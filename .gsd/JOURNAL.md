@@ -65,3 +65,47 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 Ready to start Plan 3.3 (Fitur Parked Notes) in the next session.
+
+---
+
+## Session: 2026-09-26 21:27
+
+### Objective
+Execute Plan 3.3 (Fitur Parked Notes) inline.
+
+### Accomplished
+- Extended `cartStore.ts` to support an array of `parkedTransactions` with `parkCurrentTransaction(note)` and `resumeTransaction(id)`.
+- Built UI in `Kasir.tsx` for a "Simpan Transaksi (Park)" button, a Parked Notes modal, and a "Tersimpan" button to view and resume parked transactions.
+
+### Verification
+- [x] Cart can be parked and resumed correctly with a custom note.
+- [x] Build passes (`npm run build`).
+
+### Paused Because
+Plan 3.3 is completed. We should refresh context before the next plan.
+
+### Handoff Notes
+Ready to start Plan 3.4 (Payment & Receipt Modal) in the next session.
+
+---
+
+## Session: 2026-09-26 21:32
+
+### Objective
+Execute Plan 3.4 (Proses Checkout) inline.
+
+### Accomplished
+- Created a Checkout Modal UI in `Kasir.tsx` triggered by a "Bayar Transaksi" button.
+- Added input for "Jumlah Bayar" (Cash given) with real-time "Kembalian" (Change) calculation.
+- Added `saveTransaction` to `koperasiService.ts` to save transactions to Supabase and clear the cart upon success.
+
+### Verification
+- [x] Input amounts work and change is calculated correctly.
+- [x] Transacation saving mocked/handles missing schema gracefully without breaking.
+- [x] Build passes (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command. Plan 3.4 is completed inline.
+
+### Handoff Notes
+Ready to start Plan 3.5 (Receipt and Final Review) in the next session.
