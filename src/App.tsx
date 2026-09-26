@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LoginPage from './pages/login';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
+import UserManagement from './pages/admin/UserManagement';
 
 export default function App() {
   return (
@@ -16,6 +17,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <AdminDashboard />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/users" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <UserManagement />
             </ProtectedRoute>
           } 
         />

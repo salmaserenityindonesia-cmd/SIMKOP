@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, NavLink } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import AdminProfileModal from '../admin/AdminProfileModal';
 
@@ -57,18 +57,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
 
             <nav className="space-y-1">
-              <a href="#" className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-surface-container-lowest/10 text-surface-container-lowest font-title-sm border-l-4 border-secondary-fixed">
+              <NavLink 
+                to="/admin" 
+                end
+                className={({ isActive }) => 
+                  `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                    isActive 
+                      ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                      : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                  }`
+                }
+              >
                 <span className="material-symbols-outlined text-secondary-fixed" style={{fontVariationSettings: "'FILL' 1"}}>dashboard</span>
                 <span>Dashboard</span>
-              </a>
-              <a href="#" className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md transition-colors">
+              </NavLink>
+              <NavLink 
+                to="/admin/simpan-pinjam"
+                className={({ isActive }) => 
+                  `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                    isActive 
+                      ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                      : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                  }`
+                }
+              >
                 <span className="material-symbols-outlined">account_balance</span>
                 <span>Simpan Pinjam</span>
-              </a>
-              <a href="#" className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md transition-colors">
+              </NavLink>
+              <NavLink 
+                to="/admin/users"
+                className={({ isActive }) => 
+                  `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                    isActive 
+                      ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                      : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                  }`
+                }
+              >
                 <span className="material-symbols-outlined">group</span>
-                <span>Manajemen Anggota</span>
-              </a>
+                <span>Manajemen User</span>
+              </NavLink>
             </nav>
           </div>
 
