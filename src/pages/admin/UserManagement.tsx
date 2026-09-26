@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { supabaseAdmin } from '../../lib/supabaseClient';
+import { getPengelolaList, Pengelola } from '../../services/koperasiService';
 
 export default function UserManagement() {
   const [email, setEmail] = useState('');
@@ -9,6 +10,25 @@ export default function UserManagement() {
   const [role, setRole] = useState<'admin' | 'operator'>('operator');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  
+  const [users, setUsers] = useState<Pengelola[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
+
+  const fetchUsers = async () => {
+    setIsFetching(true);
+    try {
+      const { data } = await getPengelolaList(100, 0);
+      setUsers(data);
+    } catch (err) {
+      console.error('Failed to fetch users:', err);
+    } finally {
+      setIsFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,20 +59,15 @@ export default function UserManagement() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // 2. Insert into public.pengelola using supabaseAdmin to bypass RLS if any, 
-        // or let the trigger do it? The DB trigger only sets raw_app_meta_data for the first user.
-        // Let's manually insert into public.pengelola
+        // 2. Insert into public.pengelola using supabaseAdmin
         const { error: dbError } = await supabaseAdmin
           .from('pengelola')
           .insert([
             { id: authData.user.id, nama, role }
           ]);
         
-        // Sometimes the trigger handles role, but we explicitly inserted it
         if (dbError) {
           console.error('Error inserting into pengelola:', dbError);
-          // Don't throw here to avoid failing if the trigger already inserted it, 
-          // but we can check if it already exists or upsert it.
           const { error: upsertError } = await supabaseAdmin
             .from('pengelola')
             .upsert([
@@ -70,6 +85,9 @@ export default function UserManagement() {
       setPassword('');
       setNama('');
       setRole('operator');
+      
+      // Refresh the user list
+      fetchUsers();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Gagal mendaftarkan user' });
     } finally {
@@ -175,12 +193,70 @@ export default function UserManagement() {
           </form>
         </div>
 
-        {/* Tabel Daftar User akan ditaruh di sini nantinya (Plan 2.4) */}
-        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/40 shadow-sm overflow-hidden lg:col-span-2 flex items-center justify-center p-8 text-on-surface-variant text-center">
-          <div>
-            <span className="material-symbols-outlined text-[48px] text-outline-variant mb-2">group</span>
-            <h3 className="text-title-md font-title-md text-primary mb-1">Daftar User Sistem</h3>
-            <p className="text-body-sm">Fitur manajemen daftar user (CRUD) akan diimplementasikan pada Plan 2.4.</p>
+        {/* Tabel Daftar User */}
+        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/40 shadow-sm overflow-hidden lg:col-span-2">
+          <div className="p-4 border-b border-outline-variant/30 bg-surface-container-low/30">
+            <h2 className="text-title-md font-title-md text-primary flex items-center gap-2">
+              <span className="material-symbols-outlined text-[20px]">manage_accounts</span>
+              Daftar Pengelola Sistem
+            </h2>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-body-sm text-on-surface">
+              <thead className="bg-surface-container-low/20 text-label-sm font-label-sm text-on-surface-variant uppercase border-b border-outline-variant/40">
+                <tr>
+                  <th className="px-6 py-4 font-semibold">Nama</th>
+                  <th className="px-6 py-4 font-semibold">Role</th>
+                  <th className="px-6 py-4 font-semibold">Tgl Terdaftar</th>
+                  <th className="px-6 py-4 font-semibold text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/20">
+                {isFetching ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-on-surface-variant">
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full mb-3"></div>
+                        <span>Memuat data...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : users.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-8 text-center text-on-surface-variant">
+                      Tidak ada data pengelola.
+                    </td>
+                  </tr>
+                ) : (
+                  users.map((user) => (
+                    <tr key={user.id} className="hover:bg-surface-container-lowest/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="font-title-sm text-primary mb-0.5">{user.nama}</div>
+                        <div className="text-label-sm text-on-surface-variant">{user.id.substring(0,8)}...</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold uppercase ${
+                          user.role === 'admin' 
+                            ? 'bg-[#FEF2F2] text-[#B91C1C]' 
+                            : 'bg-[#F0F9FF] text-[#0369A1]'
+                        }`}>
+                          {user.role}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-on-surface-variant text-[13px]">
+                        {user.created_at ? new Date(user.created_at).toLocaleDateString('id-ID') : '-'}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <button className="p-1.5 text-on-surface-variant hover:text-secondary hover:bg-secondary/10 rounded-md transition-colors" title="Edit">
+                          <span className="material-symbols-outlined text-[18px]">edit</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
