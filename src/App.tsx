@@ -7,6 +7,7 @@ import Kasir from './pages/admin/Kasir';
 import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 import DetailPinjaman from './pages/admin/DetailPinjaman';
+import ManajemenProduk from './pages/admin/ManajemenProduk';
 
 export default function App() {
   return (
@@ -65,6 +66,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <DetailPinjaman />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/produk" 
+          element={
+            <ProtectedRoute>
+              <ManajemenProduk />
             </ProtectedRoute>
           } 
         />
