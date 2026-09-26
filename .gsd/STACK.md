@@ -6,42 +6,39 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js / Vite | 8.3.1 | Core development and build tool |
-| React | 19.3.0 | UI Library |
-| TypeScript | 7.0.2 | Programming Language |
+| Node.js | v20+ | Execution environment |
+| React | ^19.3.0 | Core UI Library |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Database and Auth Client |
-| react-router-dom | ^7.18.4 | Application Routing |
+| @supabase/supabase-js | ^2.117.2 | Supabase Client |
+| dotenv | ^18.0.4 | Environment variables |
 | lucide-react | ^1.48.0 | Icons |
-| dotenv | ^18.0.4 | Environment Variables |
+| react-router-dom | ^7.18.4 | Routing |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
-| vite | ^8.3.1 | Build tool / Dev server |
 | tailwindcss | ^4.3.3 | CSS Framework |
-| postcss / autoprefixer | - | CSS processing |
-| @vitejs/plugin-react | ^6.1.1 | React plugin for Vite |
+| vite | ^8.3.1 | Build tool / Dev server |
+| typescript | ^7.0.2 | Type checking |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Database & Auth | Supabase | Backend as a Service |
+| Database & Auth | Supabase | Postgres DB, Authentication, Storage |
 
 ## Configuration
 
 | Variable | Purpose | Location |
 |----------|---------|----------|
-| VITE_SUPABASE_URL | Supabase API URL | `.env` / `import.meta.env` |
-| VITE_SUPABASE_ANON_KEY | Supabase public key | `.env` / `import.meta.env` |
-| VITE_SUPABASE_SERVICE_ROLE_KEY | Supabase admin key | `.env` / `import.meta.env` |
+| VITE_SUPABASE_URL | Supabase API URL | .env |
+| VITE_SUPABASE_ANON_KEY | Supabase Anon Key | .env |
 
 ## Outdated Packages
 
-No critical outdated packages detected at this time.
+*(Run `npm outdated` to refresh, currently up to date)*

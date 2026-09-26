@@ -4,66 +4,73 @@
 
 ## Overview
 
-SIMKOP (Sistem Informasi Manajemen Koperasi) is a React-based web application providing management and point-of-sale features for an Indonesian cooperative. It uses Supabase as its backend for both authentication and database storage.
+SIMKOP (Sistem Informasi Manajemen Koperasi) is a web-based cooperative management system. It provides user management, a POS (Kasir) system, and a module for managing savings and loans (Simpanan & Pinjaman) for cooperative members.
 
-```
+```text
 ┌─────────────────────────────────────────┐
-│              [main.tsx / App.tsx]       │
+│        Vite + React (Entry Point)       │
 ├─────────────────────────────────────────┤
-│         [React Components / Pages]      │
-│     (Pages, Auth, Admin, Layout)        │
+│        Pages (Admin & Auth Flow)        │
 ├─────────────────────────────────────────┤
-│            [Supabase SDK Layer]         │
-│         (koperasiService.ts)            │
+│      Services & Hooks (State, API)      │
+├─────────────────────────────────────────┤
+│           Supabase (Data Layer)         │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Entry Points
-- **Purpose:** App initialization and routing
-- **Location:** `src/main.tsx`, `src/App.tsx`
-- **Dependencies:** `react`, `react-router-dom`
-
 ### Pages
-- **Purpose:** Top-level views (Login, Admin Management, POS)
-- **Location:** `src/pages/login.tsx`, `src/pages/admin/UserManagement.tsx`, `src/pages/admin/Kasir.tsx`, `src/pages/admin/AdminDashboard.tsx`
-- **Dependencies:** React hooks, Supabase Client, UI Components, Zustand (`cartStore`)
+- **Location:** `src/pages/`
+- **Purpose:** Primary application views.
+- **Key Files:** 
+  - `login.tsx` (Authentication)
+  - `admin/AdminDashboard.tsx` (Main admin landing)
+  - `admin/UserManagement.tsx` (CRUD for `pengelola` staff)
+  - `admin/Kasir.tsx` (POS interface with parked notes, checkout, cart)
+  - `admin/DashboardSimpanan.tsx` (Management of members' savings)
 
 ### Components
-- **Purpose:** Reusable UI, Layout, and Print components
-- **Location:** `src/components/layout/AdminLayout.tsx`, `src/components/auth/LoginForm.tsx`, `src/components/auth/ProtectedRoute.tsx`, `src/components/admin/AdminProfileModal.tsx`, `src/components/admin/ReceiptPrinter.tsx`
-- **Dependencies:** Supabase Auth, `lucide-react`
+- **Location:** `src/components/`
+- **Purpose:** Reusable UI components.
+- **Key Files:** 
+  - `admin/AdminProfileModal.tsx` (Profile editing)
+  - `admin/ReceiptPrinter.tsx` (Thermal printer receipt format for POS)
+  - `layout/` & `auth/` (Structural components)
 
-### State Management & Stores
-- **Purpose:** Global/shared state management for complex features (like POS cart)
-- **Location:** `src/lib/cartStore.ts`
-- **Dependencies:** React Hooks / Context
+### Lib
+- **Location:** `src/lib/`
+- **Purpose:** Core utilities, state stores, and configurations.
+- **Key Files:**
+  - `supabaseClient.ts` (Supabase connection setup)
+  - `cartStore.ts` (Zustand/Custom hook for cart state and parked transactions)
 
-### Services / Data Layer
-- **Purpose:** Interacting with Supabase
-- **Location:** `src/services/koperasiService.ts`, `src/lib/supabaseClient.ts`
-- **Dependencies:** `@supabase/supabase-js`
+### Services
+- **Location:** `src/services/`
+- **Purpose:** API interactions and business logic abstraction.
+- **Key Files:**
+  - `koperasiService.ts` (Contains mock/data logic for members, savings, and POS transactions)
 
 ## Data Flow
 
-1. User authenticates via `LoginForm` / `ProtectedRoute` using Supabase Auth.
-2. Pages (e.g. `UserManagement`) use `koperasiService` or direct Supabase client imports to fetch/mutate data.
-3. Special Admin operations bypass RLS by utilizing `supabaseAdmin` initialized with `VITE_SUPABASE_SERVICE_ROLE_KEY`.
+1. User authenticates via `login.tsx` interfacing with `supabaseClient.ts`.
+2. App routes to specific module based on navigation.
+3. For Kasir (POS): `Kasir.tsx` interacts with `cartStore.ts` for cart state, parked transactions, and checkout calculation. Checkout saves via `koperasiService.ts`.
+4. For Simpanan: `DashboardSimpanan.tsx` fetches member and savings data via `koperasiService.ts`.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | BaaS | Authentication, PostgreSQL Database, Service Role Admin operations |
+| Supabase | BaaS | Authentication, Postgres Database, Row Level Security |
 
 ## Technical Debt
 
-- [ ] Missing extensive error boundaries for component failures.
-- [ ] No dedicated testing framework currently configured (Vite default test script returns error).
+- [ ] `src/pages/admin/Kasir.tsx:58`: TODO: implement real lookup logic
+- [ ] Schema generation for `anggota` (customers) is mocked/partially complete, relying on fallback data in `koperasiService.ts`.
 
 ## Conventions
 
-**Naming:** PascalCase for components (`LoginForm.tsx`), camelCase for services (`koperasiService.ts`).
-**Structure:** Feature-based directories (`admin`, `auth`, `layout`) inside `components` and `pages`.
-**Testing:** No active tests observed.
+**Naming:** PascalCase for React components, camelCase for services/utils.
+**Structure:** Feature-based pages with a shared `components/` and `services/` directory.
+**Testing:** No test framework specified currently in `package.json`.
