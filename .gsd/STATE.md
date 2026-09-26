@@ -20,6 +20,8 @@ Codebase mapping complete.
 - Ported modern login portal UI from stitch to `LoginForm.tsx`.
 - Integrated Supabase Auth (`signInWithPassword`) and state management in `LoginForm.tsx`.
 - Implemented `ProtectedRoute.tsx` for route protection and auth guard.
+- Migrated Supabase environment variables from Node's `process.env` to Vite's `import.meta.env` to fix runtime crash.
+- Resolved browser white screen issue, ensuring successful React component mount and routing.
 
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
