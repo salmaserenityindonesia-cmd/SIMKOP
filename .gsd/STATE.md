@@ -1,42 +1,33 @@
 # Session State
 
 ## Current Position
-- **Phase:** 1 (Foundation & Database Setup)
-- **Task:** Integrasi Supabase Client & Database CRUD untuk SIMKOP
+- **Phase**: Phase 3 (Kasir (POS) & Parked Notes)
+- **Task**: Between tasks (Finished Phase 2 completely)
+- **Status**: Paused at 2026-09-26T21:09
 
 ## Last Session Summary
-Codebase mapping complete.
-- 2 components identified
-- 5 dependencies analyzed
-- 2 technical debt items found
+Successfully completed Phase 2 (Autentikasi & User Management):
+- Implemented `UserManagement` page with secure admin-only user registration.
+- Added full CRUD functionality (listing, role toggling, deletion) for system users using `supabaseAdmin`.
+- Corrected domain terminology: renamed `anggota` to `pengelola` for staff/users, and created a dedicated `anggota` table with `pangkat` and `nrp` specifically for cooperative members.
+- Resolved unused import lint errors in `App.tsx`, `UserManagement.tsx`, and `AdminDashboard.tsx`.
 
-## Recent Accomplishments
-- Initialized Node/TypeScript environment with `package.json`.
-- Configured environment variables (`.env`, `.env.example`).
-- Implemented singleton Supabase client in `src/lib/supabaseClient.ts`.
-- Implemented read (SELECT) query helpers in `src/services/koperasiService.ts`.
-- Implemented write/mutation (INSERT/UPDATE) helpers in `src/services/koperasiService.ts`.
-- Validated Supabase connection and error handling dynamically handling missing schema with `test-crud.ts`.
-- Ported modern login portal UI from stitch to `LoginForm.tsx`.
-- Integrated Supabase Auth (`signInWithPassword`) and state management in `LoginForm.tsx`.
-- Implemented `ProtectedRoute.tsx` for route protection and auth guard.
-- Migrated Supabase environment variables from Node's `process.env` to Vite's `import.meta.env` to fix runtime crash.
-- Resolved browser white screen issue, ensuring successful React component mount and routing.
-- Fixed unstyled layout by migrating design tokens to Tailwind v4 `@theme` in `index.css`.
-- Ensured Stitch UI components and CSS utility classes render proportionally and precisely.
-- Created seed SQL script to set initial admin role for `salmaserenityindonesia@gmail.com`.
-- Generated Admin Dashboard and Profile specs via Stitch MCP.
-- Implemented `AdminLayout` and `AdminDashboard` React components incorporating Stitch designs.
-- Integrated direct in-app password update (`supabase.auth.updateUser`) without email confirmation via `AdminProfileModal`.
-- Configured `/admin` route with `requireAdmin` protected route checks.
-- Performed codebase audit and synchronized `.gsd/ROADMAP.md` tracking progress across all phases.
-- Implemented `UserManagement` page with secure admin-only user registration utilizing `supabaseAdmin` (Plan 2.2).
-- Finalized User Management CRUD functionality (Listing, Edit Role, Delete) resolving Phase 2 (Plan 2.4).
-- Corrected database schema domain terms (separated `pengelola` vs `anggota`).
+## In-Progress Work
+- No partial work. Phase 2 is 100% complete.
+- Files modified: `UserManagement.tsx`, `koperasiService.ts`, `AdminDashboard.tsx`, various SQL migration scripts.
 
-## Database Schema Constraints Adhered
-- Ensured role checks map strictly to 'admin' and 'operator' in `pengelola`.
-- Validated `anggota` schema to align with Phase 4's cooperative member requirements.
+## Blockers
+- None.
+
+## Context Dump
+- **Domain Modeling**: The `pengelola` table (previously `anggota`) acts as the profiles table for `auth.users`. Only `admin` and `operator` exist here. 
+- **Customer Modeling**: The newly created `anggota` table (`005_create_tabel_anggota_koperasi.sql`) is strictly for cooperative members (customers) and has no relation to `auth.users` because they do not have login access.
+- **Service Role**: Elevated operations (create user, toggle role, delete user) bypass RLS and are handled entirely in the browser using `supabaseAdmin` relying on the `VITE_SUPABASE_SERVICE_ROLE_KEY`.
+
+### Decisions Made
+- Renamed system profiles table to `pengelola` to adhere to Indonesian Cooperative domain terminology, reserving `anggota` for actual members/customers.
 
 ## Next Steps
-- Begin layouting POS (Kasir) system logic and UI (Phase 3).
+1. Begin Phase 3: Kasir (POS) & Parked Notes.
+2. Develop the main POS interface (Kasir) and shopping cart logic.
+3. Integrate product lookup and calculation logic.
