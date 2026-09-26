@@ -214,3 +214,25 @@ Execute Plan 4.3 (Approval Workflow) inline.
 
 ### Handoff Notes
 Plan 4.3 is complete. Ready to start Plan 4.4 (Simulasi & Logika Pembayaran Cicilan).
+
+---
+
+## Session: 2026-09-26 22:30
+
+### Objective
+Tweak Admin UI.
+
+### Accomplished
+- Added "Approval Pinjaman" link as a sub-menu under "Simpan Pinjam" in `AdminLayout.tsx`.
+- Applied conditional rendering to only show this link to users with the 'admin' role.
+
+### Verification
+- [x] Link is nested correctly in the UI.
+- [x] Render logic checks `user?.role === 'admin'`.
+- [x] Build passes (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+We are between plans. Next session should pick up with Phase 4, Plan 4.4 (Simulasi & Logika Pembayaran Cicilan).
