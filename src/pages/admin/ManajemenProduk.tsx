@@ -150,6 +150,20 @@ export default function ManajemenProduk() {
           </button>
         </div>
 
+        {products.filter(p => p.stok <= p.stokMinimum).length > 0 && !loading && (
+          <div className="bg-error/10 border border-error/20 rounded-xl p-4 flex items-center gap-3 text-error">
+            <span className="material-symbols-outlined">warning</span>
+            <div className="flex-1">
+              <p className="font-medium text-body-lg">
+                {products.filter(p => p.stok <= p.stokMinimum).length} produk perlu restock!
+              </p>
+              <p className="text-body-md text-error/80">
+                Stok berada di bawah atau sama dengan batas minimum.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="bg-surface rounded-2xl shadow-sm border border-outline-variant overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -180,8 +194,15 @@ export default function ManajemenProduk() {
                       <td className="p-4 text-body-md text-on-surface text-right">
                         Rp {p.hargaJual.toLocaleString('id-ID')}
                       </td>
-                      <td className="p-4 text-body-md text-on-surface text-right font-medium">
-                        {p.stok}
+                      <td className="p-4 text-body-md text-right font-medium">
+                        {p.stok <= p.stokMinimum ? (
+                          <span className="inline-flex items-center gap-1 text-error bg-error/10 px-2 py-0.5 rounded" title="Stok menipis">
+                            <span className="material-symbols-outlined text-[14px]">warning</span>
+                            {p.stok}
+                          </span>
+                        ) : (
+                          <span className="text-on-surface">{p.stok}</span>
+                        )}
                       </td>
                       <td className="p-4 text-body-md text-on-surface-variant text-right">
                         {p.stokMinimum}

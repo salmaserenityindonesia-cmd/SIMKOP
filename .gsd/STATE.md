@@ -1,7 +1,7 @@
 ## Current Position
 - **Phase**: 6 (Manajemen Anggota Koperasi)
 - **Task**: Plan 6.2 (UI Manajemen Anggota)
-- **Status**: Paused at 2026-09-27T05:40:00+07:00
+- **Status**: Active (resumed 2026-09-27T05:41:16+07:00)
 
 ## Last Session Summary
 Executed Plan 6.1 (Service Extension). Ditambahkan CRUD `Anggota` ke `koperasiService.ts` beserta in-memory `mockAnggotaList`. Tipe data `Anggota` disesuaikan (menambah `telepon`, `alamat`, `tanggal_bergabung`). Build sukses.
