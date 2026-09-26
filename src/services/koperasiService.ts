@@ -518,6 +518,8 @@ export interface Restock {
   tanggal: string;
 }
 
+let mockRestockList: Restock[] = [];
+
 export async function catatRestock(data: Omit<Restock, 'id'>): Promise<Restock> {
   if (!data.noFaktur || data.noFaktur.trim() === '') {
     throw new Error('Supplier invoice number (noFaktur) is required');
@@ -539,6 +541,74 @@ export async function catatRestock(data: Omit<Restock, 'id'>): Promise<Restock> 
     throw new Error('Produk tidak ditemukan');
   }
 
-  // In a real app, save newRestock to a 'restock' table here.
+  // Save to in-memory list (simulate DB insertion)
+  mockRestockList.push(newRestock);
+
   return newRestock;
+}
+
+export interface RiwayatStok {
+  id: string;
+  tanggal: string;
+  tipe: 'in' | 'out';
+  qty: number;
+  keterangan: string;
+}
+
+export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const riwayat: RiwayatStok[] = [];
+
+  // Restock (IN)
+  const restocks = mockRestockList.filter(r => r.produkId === produkId);
+  restocks.forEach(r => {
+    riwayat.push({
+      id: r.id,
+      tanggal: r.tanggal,
+      tipe: 'in',
+      qty: r.qty,
+      keterangan: `Restock (Faktur: ${r.noFaktur})`
+    });
+  });
+
+  // Transaksi POS (OUT)
+  const { data: txItems, error } = await supabase
+    .from('transaksi_item')
+    .select(`
+      id,
+      qty,
+      transaksi (
+        created_at,
+        id
+      )
+    `)
+    .eq('product_id', produkId);
+
+  if (!error && txItems) {
+    txItems.forEach((item: any) => {
+      riwayat.push({
+        id: item.id,
+        tanggal: item.transaksi?.created_at ? item.transaksi.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+        tipe: 'out',
+        qty: item.qty,
+        keterangan: `Penjualan POS (#${item.transaksi?.id?.substring(0,8) || 'Unknown'})`
+      });
+    });
+  } else {
+    // Mock dummy sales for prod-1 if table doesn't exist
+    if (produkId === 'prod-1') {
+      riwayat.push({
+        id: 'dummy-tx-1',
+        tanggal: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        tipe: 'out',
+        qty: 2,
+        keterangan: 'Penjualan POS (Dummy)'
+      });
+    }
+  }
+
+  // Sort descending by date
+  riwayat.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+
+  return riwayat;
 }

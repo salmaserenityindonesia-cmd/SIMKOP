@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Produk, getProduk, addProduk, updateProduk, deleteProduk, catatRestock } from '../../services/koperasiService';
+import { Produk, getProduk, addProduk, updateProduk, deleteProduk, catatRestock, RiwayatStok, getRiwayatStok } from '../../services/koperasiService';
 
 export default function ManajemenProduk() {
   const [products, setProducts] = useState<Produk[]>([]);
@@ -15,6 +15,12 @@ export default function ManajemenProduk() {
   const [restockHargaBeli, setRestockHargaBeli] = useState(0);
   const [restockNoFaktur, setRestockNoFaktur] = useState('');
   const [restockTanggal, setRestockTanggal] = useState(new Date().toISOString().split('T')[0]);
+
+  // Riwayat Stok state
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historyProduct, setHistoryProduct] = useState<Produk | null>(null);
+  const [stockHistory, setStockHistory] = useState<RiwayatStok[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Form state
   const [nama, setNama] = useState('');
@@ -66,6 +72,20 @@ export default function ManajemenProduk() {
     setRestockNoFaktur('');
     setRestockTanggal(new Date().toISOString().split('T')[0]);
     setIsRestockModalOpen(true);
+  };
+
+  const openHistoryModal = async (product: Produk) => {
+    setHistoryProduct(product);
+    setIsHistoryModalOpen(true);
+    setLoadingHistory(true);
+    try {
+      const data = await getRiwayatStok(product.id);
+      setStockHistory(data);
+    } catch (error) {
+      console.error('Failed to load stock history', error);
+    } finally {
+      setLoadingHistory(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -167,6 +187,13 @@ export default function ManajemenProduk() {
                         {p.stokMinimum}
                       </td>
                       <td className="p-4 flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => openHistoryModal(p)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-tertiary hover:bg-tertiary/10 transition-colors"
+                          title="Kartu Stok (Riwayat)"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">history</span>
+                        </button>
                         <button 
                           onClick={() => openRestockModal(p)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-secondary hover:bg-secondary/10 transition-colors"
@@ -367,6 +394,55 @@ export default function ManajemenProduk() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {isHistoryModalOpen && historyProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-surface rounded-2xl w-full max-w-2xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-outline-variant/30 flex justify-between items-center">
+              <div>
+                <h2 className="text-title-lg font-title-lg text-on-surface">Kartu Stok</h2>
+                <p className="text-body-md text-on-surface-variant mt-1">{historyProduct.nama}</p>
+              </div>
+              <button onClick={() => setIsHistoryModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto">
+              {loadingHistory ? (
+                <div className="text-center py-8 text-on-surface-variant">Memuat riwayat stok...</div>
+              ) : stockHistory.length === 0 ? (
+                <div className="text-center py-8 text-on-surface-variant">Belum ada riwayat pergerakan stok.</div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-surface-container-lowest border-b border-outline-variant text-label-md text-on-surface-variant">
+                      <th className="p-3 font-label-md">Tanggal</th>
+                      <th className="p-3 font-label-md">Keterangan</th>
+                      <th className="p-3 font-label-md text-center">Tipe</th>
+                      <th className="p-3 font-label-md text-right">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stockHistory.map(h => (
+                      <tr key={h.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
+                        <td className="p-3 text-body-md text-on-surface">{h.tanggal}</td>
+                        <td className="p-3 text-body-md text-on-surface">{h.keterangan}</td>
+                        <td className="p-3 text-center">
+                          <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${h.tipe === 'in' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>
+                            {h.tipe === 'in' ? 'Masuk' : 'Keluar'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-body-md font-medium text-right text-on-surface">{h.qty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </div>
         </div>
       )}
