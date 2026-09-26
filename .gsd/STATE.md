@@ -24,6 +24,7 @@ Codebase mapping complete.
 - Resolved browser white screen issue, ensuring successful React component mount and routing.
 - Fixed unstyled layout by migrating design tokens to Tailwind v4 `@theme` in `index.css`.
 - Ensured Stitch UI components and CSS utility classes render proportionally and precisely.
+- Created seed SQL script to set initial admin role for `salmaserenityindonesia@gmail.com`.
 
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
