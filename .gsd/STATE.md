@@ -25,7 +25,10 @@ Codebase mapping complete.
 - Fixed unstyled layout by migrating design tokens to Tailwind v4 `@theme` in `index.css`.
 - Ensured Stitch UI components and CSS utility classes render proportionally and precisely.
 - Created seed SQL script to set initial admin role for `salmaserenityindonesia@gmail.com`.
-
+- Generated Admin Dashboard and Profile specs via Stitch MCP.
+- Implemented `AdminLayout` and `AdminDashboard` React components incorporating Stitch designs.
+- Integrated direct in-app password update (`supabase.auth.updateUser`) without email confirmation via `AdminProfileModal`.
+- Configured `/admin` route with `requireAdmin` protected route checks.
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
 - Data access helpers map to `user_restrictions` logic.
