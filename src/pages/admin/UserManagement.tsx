@@ -95,6 +95,55 @@ export default function UserManagement() {
     }
   };
 
+  const handleDeleteUser = async (id: string, namaUser: string) => {
+    if (!supabaseAdmin) {
+      alert('Service Role Key tidak dikonfigurasi.');
+      return;
+    }
+    
+    if (window.confirm(`Apakah Anda yakin ingin menghapus pengelola "${namaUser}" secara permanen?`)) {
+      try {
+        const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
+        if (error) throw error;
+        
+        // Trigger refetch
+        fetchUsers();
+      } catch (err: any) {
+        alert(`Gagal menghapus user: ${err.message}`);
+      }
+    }
+  };
+
+  const handleToggleRole = async (user: Pengelola) => {
+    if (!supabaseAdmin) {
+      alert('Service Role Key tidak dikonfigurasi.');
+      return;
+    }
+
+    const newRole = user.role === 'admin' ? 'operator' : 'admin';
+    if (window.confirm(`Ubah hak akses "${user.nama}" menjadi ${newRole.toUpperCase()}?`)) {
+      try {
+        // 1. Update auth.users metadata
+        const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+          app_metadata: { role: newRole }
+        });
+        if (authError) throw authError;
+
+        // 2. Update pengelola table
+        const { error: dbError } = await supabaseAdmin
+          .from('pengelola')
+          .update({ role: newRole })
+          .eq('id', user.id);
+        
+        if (dbError) throw dbError;
+
+        fetchUsers();
+      } catch (err: any) {
+        alert(`Gagal mengubah role: ${err.message}`);
+      }
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
@@ -248,9 +297,22 @@ export default function UserManagement() {
                         {user.created_at ? new Date(user.created_at).toLocaleDateString('id-ID') : '-'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <button className="p-1.5 text-on-surface-variant hover:text-secondary hover:bg-secondary/10 rounded-md transition-colors" title="Edit">
-                          <span className="material-symbols-outlined text-[18px]">edit</span>
-                        </button>
+                        <div className="flex justify-end gap-2">
+                          <button 
+                            className="p-1.5 text-on-surface-variant hover:text-secondary hover:bg-secondary/10 rounded-md transition-colors" 
+                            title="Ubah Role (Admin/Operator)"
+                            onClick={() => handleToggleRole(user)}
+                          >
+                            <span className="material-symbols-outlined text-[18px]">manage_accounts</span>
+                          </button>
+                          <button 
+                            className="p-1.5 text-on-surface-variant hover:text-error hover:bg-error-container/20 rounded-md transition-colors" 
+                            title="Hapus Pengelola"
+                            onClick={() => handleDeleteUser(user.id, user.nama)}
+                          >
+                            <span className="material-symbols-outlined text-[18px]">delete</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
