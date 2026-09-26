@@ -1,24 +1,22 @@
 ## Current Position
-- **Phase**: 4 (verified)
-- **Task**: All tasks complete
-- **Status**: ✅ Complete and verified
+- **Phase**: 4 (Modul Pinjaman & Simpanan)
+- **Task**: Phase completed and verified
+- **Status**: Paused at 2026-09-26 22:53
 
 ## Last Session Summary
-- Added `Angsuran` type and logic in `koperasiService.ts`.
-- Created `DetailPinjaman.tsx` to handle schedule and payments.
-- Completed Plan 4.4.
+- Executed Plan 4.5: Implemented `StatusBadge.tsx` and integrated it into `DetailPinjaman.tsx` and `ApprovalPinjaman.tsx`.
+- Ran verification for Phase 4 (`/verify 4`). All must-haves met.
+- Marked Phase 4 as Complete in `ROADMAP.md`.
 
 ## In-Progress Work
-- None. 
+- None.
 - Tests status: Build passes.
 
 ## Blockers
 - None.
 
 ## Context Dump
-- `DetailPinjaman.tsx` requires an `id` parameter. Route is `/admin/pinjaman/:id`.
-- There is a "Detail" link in `ApprovalPinjaman.tsx` to access it.
+- Phase 4 is fully completed. The application can now handle loan requests, approvals, and installment payments with UI badges.
 
 ## Next Steps
-1. `/execute 5` (to start Plan 4.5, if it exists) or check roadmap.
-2. Follow through remaining plans in Phase 4.
+1. `/plan 5` or `/execute 5` to begin Phase 5 (Modul Inventori, Restock & Dashboard).
