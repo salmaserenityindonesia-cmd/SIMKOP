@@ -5,7 +5,7 @@ import AdminProfileModal from '../admin/AdminProfileModal';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
-  const [user, setUser] = useState<{ email: string; name: string } | null>(null);
+  const [user, setUser] = useState<{ email: string; name: string; role: string } | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -14,13 +14,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (user) {
         const { data: profile } = await supabase
           .from('pengelola')
-          .select('nama')
+          .select('nama, role')
           .eq('id', user.id)
           .single();
         
         setUser({
           email: user.email || '',
-          name: profile?.nama || user.user_metadata?.nama || 'Admin SIMKOP'
+          name: profile?.nama || user.user_metadata?.nama || 'Admin SIMKOP',
+          role: profile?.role || 'operator'
         });
       }
     };
@@ -79,19 +80,35 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span className="material-symbols-outlined text-secondary-fixed" style={{fontVariationSettings: "'FILL' 1"}}>dashboard</span>
                 <span>Dashboard</span>
               </NavLink>
-              <NavLink 
-                to="/admin/simpanan"
-                className={({ isActive }) => 
-                  `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
-                    isActive 
-                      ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
-                      : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
-                  }`
-                }
-              >
-                <span className="material-symbols-outlined">account_balance</span>
-                <span>Simpan Pinjam</span>
-              </NavLink>
+              <div className="space-y-1">
+                <NavLink 
+                  to="/admin/simpanan"
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                      isActive 
+                        ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                        : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                    }`
+                  }
+                >
+                  <span className="material-symbols-outlined">account_balance</span>
+                  <span>Simpan Pinjam</span>
+                </NavLink>
+                {user?.role === 'admin' && (
+                  <NavLink 
+                    to="/admin/approval"
+                    className={({ isActive }) => 
+                      `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
+                        isActive 
+                          ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                          : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                      }`
+                    }
+                  >
+                    <span>Approval Pinjaman</span>
+                  </NavLink>
+                )}
+              </div>
               <NavLink 
                 to="/admin/users"
                 className={({ isActive }) => 
@@ -146,7 +163,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
               <div className="hidden sm:flex flex-col">
                 <span className="text-title-sm font-title-sm text-primary leading-tight">{user?.name || 'Admin'}</span>
-                <span className="text-label-sm font-label-sm text-secondary font-medium">Super Admin</span>
+                <span className="text-label-sm font-label-sm text-secondary font-medium capitalize">{user?.role || 'Admin'}</span>
               </div>
               <span className="material-symbols-outlined text-outline text-[16px]">expand_more</span>
             </button>
