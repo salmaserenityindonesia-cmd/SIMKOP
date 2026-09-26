@@ -13,9 +13,10 @@ export default function ManajemenAnggota() {
   const [showModal, setShowModal] = useState(false);
   const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(null);
   const [formData, setFormData] = useState({
+    nrp: '',
     nama: '',
-    telepon: '',
-    alamat: ''
+    pangkat: '',
+    status: 'aktif'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -37,16 +38,17 @@ export default function ManajemenAnggota() {
 
   const handleOpenAddModal = () => {
     setEditingAnggota(null);
-    setFormData({ nama: '', telepon: '', alamat: '' });
+    setFormData({ nrp: '', nama: '', pangkat: '', status: 'aktif' });
     setShowModal(true);
   };
 
   const handleOpenEditModal = (anggota: Anggota) => {
     setEditingAnggota(anggota);
     setFormData({
+      nrp: anggota.nrp || '',
       nama: anggota.nama,
-      telepon: anggota.telepon || '',
-      alamat: anggota.alamat || ''
+      pangkat: anggota.pangkat || '',
+      status: anggota.status || 'aktif'
     });
     setShowModal(true);
   };
@@ -71,10 +73,7 @@ export default function ManajemenAnggota() {
       if (editingAnggota) {
         await updateAnggota(editingAnggota.id, formData);
       } else {
-        await addAnggota({
-          ...formData,
-          tanggal_bergabung: new Date().toISOString().split('T')[0]
-        });
+        await addAnggota(formData);
       }
       setShowModal(false);
       await loadData();
@@ -87,7 +86,7 @@ export default function ManajemenAnggota() {
 
   const filteredList = anggotaList.filter(a => 
     a.nama.toLowerCase().includes(search.toLowerCase()) || 
-    a.no_anggota.toLowerCase().includes(search.toLowerCase())
+    (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
@@ -104,7 +103,7 @@ export default function ManajemenAnggota() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Cari anggota..."
+              placeholder="Cari anggota (Nama / NRP)..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] w-64"
@@ -124,11 +123,11 @@ export default function ManajemenAnggota() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-100 text-gray-600 text-sm">
-                <th className="py-3 px-4 font-medium border-b border-gray-200">No. Anggota</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Telepon</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Alamat</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Tanggal Bergabung</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
               </tr>
             </thead>
@@ -155,11 +154,17 @@ export default function ManajemenAnggota() {
               ) : (
                 filteredList.map((anggota) => (
                   <tr key={anggota.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.no_anggota}</td>
+                    <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700">{anggota.telepon || '-'}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700 max-w-[200px] truncate" title={anggota.alamat}>{anggota.alamat || '-'}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700">{anggota.tanggal_bergabung ? new Date(anggota.tanggal_bergabung).toLocaleDateString('id-ID') : '-'}</td>
+                    <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
+                    <td className="py-3 px-4 text-sm">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                        anggota.status === 'aktif' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {anggota.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-700">{anggota.created_at ? new Date(anggota.created_at).toLocaleDateString('id-ID') : '-'}</td>
                     <td className="py-3 px-4 text-sm text-center">
                       <div className="flex justify-center space-x-2">
                         <button
@@ -205,6 +210,20 @@ export default function ManajemenAnggota() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
+                    NRP <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.nrp}
+                    onChange={(e) => setFormData({...formData, nrp: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                    placeholder="Masukkan NRP anggota"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nama Lengkap <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -219,28 +238,29 @@ export default function ManajemenAnggota() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nomor Telepon
+                    Pangkat
                   </label>
                   <input
-                    type="tel"
-                    value={formData.telepon}
-                    onChange={(e) => setFormData({...formData, telepon: e.target.value})}
+                    type="text"
+                    value={formData.pangkat}
+                    onChange={(e) => setFormData({...formData, pangkat: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    placeholder="Contoh: 081234567890"
+                    placeholder="Contoh: Sertu, Kopda, dll"
                   />
                 </div>
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Alamat Lengkap
+                    Status
                   </label>
-                  <textarea
-                    rows={3}
-                    value={formData.alamat}
-                    onChange={(e) => setFormData({...formData, alamat: e.target.value})}
+                  <select
+                    value={formData.status}
+                    onChange={(e) => setFormData({...formData, status: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    placeholder="Masukkan alamat domisili"
-                  />
+                  >
+                    <option value="aktif">Aktif</option>
+                    <option value="nonaktif">Nonaktif</option>
+                  </select>
                 </div>
               </div>
               

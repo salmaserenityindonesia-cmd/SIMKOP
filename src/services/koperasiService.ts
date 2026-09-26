@@ -10,11 +10,10 @@ export interface Pengelola {
 
 export interface Anggota {
   id: string;
+  nrp: string;
   nama: string;
-  no_anggota: string;
-  telepon?: string;
-  alamat?: string;
-  tanggal_bergabung?: string;
+  pangkat?: string | null;
+  status?: string;
   created_at?: string;
 }
 
@@ -54,7 +53,9 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
         {
           id: 'dummy-anggota-1',
           nama: 'Budi Santoso',
-          no_anggota: 'A-001',
+          nrp: '123456',
+          pangkat: 'Sertu',
+          status: 'aktif',
           created_at: new Date().toISOString(),
           simpanan_pokok: 100000,
           simpanan_wajib: 50000,
@@ -63,7 +64,9 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
         {
           id: 'dummy-anggota-2',
           nama: 'Siti Aminah',
-          no_anggota: 'A-002',
+          nrp: '654321',
+          pangkat: 'Kopda',
+          status: 'aktif',
           created_at: new Date().toISOString(),
           simpanan_pokok: 100000,
           simpanan_wajib: 200000,
@@ -103,56 +106,66 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
 }
 
 // --- Anggota CRUD ---
-let mockAnggotaList: Anggota[] = [
-  {
-    id: 'dummy-anggota-1',
-    nama: 'Budi Santoso',
-    no_anggota: 'A-001',
-    telepon: '081234567890',
-    alamat: 'Jl. Merdeka No. 1',
-    tanggal_bergabung: '2025-01-10',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'dummy-anggota-2',
-    nama: 'Siti Aminah',
-    no_anggota: 'A-002',
-    telepon: '089876543210',
-    alamat: 'Jl. Sudirman No. 2',
-    tanggal_bergabung: '2025-02-15',
-    created_at: new Date().toISOString()
-  }
-];
 
 export async function getAnggota(): Promise<Anggota[]> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  return [...mockAnggotaList];
+  const { data, error } = await supabase
+    .from('anggota')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "anggota" does not exist yet. Returning empty array.');
+      return [];
+    }
+    console.error('Error fetching anggota:', error.message);
+    throw new Error(`Gagal mengambil data anggota: ${error.message}`);
+  }
+
+  return data as Anggota[];
 }
 
-export async function addAnggota(data: Omit<Anggota, 'id' | 'no_anggota'>): Promise<Anggota> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  const count = mockAnggotaList.length + 1;
-  const newAnggota: Anggota = {
-    ...data,
-    id: `anggota-${Date.now()}`,
-    no_anggota: `A-${count.toString().padStart(3, '0')}`,
-    created_at: new Date().toISOString()
-  };
-  mockAnggotaList.push(newAnggota);
-  return newAnggota;
+export async function addAnggota(data: Omit<Anggota, 'id' | 'created_at'>): Promise<Anggota> {
+  const { data: result, error } = await supabase
+    .from('anggota')
+    .insert([data])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error inserting anggota:', error.message);
+    throw new Error(`Gagal menambah anggota: ${error.message}`);
+  }
+
+  return result as Anggota;
 }
 
-export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id' | 'no_anggota'>>): Promise<Anggota> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  const index = mockAnggotaList.findIndex(a => a.id === id);
-  if (index === -1) throw new Error('Anggota tidak ditemukan');
-  mockAnggotaList[index] = { ...mockAnggotaList[index], ...updates };
-  return mockAnggotaList[index];
+export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id' | 'created_at'>>): Promise<Anggota> {
+  const { data, error } = await supabase
+    .from('anggota')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`Error updating anggota ${id}:`, error.message);
+    throw new Error(`Gagal mengupdate anggota: ${error.message}`);
+  }
+
+  return data as Anggota;
 }
 
 export async function deleteAnggota(id: string): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  mockAnggotaList = mockAnggotaList.filter(a => a.id !== id);
+  const { error } = await supabase
+    .from('anggota')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error(`Error deleting anggota ${id}:`, error.message);
+    throw new Error(`Gagal menghapus anggota: ${error.message}`);
+  }
 }
 
 /**
@@ -350,7 +363,7 @@ export async function getPendingPinjaman() {
       *,
       anggota (
         nama,
-        no_anggota
+        nrp
       )
     `)
     .eq('status', 'pending')
@@ -367,7 +380,7 @@ export async function getPendingPinjaman() {
           tenor_bulan: 12,
           status: 'pending',
           created_at: new Date().toISOString(),
-          anggota: { nama: 'Budi Santoso', no_anggota: 'A-001' }
+          anggota: { nama: 'Budi Santoso', nrp: '123456' }
         },
         {
           id: 'dummy-pinjaman-2',
@@ -376,7 +389,7 @@ export async function getPendingPinjaman() {
           tenor_bulan: 6,
           status: 'pending',
           created_at: new Date().toISOString(),
-          anggota: { nama: 'Siti Aminah', no_anggota: 'A-002' }
+          anggota: { nama: 'Siti Aminah', nrp: '654321' }
         }
       ];
     }
@@ -490,7 +503,7 @@ export async function getPinjamanById(id: string) {
       *,
       anggota (
         nama,
-        no_anggota
+        nrp
       )
     `)
     .eq('id', id)
@@ -506,7 +519,7 @@ export async function getPinjamanById(id: string) {
         tenor_bulan: 12,
         status: 'approved',
         created_at: new Date().toISOString(),
-        anggota: { nama: 'Budi Santoso', no_anggota: 'A-001' }
+        anggota: { nama: 'Budi Santoso', nrp: '123456' }
       };
     }
     console.error(`Error fetching pinjaman ${id}:`, error.message);
