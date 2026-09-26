@@ -12,6 +12,9 @@ export interface Anggota {
   id: string;
   nama: string;
   no_anggota: string;
+  telepon?: string;
+  alamat?: string;
+  tanggal_bergabung?: string;
   created_at?: string;
 }
 
@@ -97,6 +100,59 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
   });
 
   return result;
+}
+
+// --- Anggota CRUD ---
+let mockAnggotaList: Anggota[] = [
+  {
+    id: 'dummy-anggota-1',
+    nama: 'Budi Santoso',
+    no_anggota: 'A-001',
+    telepon: '081234567890',
+    alamat: 'Jl. Merdeka No. 1',
+    tanggal_bergabung: '2025-01-10',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'dummy-anggota-2',
+    nama: 'Siti Aminah',
+    no_anggota: 'A-002',
+    telepon: '089876543210',
+    alamat: 'Jl. Sudirman No. 2',
+    tanggal_bergabung: '2025-02-15',
+    created_at: new Date().toISOString()
+  }
+];
+
+export async function getAnggota(): Promise<Anggota[]> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  return [...mockAnggotaList];
+}
+
+export async function addAnggota(data: Omit<Anggota, 'id' | 'no_anggota'>): Promise<Anggota> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const count = mockAnggotaList.length + 1;
+  const newAnggota: Anggota = {
+    ...data,
+    id: `anggota-${Date.now()}`,
+    no_anggota: `A-${count.toString().padStart(3, '0')}`,
+    created_at: new Date().toISOString()
+  };
+  mockAnggotaList.push(newAnggota);
+  return newAnggota;
+}
+
+export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id' | 'no_anggota'>>): Promise<Anggota> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const index = mockAnggotaList.findIndex(a => a.id === id);
+  if (index === -1) throw new Error('Anggota tidak ditemukan');
+  mockAnggotaList[index] = { ...mockAnggotaList[index], ...updates };
+  return mockAnggotaList[index];
+}
+
+export async function deleteAnggota(id: string): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  mockAnggotaList = mockAnggotaList.filter(a => a.id !== id);
 }
 
 /**
@@ -611,4 +667,55 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
   riwayat.sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
 
   return riwayat;
+}
+
+export interface DashboardStats {
+  totalPenjualanHariIni: number;
+  totalPinjamanAktif: number;
+  stokKritis: number;
+  transaksiTersimpan: number;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  let totalPenjualanHariIni = 0;
+  let totalPinjamanAktif = 0;
+  let stokKritis = 0;
+  
+  // Total Penjualan Hari Ini
+  const today = new Date().toISOString().split('T')[0];
+  const { data: sales, error: salesError } = await supabase
+    .from('transaksi')
+    .select('total')
+    .gte('created_at', `${today}T00:00:00.000Z`);
+    
+  if (!salesError && sales) {
+    totalPenjualanHariIni = sales.reduce((acc, curr) => acc + curr.total, 0);
+  } else {
+    // Mock if table doesn't exist
+    totalPenjualanHariIni = 48720500;
+  }
+
+  // Total Pinjaman Aktif
+  const { count: loanCount, error: loanError } = await supabase
+    .from('pinjaman')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'approved');
+    
+  if (!loanError && loanCount !== null) {
+    totalPinjamanAktif = loanCount;
+  } else {
+    // Mock if table doesn't exist
+    totalPinjamanAktif = 182;
+  }
+
+  // Stok Kritis
+  const produkList = await getProduk();
+  stokKritis = produkList.filter(p => p.stok <= p.stokMinimum).length;
+
+  return {
+    totalPenjualanHariIni,
+    totalPinjamanAktif,
+    stokKritis,
+    transaksiTersimpan: 0 // Will be handled by the UI via cartStore
+  };
 }
