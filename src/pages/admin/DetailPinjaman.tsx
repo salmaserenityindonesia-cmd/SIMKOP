@@ -9,6 +9,7 @@ import {
   Pinjaman 
 } from '../../services/koperasiService';
 import { ArrowLeft, CheckCircle, Clock } from 'lucide-react';
+import StatusBadge from '../../components/ui/StatusBadge';
 
 export default function DetailPinjaman() {
   const { id } = useParams<{ id: string }>();
@@ -108,13 +109,7 @@ export default function DetailPinjaman() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div>
             <p className="text-sm text-gray-500 mb-1">Status Pinjaman</p>
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-              ${pinjaman.status === 'approved' ? 'bg-blue-100 text-blue-800' : 
-                pinjaman.status === 'paid' ? 'bg-green-100 text-green-800' : 
-                'bg-gray-100 text-gray-800'}`}
-            >
-              {pinjaman.status}
-            </span>
+            <StatusBadge status={pinjaman.status} />
           </div>
           <div>
             <p className="text-sm text-gray-500 mb-1">Total Pinjaman</p>
@@ -163,17 +158,7 @@ export default function DetailPinjaman() {
                     Rp {item.jumlah_bayar.toLocaleString('id-ID')}
                   </td>
                   <td className="px-6 py-4">
-                    {item.status === 'lunas' ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
-                        <CheckCircle className="w-3.5 h-3.5" />
-                        Lunas
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
-                        <Clock className="w-3.5 h-3.5" />
-                        Belum
-                      </span>
-                    )}
+                    <StatusBadge status={item.status} />
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">
                     {item.tanggal_bayar ? new Date(item.tanggal_bayar).toLocaleDateString('id-ID') : '-'}

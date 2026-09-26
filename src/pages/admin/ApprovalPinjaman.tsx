@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getPendingPinjaman, updateStatusPinjaman } from '../../services/koperasiService';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import StatusBadge from '../../components/ui/StatusBadge';
 
 export default function ApprovalPinjaman() {
   const [pinjamanList, setPinjamanList] = useState<any[]>([]);
@@ -66,26 +67,27 @@ export default function ApprovalPinjaman() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama Anggota</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Jumlah Pinjaman</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Tenor</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-gray-500">
+                  <td colSpan={6} className="py-12 text-center text-gray-500">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-[var(--color-primary)]" />
                     <p>Memuat data...</p>
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-red-500">
+                  <td colSpan={6} className="py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : pinjamanList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-500">
+                  <td colSpan={6} className="py-8 text-center text-gray-500">
                     Tidak ada pengajuan pinjaman yang menunggu persetujuan.
                   </td>
                 </tr>
@@ -96,6 +98,9 @@ export default function ApprovalPinjaman() {
                     <td className="py-3 px-4 text-sm text-gray-700">{p.anggota?.nama || '-'}</td>
                     <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.jumlah)}</td>
                     <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.tenor_bulan} Bulan</td>
+                    <td className="py-3 px-4 text-sm text-center">
+                      <StatusBadge status={p.status || 'pending'} />
+                    </td>
                     <td className="py-3 px-4 text-sm text-center">
                       <div className="flex justify-center gap-2">
                         <button 
