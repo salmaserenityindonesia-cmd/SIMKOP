@@ -236,3 +236,27 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 We are between plans. Next session should pick up with Phase 4, Plan 4.4 (Simulasi & Logika Pembayaran Cicilan).
+
+---
+
+## Session: 2026-09-26 22:34
+
+### Objective
+Execute Plan 4.4 (Jadwal Angsuran & Pencatatan Pembayaran) inline.
+
+### Accomplished
+- Added `Angsuran` type, `getJadwalAngsuran`, `getPinjamanById`, dan `bayarAngsuran` ke `koperasiService.ts`.
+- Built `DetailPinjaman.tsx` to display loan summary, installment schedule, and pay button.
+- Registered `/admin/pinjaman/:id` route in `App.tsx`.
+- Added a "Detail" link in `ApprovalPinjaman.tsx` for easy access.
+- Generated `4.4-SUMMARY.md`.
+
+### Verification
+- [x] UI forms and integration works.
+- [x] Build passes (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command. Context refresh recommended between inline plan executions.
+
+### Handoff Notes
+Plan 4.4 is complete. Ready to start the next plan (presumably Plan 4.5).
