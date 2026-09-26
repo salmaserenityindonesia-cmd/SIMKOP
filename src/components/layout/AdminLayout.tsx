@@ -49,10 +49,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
             
             <div>
-              <button className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-secondary text-on-secondary font-title-sm text-title-sm shadow hover:bg-secondary/90 transition-all duration-150 active:scale-[0.98]">
-                <span className="material-symbols-outlined text-[18px]">add_circle</span>
-                <span>Transaksi Kas Teller</span>
-              </button>
+              <NavLink 
+                to="/admin/kasir"
+                className={({ isActive }) => 
+                  `w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-title-sm text-title-sm shadow transition-all duration-150 active:scale-[0.98] ${
+                    isActive 
+                      ? 'bg-secondary-fixed text-on-secondary-fixed' 
+                      : 'bg-secondary text-on-secondary hover:bg-secondary/90'
+                  }`
+                }
+              >
+                <span className="material-symbols-outlined text-[18px]">point_of_sale</span>
+                <span>Kasir (POS)</span>
+              </NavLink>
             </div>
 
             <nav className="space-y-1">

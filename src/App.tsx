@@ -3,6 +3,7 @@ import LoginPage from './pages/login';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
+import Kasir from './pages/admin/Kasir';
 
 export default function App() {
   return (
@@ -25,6 +26,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <UserManagement />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/kasir" 
+          element={
+            <ProtectedRoute>
+              <Kasir />
             </ProtectedRoute>
           } 
         />
