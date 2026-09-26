@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useCart } from '../../lib/cartStore';
 import { saveTransaction } from '../../services/koperasiService';
+import ReceiptPrinter, { TransactionData } from '../../components/admin/ReceiptPrinter';
 
 export default function Kasir() {
   const cart = useCart();
@@ -11,6 +12,7 @@ export default function Kasir() {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastTransaction, setLastTransaction] = useState<TransactionData | null>(null);
 
   const handleCheckout = async () => {
     const payment = parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0;
@@ -21,11 +23,27 @@ export default function Kasir() {
     
     setIsSubmitting(true);
     try {
-      await saveTransaction(cart.items, cart.total, payment);
+      const tx = await saveTransaction(cart.items, cart.total, payment);
       alert('Transaksi berhasil disimpan!');
+      
+      setLastTransaction({
+        id: tx?.id || `TX-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        items: [...cart.items],
+        total: cart.total,
+        payment: payment,
+        change: payment - cart.total
+      });
+      
       cart.clearCart();
       setShowCheckoutModal(false);
       setPaymentAmount('');
+      
+      // Trigger print after modal closes and DOM updates
+      setTimeout(() => {
+        window.print();
+      }, 300);
+      
     } catch (error: any) {
       alert(error.message || 'Gagal menyimpan transaksi');
     } finally {
@@ -48,7 +66,8 @@ export default function Kasir() {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-8rem)]">
+    <>
+    <div className="print:hidden flex flex-col lg:flex-row gap-6 h-[calc(100vh-8rem)]">
       {/* Left Column: Catalog & Barcode */}
       <div className="flex-1 lg:w-2/3 flex flex-col gap-4">
         {/* Barcode Input */}
@@ -331,5 +350,7 @@ export default function Kasir() {
         </div>
       )}
     </div>
+    <ReceiptPrinter transaction={lastTransaction} />
+    </>
   );
 }

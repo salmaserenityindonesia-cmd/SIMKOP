@@ -66,16 +66,16 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 3: Modul Kasir (POS) & Parked Notes
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 **Objective:** Membangun antarmuka Point of Sale (kasir) dengan fitur pending transaksi (`parked_notes`), pembayaran tunai, dan cetak struk.
 **Depends on:** Phase 2
 
 **Plans:**
-- [ ] Plan 3.1: Layout POS — split-screen (katalog produk kiri, keranjang/checkout kanan), barcode input field
-- [ ] Plan 3.2: Keranjang belanja — tambah/hapus item, edit qty, kalkulasi subtotal/total (tabular numerics)
-- [ ] Plan 3.3: Fitur Parked Notes — park transaksi sementara, list parked notes, resume transaksi
-- [ ] Plan 3.4: Proses checkout — pembayaran tunai, kalkulasi kembalian, simpan transaksi ke Supabase
-- [ ] Plan 3.5: Cetak struk (thermal print layout / PDF receipt)
+- [x] Plan 3.1: Layout POS — split-screen (katalog produk kiri, keranjang/checkout kanan), barcode input field
+- [x] Plan 3.2: Keranjang belanja — tambah/hapus item, edit qty, kalkulasi subtotal/total (tabular numerics)
+- [x] Plan 3.3: Fitur Parked Notes — park transaksi sementara, list parked notes, resume transaksi
+- [x] Plan 3.4: Proses checkout — pembayaran tunai, kalkulasi kembalian, simpan transaksi ke Supabase
+- [x] Plan 3.5: Cetak struk (thermal print layout / PDF receipt)
 
 **Deliverables:**
 - Kasir dapat memproses transaksi end-to-end
@@ -139,7 +139,7 @@ updated: 2026-09-26T19:28:00+07:00
 |-------|------|--------|-------|----------|
 | 1 | Foundation & Design System | ✅ | 3/3 | 100% |
 | 2 | Autentikasi & User Management | ✅ | 4/4 | 100% |
-| 3 | Kasir (POS) & Parked Notes | ⬜ | 0/5 | 0% |
+| 3 | Kasir (POS) & Parked Notes | ✅ | 5/5 | 100% |
 | 4 | Pinjaman (0% Bunga) & Simpanan | ⬜ | 0/5 | 0% |
 | 5 | Inventori, Restock & Dashboard | 🔄 | 0/5 | 0% |
 

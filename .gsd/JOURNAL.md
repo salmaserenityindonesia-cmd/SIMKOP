@@ -109,3 +109,23 @@ User invoked `/pause` command. Plan 3.4 is completed inline.
 
 ### Handoff Notes
 Ready to start Plan 3.5 (Receipt and Final Review) in the next session.
+
+---
+
+## Session: 2026-09-26 21:46
+
+### Objective
+Execute Plan 3.5 (Cetak Struk) inline.
+
+### Accomplished
+- Created `ReceiptPrinter.tsx` component formatted for thermal printer using `@media print` CSS.
+- Integrated `ReceiptPrinter` into `Kasir.tsx` checkout flow.
+- Added logic to temporarily store the last transaction data, and trigger `window.print()` after successful checkout.
+- Added `print:hidden` to the main application UI so only the receipt is printed.
+
+### Verification
+- [x] Receipt layout matches thermal printer specs visually (when printing).
+- [x] Application builds successfully (`npm run build`).
+
+### Handoff Notes
+Phase 3 (Kasir / POS) plans are complete. We should review/audit Phase 3 and mark the milestone complete.
