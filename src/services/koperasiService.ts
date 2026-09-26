@@ -401,7 +401,7 @@ export async function getJadwalAngsuran(pinjaman_id: string, jumlah_pinjaman: nu
 /**
  * Membayar angsuran bulan tertentu
  */
-export async function bayarAngsuran(angsuran_id: string, jumlah: number) {
+export async function bayarAngsuran(angsuran_id: string, _jumlah: number) {
   const { data, error } = await supabase
     .from('angsuran')
     .update({ 
