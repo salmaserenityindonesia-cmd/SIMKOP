@@ -5,6 +5,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import Kasir from './pages/admin/Kasir';
 import DashboardSimpanan from './pages/admin/DashboardSimpanan';
+import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 
 export default function App() {
   return (
@@ -45,6 +46,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <DashboardSimpanan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/approval" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <ApprovalPinjaman />
             </ProtectedRoute>
           } 
         />

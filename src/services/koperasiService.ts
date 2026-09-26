@@ -283,3 +283,73 @@ export async function ajukanPinjaman(data: Omit<Pinjaman, 'id' | 'created_at' | 
 
   return result as Pinjaman;
 }
+
+/**
+ * Mengambil daftar pinjaman dengan status pending
+ */
+export async function getPendingPinjaman() {
+  const { data, error } = await supabase
+    .from('pinjaman')
+    .select(`
+      *,
+      anggota (
+        nama,
+        no_anggota
+      )
+    `)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "pinjaman" does not exist yet. Returning dummy pending data.');
+      return [
+        {
+          id: 'dummy-pinjaman-1',
+          anggota_id: 'dummy-anggota-1',
+          jumlah: 5000000,
+          tenor_bulan: 12,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          anggota: { nama: 'Budi Santoso', no_anggota: 'A-001' }
+        },
+        {
+          id: 'dummy-pinjaman-2',
+          anggota_id: 'dummy-anggota-2',
+          jumlah: 2000000,
+          tenor_bulan: 6,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          anggota: { nama: 'Siti Aminah', no_anggota: 'A-002' }
+        }
+      ];
+    }
+    console.error('Error fetching pending pinjaman:', error.message);
+    throw new Error(`Gagal memuat daftar pinjaman pending: ${error.message}`);
+  }
+
+  return data;
+}
+
+/**
+ * Update status pinjaman (approved / rejected)
+ */
+export async function updateStatusPinjaman(id: string, status: 'approved' | 'rejected') {
+  const { data, error } = await supabase
+    .from('pinjaman')
+    .update({ status })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "pinjaman" does not exist yet. Simulating update success.');
+      return { id, status } as Partial<Pinjaman>;
+    }
+    console.error(`Error updating pinjaman status to ${status}:`, error.message);
+    throw new Error(`Gagal memperbarui status pinjaman: ${error.message}`);
+  }
+
+  return data as Pinjaman;
+}

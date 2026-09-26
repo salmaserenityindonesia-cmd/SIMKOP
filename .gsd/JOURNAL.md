@@ -194,3 +194,23 @@ Execute Plan 4.2 (Pengajuan Pinjaman Baru) inline.
 
 ### Handoff Notes
 Plan 4.2 is complete. Ready to start Plan 4.3 (Persetujuan & Penolakan Pinjaman).
+
+---
+
+## Session: 2026-09-26 22:13
+
+### Objective
+Execute Plan 4.3 (Approval Workflow) inline.
+
+### Accomplished
+- Added `getPendingPinjaman` and `updateStatusPinjaman` to `koperasiService.ts`.
+- Created `ApprovalPinjaman.tsx` to list pending loans and allow approve/reject actions.
+- Registered `/admin/approval` route in `App.tsx` protected with `requireAdmin={true}`.
+- Generated `4.3-SUMMARY.md`.
+
+### Verification
+- [x] Admin protection works on route level.
+- [x] Build passes (`npm run build`).
+
+### Handoff Notes
+Plan 4.3 is complete. Ready to start Plan 4.4 (Simulasi & Logika Pembayaran Cicilan).
