@@ -80,7 +80,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span>Dashboard</span>
               </NavLink>
               <NavLink 
-                to="/admin/simpan-pinjam"
+                to="/admin/simpanan"
                 className={({ isActive }) => 
                   `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
                     isActive 

@@ -4,6 +4,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import Kasir from './pages/admin/Kasir';
+import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 
 export default function App() {
   return (
@@ -35,6 +36,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Kasir />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/simpanan" 
+          element={
+            <ProtectedRoute>
+              <DashboardSimpanan />
             </ProtectedRoute>
           } 
         />

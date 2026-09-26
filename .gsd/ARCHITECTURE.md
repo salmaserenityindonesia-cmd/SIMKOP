@@ -26,14 +26,19 @@ SIMKOP (Sistem Informasi Manajemen Koperasi) is a React-based web application pr
 - **Dependencies:** `react`, `react-router-dom`
 
 ### Pages
-- **Purpose:** Top-level views (Login, Admin Management)
-- **Location:** `src/pages/login.tsx`, `src/pages/admin/UserManagement.tsx`
-- **Dependencies:** React hooks, Supabase Client, UI Components
+- **Purpose:** Top-level views (Login, Admin Management, POS)
+- **Location:** `src/pages/login.tsx`, `src/pages/admin/UserManagement.tsx`, `src/pages/admin/Kasir.tsx`, `src/pages/admin/AdminDashboard.tsx`
+- **Dependencies:** React hooks, Supabase Client, UI Components, Zustand (`cartStore`)
 
 ### Components
-- **Purpose:** Reusable UI and Layout
-- **Location:** `src/components/layout/AdminLayout.tsx`, `src/components/auth/LoginForm.tsx`, `src/components/auth/ProtectedRoute.tsx`, `src/components/admin/AdminProfileModal.tsx`
+- **Purpose:** Reusable UI, Layout, and Print components
+- **Location:** `src/components/layout/AdminLayout.tsx`, `src/components/auth/LoginForm.tsx`, `src/components/auth/ProtectedRoute.tsx`, `src/components/admin/AdminProfileModal.tsx`, `src/components/admin/ReceiptPrinter.tsx`
 - **Dependencies:** Supabase Auth, `lucide-react`
+
+### State Management & Stores
+- **Purpose:** Global/shared state management for complex features (like POS cart)
+- **Location:** `src/lib/cartStore.ts`
+- **Dependencies:** React Hooks / Context
 
 ### Services / Data Layer
 - **Purpose:** Interacting with Supabase
