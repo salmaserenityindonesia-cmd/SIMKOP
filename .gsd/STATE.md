@@ -2,21 +2,19 @@
 
 ## Current Position
 - **Phase**: Phase 3 (Kasir (POS) & Parked Notes)
-- **Task**: Between tasks (Completed Plan 3.1)
-- **Status**: Paused at 2026-09-26 21:19
+- **Task**: Between tasks (Completed Plan 3.2)
+- **Status**: Paused at 2026-09-26 21:25
 
 ## Last Session Summary
-Mapped the codebase (ARCHITECTURE.md and STACK.md).
-Ran `/plan` for Phase 3 and generated 5 execution plans.
-Executed Plan 3.1 inline:
-- Created the POS Kasir layout (`src/pages/admin/Kasir.tsx`) with a split screen (catalog and cart).
-- Implemented the barcode input field and skeleton for products.
-- Updated `App.tsx` and `AdminLayout.tsx` for routing and navigation.
+Executed Plan 3.2 inline:
+- Created custom `useCart` hook for cart state management in `src/lib/cartStore.ts`.
+- Integrated cart state into the `Kasir.tsx` POS UI.
+- Implemented add, remove, and adjust quantity functions with automatic subtotal/total calculations.
 
 ## In-Progress Work
-- None. Ready to start Plan 3.2.
-- Files modified: `Kasir.tsx`, `App.tsx`, `AdminLayout.tsx`.
-- Tests status: Build passes, no test suite present.
+- None. Ready to start Plan 3.3.
+- Files modified: `src/pages/admin/Kasir.tsx`, `src/lib/cartStore.ts`.
+- Tests status: Build passes.
 
 ## Blockers
 - None.
@@ -28,9 +26,9 @@ Executed Plan 3.1 inline:
 
 ### Decisions Made
 - Used inline execution fallback for Phase 3 plans due to lack of `invoke_subagent` capability.
-- Combined both tasks in Plan 3.1 into a single commit because they were small.
+- Used custom React hook with local state for cart store to keep dependencies light, fitting the plan requirements.
 
 ## Next Steps
-1. /execute 3 --inline (Start Plan 3.2: Keranjang Belanja)
-2. Develop state management for the cart.
-3. Build the cart UI in the right column of the POS layout.
+1. /execute 3 --inline (Start Plan 3.3: Fitur Parked Notes)
+2. Extend `cartStore.ts` to support parked transactions.
+3. Build the UI for Parking and Resuming transactions in `Kasir.tsx`.

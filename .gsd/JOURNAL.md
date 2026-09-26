@@ -43,3 +43,25 @@ User invoked `/pause` command. Context refresh recommended between inline plan e
 
 ### Handoff Notes
 Ready to start Plan 3.2 (Keranjang Belanja) in the next session. Execute inline since subagent delegation is not available.
+
+---
+
+## Session: 2026-09-26 21:20
+
+### Objective
+Execute Plan 3.2 (Keranjang Belanja) inline.
+
+### Accomplished
+- Created custom `useCart` hook for cart state management in `src/lib/cartStore.ts`.
+- Integrated cart state into the `Kasir.tsx` POS UI.
+- Implemented add, remove, and adjust quantity functions with automatic subtotal/total calculations.
+
+### Verification
+- [x] Cart UI correctly updates when interacting with dummy products and barcode input.
+- [x] Build passes (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Ready to start Plan 3.3 (Fitur Parked Notes) in the next session.
