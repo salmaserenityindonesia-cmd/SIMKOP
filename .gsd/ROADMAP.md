@@ -85,7 +85,7 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 4: Modul Pinjaman (0% Bunga) & Simpanan
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 **Objective:** Mengelola simpanan anggota dan pinjaman tanpa bunga — pengajuan, persetujuan, jadwal angsuran, dan monitoring pelunasan.
 **Depends on:** Phase 2
 
@@ -140,7 +140,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 1 | Foundation & Design System | ✅ | 3/3 | 100% |
 | 2 | Autentikasi & User Management | ✅ | 4/4 | 100% |
 | 3 | Kasir (POS) & Parked Notes | ✅ | 5/5 | 100% |
-| 4 | Pinjaman (0% Bunga) & Simpanan | ⬜ | 0/5 | 0% |
+| 4 | Pinjaman (0% Bunga) & Simpanan | ✅ | 5/5 | 100% |
 | 5 | Inventori, Restock & Dashboard | 🔄 | 0/5 | 0% |
 
 ---
