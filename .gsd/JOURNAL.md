@@ -151,3 +151,26 @@ User invoked `/pause` command. Context hygiene checkpoint.
 
 ### Handoff Notes
 Phase 3 is fully complete and verified. Next session should begin with Phase 4 (Modul Pinjaman & Simpanan).
+
+---
+
+## Session: 2026-09-26 22:04
+
+### Objective
+Plan Phase 4 and execute Plan 4.1 (Dashboard Simpanan).
+
+### Accomplished
+- Generated 5 plans for Phase 4 (Modul Pinjaman & Simpanan).
+- Executed Plan 4.1 inline: built `DashboardSimpanan.tsx` and updated `koperasiService.ts`.
+- Fixed unused variable lint warnings in `DashboardSimpanan.tsx` and `koperasiService.ts`.
+- Generated `4.1-SUMMARY.md`.
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+- [x] Routing to `/admin/simpanan` works and displays member list.
+
+### Paused Because
+User invoked `/pause` command. Plan 4.1 is completed, context refresh recommended before Plan 4.2.
+
+### Handoff Notes
+Ready to start Plan 4.2 (Pengajuan Pinjaman Baru) in the next session. Execute inline since subagent delegation is not available.
