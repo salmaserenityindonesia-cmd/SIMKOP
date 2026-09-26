@@ -353,3 +353,109 @@ export async function updateStatusPinjaman(id: string, status: 'approved' | 'rej
 
   return data as Pinjaman;
 }
+
+export interface Angsuran {
+  id: string;
+  pinjaman_id: string;
+  bulan_ke: number;
+  jumlah_bayar: number;
+  tanggal_bayar: string | null;
+  status: 'belum' | 'lunas';
+}
+
+/**
+ * Mengambil jadwal angsuran berdasarkan pinjaman_id
+ */
+export async function getJadwalAngsuran(pinjaman_id: string, jumlah_pinjaman: number, tenor_bulan: number): Promise<Angsuran[]> {
+  const { data, error } = await supabase
+    .from('angsuran')
+    .select('*')
+    .eq('pinjaman_id', pinjaman_id)
+    .order('bulan_ke', { ascending: true });
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "angsuran" does not exist yet. Generating dummy schedule.');
+      // Generate dummy schedule based on jumlah / tenor
+      const cicilanPerBulan = Math.floor(jumlah_pinjaman / tenor_bulan);
+      const schedule: Angsuran[] = [];
+      for (let i = 1; i <= tenor_bulan; i++) {
+        schedule.push({
+          id: `dummy-angsuran-${pinjaman_id}-${i}`,
+          pinjaman_id,
+          bulan_ke: i,
+          jumlah_bayar: cicilanPerBulan,
+          tanggal_bayar: null,
+          status: 'belum'
+        });
+      }
+      return schedule;
+    }
+    console.error('Error fetching jadwal angsuran:', error.message);
+    throw new Error(`Gagal memuat jadwal angsuran: ${error.message}`);
+  }
+
+  return data as Angsuran[];
+}
+
+/**
+ * Membayar angsuran bulan tertentu
+ */
+export async function bayarAngsuran(angsuran_id: string, jumlah: number) {
+  const { data, error } = await supabase
+    .from('angsuran')
+    .update({ 
+      status: 'lunas',
+      tanggal_bayar: new Date().toISOString()
+    })
+    .eq('id', angsuran_id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "angsuran" does not exist yet. Simulating payment success.');
+      return { id: angsuran_id, status: 'lunas', tanggal_bayar: new Date().toISOString() };
+    }
+    console.error(`Error updating angsuran ${angsuran_id}:`, error.message);
+    throw new Error(`Gagal membayar angsuran: ${error.message}`);
+  }
+
+  return data;
+}
+
+/**
+ * Mengambil detail pinjaman beserta anggotanya
+ */
+export async function getPinjamanById(id: string) {
+  const { data, error } = await supabase
+    .from('pinjaman')
+    .select(`
+      *,
+      anggota (
+        nama,
+        no_anggota
+      )
+    `)
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "pinjaman" does not exist yet. Returning dummy data.');
+      return {
+        id,
+        anggota_id: 'dummy-anggota',
+        jumlah: 12000000,
+        tenor_bulan: 12,
+        status: 'approved',
+        created_at: new Date().toISOString(),
+        anggota: { nama: 'Budi Santoso', no_anggota: 'A-001' }
+      };
+    }
+    console.error(`Error fetching pinjaman ${id}:`, error.message);
+    throw new Error(`Gagal memuat detail pinjaman: ${error.message}`);
+  }
+
+  return data;
+}

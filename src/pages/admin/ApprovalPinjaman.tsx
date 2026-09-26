@@ -114,6 +114,12 @@ export default function ApprovalPinjaman() {
                           {actionLoading === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
                           Tolak
                         </button>
+                        <a 
+                          href={`/admin/pinjaman/${p.id}`}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-md text-xs font-medium"
+                        >
+                          Detail
+                        </a>
                       </div>
                     </td>
                   </tr>
