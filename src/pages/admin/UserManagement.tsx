@@ -39,22 +39,22 @@ export default function UserManagement() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // 2. Insert into public.anggota using supabaseAdmin to bypass RLS if any, 
+        // 2. Insert into public.pengelola using supabaseAdmin to bypass RLS if any, 
         // or let the trigger do it? The DB trigger only sets raw_app_meta_data for the first user.
-        // Let's manually insert into public.anggota
+        // Let's manually insert into public.pengelola
         const { error: dbError } = await supabaseAdmin
-          .from('anggota')
+          .from('pengelola')
           .insert([
             { id: authData.user.id, nama, role }
           ]);
         
         // Sometimes the trigger handles role, but we explicitly inserted it
         if (dbError) {
-          console.error('Error inserting into anggota:', dbError);
+          console.error('Error inserting into pengelola:', dbError);
           // Don't throw here to avoid failing if the trigger already inserted it, 
           // but we can check if it already exists or upsert it.
           const { error: upsertError } = await supabaseAdmin
-            .from('anggota')
+            .from('pengelola')
             .upsert([
               { id: authData.user.id, nama, role }
             ]);

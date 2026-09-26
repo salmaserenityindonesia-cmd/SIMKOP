@@ -12,9 +12,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const fetchUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // Fetch from profile if available, otherwise fallback to metadata
         const { data: profile } = await supabase
-          .from('anggota')
+          .from('pengelola')
           .select('nama')
           .eq('id', user.id)
           .single();

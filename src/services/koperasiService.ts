@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 
-export interface Anggota {
+export interface Pengelola {
   id: string;
   nama: string;
   role: 'admin' | 'operator';
@@ -9,25 +9,25 @@ export interface Anggota {
 }
 
 /**
- * Fetch list of anggota (members) with optional pagination
+ * Fetch list of pengelola (staff/admin) with optional pagination
  */
-export async function getAnggotaList(limit: number = 50, offset: number = 0) {
+export async function getPengelolaList(limit: number = 50, offset: number = 0) {
   const { data, error, count } = await supabase
-    .from('anggota')
+    .from('pengelola')
     .select('*', { count: 'exact' })
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 
   if (error) {
     if (error.code === '42P01' || error.message.includes('schema cache')) {
-      console.warn('Table "anggota" does not exist yet. Returning empty array.');
+      console.warn('Table "pengelola" does not exist yet. Returning empty array.');
       return { data: [], count: 0 };
     }
-    console.error('Error fetching anggota list:', error.message);
-    throw new Error(`Failed to fetch anggota: ${error.message}`);
+    console.error('Error fetching pengelola list:', error.message);
+    throw new Error(`Failed to fetch pengelola: ${error.message}`);
   }
 
-  return { data: data as Anggota[], count };
+  return { data: data as Pengelola[], count };
 }
 
 /**
@@ -52,41 +52,41 @@ export async function getUserRestrictions(userId: string) {
 }
 
 /**
- * Insert a new anggota (member)
+ * Insert a new pengelola
  */
-export async function insertAnggota(anggotaData: Omit<Anggota, 'id'>) {
-  if (!anggotaData.nama || !anggotaData.role) {
+export async function insertPengelola(pengelolaData: Omit<Pengelola, 'id'>) {
+  if (!pengelolaData.nama || !pengelolaData.role) {
     throw new Error('Validation failed: nama and role are required.');
   }
 
   const { data, error } = await supabase
-    .from('anggota')
-    .insert([anggotaData])
+    .from('pengelola')
+    .insert([pengelolaData])
     .select()
     .single();
 
   if (error) {
     if (error.code === '42P01' || error.message.includes('schema cache')) {
-      console.warn('Table "anggota" does not exist yet. Simulating success.');
-      return { id: 'dummy-id', ...anggotaData } as Anggota;
+      console.warn('Table "pengelola" does not exist yet. Simulating success.');
+      return { id: 'dummy-id', ...pengelolaData } as Pengelola;
     }
-    console.error('Error inserting anggota:', error.message);
-    throw new Error(`Failed to insert anggota: ${error.message}`);
+    console.error('Error inserting pengelola:', error.message);
+    throw new Error(`Failed to insert pengelola: ${error.message}`);
   }
 
-  return data as Anggota;
+  return data as Pengelola;
 }
 
 /**
- * Update an existing anggota (member)
+ * Update an existing pengelola
  */
-export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id'>>) {
+export async function updatePengelola(id: string, updates: Partial<Omit<Pengelola, 'id'>>) {
   if (!id) {
     throw new Error('Validation failed: id is required for update.');
   }
 
   const { data, error } = await supabase
-    .from('anggota')
+    .from('pengelola')
     .update(updates)
     .eq('id', id)
     .select()
@@ -94,12 +94,12 @@ export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, '
 
   if (error) {
     if (error.code === '42P01' || error.message.includes('schema cache')) {
-      console.warn('Table "anggota" does not exist yet. Simulating success.');
-      return { id, ...updates } as Anggota;
+      console.warn('Table "pengelola" does not exist yet. Simulating success.');
+      return { id, ...updates } as Pengelola;
     }
-    console.error(`Error updating anggota ${id}:`, error.message);
-    throw new Error(`Failed to update anggota ${id}: ${error.message}`);
+    console.error(`Error updating pengelola ${id}:`, error.message);
+    throw new Error(`Failed to update pengelola ${id}: ${error.message}`);
   }
 
-  return data as Anggota;
+  return data as Pengelola;
 }

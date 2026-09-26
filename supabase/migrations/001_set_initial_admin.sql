@@ -6,8 +6,8 @@ UPDATE auth.users
 SET raw_app_meta_data = raw_app_meta_data || '{"role":"admin"}'::jsonb
 WHERE email = 'salmaserenityindonesia@gmail.com';
 
--- 2. Upsert ke tabel 'anggota' (sebagai data profil) yang digunakan oleh aplikasi
-INSERT INTO public.anggota (id, nama, role)
+-- 2. Upsert ke tabel 'pengelola' (sebagai data profil) yang digunakan oleh aplikasi
+INSERT INTO public.pengelola (id, nama, role)
 SELECT 
     id, 
     'Salma Serenity Indonesia' AS nama, 
