@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggotaWithSimpanan, AnggotaWithSimpanan } from '../../services/koperasiService';
 import { Search, Loader2 } from 'lucide-react';

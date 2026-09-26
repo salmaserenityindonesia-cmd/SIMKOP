@@ -190,7 +190,7 @@ export async function updatePengelola(id: string, updates: Partial<Omit<Pengelol
  * Save a new transaction
  */
 export async function saveTransaction(items: any[], total: number, payment: number) {
-  const { data: userData, error: userError } = await supabase.auth.getUser();
+  const { data: userData } = await supabase.auth.getUser();
   const userId = userData?.user?.id || null;
 
   const txData = {
