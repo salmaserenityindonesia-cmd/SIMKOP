@@ -54,7 +54,7 @@ updated: 2026-09-26T19:28:00+07:00
 
 **Plans:**
 - [x] Plan 2.1: Halaman Login — port dari Stitch "Login SIM Koperasi" screen, integrasi Supabase Auth
-- [ ] Plan 2.2: Registrasi user baru (admin-only action) dengan pemilihan role (admin/operator)
+- [x] Plan 2.2: Registrasi user baru (admin-only action) dengan pemilihan role (admin/operator)
 - [x] Plan 2.3: Middleware auth guard + dynamic restriction engine dari tabel `user_restrictions` (partial implementation via ProtectedRoute)
 - [ ] Plan 2.4: Halaman manajemen user — CRUD user, assign role, kelola restrictions
 
@@ -138,7 +138,7 @@ updated: 2026-09-26T19:28:00+07:00
 | Phase | Name | Status | Plans | Complete |
 |-------|------|--------|-------|----------|
 | 1 | Foundation & Design System | ✅ | 3/3 | 100% |
-| 2 | Autentikasi & User Management | 🔄 | 2/4 | 50% |
+| 2 | Autentikasi & User Management | 🔄 | 3/4 | 75% |
 | 3 | Kasir (POS) & Parked Notes | ⬜ | 0/5 | 0% |
 | 4 | Pinjaman (0% Bunga) & Simpanan | ⬜ | 0/5 | 0% |
 | 5 | Inventori, Restock & Dashboard | 🔄 | 0/5 | 0% |

@@ -30,12 +30,12 @@ Codebase mapping complete.
 - Integrated direct in-app password update (`supabase.auth.updateUser`) without email confirmation via `AdminProfileModal`.
 - Configured `/admin` route with `requireAdmin` protected route checks.
 - Performed codebase audit and synchronized `.gsd/ROADMAP.md` tracking progress across all phases.
+- Implemented `UserManagement` page with secure admin-only user registration utilizing `supabaseAdmin` (Plan 2.2).
 
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
 - Data access helpers map to `user_restrictions` logic.
 
 ## Next Steps
-- Implement user registration (admin-only) with role assignment (Plan 2.2).
 - Develop user management page (CRUD user, assign roles, manage restrictions) (Plan 2.4).
 - Begin layouting POS (Kasir) system logic and UI (Phase 3).
