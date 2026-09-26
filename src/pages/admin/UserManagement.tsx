@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { supabaseAdmin, supabase } from '../../lib/supabaseClient';
+import { supabaseAdmin } from '../../lib/supabaseClient';
 
 export default function UserManagement() {
   const [email, setEmail] = useState('');
