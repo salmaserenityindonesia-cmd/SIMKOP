@@ -9,12 +9,10 @@ interface AdminProfileModalProps {
 }
 
 export default function AdminProfileModal({ isOpen, onClose, userEmail, userName }: AdminProfileModalProps) {
-  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
-  const [showCurrent, setShowCurrent] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -52,7 +50,6 @@ export default function AdminProfileModal({ isOpen, onClose, userEmail, userName
       setMessage({ type: 'error', text: error.message });
     } else {
       setMessage({ type: 'success', text: 'Kata sandi berhasil diperbarui.' });
-      setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
       // Auto close after 2s
