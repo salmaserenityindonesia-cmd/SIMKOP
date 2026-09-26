@@ -508,3 +508,37 @@ export async function deleteProduk(id: string): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 300));
   mockProdukList = mockProdukList.filter(p => p.id !== id);
 }
+
+export interface Restock {
+  id: string;
+  produkId: string;
+  qty: number;
+  hargaBeli: number;
+  noFaktur: string;
+  tanggal: string;
+}
+
+export async function catatRestock(data: Omit<Restock, 'id'>): Promise<Restock> {
+  if (!data.noFaktur || data.noFaktur.trim() === '') {
+    throw new Error('Supplier invoice number (noFaktur) is required');
+  }
+
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 300));
+  
+  const newRestock: Restock = {
+    ...data,
+    id: `restock-${Date.now()}`
+  };
+
+  // Update product stock
+  const produkIndex = mockProdukList.findIndex(p => p.id === data.produkId);
+  if (produkIndex !== -1) {
+    mockProdukList[produkIndex].stok += data.qty;
+  } else {
+    throw new Error('Produk tidak ditemukan');
+  }
+
+  // In a real app, save newRestock to a 'restock' table here.
+  return newRestock;
+}

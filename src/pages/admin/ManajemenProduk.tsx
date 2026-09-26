@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { Produk, getProduk, addProduk, updateProduk, deleteProduk } from '../../services/koperasiService';
+import { Produk, getProduk, addProduk, updateProduk, deleteProduk, catatRestock } from '../../services/koperasiService';
 
 export default function ManajemenProduk() {
   const [products, setProducts] = useState<Produk[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Produk | null>(null);
+
+  // Restock state
+  const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
+  const [restockProduct, setRestockProduct] = useState<Produk | null>(null);
+  const [restockQty, setRestockQty] = useState(0);
+  const [restockHargaBeli, setRestockHargaBeli] = useState(0);
+  const [restockNoFaktur, setRestockNoFaktur] = useState('');
+  const [restockTanggal, setRestockTanggal] = useState(new Date().toISOString().split('T')[0]);
 
   // Form state
   const [nama, setNama] = useState('');
@@ -51,6 +59,15 @@ export default function ManajemenProduk() {
     setIsModalOpen(true);
   };
 
+  const openRestockModal = (product: Produk) => {
+    setRestockProduct(product);
+    setRestockQty(0);
+    setRestockHargaBeli(0);
+    setRestockNoFaktur('');
+    setRestockTanggal(new Date().toISOString().split('T')[0]);
+    setIsRestockModalOpen(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -74,6 +91,25 @@ export default function ManajemenProduk() {
       } catch (error) {
         console.error('Error deleting product', error);
       }
+    }
+  };
+
+  const handleRestockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restockProduct) return;
+    try {
+      await catatRestock({
+        produkId: restockProduct.id,
+        qty: restockQty,
+        hargaBeli: restockHargaBeli,
+        noFaktur: restockNoFaktur,
+        tanggal: restockTanggal
+      });
+      setIsRestockModalOpen(false);
+      fetchProducts();
+    } catch (error: any) {
+      alert(error.message || 'Error recording restock');
+      console.error('Error recording restock', error);
     }
   };
 
@@ -131,6 +167,13 @@ export default function ManajemenProduk() {
                         {p.stokMinimum}
                       </td>
                       <td className="p-4 flex items-center justify-center gap-2">
+                        <button 
+                          onClick={() => openRestockModal(p)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-secondary hover:bg-secondary/10 transition-colors"
+                          title="Restock Produk"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+                        </button>
                         <button 
                           onClick={() => openEditModal(p)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
@@ -242,6 +285,85 @@ export default function ManajemenProduk() {
                   className="bg-primary text-on-primary px-6 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
                 >
                   Simpan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isRestockModalOpen && restockProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-surface rounded-2xl w-full max-w-md overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col">
+            <div className="p-6 border-b border-outline-variant/30">
+              <h2 className="text-title-lg font-title-lg text-on-surface">
+                Restock: {restockProduct.nama}
+              </h2>
+            </div>
+            
+            <form onSubmit={handleRestockSubmit} className="flex flex-col flex-1 p-6 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-label-md font-label-md text-on-surface-variant">Tanggal Restock</label>
+                <input 
+                  type="date" 
+                  value={restockTanggal}
+                  onChange={(e) => setRestockTanggal(e.target.value)}
+                  className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur (Supplier)</label>
+                <input 
+                  type="text" 
+                  value={restockNoFaktur}
+                  onChange={(e) => setRestockNoFaktur(e.target.value)}
+                  className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                  placeholder="Mis. INV/2026/09/123"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-label-md font-label-md text-on-surface-variant">Qty Masuk</label>
+                  <input 
+                    type="number" 
+                    value={restockQty}
+                    onChange={(e) => setRestockQty(Number(e.target.value))}
+                    className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                    min="1"
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-label-md font-label-md text-on-surface-variant">Harga Beli Satuan (Rp)</label>
+                  <input 
+                    type="number" 
+                    value={restockHargaBeli}
+                    onChange={(e) => setRestockHargaBeli(Number(e.target.value))}
+                    className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                    min="0"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-outline-variant/30 mt-4">
+                <button 
+                  type="button"
+                  onClick={() => setIsRestockModalOpen(false)}
+                  className="px-4 py-2 rounded-lg text-primary font-label-lg hover:bg-primary/5 transition-colors"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit"
+                  className="bg-primary text-on-primary px-6 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
+                >
+                  Simpan Restock
                 </button>
               </div>
             </form>
