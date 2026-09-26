@@ -29,9 +29,13 @@ Codebase mapping complete.
 - Implemented `AdminLayout` and `AdminDashboard` React components incorporating Stitch designs.
 - Integrated direct in-app password update (`supabase.auth.updateUser`) without email confirmation via `AdminProfileModal`.
 - Configured `/admin` route with `requireAdmin` protected route checks.
+- Performed codebase audit and synchronized `.gsd/ROADMAP.md` tracking progress across all phases.
+
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
 - Data access helpers map to `user_restrictions` logic.
 
 ## Next Steps
-- Continue with UI scaffolding (Vite + React) and implementing Stitch design tokens (Plan 1.1 & Plan 1.2).
+- Implement user registration (admin-only) with role assignment (Plan 2.2).
+- Develop user management page (CRUD user, assign roles, manage restrictions) (Plan 2.4).
+- Begin layouting POS (Kasir) system logic and UI (Phase 3).
