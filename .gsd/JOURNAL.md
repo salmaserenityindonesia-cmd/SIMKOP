@@ -304,5 +304,27 @@ Plan Phase 5 and execute the first plan (Plan 5.1).
 ### Paused Because
 User invoked `/pause` command. Context hygiene checkpoint between plans.
 
-### Handoff Notes
 Ready to start Plan 5.2 (Pencatatan Restock) in the next session.
+
+---
+
+## Session: 2026-09-26 23:11
+
+### Objective
+Resume session and execute Plans 5.2 and 5.3.
+
+### Accomplished
+- Executed Plan 5.2 (Pencatatan Restock): Added `catatRestock` logic and built Restock UI with invoice validation.
+- Executed Plan 5.3 (Kartu Stok): Added `getRiwayatStok` to aggregate in-memory restocks and dummy sales. Built Kartu Stok modal UI.
+- All changes committed and verified with `npm run build`.
+
+### Verification
+- [x] Restock updates stock correctly and requires `noFaktur`.
+- [x] Kartu Stok modal opens and displays chronological history.
+- [x] Application builds successfully (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command. Context hygiene checkpoint between plans.
+
+### Handoff Notes
+Ready to start Plan 5.4 (Laporan Inventori & Alert) in the next session.
