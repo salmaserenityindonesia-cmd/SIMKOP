@@ -4,49 +4,61 @@
 
 ## Overview
 
-A Node.js backend utilizing Supabase for database operations and authentication, structured with services for business logic and data access. Currently focuses on member (anggota) management and role restrictions.
+SIMKOP (Sistem Informasi Manajemen Koperasi) is a React-based web application providing management and point-of-sale features for an Indonesian cooperative. It uses Supabase as its backend for both authentication and database storage.
 
 ```
 ┌─────────────────────────────────────────┐
-│       [Entry Point / Test Scripts]      │
+│              [main.tsx / App.tsx]       │
 ├─────────────────────────────────────────┤
-│    [Services (Business/Data Layer)]     │
+│         [React Components / Pages]      │
+│     (Pages, Auth, Admin, Layout)        │
 ├─────────────────────────────────────────┤
-│       [Supabase Client Layer]           │
+│            [Supabase SDK Layer]         │
+│         (koperasiService.ts)            │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Supabase Client
-- **Purpose:** Initializes and provides the Supabase client for database operations using environment variables. Provides an admin client for backend operations.
-- **Location:** `src/lib/supabaseClient.ts`
-- **Dependencies:** `@supabase/supabase-js`, `dotenv`
+### Entry Points
+- **Purpose:** App initialization and routing
+- **Location:** `src/main.tsx`, `src/App.tsx`
+- **Dependencies:** `react`, `react-router-dom`
 
-### Koperasi Service
-- **Purpose:** Provides CRUD operations for the `anggota` table and fetches `user_restrictions`. Handles pagination and basic error logging/mocking.
-- **Location:** `src/services/koperasiService.ts`
-- **Dependencies:** `src/lib/supabaseClient.ts`
+### Pages
+- **Purpose:** Top-level views (Login, Admin Management)
+- **Location:** `src/pages/login.tsx`, `src/pages/admin/UserManagement.tsx`
+- **Dependencies:** React hooks, Supabase Client, UI Components
+
+### Components
+- **Purpose:** Reusable UI and Layout
+- **Location:** `src/components/layout/AdminLayout.tsx`, `src/components/auth/LoginForm.tsx`, `src/components/auth/ProtectedRoute.tsx`, `src/components/admin/AdminProfileModal.tsx`
+- **Dependencies:** Supabase Auth, `lucide-react`
+
+### Services / Data Layer
+- **Purpose:** Interacting with Supabase
+- **Location:** `src/services/koperasiService.ts`, `src/lib/supabaseClient.ts`
+- **Dependencies:** `@supabase/supabase-js`
 
 ## Data Flow
 
-1. Entry points or API routes (currently test scripts like `test-connection.ts`, `test-crud.ts`) call functions in `koperasiService.ts`.
-2. `koperasiService.ts` validates input (if any) and calls Supabase using the configured client from `supabaseClient.ts`.
-3. Supabase returns data or error. `koperasiService.ts` logs errors, falls back to mocking if the table doesn't exist, and returns the result to the caller.
+1. User authenticates via `LoginForm` / `ProtectedRoute` using Supabase Auth.
+2. Pages (e.g. `UserManagement`) use `koperasiService` or direct Supabase client imports to fetch/mutate data.
+3. Special Admin operations bypass RLS by utilizing `supabaseAdmin` initialized with `VITE_SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | Database/BaaS | Data persistence for `anggota` and `user_restrictions` |
+| Supabase | BaaS | Authentication, PostgreSQL Database, Service Role Admin operations |
 
 ## Technical Debt
 
-- [ ] Missing tests for critical paths (currently using ad-hoc `test-*.ts` scripts instead of a framework like Jest).
-- [ ] No strict validation library (e.g., Zod) being used in services.
+- [ ] Missing extensive error boundaries for component failures.
+- [ ] No dedicated testing framework currently configured (Vite default test script returns error).
 
 ## Conventions
 
-**Naming:** camelCase for variables/functions, PascalCase for interfaces.
-**Structure:** Modular directories (`src/lib`, `src/services`).
-**Testing:** Basic ad-hoc `.ts` scripts in the root directory.
+**Naming:** PascalCase for components (`LoginForm.tsx`), camelCase for services (`koperasiService.ts`).
+**Structure:** Feature-based directories (`admin`, `auth`, `layout`) inside `components` and `pages`.
+**Testing:** No active tests observed.

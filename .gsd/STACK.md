@@ -6,35 +6,42 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | >= 18 | Core runtime |
+| Node.js / Vite | 8.3.1 | Core development and build tool |
+| React | 19.3.0 | UI Library |
+| TypeScript | 7.0.2 | Programming Language |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Supabase client for DB/Auth |
-| dotenv | ^18.0.4 | Environment variable management |
+| @supabase/supabase-js | ^2.117.2 | Database and Auth Client |
+| react-router-dom | ^7.18.4 | Application Routing |
+| lucide-react | ^1.48.0 | Icons |
+| dotenv | ^18.0.4 | Environment Variables |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @types/node | ^26.6.3 | Type definitions for Node.js |
-| tsx | ^4.23.15 | TypeScript execution environment |
-| typescript | ^7.0.2 | TypeScript compiler |
+| vite | ^8.3.1 | Build tool / Dev server |
+| tailwindcss | ^4.3.3 | CSS Framework |
+| postcss / autoprefixer | - | CSS processing |
+| @vitejs/plugin-react | ^6.1.1 | React plugin for Vite |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Supabase | Supabase | Database and Authentication BaaS |
+| Database & Auth | Supabase | Backend as a Service |
 
 ## Configuration
 
 | Variable | Purpose | Location |
 |----------|---------|----------|
-| NEXT_PUBLIC_SUPABASE_URL | Supabase project URL | .env |
-| SUPABASE_URL | Supabase project URL (fallback) | .env |
-| NEXT_PUBLIC_SUPABASE_ANON_KEY | Supabase anonymous key | .env |
-| SUPABASE_ANON_KEY | Supabase anonymous key (fallback) | .env |
-| SUPABASE_SERVICE_ROLE_KEY | Supabase admin key | .env |
+| VITE_SUPABASE_URL | Supabase API URL | `.env` / `import.meta.env` |
+| VITE_SUPABASE_ANON_KEY | Supabase public key | `.env` / `import.meta.env` |
+| VITE_SUPABASE_SERVICE_ROLE_KEY | Supabase admin key | `.env` / `import.meta.env` |
+
+## Outdated Packages
+
+No critical outdated packages detected at this time.
