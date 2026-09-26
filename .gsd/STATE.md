@@ -1,25 +1,32 @@
 ## Current Position
 - **Phase**: 6 (Manajemen Anggota Koperasi)
-- **Task**: Planning complete
-- **Status**: Ready for execution
+- **Task**: Plan 6.2 (UI Manajemen Anggota)
+- **Status**: Paused at 2026-09-27T05:40:00+07:00
 
 ## Last Session Summary
-- Resumed session.
-- Executed Plan 5.4 inline (Low stock alerts).
-- Executed Plan 5.5 inline (Operational Dashboard).
-- Cleaned up unused React import.
+Executed Plan 6.1 (Service Extension). Ditambahkan CRUD `Anggota` ke `koperasiService.ts` beserta in-memory `mockAnggotaList`. Tipe data `Anggota` disesuaikan (menambah `telepon`, `alamat`, `tanggal_bergabung`). Build sukses.
 
 ## In-Progress Work
-- Plan 6.1 (Service Extension) completed.
-- Next is Plan 6.2 (UI Manajemen Anggota).
+- Plan 6.1 sudah di-commit beserta ringkasannya.
+- Belum memulai Plan 6.2.
+- Files modified: `src/services/koperasiService.ts`
 - Tests status: Build passes (`npm run build`).
 
 ## Blockers
-- None.
+None.
 
 ## Context Dump
-- Phase 5 plans (5.1 to 5.5) are completely implemented.
-- The next logical step is to run `/verify 5` to audit the phase and mark it as officially complete.
+- Phase 6 memiliki 3 Plan.
+- Plan 6.1 selesai, implementasi state ada di `koperasiService.ts`.
+- Plan 6.2 akan fokus membuat antarmuka tabel Manajemen Anggota.
+- Plan 6.3 akan melengkapinya dengan modal form CRUD.
+
+### Files of Interest
+- `src/services/koperasiService.ts`: Mengandung fungsi CRUD yang akan dipakai oleh UI.
+- `src/pages/admin/ManajemenAnggota.tsx`: File UI baru yang harus dibuat pada sesi berikutnya.
+- `src/components/layout/AdminLayout.tsx`: Untuk update navigasi.
 
 ## Next Steps
-1. `/execute 6`
+1. `/execute 6` untuk lanjut ke Plan 6.2 (dan selanjutnya).
+2. Buat halaman `ManajemenAnggota.tsx`.
+3. Tambahkan ke routing dan sidebar.
