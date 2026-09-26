@@ -104,21 +104,32 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 5: Modul Inventori, Restock & Dashboard
-**Status:** 🔄 In Progress
+**Status:** ✅ Complete
 **Objective:** Manajemen stok barang, pencatatan restock dengan nomor faktur supplier, dan dashboard ringkasan operasional.
 **Depends on:** Phase 3
 
 **Plans:**
-- [ ] Plan 5.1: Katalog produk — CRUD produk (nama, barcode/SKU, harga jual, stok saat ini)
-- [ ] Plan 5.2: Pencatatan restock — form input (produk, qty, harga beli, **nomor faktur supplier**, tanggal)
-- [ ] Plan 5.3: Kartu stok & riwayat pergerakan stok per produk
-- [ ] Plan 5.4: Peringatan stok minimum (low stock alert)
-- [/] Plan 5.5: Dashboard operasional — ringkasan penjualan hari ini, total pinjaman aktif, stok kritis, parked notes count (UI skeleton created)
+- [x] Plan 5.1: Katalog produk — CRUD produk (nama, barcode/SKU, harga jual, stok saat ini)
+- [x] Plan 5.2: Pencatatan restock — form input (produk, qty, harga beli, **nomor faktur supplier**, tanggal)
+- [x] Plan 5.3: Kartu stok & riwayat pergerakan stok per produk
+- [x] Plan 5.4: Peringatan stok minimum (low stock alert)
+- [x] Plan 5.5: Dashboard operasional — ringkasan penjualan hari ini, total pinjaman aktif, stok kritis, parked notes count
 
 **Deliverables:**
 - Produk terdaftar dengan stok real-time
 - Setiap restock tercatat dengan nomor faktur supplier
 - Dashboard memberikan overview operasional harian
+
+### Phase 6: Manajemen Anggota Koperasi
+**Status:** ⬜ Not Started
+**Objective:** Mengelola data induk anggota koperasi (CRUD Anggota).
+**Depends on:** Phase 2
+
+**Plans:**
+- [ ] TBD (run `/plan 6` to create)
+
+**Deliverables:**
+- TBD
 
 ---
 
@@ -130,6 +141,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 2 | Phase 2 | Auth diperlukan oleh semua modul fungsional |
 | 3 | Phase 3 + Phase 4 | POS dan Pinjaman independen, dapat paralel |
 | 4 | Phase 5 | Inventori bergantung pada katalog produk dari POS; Dashboard butuh semua data |
+| 5 | Phase 6 | CRUD Anggota dapat ditambahkan setelah manajemen user |
 
 ---
 
@@ -141,7 +153,8 @@ updated: 2026-09-26T19:28:00+07:00
 | 2 | Autentikasi & User Management | ✅ | 4/4 | 100% |
 | 3 | Kasir (POS) & Parked Notes | ✅ | 5/5 | 100% |
 | 4 | Pinjaman (0% Bunga) & Simpanan | ✅ | 5/5 | 100% |
-| 5 | Inventori, Restock & Dashboard | 🔄 | 0/5 | 0% |
+| 5 | Inventori, Restock & Dashboard | ✅ | 5/5 | 100% |
+| 6 | Manajemen Anggota Koperasi | ⬜ | 0/4 | 0% |
 
 ---
 
@@ -154,3 +167,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 3 | — | — | — |
 | 4 | — | — | — |
 | 5 | — | — | — |
+| 6 | — | — | — |
