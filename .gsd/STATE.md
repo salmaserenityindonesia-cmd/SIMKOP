@@ -31,11 +31,12 @@ Codebase mapping complete.
 - Configured `/admin` route with `requireAdmin` protected route checks.
 - Performed codebase audit and synchronized `.gsd/ROADMAP.md` tracking progress across all phases.
 - Implemented `UserManagement` page with secure admin-only user registration utilizing `supabaseAdmin` (Plan 2.2).
+- Finalized User Management CRUD functionality (Listing, Edit Role, Delete) resolving Phase 2 (Plan 2.4).
+- Corrected database schema domain terms (separated `pengelola` vs `anggota`).
 
 ## Database Schema Constraints Adhered
-- Ensured role checks map strictly to 'admin' and 'operator'.
-- Data access helpers map to `user_restrictions` logic.
+- Ensured role checks map strictly to 'admin' and 'operator' in `pengelola`.
+- Validated `anggota` schema to align with Phase 4's cooperative member requirements.
 
 ## Next Steps
-- Develop user management page (CRUD user, assign roles, manage restrictions) (Plan 2.4).
 - Begin layouting POS (Kasir) system logic and UI (Phase 3).
