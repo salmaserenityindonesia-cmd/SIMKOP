@@ -8,8 +8,16 @@ export interface CartItem {
   subtotal: number;
 }
 
+export interface ParkedTransaction {
+  id: string;
+  note: string;
+  timestamp: number;
+  items: CartItem[];
+}
+
 export function useCart() {
   const [items, setItems] = useState<CartItem[]>([]);
+  const [parkedTransactions, setParkedTransactions] = useState<ParkedTransaction[]>([]);
 
   const addItem = (newItem: Omit<CartItem, 'qty' | 'subtotal'>) => {
     setItems((prev) => {
@@ -43,14 +51,40 @@ export function useCart() {
 
   const clearCart = () => setItems([]);
 
+  const parkCurrentTransaction = (note: string) => {
+    if (items.length === 0) return;
+    const newParked: ParkedTransaction = {
+      id: Date.now().toString(),
+      note,
+      timestamp: Date.now(),
+      items: [...items],
+    };
+    setParkedTransactions((prev) => [...prev, newParked]);
+    clearCart();
+  };
+
+  const resumeTransaction = (id: string) => {
+    setParkedTransactions((prev) => {
+      const tx = prev.find((p) => p.id === id);
+      if (tx) {
+        setItems(tx.items);
+        return prev.filter((p) => p.id !== id);
+      }
+      return prev;
+    });
+  };
+
   const total = useMemo(() => items.reduce((sum, item) => sum + item.subtotal, 0), [items]);
 
   return {
     items,
+    parkedTransactions,
     addItem,
     removeItem,
     updateQty,
     clearCart,
+    parkCurrentTransaction,
+    resumeTransaction,
     total,
   };
 }

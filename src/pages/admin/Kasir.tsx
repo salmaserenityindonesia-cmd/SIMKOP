@@ -1,9 +1,37 @@
 import React, { useState } from 'react';
 import { useCart } from '../../lib/cartStore';
+import { saveTransaction } from '../../services/koperasiService';
 
 export default function Kasir() {
   const cart = useCart();
   const [barcode, setBarcode] = useState('');
+  const [showParkModal, setShowParkModal] = useState(false);
+  const [showParkedList, setShowParkedList] = useState(false);
+  const [parkNote, setParkNote] = useState('');
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleCheckout = async () => {
+    const payment = parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0;
+    if (payment < cart.total) {
+      alert('Jumlah bayar kurang dari total transaksi.');
+      return;
+    }
+    
+    setIsSubmitting(true);
+    try {
+      await saveTransaction(cart.items, cart.total, payment);
+      alert('Transaksi berhasil disimpan!');
+      cart.clearCart();
+      setShowCheckoutModal(false);
+      setPaymentAmount('');
+    } catch (error: any) {
+      alert(error.message || 'Gagal menyimpan transaksi');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleBarcodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,8 +99,17 @@ export default function Kasir() {
       </div>
 
       {/* Right Column: Cart / Checkout */}
-      <div className="w-full lg:w-1/3 bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/30 flex flex-col">
-        <h2 className="text-title-md font-title-md text-on-surface mb-4">Keranjang Belanja</h2>
+      <div className="w-full lg:w-1/3 bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/30 flex flex-col relative">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-title-md font-title-md text-on-surface">Keranjang Belanja</h2>
+          <button 
+            onClick={() => setShowParkedList(true)}
+            className="flex items-center gap-2 text-primary hover:bg-primary/10 px-3 py-1.5 rounded-lg transition-colors bg-primary/5 border border-primary/20"
+          >
+            <span className="material-symbols-outlined text-sm">bookmark</span>
+            <span className="font-label-md">Tersimpan ({cart.parkedTransactions.length})</span>
+          </button>
+        </div>
         
         <div className="flex-1 overflow-y-auto pr-2">
           {cart.items.length === 0 ? (
@@ -124,21 +161,175 @@ export default function Kasir() {
           )}
         </div>
 
-        <div className="pt-6 mt-4 border-t border-outline-variant/30">
-          <div className="flex justify-between items-center mb-4">
+        <div className="pt-6 mt-4 border-t border-outline-variant/30 flex flex-col gap-3">
+          <div className="flex justify-between items-center mb-2">
             <span className="font-title-md text-on-surface-variant">Total</span>
             <span className="font-headline-sm text-primary">
               Rp {cart.total.toLocaleString('id-ID')}
             </span>
           </div>
           <button 
+            onClick={() => setShowCheckoutModal(true)}
             disabled={cart.items.length === 0}
             className="w-full py-4 bg-primary text-on-primary rounded-lg font-title-md shadow-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Bayar Transaksi
           </button>
+          <button 
+            onClick={() => setShowParkModal(true)}
+            disabled={cart.items.length === 0}
+            className="w-full py-3 bg-surface-container-high text-on-surface rounded-lg font-title-sm hover:bg-surface-container-highest transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Simpan Transaksi (Park)
+          </button>
         </div>
       </div>
+
+      {/* Modals */}
+      {showCheckoutModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-lowest w-full max-w-md rounded-2xl p-6 shadow-xl border border-outline-variant/30">
+            <h3 className="text-title-lg font-title-lg text-on-surface mb-6">Pembayaran</h3>
+            
+            <div className="mb-4">
+              <p className="text-body-md text-on-surface-variant mb-1">Total Tagihan</p>
+              <p className="text-headline-sm text-primary font-bold">Rp {cart.total.toLocaleString('id-ID')}</p>
+            </div>
+            
+            <div className="mb-6">
+              <label className="block text-body-md text-on-surface-variant mb-2">Jumlah Bayar</label>
+              <input
+                type="text"
+                autoFocus
+                value={paymentAmount}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, '');
+                  setPaymentAmount(val ? Number(val).toLocaleString('id-ID') : '');
+                }}
+                placeholder="0"
+                className="w-full p-4 rounded-lg border border-outline-variant bg-surface text-title-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+            
+            <div className="mb-8 p-4 bg-surface-container rounded-lg">
+              <p className="text-body-md text-on-surface-variant mb-1">Kembalian</p>
+              <p className={`text-title-lg font-bold ${
+                (parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0) >= cart.total 
+                  ? 'text-green-600' 
+                  : 'text-error'
+              }`}>
+                Rp {((parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0) - cart.total).toLocaleString('id-ID')}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => { setShowCheckoutModal(false); setPaymentAmount(''); }}
+                disabled={isSubmitting}
+                className="px-5 py-3 text-on-surface-variant hover:bg-surface-container rounded-lg font-title-sm transition-colors disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={handleCheckout}
+                disabled={isSubmitting || (parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0) < cart.total}
+                className="px-6 py-3 bg-primary text-on-primary rounded-lg font-title-md shadow-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isSubmitting ? 'Memproses...' : 'Selesaikan Pembayaran'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showParkModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-lowest w-full max-w-md rounded-2xl p-6 shadow-xl border border-outline-variant/30">
+            <h3 className="text-title-lg font-title-lg text-on-surface mb-4">Simpan Transaksi</h3>
+            <p className="text-body-md text-on-surface-variant mb-4">Masukkan catatan untuk transaksi ini agar mudah ditemukan nanti.</p>
+            <input
+              type="text"
+              autoFocus
+              value={parkNote}
+              onChange={(e) => setParkNote(e.target.value)}
+              placeholder="Contoh: Meja 4 / Pesanan Ibu Budi"
+              className="w-full p-3 rounded-lg border border-outline-variant bg-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent font-body-md mb-6"
+            />
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => { setShowParkModal(false); setParkNote(''); }}
+                className="px-5 py-2.5 text-on-surface-variant hover:bg-surface-container rounded-lg font-title-sm transition-colors"
+              >
+                Batal
+              </button>
+              <button 
+                onClick={() => {
+                  cart.parkCurrentTransaction(parkNote || 'Tanpa Catatan');
+                  setShowParkModal(false);
+                  setParkNote('');
+                }}
+                className="px-5 py-2.5 bg-primary text-on-primary rounded-lg font-title-sm shadow-sm hover:bg-primary/90 transition-colors"
+              >
+                Simpan (Park)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showParkedList && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-lowest w-full max-w-2xl max-h-[80vh] flex flex-col rounded-2xl p-6 shadow-xl border border-outline-variant/30">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-title-lg font-title-lg text-on-surface">Transaksi Tersimpan</h3>
+              <button 
+                onClick={() => setShowParkedList(false)}
+                className="text-on-surface-variant hover:bg-surface-container p-2 rounded-full transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2">
+              {cart.parkedTransactions.length === 0 ? (
+                <div className="h-40 flex flex-col items-center justify-center text-outline-variant border-2 border-dashed border-outline-variant/30 rounded-xl">
+                  <span className="material-symbols-outlined text-4xl mb-2">bookmark_border</span>
+                  <p className="font-body-md">Tidak ada transaksi tersimpan.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {cart.parkedTransactions.map((tx) => (
+                    <div key={tx.id} className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/30 flex justify-between items-center">
+                      <div>
+                        <p className="font-title-md text-on-surface mb-1">{tx.note}</p>
+                        <div className="flex gap-4 text-label-md text-on-surface-variant">
+                          <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">schedule</span> {new Date(tx.timestamp).toLocaleTimeString('id-ID')}</span>
+                          <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">inventory_2</span> {tx.items.length} Item</span>
+                          <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">payments</span> Rp {tx.items.reduce((s, i) => s + i.subtotal, 0).toLocaleString('id-ID')}</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          if (cart.items.length > 0) {
+                            if (!window.confirm('Keranjang aktif saat ini tidak kosong. Mengambil transaksi tersimpan akan menggantikan keranjang aktif. Lanjutkan?')) {
+                              return;
+                            }
+                          }
+                          cart.resumeTransaction(tx.id);
+                          setShowParkedList(false);
+                        }}
+                        className="px-4 py-2 bg-primary/10 text-primary font-title-sm rounded-lg hover:bg-primary/20 transition-colors whitespace-nowrap"
+                      >
+                        Resume
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
