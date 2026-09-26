@@ -121,15 +121,17 @@ updated: 2026-09-26T19:28:00+07:00
 - Dashboard memberikan overview operasional harian
 
 ### Phase 6: Manajemen Anggota Koperasi
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 **Objective:** Mengelola data induk anggota koperasi (CRUD Anggota).
 **Depends on:** Phase 2
 
 **Plans:**
-- [ ] TBD (run `/plan 6` to create)
+- [x] Plan 6.1: Service functions CRUD Anggota
+- [x] Plan 6.2: UI Tabel & Routing
+- [x] Plan 6.3: UI Modal Form CRUD Anggota
 
 **Deliverables:**
-- TBD
+- Halaman Manajemen Anggota berfungsi penuh untuk Tambah, Edit, Hapus, dan Lihat daftar anggota.
 
 ---
 
@@ -154,7 +156,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 3 | Kasir (POS) & Parked Notes | ✅ | 5/5 | 100% |
 | 4 | Pinjaman (0% Bunga) & Simpanan | ✅ | 5/5 | 100% |
 | 5 | Inventori, Restock & Dashboard | ✅ | 5/5 | 100% |
-| 6 | Manajemen Anggota Koperasi | ⬜ | 0/4 | 0% |
+| 6 | Manajemen Anggota Koperasi | ✅ | 3/3 | 100% |
 
 ---
 
@@ -167,4 +169,5 @@ updated: 2026-09-26T19:28:00+07:00
 | 3 | — | — | — |
 | 4 | — | — | — |
 | 5 | — | — | — |
-| 6 | — | — | — |
+| 6 | — | 2026-09-27 | — |
+
