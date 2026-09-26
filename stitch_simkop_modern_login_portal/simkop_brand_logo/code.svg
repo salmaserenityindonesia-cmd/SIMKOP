@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80" fill="none">
+  <defs>
+    <linearGradient id="simkopGrad" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f2942" />
+      <stop offset="100%" stop-color="#1e3a8a" />
+    </linearGradient>
+    <linearGradient id="tealGrad" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+  </defs>
+  <rect width="80" height="80" rx="18" fill="url(#simkopGrad)" />
+  <circle cx="40" cy="40" r="26" stroke="rgba(255,255,255,0.15)" stroke-width="2" />
+  <!-- Cooperative stylized geometric emblem: intertwining hands/leaves forming circle -->
+  <path d="M40 22C33 22 28 27 28 34C28 41 33 46 40 46C47 46 52 41 52 34C52 27 47 22 40 22Z" fill="none" stroke="url(#tealGrad)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M26 48C26 44 32 41 40 41C48 41 54 44 54 48V53C54 55 52 57 50 57H30C28 57 26 55 26 53V48Z" fill="url(#tealGrad)" opacity="0.9" />
+  <circle cx="40" cy="33" r="5" fill="#ffffff" />
+  <path d="M40 25V17M30 20L34 26M50 20L46 26" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" />
+</svg>
