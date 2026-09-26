@@ -459,3 +459,52 @@ export async function getPinjamanById(id: string) {
 
   return data;
 }
+
+// --- Produk CRUD ---
+
+export interface Produk {
+  id: string;
+  nama: string;
+  barcode: string;
+  hargaJual: number;
+  stok: number;
+  stokMinimum: number;
+}
+
+// In-memory mock data for Produk
+let mockProdukList: Produk[] = [
+  { id: 'prod-1', nama: 'Beras Premium 5kg', barcode: '8991234567890', hargaJual: 75000, stok: 20, stokMinimum: 5 },
+  { id: 'prod-2', nama: 'Minyak Goreng 2L', barcode: '8991234567891', hargaJual: 35000, stok: 15, stokMinimum: 10 },
+  { id: 'prod-3', nama: 'Gula Pasir 1kg', barcode: '8991234567892', hargaJual: 15000, stok: 3, stokMinimum: 10 },
+];
+
+export async function getProduk(): Promise<Produk[]> {
+  // Simulating network delay
+  await new Promise(resolve => setTimeout(resolve, 300));
+  return [...mockProdukList];
+}
+
+export async function addProduk(produk: Omit<Produk, 'id'>): Promise<Produk> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const newProduk = {
+    ...produk,
+    id: `prod-${Date.now()}`
+  };
+  mockProdukList.push(newProduk);
+  return newProduk;
+}
+
+export async function updateProduk(id: string, updates: Partial<Omit<Produk, 'id'>>): Promise<Produk> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const index = mockProdukList.findIndex(p => p.id === id);
+  if (index === -1) {
+    throw new Error('Produk tidak ditemukan');
+  }
+  mockProdukList[index] = { ...mockProdukList[index], ...updates };
+  return mockProdukList[index];
+}
+
+export async function deleteProduk(id: string): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 300));
+  mockProdukList = mockProdukList.filter(p => p.id !== id);
+}
