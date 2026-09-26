@@ -10,7 +10,8 @@
 - Cleaned up unused React import.
 
 ## In-Progress Work
-- Phase 6 (Manajemen Anggota Koperasi) added to roadmap.
+- Plan 6.1 (Service Extension) completed.
+- Next is Plan 6.2 (UI Manajemen Anggota).
 - Tests status: Build passes (`npm run build`).
 
 ## Blockers
