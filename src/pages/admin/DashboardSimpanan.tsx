@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggotaWithSimpanan, AnggotaWithSimpanan } from '../../services/koperasiService';
 import { Search, Loader2 } from 'lucide-react';
+import FormPengajuanPinjaman from '../../components/admin/FormPengajuanPinjaman';
 
 export default function DashboardSimpanan() {
   const [anggotaList, setAnggotaList] = useState<AnggotaWithSimpanan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [selectedAnggota, setSelectedAnggota] = useState<AnggotaWithSimpanan | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -37,6 +40,11 @@ export default function DashboardSimpanan() {
     a.nama.toLowerCase().includes(search.toLowerCase()) || 
     a.no_anggota.toLowerCase().includes(search.toLowerCase())
   );
+
+  const handleAjukanPinjaman = (anggota: AnggotaWithSimpanan) => {
+    setSelectedAnggota(anggota);
+    setIsFormOpen(true);
+  };
 
   return (
     <AdminLayout>
@@ -70,25 +78,26 @@ export default function DashboardSimpanan() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Simpanan Pokok</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Simpanan Wajib</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Total Saldo</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-gray-500">
+                  <td colSpan={6} className="py-12 text-center text-gray-500">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-[var(--color-primary)]" />
                     <p>Memuat data...</p>
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-red-500">
+                  <td colSpan={6} className="py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-500">
+                  <td colSpan={6} className="py-8 text-center text-gray-500">
                     Tidak ada data anggota.
                   </td>
                 </tr>
@@ -100,6 +109,14 @@ export default function DashboardSimpanan() {
                     <td className="py-3 px-4 text-sm text-gray-700 text-right">{formatRupiah(anggota.simpanan_pokok)}</td>
                     <td className="py-3 px-4 text-sm text-gray-700 text-right">{formatRupiah(anggota.simpanan_wajib)}</td>
                     <td className="py-3 px-4 text-sm font-semibold text-green-700 text-right">{formatRupiah(anggota.total_saldo)}</td>
+                    <td className="py-3 px-4 text-sm text-center">
+                      <button 
+                        onClick={() => handleAjukanPinjaman(anggota)}
+                        className="px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-md text-xs font-medium"
+                      >
+                        Ajukan Pinjaman
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -107,6 +124,15 @@ export default function DashboardSimpanan() {
           </table>
         </div>
       </div>
+
+      <FormPengajuanPinjaman 
+        isOpen={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        anggota={selectedAnggota ? { id: selectedAnggota.id, nama: selectedAnggota.nama, no_anggota: selectedAnggota.no_anggota } : null}
+        onSuccess={() => {
+          // Additional logic on success if needed (e.g. toast notification)
+        }}
+      />
     </AdminLayout>
   );
 }

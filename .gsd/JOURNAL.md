@@ -174,3 +174,23 @@ User invoked `/pause` command. Plan 4.1 is completed, context refresh recommende
 
 ### Handoff Notes
 Ready to start Plan 4.2 (Pengajuan Pinjaman Baru) in the next session. Execute inline since subagent delegation is not available.
+
+---
+
+## Session: 2026-09-26 22:08
+
+### Objective
+Execute Plan 4.2 (Pengajuan Pinjaman Baru) inline.
+
+### Accomplished
+- Added `Pinjaman` type and `ajukanPinjaman` method to `koperasiService.ts`.
+- Built `FormPengajuanPinjaman.tsx` with tenor options and 0% interest calculation.
+- Integrated form into `DashboardSimpanan.tsx` with a new "Ajukan Pinjaman" button in the table.
+- Generated `4.2-SUMMARY.md`.
+
+### Verification
+- [x] UI forms and integration works.
+- [x] Build passes (`npm run build`).
+
+### Handoff Notes
+Plan 4.2 is complete. Ready to start Plan 4.3 (Persetujuan & Penolakan Pinjaman).

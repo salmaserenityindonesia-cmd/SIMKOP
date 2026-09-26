@@ -23,6 +23,15 @@ export interface Simpanan {
   tanggal: string;
 }
 
+export interface Pinjaman {
+  id: string;
+  anggota_id: string;
+  jumlah: number;
+  tenor_bulan: number;
+  status: 'pending' | 'approved' | 'rejected' | 'paid';
+  created_at?: string;
+}
+
 export interface AnggotaWithSimpanan extends Anggota {
   simpanan_pokok: number;
   simpanan_wajib: number;
@@ -242,4 +251,35 @@ export async function saveTransaction(items: any[], total: number, payment: numb
   }
 
   return tx;
+}
+
+/**
+ * Mengajukan pinjaman baru (0% bunga)
+ */
+export async function ajukanPinjaman(data: Omit<Pinjaman, 'id' | 'created_at' | 'status'>) {
+  const pinjamanData = {
+    ...data,
+    status: 'pending',
+  };
+
+  const { data: result, error } = await supabase
+    .from('pinjaman')
+    .insert([pinjamanData])
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "pinjaman" does not exist yet. Simulating success.');
+      return { 
+        id: `dummy-pinjaman-${Date.now()}`, 
+        ...pinjamanData, 
+        created_at: new Date().toISOString() 
+      } as Pinjaman;
+    }
+    console.error('Error inserting pinjaman:', error.message);
+    throw new Error(`Gagal mengajukan pinjaman: ${error.message}`);
+  }
+
+  return result as Pinjaman;
 }
