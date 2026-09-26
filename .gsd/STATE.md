@@ -17,6 +17,9 @@ Codebase mapping complete.
 - Implemented read (SELECT) query helpers in `src/services/koperasiService.ts`.
 - Implemented write/mutation (INSERT/UPDATE) helpers in `src/services/koperasiService.ts`.
 - Validated Supabase connection and error handling dynamically handling missing schema with `test-crud.ts`.
+- Ported modern login portal UI from stitch to `LoginForm.tsx`.
+- Integrated Supabase Auth (`signInWithPassword`) and state management in `LoginForm.tsx`.
+- Implemented `ProtectedRoute.tsx` for route protection and auth guard.
 
 ## Database Schema Constraints Adhered
 - Ensured role checks map strictly to 'admin' and 'operator'.
