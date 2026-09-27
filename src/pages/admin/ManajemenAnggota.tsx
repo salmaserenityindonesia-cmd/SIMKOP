@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, addAnggota, updateAnggota, deleteAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Trash2, X } from 'lucide-react';
+import { Search, Loader2, Plus, Edit2, Trash2, X, Download } from 'lucide-react';
+import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 
 export default function ManajemenAnggota() {
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -89,6 +90,22 @@ export default function ManajemenAnggota() {
     (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const handleExportExcel = () => {
+    exportToExcel(filteredList, 'Data_Anggota');
+  };
+
+  const handleExportPDF = () => {
+    const headers = ['NRP', 'Nama', 'Pangkat', 'Status', 'Terdaftar'];
+    const data = filteredList.map(a => [
+      a.nrp || '-',
+      a.nama,
+      a.pangkat || '-',
+      a.status === 'aktif' ? 'Aktif' : 'Nonaktif',
+      a.created_at ? new Date(a.created_at).toLocaleDateString('id-ID') : '-'
+    ]);
+    exportToPDF(headers, data, 'Data_Anggota', 'Laporan Data Anggota Koperasi');
+  };
+
   return (
     <AdminLayout>
       <div className="mb-6">
@@ -109,13 +126,29 @@ export default function ManajemenAnggota() {
               className="pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] w-64"
             />
           </div>
-          <button
-            onClick={handleOpenAddModal}
-            className="flex items-center px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Tambah Anggota
-          </button>
+          <div className="flex space-x-2">
+            <button
+              onClick={handleExportExcel}
+              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Excel
+            </button>
+            <button
+              onClick={handleExportPDF}
+              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              PDF
+            </button>
+            <button
+              onClick={handleOpenAddModal}
+              className="flex items-center px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Tambah Anggota
+            </button>
+          </div>
         </div>
 
         {/* Table */}

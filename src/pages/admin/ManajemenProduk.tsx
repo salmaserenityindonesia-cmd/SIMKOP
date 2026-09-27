@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Produk, getProduk, addProduk, updateProduk, deleteProduk, RiwayatStok, getRiwayatStok, ProductCategory, getProductCategories } from '../../services/koperasiService';
+import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 
 export default function ManajemenProduk() {
   const [products, setProducts] = useState<Produk[]>([]);
@@ -153,6 +154,24 @@ export default function ManajemenProduk() {
     }
   };
 
+  const handleExportExcel = () => {
+    exportToExcel(products, 'Data_Produk');
+  };
+
+  const handleExportPDF = () => {
+    const headers = ['SKU/Barcode', 'Nama Produk', 'Harga Beli', 'Harga Jual', 'Stok', 'Min. Stok', 'Satuan'];
+    const data = products.map(p => [
+      p.sku,
+      p.name,
+      `Rp ${p.buy_price?.toLocaleString('id-ID') || 0}`,
+      `Rp ${p.sell_price?.toLocaleString('id-ID') || 0}`,
+      p.stock,
+      p.min_stock_alert,
+      p.unit || 'pcs'
+    ]);
+    exportToPDF(headers, data, 'Data_Produk', 'Laporan Data Produk Koperasi');
+  };
+
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
@@ -161,13 +180,29 @@ export default function ManajemenProduk() {
             <h1 className="text-display-sm font-display-sm text-primary">Katalog Produk</h1>
             <p className="text-body-lg text-on-surface-variant mt-2">Kelola master data produk dan inventory</p>
           </div>
-          <button 
-            onClick={openAddModal}
-            className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[20px]">add</span>
-            Tambah Produk
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleExportExcel}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-green-700 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">download</span>
+              Excel
+            </button>
+            <button 
+              onClick={handleExportPDF}
+              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-red-700 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">download</span>
+              PDF
+            </button>
+            <button 
+              onClick={openAddModal}
+              className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              Tambah Produk
+            </button>
+          </div>
         </div>
 
         {products.filter(p => p.stock <= p.min_stock_alert).length > 0 && !loading && (
