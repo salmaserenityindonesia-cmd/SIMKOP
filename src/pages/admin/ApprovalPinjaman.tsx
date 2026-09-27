@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getPendingPinjaman, updateStatusPinjaman } from '../../services/koperasiService';
-import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, Download, FileText } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 
 export default function ApprovalPinjaman() {
   const [pinjamanList, setPinjamanList] = useState<any[]>([]);
@@ -51,11 +52,52 @@ export default function ApprovalPinjaman() {
     }).format(amount);
   };
 
+  const handleExportExcel = () => {
+    const data = pinjamanList.map(p => ({
+      'No. Anggota': p.anggota?.no_anggota || '-',
+      'Nama Anggota': p.anggota?.nama || '-',
+      'Jumlah Pinjaman': p.jumlah,
+      'Tenor (Bulan)': p.tenor_bulan,
+      'Status': p.status || 'pending'
+    }));
+    exportToExcel(data, 'Data_Pinjaman');
+  };
+
+  const handleExportPDF = () => {
+    const headers = ['No. Anggota', 'Nama Anggota', 'Jumlah', 'Tenor', 'Status'];
+    const data = pinjamanList.map(p => [
+      p.anggota?.no_anggota || '-',
+      p.anggota?.nama || '-',
+      formatRupiah(p.jumlah),
+      `${p.tenor_bulan} Bulan`,
+      p.status || 'pending'
+    ]);
+    exportToPDF(headers, data, 'Data_Pinjaman', 'Laporan Data Pinjaman');
+  };
+
   return (
     <AdminLayout>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">Persetujuan Pinjaman</h1>
-        <p className="text-[var(--color-text-secondary)]">Kelola persetujuan pinjaman anggota (Khusus Admin)</p>
+      <div className="mb-6 flex justify-between items-end">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">Persetujuan Pinjaman</h1>
+          <p className="text-[var(--color-text-secondary)]">Kelola persetujuan pinjaman anggota (Khusus Admin)</p>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium text-sm transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export Excel
+          </button>
+          <button 
+            onClick={handleExportPDF}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium text-sm transition-colors"
+          >
+            <FileText className="w-4 h-4" />
+            Export PDF
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">

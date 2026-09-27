@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggotaWithSimpanan, AnggotaWithSimpanan } from '../../services/koperasiService';
-import { Search, Loader2 } from 'lucide-react';
+import { Search, Loader2, Download, FileText } from 'lucide-react';
 import FormPengajuanPinjaman from '../../components/admin/FormPengajuanPinjaman';
+import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 
 export default function DashboardSimpanan() {
   const [anggotaList, setAnggotaList] = useState<AnggotaWithSimpanan[]>([]);
@@ -46,11 +47,52 @@ export default function DashboardSimpanan() {
     setIsFormOpen(true);
   };
 
+  const handleExportExcel = () => {
+    const data = filteredList.map(a => ({
+      'No. Anggota': a.no_anggota,
+      'Nama': a.nama,
+      'Simpanan Pokok': a.simpanan_pokok,
+      'Simpanan Wajib': a.simpanan_wajib,
+      'Total Saldo': a.total_saldo
+    }));
+    exportToExcel(data, 'Data_Simpanan');
+  };
+
+  const handleExportPDF = () => {
+    const headers = ['No. Anggota', 'Nama', 'Simpanan Pokok', 'Simpanan Wajib', 'Total Saldo'];
+    const data = filteredList.map(a => [
+      a.no_anggota,
+      a.nama,
+      formatRupiah(a.simpanan_pokok),
+      formatRupiah(a.simpanan_wajib),
+      formatRupiah(a.total_saldo)
+    ]);
+    exportToPDF(headers, data, 'Data_Simpanan', 'Laporan Data Simpanan Anggota');
+  };
+
   return (
     <AdminLayout>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-[var(--color-text)]">Simpanan Anggota</h1>
-        <p className="text-[var(--color-text-secondary)]">Kelola simpanan pokok dan wajib anggota koperasi</p>
+      <div className="mb-6 flex justify-between items-end">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">Simpanan Anggota</h1>
+          <p className="text-[var(--color-text-secondary)]">Kelola simpanan pokok dan wajib anggota koperasi</p>
+        </div>
+        <div className="flex gap-2">
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium text-sm transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Export Excel
+          </button>
+          <button 
+            onClick={handleExportPDF}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium text-sm transition-colors"
+          >
+            <FileText className="w-4 h-4" />
+            Export PDF
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
