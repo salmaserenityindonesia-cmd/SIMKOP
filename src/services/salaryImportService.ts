@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { supabase } from '../lib/supabase'; // Assuming standard supabase client location
+import { supabase } from '../lib/supabaseClient'; // Assuming standard supabase client location
 
 export type ReconciliationResult = {
   nrp: string;
@@ -62,7 +62,7 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
 
     const dbDataMap = new Map<string, any>();
     if (anggotaData) {
-        anggotaData.forEach(a => {
+        anggotaData.forEach((a: any) => {
             dbDataMap.set(a.nrp, a);
         });
     }

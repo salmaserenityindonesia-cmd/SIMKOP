@@ -14,6 +14,7 @@ import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
 import TerimaSetoran from './pages/admin/TerimaSetoran';
+import SalaryImport from './pages/admin/SalaryImport';
 
 export default function App() {
   return (
@@ -135,6 +136,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ManajemenAnggota />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/admin/import-gaji" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <SalaryImport />
             </ProtectedRoute>
           } 
         />

@@ -40,7 +40,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* SIDEBAR NAVIGATION */}
       <aside className="fixed top-0 left-0 h-screen w-72 flex flex-col z-30 bg-primary-container text-on-primary-container shadow-md border-r border-outline-variant/20">
         <div className="w-72 h-full flex flex-col justify-between p-4">
-          <div className="space-y-6">
+          <div className="space-y-6 flex-1 overflow-y-auto pb-4">
             <div className="flex items-center gap-3 px-2 py-1">
               <div className="w-10 h-10 rounded-lg bg-surface-container-lowest p-1 shadow-sm flex items-center justify-center text-primary font-bold text-xl">S</div>
               <div className="flex flex-col">
@@ -149,6 +149,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     </NavLink>
                   </>
                 )}
+                <NavLink 
+                  to="/admin/import-gaji"
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
+                      isActive 
+                        ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                        : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                    }`
+                  }
+                >
+                  <span>Import Gaji & Rekening</span>
+                </NavLink>
               </div>
               <NavLink 
                 to="/admin/produk"

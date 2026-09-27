@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { supabase } from '../lib/supabase'; // Assuming standard supabase client location
+import { supabase } from '../lib/supabaseClient'; // Assuming standard supabase client location
 
 export const downloadSalaryTemplate = async () => {
   try {
@@ -35,7 +35,7 @@ export const downloadSalaryTemplate = async () => {
 
     // 4. Populate rows
     if (data && data.length > 0) {
-      data.forEach(anggota => {
+      data.forEach((anggota: any) => {
         const row = worksheet.addRow({
           nrp: anggota.nrp,
           nama: anggota.nama,

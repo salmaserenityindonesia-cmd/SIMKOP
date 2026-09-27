@@ -181,15 +181,15 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 10: Export Template and Salary-Account Reconciliation Import
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: Implementasi sistem rekonsiliasi gaji dan rekening anggota via upload/download template Excel.
 **Depends on**: Phase 9
 
 **Plans**:
-- [ ] Plan 10.1: (Wave 1) Database schema adjustment & audit log table
-- [ ] Plan 10.2: (Wave 1) Export template xlsx service & endpoint
-- [ ] Plan 10.3: (Wave 2) Upload parser with instant file deletion and staging classifier
-- [ ] Plan 10.4: (Wave 2) Batch reconciliation confirmation handler with DB Transaction
+- [x] Plan 10.1: (Wave 1) Database schema adjustment & audit log table
+- [x] Plan 10.2: (Wave 1) Export template xlsx service & endpoint
+- [x] Plan 10.3: (Wave 2) Upload parser with instant file deletion and staging classifier
+- [x] Plan 10.4: (Wave 2) Batch reconciliation confirmation handler with DB Transaction
 
 ---
 
@@ -218,7 +218,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 7 | Backup Database | ✅ | 2/2 | 100% |
 | 8 | Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis | ✅ | 5/5 | 100% |
 | 9 | Modul Pinjaman Komprehensif (THP & FIFO) | ✅ | 7/7 | 100% |
-| 10 | Export Template and Salary-Account Reconciliation Import | ⬜ | 0/4 | 0% |
+| 10 | Export Template and Salary-Account Reconciliation Import | ✅ | 4/4 | 100% |
 
 ---
 
@@ -235,4 +235,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 7 | 2026-09-27 | 2026-09-27 | 1 day |
 | 8 | 2026-09-27 | 2026-09-27 | 1 day |
 | 9 | — | — | — |
-| 10 | — | — | — |
+| 10 | 2026-09-27 | 2026-09-27 | 1 day |
