@@ -25,4 +25,4 @@ None.
 - `src/pages/admin/AdminDashboard.tsx`: Displays the new stats.
 
 ## Next Steps
-1. Proceed to wrap up Milestone (SIMKOP v1.0).
+1. Execute Phase 10: Export Template and Salary-Account Reconciliation Import. You can use `/execute 10` to start this phase.

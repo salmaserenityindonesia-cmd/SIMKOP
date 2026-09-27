@@ -1,0 +1,56 @@
+<plan>
+  <name>Export Template and Salary-Account Reconciliation Import</name>
+  
+  <!-- WAVE 1: Database Migration & Template Export -->
+  <wave number="1">
+    <task type="auto">
+      <name>Database schema adjustment & audit log table</name>
+      <files>supabase/migrations/add_salary_and_bank_account_to_anggota.sql</files>
+      <action>
+        Terapkan ALTER TABLE public.anggota untuk kolom take_home_pay dan bank_account_number, serta buat tabel public.rekening_audit_logs beserta RLS.
+      </action>
+      <verify>Verifikasi kolom take_home_pay dan bank_account_number di public.anggota serta tabel rekening_audit_logs sukses dibuat</verify>
+      <done>Skema database anggota dan tabel audit siap digunakan</done>
+    </task>
+    <task type="auto">
+      <name>Export template xlsx service & endpoint</name>
+      <files>package.json, src/services/salary-template.service.ts, src/controllers/salary-template.controller.ts</files>
+      <action>
+        1. Pastikan package `exceljs` terinstal.
+        2. Buat fungsi export workbook: query dari `public.anggota` (nrp, nama, bank_account_number).
+        3. Tulis cell nrp & nama terisi, cell nomor_rekening (terisi/kosong), dan cell take_home_pay kosong. Format cell nrp sebagai Text.
+        4. Sediakan endpoint GET untuk mengunduh template .xlsx.
+      </action>
+      <verify>Endpoint GET mengembalikan file streaming binary .xlsx dengan header yang benar dan NRP berformat teks</verify>
+      <done>Template .xlsx berhasil digenerate dan dapat diunduh</done>
+    </task>
+  </wave>
+
+  <!-- WAVE 2: Excel Parser, Immediate File Cleanup, and Reconciliation Staging -->
+  <wave number="2">
+    <task type="auto">
+      <name>Upload parser with instant file deletion and staging classifier</name>
+      <files>src/services/salary-import.service.ts, src/controllers/salary-import.controller.ts</files>
+      <action>
+        1. Buat endpoint POST untuk mengunggah file .xlsx (multipart/form-data).
+        2. Parse file baris per baris dengan exceljs, ekstrak nrp, nomor_rekening, dan take_home_pay.
+        3. Segera panggil fs.promises.unlink pada path file temporary begitu ekstraksi ke memori selesai.
+        4. Bandingkan terhadap data di `public.anggota`: pisahkan menjadi MATCH, NOT_FOUND, dan CONFLICT (rekening berbeda).
+        5. Return response JSON hasil pengelompokan ke UI untuk review admin.
+      </action>
+      <verify>Upload file uji coba sampel, pastikan file temporary terhapus dari disk dan respons memuat daftar MATCH, NOT_FOUND, serta CONFLICT</verify>
+      <done>File temporary terhapus dari disk dan data rekonsiliasi siap direview</done>
+    </task>
+    <task type="auto">
+      <name>Batch reconciliation confirmation handler with DB Transaction</name>
+      <files>src/services/salary-import.service.ts</files>
+      <action>
+        1. Buat endpoint konfirmasi final yang menerima payload keputusan admin untuk baris CONFLICT ('USE_NEW', 'KEEP_OLD', 'CUSTOM_ACCOUNT').
+        2. Lakukan update ke tabel `public.anggota` (kolom take_home_pay dan bank_account_number) di dalam Database Transaction.
+        3. Catat riwayat setiap perubahan nomor rekening ke `public.rekening_audit_logs`.
+      </action>
+      <verify>Data take_home_pay terupdate di public.anggota, rekening berubah sesuai keputusan admin, dan log audit tercatat</verify>
+      <done>Rekonsiliasi selesai dan tersimpan konsisten di database</done>
+    </task>
+  </wave>
+</plan>
