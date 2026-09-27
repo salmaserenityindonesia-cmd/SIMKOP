@@ -481,3 +481,25 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 Plan 8.2 is complete. Next session should begin with `/execute 8` to run Plan 8.3 (Refaktor UI Simpanan).
+
+---
+
+## Session: 2026-09-27 11:11
+
+### Objective
+Execute Plan 8.3 (Refaktor UI Simpanan) inline.
+
+### Accomplished
+- Refactored `DashboardSimpanan.tsx` to use the `monthly_deposit_commitments` view.
+- Added a modal for partial/full payment of deposits for a specific month.
+- Fixed duplicate function definitions in `koperasiService.ts`.
+- Passed `npm run build` and committed the tasks atomically.
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Plan 8.3 is complete. Next session should begin with `/execute 8` to run Plan 8.4 (Refaktor UI Pinjaman - Dropdown jenis pinjaman & pencatatan cicilan parsial).
