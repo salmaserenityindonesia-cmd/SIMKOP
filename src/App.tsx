@@ -8,6 +8,7 @@ import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 import DetailPinjaman from './pages/admin/DetailPinjaman';
 import ManajemenProduk from './pages/admin/ManajemenProduk';
+import ManajemenPembelian from './pages/admin/ManajemenPembelian';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 
 export default function App() {
@@ -76,6 +77,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ManajemenProduk />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/pembelian" 
+          element={
+            <ProtectedRoute>
+              <ManajemenPembelian />
             </ProtectedRoute>
           } 
         />

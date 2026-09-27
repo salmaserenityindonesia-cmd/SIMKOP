@@ -123,6 +123,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span>Inventori Produk</span>
               </NavLink>
               <NavLink 
+                to="/admin/pembelian"
+                className={({ isActive }) => 
+                  `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                    isActive 
+                      ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                      : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                  }`
+                }
+              >
+                <span className="material-symbols-outlined">receipt_long</span>
+                <span>Manajemen Pembelian</span>
+              </NavLink>
+              <NavLink 
                 to="/admin/anggota"
                 className={({ isActive }) => 
                   `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${

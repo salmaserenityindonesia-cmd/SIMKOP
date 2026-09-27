@@ -531,89 +531,251 @@ export async function getPinjamanById(id: string) {
 
 // --- Produk CRUD ---
 
-export interface Produk {
+export interface ProductCategory {
   id: string;
-  nama: string;
-  barcode: string;
-  hargaJual: number;
-  stok: number;
-  stokMinimum: number;
+  name: string;
 }
 
-// In-memory mock data for Produk
+export async function getProductCategories(): Promise<ProductCategory[]> {
+  const { data, error } = await supabase
+    .from('product_categories')
+    .select('*')
+    .order('name');
+  
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      return [{ id: 'cat-1', name: 'Sembako' }, { id: 'cat-2', name: 'Minuman' }];
+    }
+    console.error('Error fetching categories:', error.message);
+    throw new Error(`Gagal mengambil kategori produk: ${error.message}`);
+  }
+  return data as ProductCategory[];
+}
+
+export interface Produk {
+  id: string;
+  sku: string;
+  name: string;
+  category_id?: string | null;
+  unit: string;
+  buy_price: number;
+  sell_price: number;
+  stock: number;
+  min_stock_alert: number;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// In-memory mock data for Produk (if Supabase fails)
 let mockProdukList: Produk[] = [
-  { id: 'prod-1', nama: 'Beras Premium 5kg', barcode: '8991234567890', hargaJual: 75000, stok: 20, stokMinimum: 5 },
-  { id: 'prod-2', nama: 'Minyak Goreng 2L', barcode: '8991234567891', hargaJual: 35000, stok: 15, stokMinimum: 10 },
-  { id: 'prod-3', nama: 'Gula Pasir 1kg', barcode: '8991234567892', hargaJual: 15000, stok: 3, stokMinimum: 10 },
+  { id: 'prod-1', sku: '8991234567890', name: 'Beras Premium 5kg', unit: 'pcs', buy_price: 70000, sell_price: 75000, stock: 20, min_stock_alert: 5, is_active: true },
+  { id: 'prod-2', sku: '8991234567891', name: 'Minyak Goreng 2L', unit: 'pcs', buy_price: 30000, sell_price: 35000, stock: 15, min_stock_alert: 10, is_active: true },
+  { id: 'prod-3', sku: '8991234567892', name: 'Gula Pasir 1kg', unit: 'pcs', buy_price: 12000, sell_price: 15000, stock: 3, min_stock_alert: 10, is_active: true },
 ];
 
 export async function getProduk(): Promise<Produk[]> {
-  // Simulating network delay
-  await new Promise(resolve => setTimeout(resolve, 300));
-  return [...mockProdukList];
-}
+  const { data, error } = await supabase
+    .from('products')
+    .select('*')
+    .order('created_at', { ascending: false });
 
-export async function addProduk(produk: Omit<Produk, 'id'>): Promise<Produk> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  const newProduk = {
-    ...produk,
-    id: `prod-${Date.now()}`
-  };
-  mockProdukList.push(newProduk);
-  return newProduk;
-}
-
-export async function updateProduk(id: string, updates: Partial<Omit<Produk, 'id'>>): Promise<Produk> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  const index = mockProdukList.findIndex(p => p.id === id);
-  if (index === -1) {
-    throw new Error('Produk tidak ditemukan');
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "products" does not exist yet. Returning dummy data.');
+      return [...mockProdukList];
+    }
+    console.error('Error fetching products:', error.message);
+    throw new Error(`Gagal mengambil data produk: ${error.message}`);
   }
-  mockProdukList[index] = { ...mockProdukList[index], ...updates };
-  return mockProdukList[index];
+
+  return data as Produk[];
+}
+
+export async function addProduk(produk: Omit<Produk, 'id' | 'created_at' | 'updated_at'>): Promise<Produk> {
+  const { data, error } = await supabase
+    .from('products')
+    .insert([produk])
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      const newProduk = { ...produk, id: `prod-${Date.now()}` } as Produk;
+      mockProdukList.push(newProduk);
+      return newProduk;
+    }
+    throw new Error(`Gagal menambah produk: ${error.message}`);
+  }
+  return data;
+}
+
+export async function updateProduk(id: string, updates: Partial<Omit<Produk, 'id' | 'created_at' | 'updated_at'>>): Promise<Produk> {
+  const { data, error } = await supabase
+    .from('products')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      const index = mockProdukList.findIndex(p => p.id === id);
+      if (index > -1) {
+        mockProdukList[index] = { ...mockProdukList[index], ...updates };
+        return mockProdukList[index];
+      }
+      throw new Error('Produk tidak ditemukan');
+    }
+    throw new Error(`Gagal mengupdate produk: ${error.message}`);
+  }
+  return data;
 }
 
 export async function deleteProduk(id: string): Promise<void> {
-  await new Promise(resolve => setTimeout(resolve, 300));
-  mockProdukList = mockProdukList.filter(p => p.id !== id);
+  const { error } = await supabase
+    .from('products')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      mockProdukList = mockProdukList.filter(p => p.id !== id);
+      return;
+    }
+    throw new Error(`Gagal menghapus produk: ${error.message}`);
+  }
 }
 
-export interface Restock {
+export interface RestockItem {
   id: string;
   produkId: string;
   qty: number;
   hargaBeli: number;
-  noFaktur: string;
-  tanggal: string;
 }
 
-let mockRestockList: Restock[] = [];
+export interface FakturPembelian {
+  id: string;
+  noFaktur: string;
+  tanggal: string;
+  totalNilai: number;
+  items: RestockItem[];
+}
 
-export async function catatRestock(data: Omit<Restock, 'id'>): Promise<Restock> {
-  if (!data.noFaktur || data.noFaktur.trim() === '') {
-    throw new Error('Supplier invoice number (noFaktur) is required');
+let mockFakturList: FakturPembelian[] = [];
+
+export async function getFakturPembelian(): Promise<FakturPembelian[]> {
+  const { data, error } = await supabase
+    .from('purchases')
+    .select(`
+      id,
+      invoice_number,
+      purchase_date,
+      total_amount,
+      purchase_items (
+        id,
+        product_id,
+        qty,
+        buy_price
+      )
+    `)
+    .order('purchase_date', { ascending: false });
+
+  if (error) {
+    if (error.code === '42P01' || error.message.includes('schema cache')) {
+      console.warn('Table "purchases" does not exist yet. Returning dummy data.');
+      return [...mockFakturList].sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
+    }
+    throw new Error(`Gagal memuat faktur pembelian: ${error.message}`);
   }
 
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 300));
+  // Format the data back to our FakturPembelian structure
+  const result: FakturPembelian[] = data.map((p: any) => ({
+    id: p.id,
+    noFaktur: p.invoice_number,
+    tanggal: p.purchase_date,
+    totalNilai: p.total_amount,
+    items: p.purchase_items.map((pi: any) => ({
+      id: pi.id,
+      produkId: pi.product_id,
+      qty: pi.qty,
+      hargaBeli: pi.buy_price
+    }))
+  }));
+
+  return result;
+}
+
+export async function catatRestockFaktur(faktur: Omit<FakturPembelian, 'id' | 'totalNilai'>): Promise<FakturPembelian> {
+  if (!faktur.noFaktur || faktur.noFaktur.trim() === '') {
+    throw new Error('Nomor Faktur (noFaktur) harus diisi');
+  }
+
+  const totalNilai = faktur.items.reduce((sum, item) => sum + (item.qty * item.hargaBeli), 0);
   
-  const newRestock: Restock = {
-    ...data,
-    id: `restock-${Date.now()}`
-  };
+  // 1. Insert ke purchases
+  const { data: purchaseData, error: purchaseError } = await supabase
+    .from('purchases')
+    .insert([{
+      invoice_number: faktur.noFaktur,
+      purchase_date: faktur.tanggal,
+      total_amount: totalNilai
+    }])
+    .select()
+    .single();
 
-  // Update product stock
-  const produkIndex = mockProdukList.findIndex(p => p.id === data.produkId);
-  if (produkIndex !== -1) {
-    mockProdukList[produkIndex].stok += data.qty;
-  } else {
-    throw new Error('Produk tidak ditemukan');
+  if (purchaseError) {
+    if (purchaseError.code === '42P01' || purchaseError.message.includes('schema cache')) {
+      // Fallback ke mock
+      const newFaktur: FakturPembelian = {
+        ...faktur,
+        id: `faktur-${Date.now()}`,
+        totalNilai
+      };
+      // Update stock in products mock
+      for (const item of newFaktur.items) {
+        const pIdx = mockProdukList.findIndex(p => p.id === item.produkId);
+        if (pIdx !== -1) {
+          mockProdukList[pIdx].stock += item.qty;
+          mockProdukList[pIdx].buy_price = item.hargaBeli;
+        }
+      }
+      mockFakturList.push(newFaktur);
+      return newFaktur;
+    }
+    throw new Error(`Gagal menyimpan faktur: ${purchaseError.message}`);
   }
 
-  // Save to in-memory list (simulate DB insertion)
-  mockRestockList.push(newRestock);
+  // 2. Insert ke purchase_items
+  const itemsToInsert = faktur.items.map(item => ({
+    purchase_id: purchaseData.id,
+    product_id: item.produkId,
+    qty: item.qty,
+    buy_price: item.hargaBeli
+  }));
 
-  return newRestock;
+  const { error: itemsError } = await supabase.from('purchase_items').insert(itemsToInsert);
+  if (itemsError) {
+    // Ideally we should rollback the purchase here, but Supabase standard API doesn't support atomic transactions from client yet without RPC.
+    console.error('Failed to insert items:', itemsError.message);
+    throw new Error(`Faktur tersimpan, tetapi gagal menyimpan item: ${itemsError.message}`);
+  }
+
+  // 3. Update stock in products table
+  for (const item of faktur.items) {
+    const { data: prodData } = await supabase.from('products').select('stock').eq('id', item.produkId).single();
+    if (prodData) {
+      await supabase.from('products')
+        .update({ stock: prodData.stock + item.qty, buy_price: item.hargaBeli })
+        .eq('id', item.produkId);
+    }
+  }
+
+  return {
+    ...faktur,
+    id: purchaseData.id,
+    totalNilai
+  };
 }
 
 export interface RiwayatStok {
@@ -629,16 +791,43 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
   const riwayat: RiwayatStok[] = [];
 
   // Restock (IN)
-  const restocks = mockRestockList.filter(r => r.produkId === produkId);
-  restocks.forEach(r => {
-    riwayat.push({
-      id: r.id,
-      tanggal: r.tanggal,
-      tipe: 'in',
-      qty: r.qty,
-      keterangan: `Restock (Faktur: ${r.noFaktur})`
+  const { data: purchaseItems, error: pError } = await supabase
+    .from('purchase_items')
+    .select(`
+      qty,
+      purchases (
+        id,
+        invoice_number,
+        purchase_date
+      )
+    `)
+    .eq('product_id', produkId);
+
+  if (!pError && purchaseItems) {
+    purchaseItems.forEach((item: any) => {
+      riwayat.push({
+        id: `riwayat-${item.purchases?.id}-${Date.now()}`,
+        tanggal: item.purchases?.purchase_date || new Date().toISOString().split('T')[0],
+        tipe: 'in',
+        qty: item.qty,
+        keterangan: `Restock (Faktur: ${item.purchases?.invoice_number || 'Unknown'})`
+      });
     });
-  });
+  } else {
+    // Fallback to mock
+    mockFakturList.forEach(faktur => {
+      const item = faktur.items.find(i => i.produkId === produkId);
+      if (item) {
+        riwayat.push({
+          id: `riwayat-${faktur.id}`,
+          tanggal: faktur.tanggal,
+          tipe: 'in',
+          qty: item.qty,
+          keterangan: `Restock (Faktur: ${faktur.noFaktur})`
+        });
+      }
+    });
+  }
 
   // Transaksi POS (OUT)
   const { data: txItems, error } = await supabase
@@ -723,7 +912,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   // Stok Kritis
   const produkList = await getProduk();
-  stokKritis = produkList.filter(p => p.stok <= p.stokMinimum).length;
+  stokKritis = produkList.filter(p => p.stock <= p.min_stock_alert).length;
 
   return {
     totalPenjualanHariIni,
