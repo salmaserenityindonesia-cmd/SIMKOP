@@ -81,18 +81,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span>Dashboard</span>
               </NavLink>
               <div className="space-y-1">
+                <div className="flex items-center gap-3 px-4 py-2 text-on-primary-container/70 font-label-md uppercase tracking-wider text-xs">
+                  <span className="material-symbols-outlined text-[16px]">account_balance</span>
+                  <span>Simpan Pinjam</span>
+                </div>
                 <NavLink 
                   to="/admin/simpanan"
                   className={({ isActive }) => 
-                    `flex items-center gap-3 px-4 py-2.5 rounded-lg font-title-sm transition-colors ${
+                    `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
                       isActive 
                         ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
-                        : 'text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                        : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
                     }`
                   }
                 >
-                  <span className="material-symbols-outlined">account_balance</span>
-                  <span>Simpan Pinjam</span>
+                  <span>Tagihan Simpanan</span>
                 </NavLink>
                 {user?.role === 'admin' && (
                   <>
