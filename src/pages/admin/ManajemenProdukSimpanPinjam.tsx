@@ -12,6 +12,7 @@ import {
   LoanType
 } from '../../services/koperasiService';
 import { formatCurrency } from '../../utils/formatCurrency';
+import AdminLayout from '../../components/layout/AdminLayout';
 
 export default function ManajemenProdukSimpanPinjam() {
   const [activeTab, setActiveTab] = useState<'simpanan' | 'pinjaman'>('simpanan');
@@ -136,8 +137,9 @@ export default function ManajemenProdukSimpanPinjam() {
   }
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
-      <div className="flex flex-col gap-2">
+    <AdminLayout>
+      <div className="space-y-6 max-w-6xl mx-auto">
+        <div className="flex flex-col gap-2">
         <h1 className="text-display-sm font-display-sm text-primary">Master Produk Simpan Pinjam</h1>
         <p className="text-body-lg text-on-surface-variant">Konfigurasi jenis simpanan dan pinjaman dinamis untuk anggota koperasi.</p>
       </div>
@@ -370,5 +372,6 @@ export default function ManajemenProdukSimpanPinjam() {
         </div>
       )}
     </div>
+    </AdminLayout>
   );
 }
