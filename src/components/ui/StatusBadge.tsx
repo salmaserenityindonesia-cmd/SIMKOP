@@ -11,7 +11,7 @@ interface StatusBadgeProps {
 export default function StatusBadge({ status, className = '' }: StatusBadgeProps) {
   let colorClass = '';
   let Icon = null;
-  let label = status;
+  let label: string = status;
 
   switch (status) {
     case 'lunas':

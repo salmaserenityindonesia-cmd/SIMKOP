@@ -14,7 +14,6 @@ export default function PengajuanPinjaman() {
   
   const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(null);
   
-  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -32,10 +31,8 @@ export default function PengajuanPinjaman() {
   }, [selectedAnggota]);
 
   async function loadAnggota() {
-    setLoading(true);
     const { data } = await supabase.from('anggota').select('*').order('nama');
     if (data) setAnggotaList(data);
-    setLoading(false);
   }
 
   async function checkTHP(memberId: string) {
