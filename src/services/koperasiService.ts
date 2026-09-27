@@ -319,9 +319,29 @@ export async function saveTransaction(items: any[], total: number, payment: numb
        if (shouldFallback(itemsError)) {
          console.warn('Table "transaksi_item" does not exist yet. Simulating success.');
        } else {
-         console.error('Error inserting transaction items:', itemsError.message);
-         // not throwing to keep transaction alive, but should handle properly in real prod
+         throw new Error(`Gagal menyimpan detail transaksi: ${itemsError.message}`);
        }
+    }
+    
+    // 3. Update stock in products table (Kurangi stok untuk barang yang terjual)
+    for (const item of items) {
+      // Abaikan jika ID berupa dummy/barcode manual yang tidak ada di DB
+      if (!item.id.startsWith('barcode-') && !item.id.startsWith('dummy-')) {
+        const { data: prodData, error: prodError } = await supabase.from('products').select('stock').eq('id', item.id).single();
+        if (prodError) {
+          throw new Error(`Gagal membaca stok barang ${item.name}: ${prodError.message}`);
+        }
+        
+        if (prodData) {
+          const { error: updateError } = await supabase.from('products')
+            .update({ stock: Math.max(0, prodData.stock - item.qty) })
+            .eq('id', item.id);
+            
+          if (updateError) {
+            throw new Error(`Gagal mengurangi stok barang ${item.name}: ${updateError.message}`);
+          }
+        }
+      }
     }
   }
 
@@ -833,7 +853,7 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
     purchaseItems.forEach((item: any) => {
       riwayat.push({
         id: `riwayat-${item.purchases?.id}-${Date.now()}`,
-        tanggal: item.purchases?.purchase_date || new Date().toISOString().split('T')[0],
+        tanggal: item.purchases?.purchase_date || new Date().toISOString(),
         tipe: 'in',
         qty: item.qty,
         keterangan: `Restock (Faktur: ${item.purchases?.invoice_number || 'Unknown'})`
@@ -872,7 +892,7 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
     txItems.forEach((item: any) => {
       riwayat.push({
         id: item.id,
-        tanggal: item.transaksi?.created_at ? item.transaksi.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+        tanggal: item.transaksi?.created_at ? item.transaksi.created_at : new Date().toISOString(),
         tipe: 'out',
         qty: item.qty,
         keterangan: `Penjualan POS (#${item.transaksi?.id?.substring(0,8) || 'Unknown'})`
@@ -887,6 +907,28 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
         tipe: 'out',
         qty: 2,
         keterangan: 'Penjualan POS (Dummy)'
+      });
+    }
+  }
+
+  // Hitung Stok Awal (Pendaftaran Barang Baru)
+  // Stok Awal = Stok Sekarang - Total Masuk (Restock) + Total Keluar (POS)
+  const { data: prodData } = await supabase.from('products').select('created_at, stock').eq('id', produkId).single();
+  if (prodData) {
+    let initialStock = prodData.stock;
+    riwayat.forEach(r => {
+      if (r.tipe === 'in') initialStock -= r.qty;
+      if (r.tipe === 'out') initialStock += r.qty;
+    });
+    
+    // Jika ada stok awal saat pendaftaran
+    if (initialStock > 0) {
+      riwayat.push({
+        id: `initial-${produkId}`,
+        tanggal: prodData.created_at ? prodData.created_at : new Date().toISOString(),
+        tipe: 'in',
+        qty: initialStock,
+        keterangan: 'Stok Awal (Pendaftaran Barang Baru)'
       });
     }
   }

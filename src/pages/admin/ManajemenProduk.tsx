@@ -14,6 +14,8 @@ export default function ManajemenProduk() {
   const [historyProduct, setHistoryProduct] = useState<Produk | null>(null);
   const [stockHistory, setStockHistory] = useState<RiwayatStok[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyStartDate, setHistoryStartDate] = useState('');
+  const [historyEndDate, setHistoryEndDate] = useState('');
 
   // Form state
   const [name, setName] = useState('');
@@ -73,6 +75,8 @@ export default function ManajemenProduk() {
 
   const openHistoryModal = async (product: Produk) => {
     setHistoryProduct(product);
+    setHistoryStartDate('');
+    setHistoryEndDate('');
     setIsHistoryModalOpen(true);
     setLoadingHistory(true);
     try {
@@ -84,6 +88,31 @@ export default function ManajemenProduk() {
       setLoadingHistory(false);
     }
   };
+
+  // Hitung filter & saldo awal untuk kartu stok
+  let displayedHistory = stockHistory;
+  let openingBalance = 0;
+  let showOpeningBalance = false;
+
+  if (historyStartDate || historyEndDate) {
+    const start = historyStartDate ? new Date(historyStartDate).getTime() : 0;
+    // End date covers the whole day
+    const end = historyEndDate ? new Date(historyEndDate + 'T23:59:59').getTime() : Infinity;
+
+    if (historyStartDate) {
+      showOpeningBalance = true;
+      const beforeStart = stockHistory.filter(h => new Date(h.tanggal).getTime() < start);
+      beforeStart.forEach(h => {
+        if (h.tipe === 'in') openingBalance += h.qty;
+        else if (h.tipe === 'out') openingBalance -= h.qty;
+      });
+    }
+
+    displayedHistory = stockHistory.filter(h => {
+      const t = new Date(h.tanggal).getTime();
+      return t >= start && t <= end;
+    });
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -372,14 +401,46 @@ export default function ManajemenProduk() {
       {isHistoryModalOpen && historyProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-surface rounded-2xl w-full max-w-2xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
-            <div className="p-6 border-b border-outline-variant/30 flex justify-between items-center">
-              <div>
-                <h2 className="text-title-lg font-title-lg text-on-surface">Kartu Stok</h2>
-                <p className="text-body-md text-on-surface-variant mt-1">{historyProduct.name}</p>
+            <div className="p-6 border-b border-outline-variant/30">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-title-lg font-title-lg text-on-surface">Kartu Stok</h2>
+                  <p className="text-body-md text-on-surface-variant mt-1">{historyProduct.name}</p>
+                </div>
+                <button onClick={() => setIsHistoryModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
               </div>
-              <button onClick={() => setIsHistoryModalOpen(false)} className="text-on-surface-variant hover:text-on-surface">
-                <span className="material-symbols-outlined">close</span>
-              </button>
+              
+              {/* Date Filters */}
+              <div className="flex gap-4 items-center bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/30">
+                <div className="flex items-center gap-2">
+                  <label className="text-label-md text-on-surface-variant">Dari:</label>
+                  <input 
+                    type="date" 
+                    value={historyStartDate}
+                    onChange={(e) => setHistoryStartDate(e.target.value)}
+                    className="px-2 py-1 bg-surface border border-outline-variant rounded focus:outline-primary text-body-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-label-md text-on-surface-variant">Sampai:</label>
+                  <input 
+                    type="date" 
+                    value={historyEndDate}
+                    onChange={(e) => setHistoryEndDate(e.target.value)}
+                    className="px-2 py-1 bg-surface border border-outline-variant rounded focus:outline-primary text-body-sm"
+                  />
+                </div>
+                {(historyStartDate || historyEndDate) && (
+                  <button 
+                    onClick={() => { setHistoryStartDate(''); setHistoryEndDate(''); }}
+                    className="text-label-sm text-primary hover:underline ml-2"
+                  >
+                    Reset Filter
+                  </button>
+                )}
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto">
@@ -387,6 +448,11 @@ export default function ManajemenProduk() {
                 <div className="text-center py-8 text-on-surface-variant">Memuat riwayat stok...</div>
               ) : stockHistory.length === 0 ? (
                 <div className="text-center py-8 text-on-surface-variant">Belum ada riwayat pergerakan stok.</div>
+              ) : displayedHistory.length === 0 && showOpeningBalance ? (
+                <div className="text-center py-8 text-on-surface-variant">
+                  Tidak ada transaksi pada periode ini.<br/>
+                  <span className="font-bold mt-2 inline-block">Saldo Akhir: {openingBalance}</span>
+                </div>
               ) : (
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -398,9 +464,25 @@ export default function ManajemenProduk() {
                     </tr>
                   </thead>
                   <tbody>
-                    {stockHistory.map(h => (
+                    {/* Opening Balance Row */}
+                    {showOpeningBalance && (
+                      <tr className="border-b border-outline-variant/80 bg-surface-container-lowest/30">
+                        <td className="p-3 text-body-md text-on-surface italic">{new Date(historyStartDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                        <td className="p-3 text-body-md text-on-surface font-medium">Saldo Awal Periode</td>
+                        <td className="p-3 text-center">-</td>
+                        <td className="p-3 text-body-md font-bold text-right text-primary">{openingBalance}</td>
+                      </tr>
+                    )}
+                    
+                    {/* Filtered History Rows */}
+                    {displayedHistory.map(h => (
                       <tr key={h.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
-                        <td className="p-3 text-body-md text-on-surface">{h.tanggal}</td>
+                        <td className="p-3 text-body-md text-on-surface">
+                          <div className="flex flex-col">
+                            <span>{new Date(h.tanggal).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                            <span className="text-xs text-on-surface-variant">{new Date(h.tanggal).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </td>
                         <td className="p-3 text-body-md text-on-surface">{h.keterangan}</td>
                         <td className="p-3 text-center">
                           <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${h.tipe === 'in' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}>
