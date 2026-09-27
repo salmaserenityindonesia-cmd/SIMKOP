@@ -164,6 +164,20 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 9: Modul Pinjaman Komprehensif (THP & FIFO)
+**Status**: ⬜ Not Started
+**Objective**: Implementasi siklus pinjaman lengkap dengan validasi THP (Take Home Pay), penjadwalan angsuran otomatis (loan_schedules), dan sistem pembayaran fleksibel menggunakan logika alokasi FIFO.
+**Depends on**: Phase 8
+
+**Plans**:
+- [ ] Plan 9.1: Database Schema & Migrations — `loans`, `loan_schedules`, `loan_repayments`.
+- [ ] Plan 9.2: Service Layer (THP Validation & Submission) — Validasi Sisa THP >= 1.500.000 dan pengajuan pinjaman.
+- [ ] Plan 9.3: Service Layer (Approval & Scheduling) — Auto-generate `n` baris jadwal angsuran berdasarkan tenor saat disetujui.
+- [ ] Plan 9.4: Service Layer (Payment Handler & FIFO) — Logika pembayaran dengan alokasi FIFO, penanganan overpayment, dan pelunasan awal.
+- [ ] Plan 9.5: Unit & Integration Testing — Skenario THP tidak cukup, bayar parsial, overpayment, dan full payoff.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -188,6 +202,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 6 | Manajemen Anggota Koperasi | ✅ | 3/3 | 100% |
 | 7 | Backup Database | ✅ | 2/2 | 100% |
 | 8 | Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis | ✅ | 5/5 | 100% |
+| 9 | Modul Pinjaman Komprehensif (THP & FIFO) | ⬜ | 0/5 | 0% |
 
 ---
 
@@ -203,3 +218,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 6 | — | 2026-09-27 | — |
 | 7 | 2026-09-27 | 2026-09-27 | 1 day |
 | 8 | 2026-09-27 | 2026-09-27 | 1 day |
+| 9 | — | — | — |
