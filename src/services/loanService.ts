@@ -35,6 +35,45 @@ export interface LoanRepayment {
 }
 
 export const loanService = {
+  async getPendingLoans() {
+    const { data, error } = await supabase
+      .from('loans')
+      .select('*, anggota(nama, nrp)')
+      .eq('status', 'pending')
+      .order('applied_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  async getAllLoans() {
+    const { data, error } = await supabase
+      .from('loans')
+      .select('*, anggota(nama, nrp)')
+      .order('applied_at', { ascending: false });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  async getLoanById(id: string) {
+    const { data, error } = await supabase
+      .from('loans')
+      .select('*, anggota(nama, nrp)')
+      .eq('id', id)
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
+  async getLoanSchedules(loanId: string) {
+    const { data, error } = await supabase
+      .from('loan_schedules')
+      .select('*')
+      .eq('loan_id', loanId)
+      .order('period_number', { ascending: true });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+
   async getMemberTHP(memberId: string): Promise<{ master_thp: number; active_installments: number; remaining_thp: number }> {
     // 1. Get member master_thp
     const { data: member, error: memberError } = await supabase
@@ -129,6 +168,23 @@ export const loanService = {
     if (scheduleError) throw new Error(scheduleError.message);
     
     return loan as Loan;
+  },
+
+  async rejectLoan(loanId: string) {
+    const { data: userData } = await supabase.auth.getUser();
+    const approvedBy = userData?.user?.id || null;
+
+    const { error } = await supabase
+      .from('loans')
+      .update({
+        status: 'rejected',
+        approved_by: approvedBy,
+        approved_at: new Date().toISOString()
+      })
+      .eq('id', loanId);
+
+    if (error) throw new Error(error.message);
+    return true;
   },
 
   async makePayment(loanId: string, amountPaid: number, paymentMethod: string, notes?: string) {

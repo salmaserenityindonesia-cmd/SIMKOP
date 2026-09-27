@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { 
-  getPinjamanById, 
-  getMonthlyLoanCommitments, 
-  addLoanInstallment, 
-  MonthlyLoanCommitment
-} from '../../services/koperasiService';
+import { loanService } from '../../services/loanService';
 import { ArrowLeft, Loader2, DollarSign } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
 
@@ -113,11 +108,11 @@ export default function DetailPinjaman() {
   const navigate = useNavigate();
   
   const [pinjaman, setPinjaman] = useState<any>(null);
-  const [commitments, setCommitments] = useState<MonthlyLoanCommitment[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  const [activePayment, setActivePayment] = useState<{ month: number, year: number, remaining: number } | null>(null);
+  const [activePayment, setActivePayment] = useState<any | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -130,11 +125,11 @@ export default function DetailPinjaman() {
       setLoading(true);
       setError(null);
       
-      const pinjamanData = await getPinjamanById(loanId);
+      const pinjamanData = await loanService.getLoanById(loanId);
       setPinjaman(pinjamanData);
       
-      const commitmentsData = await getMonthlyLoanCommitments({ loanId });
-      setCommitments(commitmentsData);
+      const schedulesData = await loanService.getLoanSchedules(loanId);
+      setSchedules(schedulesData);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -143,16 +138,9 @@ export default function DetailPinjaman() {
   };
 
   const handleProcessPayment = async (amount: number) => {
-    if (!activePayment || !id) return;
+    if (!id) return;
     
-    await addLoanInstallment({
-      loan_id: id,
-      amount: amount,
-      payment_date: new Date().toISOString(),
-      for_month: activePayment.month,
-      for_year: activePayment.year,
-      notes: 'Pembayaran cicilan pinjaman (Admin)'
-    });
+    await loanService.makePayment(id, amount, 'cash', 'Pembayaran cicilan pinjaman (Admin)');
 
     // Reload
     await loadData(id);
@@ -176,44 +164,9 @@ export default function DetailPinjaman() {
     );
   }
 
-  // Generate schedule based on agreed_tenor_months and created_at
-  const schedule = [];
-  const startDate = pinjaman.created_at ? new Date(pinjaman.created_at) : new Date();
-  
-  let lunasCount = 0;
-  
-  for (let i = 1; i <= pinjaman.agreed_tenor_months; i++) {
-    // Determine the month/year for this installment
-    const d = new Date(startDate);
-    d.setMonth(d.getMonth() + i);
-    const m = d.getMonth() + 1; // 1-12
-    const y = d.getFullYear();
-
-    const commitment = commitments.find(c => c.for_month === m && c.for_year === y);
-    
-    const total_paid = commitment ? commitment.total_paid : 0;
-    let status = commitment ? commitment.status : 'belum_lunas';
-    const commitment_amount = pinjaman.planned_installment_amount;
-    
-    // Safety check if overpaid or fully paid based on math
-    if (total_paid >= commitment_amount) {
-      status = 'lunas';
-    }
-
-    if (status === 'lunas') lunasCount++;
-
-    schedule.push({
-      bulan_ke: i,
-      for_month: m,
-      for_year: y,
-      commitment_amount,
-      total_paid,
-      remaining_balance: Math.max(0, commitment_amount - total_paid),
-      status
-    });
-  }
-
-  const sisaCicilan = pinjaman.agreed_tenor_months - lunasCount;
+  const schedule = schedules;
+  let lunasCount = schedules.filter(s => s.status === 'paid').length;
+  const sisaCicilan = (pinjaman.tenor || 0) - lunasCount;
 
   return (
     <AdminLayout>
@@ -250,13 +203,13 @@ export default function DetailPinjaman() {
             <div>
               <p className="text-sm text-gray-500 mb-1">Total Pinjaman</p>
               <p className="text-xl font-bold text-gray-900">
-                Rp {pinjaman.principal_amount.toLocaleString('id-ID')}
+                Rp {Number(pinjaman.amount).toLocaleString('id-ID')}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Tenor</p>
               <p className="text-xl font-bold text-gray-900">
-                {pinjaman.agreed_tenor_months} Bulan
+                {pinjaman.tenor} Bulan
               </p>
             </div>
             <div>
@@ -288,26 +241,30 @@ export default function DetailPinjaman() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {schedule.map((item) => (
-                  <tr key={`${item.for_month}-${item.for_year}`} className="hover:bg-gray-50/50">
+                  <tr key={item.id} className="hover:bg-gray-50/50">
                     <td className="px-6 py-4 text-gray-900 font-medium text-center">
-                      {item.bulan_ke}
+                      {item.period_number}
                     </td>
                     <td className="px-6 py-4 text-gray-900">
-                      {item.for_month}/{item.for_year}
+                      {item.due_date}
                     </td>
                     <td className="px-6 py-4 text-gray-600">
-                      Rp {item.commitment_amount.toLocaleString('id-ID')}
+                      Rp {Number(item.target_amount).toLocaleString('id-ID')}
                     </td>
                     <td className="px-6 py-4 text-green-600 font-medium">
-                      Rp {item.total_paid.toLocaleString('id-ID')}
+                      Rp {Number(item.paid_amount).toLocaleString('id-ID')}
                     </td>
                     <td className="px-6 py-4 text-red-500 font-medium">
-                      Rp {item.remaining_balance.toLocaleString('id-ID')}
+                      Rp {Math.max(0, Number(item.target_amount) - Number(item.paid_amount)).toLocaleString('id-ID')}
                     </td>
                     <td className="px-6 py-4">
-                      {item.status === 'lunas' ? (
+                      {item.status === 'paid' ? (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                           Lunas
+                        </span>
+                      ) : item.status === 'partial' ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          Parsial
                         </span>
                       ) : (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -316,9 +273,9 @@ export default function DetailPinjaman() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      {item.status !== 'lunas' && (
+                      {item.status !== 'paid' && (
                         <button
-                          onClick={() => setActivePayment({ month: item.for_month, year: item.for_year, remaining: item.remaining_balance })}
+                          onClick={() => setActivePayment({ schedule_id: item.id, remaining: Number(item.target_amount) - Number(item.paid_amount) })}
                           className="inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-100 transition-colors"
                         >
                           Bayar Parsial
@@ -346,7 +303,7 @@ export default function DetailPinjaman() {
         onSubmit={handleProcessPayment}
         defaultAmount={activePayment ? activePayment.remaining : 0}
         title="Pembayaran Cicilan Pinjaman"
-        description={activePayment ? `Pembayaran cicilan untuk periode ${activePayment.month}/${activePayment.year}` : ''}
+        description={activePayment ? `Pembayaran cicilan untuk tagihan Rp ${activePayment.remaining.toLocaleString('id-ID')}` : ''}
       />
     </AdminLayout>
   );

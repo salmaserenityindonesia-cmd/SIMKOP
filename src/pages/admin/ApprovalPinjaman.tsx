@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getPendingPinjaman, updateStatusPinjaman } from '../../services/koperasiService';
+import { loanService } from '../../services/loanService';
 import { Loader2, CheckCircle, XCircle, Download, FileText } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
@@ -18,7 +18,7 @@ export default function ApprovalPinjaman() {
   async function loadData() {
     try {
       setLoading(true);
-      const data = await getPendingPinjaman();
+      const data = await loanService.getPendingLoans();
       setPinjamanList(data);
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data persetujuan');
@@ -34,7 +34,12 @@ export default function ApprovalPinjaman() {
 
     try {
       setActionLoading(id);
-      await updateStatusPinjaman(id, action);
+      if (action === 'approved') {
+        const startDate = new Date().toISOString().split('T')[0]; // simple today date
+        await loanService.approveLoan(id, startDate);
+      } else {
+        await loanService.rejectLoan(id);
+      }
       // Remove from list or refresh
       setPinjamanList(prev => prev.filter(p => p.id !== id));
     } catch (err: any) {
@@ -56,8 +61,8 @@ export default function ApprovalPinjaman() {
     const data = pinjamanList.map(p => ({
       'No. Anggota': p.anggota?.no_anggota || p.anggota?.nrp || '-',
       'Nama Anggota': p.anggota?.nama || '-',
-      'Jumlah Pinjaman': p.principal_amount,
-      'Tenor (Bulan)': p.agreed_tenor_months,
+      'Jumlah Pinjaman': p.amount,
+      'Tenor (Bulan)': p.tenor,
       'Status': p.status || 'pending'
     }));
     exportToExcel(data, 'Data_Pinjaman');
@@ -68,8 +73,8 @@ export default function ApprovalPinjaman() {
     const data = pinjamanList.map(p => [
       p.anggota?.no_anggota || p.anggota?.nrp || '-',
       p.anggota?.nama || '-',
-      formatRupiah(p.principal_amount),
-      `${p.agreed_tenor_months} Bulan`,
+      formatRupiah(p.amount),
+      `${p.tenor} Bulan`,
       p.status || 'pending'
     ]);
     exportToPDF(headers, data, 'Data_Pinjaman', 'Laporan Data Pinjaman');
@@ -138,8 +143,8 @@ export default function ApprovalPinjaman() {
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-4 text-sm text-gray-900">{p.anggota?.no_anggota || p.anggota?.nrp || '-'}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{p.anggota?.nama || '-'}</td>
-                    <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.principal_amount)}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.agreed_tenor_months} Bulan</td>
+                    <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.amount)}</td>
+                    <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.tenor} Bulan</td>
                     <td className="py-3 px-4 text-sm text-center">
                       <StatusBadge status={p.status || 'pending'} />
                     </td>

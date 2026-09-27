@@ -6,6 +6,7 @@ import UserManagement from './pages/admin/UserManagement';
 import Kasir from './pages/admin/Kasir';
 import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
+import PengajuanPinjaman from './pages/admin/PengajuanPinjaman';
 import DetailPinjaman from './pages/admin/DetailPinjaman';
 import ManajemenProduk from './pages/admin/ManajemenProduk';
 import ManajemenPembelian from './pages/admin/ManajemenPembelian';
@@ -66,6 +67,15 @@ export default function App() {
           } 
         />
 
+        <Route 
+          path="/admin/pengajuan-pinjaman" 
+          element={
+            <ProtectedRoute>
+              <PengajuanPinjaman />
+            </ProtectedRoute>
+          } 
+        />
+        
         <Route 
           path="/admin/approval" 
           element={
