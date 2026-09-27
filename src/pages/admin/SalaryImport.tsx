@@ -129,13 +129,30 @@ export default function SalaryImport() {
           <div className="p-6 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 space-y-6 shadow-sm">
             <div className="flex justify-between items-center">
               <h3 className="text-title-md font-title-md text-on-surface">Hasil Pengecekan ({results.length} baris)</h3>
-              <button
-                onClick={handleConfirm}
-                disabled={isConfirming}
-                className="px-6 py-2 rounded-lg bg-primary text-on-primary font-label-lg transition-colors hover:bg-primary/90 disabled:opacity-50"
-              >
-                {isConfirming ? 'Menyimpan...' : 'Simpan Konfirmasi'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const confirmed = window.confirm("Apakah Anda yakin ingin membatalkan? Data hasil pengecekan yang belum disimpan akan hilang.");
+                    if (confirmed) {
+                        setResults([]);
+                        setFile(null);
+                        setErrorMsg(null);
+                        setSuccessMsg(null);
+                    }
+                  }}
+                  disabled={isConfirming}
+                  className="px-6 py-2 rounded-lg border border-outline-variant text-on-surface-variant font-label-lg transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-50"
+                >
+                  Batal Konfirmasi
+                </button>
+                <button
+                  onClick={handleConfirm}
+                  disabled={isConfirming}
+                  className="px-6 py-2 rounded-lg bg-primary text-on-primary font-label-lg transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {isConfirming ? 'Menyimpan...' : 'Simpan Konfirmasi'}
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-outline-variant/30">
