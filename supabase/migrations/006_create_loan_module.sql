@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS public.loans (
     applied_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
+-- Pastikan kolom ditambahkan jika tabel sudah ada sebelumnya dari phase lain
+ALTER TABLE public.loans ADD COLUMN IF NOT EXISTS amount NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE public.loans ADD COLUMN IF NOT EXISTS tenor INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.loans ADD COLUMN IF NOT EXISTS monthly_target NUMERIC NOT NULL DEFAULT 0;
+
+
 -- 3. Buat tabel loan_schedules
 CREATE TABLE IF NOT EXISTS public.loan_schedules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,14 +53,17 @@ ALTER TABLE public.loan_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.loan_repayments ENABLE ROW LEVEL SECURITY;
 
 -- 6. Buat Policy untuk pengelola (Admin & Operator)
+DROP POLICY IF EXISTS "Pengelola can manage loans" ON public.loans;
 CREATE POLICY "Pengelola can manage loans" 
 ON public.loans FOR ALL 
 USING ( (SELECT auth.jwt() -> 'app_metadata' ->> 'role') IN ('admin', 'operator') );
 
+DROP POLICY IF EXISTS "Pengelola can manage loan_schedules" ON public.loan_schedules;
 CREATE POLICY "Pengelola can manage loan_schedules" 
 ON public.loan_schedules FOR ALL 
 USING ( (SELECT auth.jwt() -> 'app_metadata' ->> 'role') IN ('admin', 'operator') );
 
+DROP POLICY IF EXISTS "Pengelola can manage loan_repayments" ON public.loan_repayments;
 CREATE POLICY "Pengelola can manage loan_repayments" 
 ON public.loan_repayments FOR ALL 
 USING ( (SELECT auth.jwt() -> 'app_metadata' ->> 'role') IN ('admin', 'operator') );

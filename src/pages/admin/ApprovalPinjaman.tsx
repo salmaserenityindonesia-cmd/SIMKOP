@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService } from '../../services/loanService';
 import { Loader2, CheckCircle, XCircle, Download, FileText } from 'lucide-react';
@@ -63,7 +63,7 @@ export default function ApprovalPinjaman() {
       'Nama Anggota': p.anggota?.nama || '-',
       'Jumlah Pinjaman': p.amount,
       'Tenor (Bulan)': p.tenor,
-      'Status': p.status || 'pending'
+      'Status': p.status || 'draft'
     }));
     exportToExcel(data, 'Data_Pinjaman');
   };
@@ -75,7 +75,7 @@ export default function ApprovalPinjaman() {
       p.anggota?.nama || '-',
       formatRupiah(p.amount),
       `${p.tenor} Bulan`,
-      p.status || 'pending'
+      p.status || 'draft'
     ]);
     exportToPDF(headers, data, 'Data_Pinjaman', 'Laporan Data Pinjaman');
   };
@@ -146,7 +146,7 @@ export default function ApprovalPinjaman() {
                     <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.amount)}</td>
                     <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.tenor} Bulan</td>
                     <td className="py-3 px-4 text-sm text-center">
-                      <StatusBadge status={p.status || 'pending'} />
+                      <StatusBadge status={p.status || 'draft'} />
                     </td>
                     <td className="py-3 px-4 text-sm text-center">
                       <div className="flex justify-center gap-2">

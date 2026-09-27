@@ -20,6 +20,7 @@ export interface Anggota {
   nama: string;
   pangkat?: string | null;
   status?: string;
+  master_thp?: number;
   created_at?: string;
 }
 

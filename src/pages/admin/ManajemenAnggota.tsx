@@ -17,7 +17,8 @@ export default function ManajemenAnggota() {
     nrp: '',
     nama: '',
     pangkat: '',
-    status: 'aktif'
+    status: 'aktif',
+    master_thp: 0
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -39,7 +40,7 @@ export default function ManajemenAnggota() {
 
   const handleOpenAddModal = () => {
     setEditingAnggota(null);
-    setFormData({ nrp: '', nama: '', pangkat: '', status: 'aktif' });
+    setFormData({ nrp: '', nama: '', pangkat: '', status: 'aktif', master_thp: 0 });
     setShowModal(true);
   };
 
@@ -49,7 +50,8 @@ export default function ManajemenAnggota() {
       nrp: anggota.nrp || '',
       nama: anggota.nama,
       pangkat: anggota.pangkat || '',
-      status: anggota.status || 'aktif'
+      status: anggota.status || 'aktif',
+      master_thp: anggota.master_thp || 0
     });
     setShowModal(true);
   };
@@ -95,11 +97,12 @@ export default function ManajemenAnggota() {
   };
 
   const handleExportPDF = () => {
-    const headers = ['NRP', 'Nama', 'Pangkat', 'Status', 'Terdaftar'];
+    const headers = ['NRP', 'Nama', 'Pangkat', 'Gaji Pokok (THP)', 'Status', 'Terdaftar'];
     const data = filteredList.map(a => [
       a.nrp || '-',
       a.nama,
       a.pangkat || '-',
+      new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(a.master_thp || 0),
       a.status === 'aktif' ? 'Aktif' : 'Nonaktif',
       a.created_at ? new Date(a.created_at).toLocaleDateString('id-ID') : '-'
     ]);
@@ -159,6 +162,7 @@ export default function ManajemenAnggota() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Gaji Pokok (THP)</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
@@ -190,6 +194,9 @@ export default function ManajemenAnggota() {
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
+                    <td className="py-3 px-4 text-sm text-gray-700 font-medium text-green-700">
+                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(anggota.master_thp || 0)}
+                    </td>
                     <td className="py-3 px-4 text-sm">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                         anggota.status === 'aktif' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -280,6 +287,22 @@ export default function ManajemenAnggota() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                     placeholder="Contoh: Sertu, Kopda, dll"
                   />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Gaji Pokok (Master THP) <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.master_thp}
+                    onChange={(e) => setFormData({...formData, master_thp: Number(e.target.value)})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                    placeholder="Contoh: 5000000"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Gaji pokok akan digunakan untuk memvalidasi kelayakan limit pemotongan saat pengajuan pinjaman.</p>
                 </div>
                 
                 <div>

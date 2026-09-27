@@ -3,15 +3,13 @@ import { supabase } from '../lib/supabaseClient';
 export interface Loan {
   id: string;
   member_id: string;
-  purpose: string;
+  notes: string;
   amount: number;
   tenor: number;
   monthly_target: number;
-  status: 'pending' | 'approved' | 'active' | 'rejected' | 'completed';
-  start_date: string | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  applied_at: string;
+  status: 'draft' | 'pending' | 'approved' | 'active' | 'rejected' | 'completed';
+  disbursed_at: string | null;
+  created_at: string;
 }
 
 export interface LoanSchedule {
@@ -39,8 +37,8 @@ export const loanService = {
     const { data, error } = await supabase
       .from('loans')
       .select('*, anggota(nama, nrp)')
-      .eq('status', 'pending')
-      .order('applied_at', { ascending: false });
+      .eq('status', 'draft')
+      .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return data;
   },
@@ -49,7 +47,7 @@ export const loanService = {
     const { data, error } = await supabase
       .from('loans')
       .select('*, anggota(nama, nrp)')
-      .order('applied_at', { ascending: false });
+      .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return data;
   },
@@ -108,15 +106,27 @@ export const loanService = {
       throw new Error(`Pengajuan ditolak: Sisa THP setelah potongan (Rp ${remaining_thp - monthlyTarget}) di bawah batas minimal Rp1.500.000.`);
     }
 
+    // Fetch a default loan type to satisfy the NOT NULL constraint on loan_type_id
+    const { data: loanTypes } = await supabase.from('loan_types').select('id').eq('is_active', true).limit(1);
+    if (!loanTypes || loanTypes.length === 0) {
+      throw new Error('Tidak ada Tipe Pinjaman (Loan Type) yang aktif di sistem.');
+    }
+    const loanTypeId = loanTypes[0].id;
+
     const { data, error } = await supabase
       .from('loans')
       .insert([{
+        loan_number: `LOAN-${Date.now()}`,
         member_id: memberId,
-        purpose,
-        amount,
-        tenor,
+        loan_type_id: loanTypeId,
+        principal_amount: amount,
+        agreed_tenor_months: tenor,
+        planned_installment_amount: monthlyTarget,
+        amount: amount,
+        tenor: tenor,
         monthly_target: monthlyTarget,
-        status: 'pending'
+        notes: purpose,
+        status: 'draft'
       }])
       .select()
       .single();
@@ -126,17 +136,12 @@ export const loanService = {
   },
 
   async approveLoan(loanId: string, startDate: string) {
-    const { data: userData } = await supabase.auth.getUser();
-    // Assuming testing might not have logged in user, optional fallback or check
-    const approvedBy = userData?.user?.id || null;
     
     const { data: loan, error: loanError } = await supabase
       .from('loans')
       .update({
-        status: 'active',
-        start_date: startDate,
-        approved_by: approvedBy,
-        approved_at: new Date().toISOString()
+        status: 'approved',
+        disbursed_at: startDate
       })
       .eq('id', loanId)
       .select()
@@ -171,15 +176,10 @@ export const loanService = {
   },
 
   async rejectLoan(loanId: string) {
-    const { data: userData } = await supabase.auth.getUser();
-    const approvedBy = userData?.user?.id || null;
-
     const { error } = await supabase
       .from('loans')
       .update({
-        status: 'rejected',
-        approved_by: approvedBy,
-        approved_at: new Date().toISOString()
+        status: 'rejected'
       })
       .eq('id', loanId);
 
