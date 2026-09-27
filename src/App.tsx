@@ -12,6 +12,7 @@ import ManajemenPembelian from './pages/admin/ManajemenPembelian';
 import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
+import TerimaSetoran from './pages/admin/TerimaSetoran';
 
 export default function App() {
   return (
@@ -52,6 +53,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <DashboardSimpanan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/setoran" 
+          element={
+            <ProtectedRoute>
+              <TerimaSetoran />
             </ProtectedRoute>
           } 
         />
