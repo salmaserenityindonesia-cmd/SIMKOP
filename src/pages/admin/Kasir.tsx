@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useCart } from '../../lib/cartStore';
-import { saveTransaction } from '../../services/koperasiService';
+import { saveTransaction, getProduk, Produk } from '../../services/koperasiService';
 import ReceiptPrinter, { TransactionData } from '../../components/admin/ReceiptPrinter';
 
 export default function Kasir() {
@@ -13,6 +13,53 @@ export default function Kasir() {
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastTransaction, setLastTransaction] = useState<TransactionData | null>(null);
+
+  // Supabase Products state
+  const [products, setProducts] = useState<Produk[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAutocomplete, setShowAutocomplete] = useState(false);
+  const autocompleteRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetchProducts();
+    
+    // Close autocomplete on click outside
+    const handleClickOutside = (e: MouseEvent) => {
+      if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node)) {
+        setShowAutocomplete(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      const data = await getProduk();
+      // Only show active and in-stock products
+      setProducts(data.filter(p => p.is_active && p.stock > 0));
+    } catch (error) {
+      console.error('Failed to fetch products', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(barcode.toLowerCase()) || 
+    p.sku.toLowerCase().includes(barcode.toLowerCase())
+  );
+
+  const addProductToCart = (product: Produk) => {
+    cart.addItem({ 
+      id: product.id, 
+      name: product.name, 
+      price: product.sell_price 
+    });
+    setBarcode('');
+    setShowAutocomplete(false);
+  };
 
   const handleCheckout = async () => {
     const payment = parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0;
@@ -55,14 +102,18 @@ export default function Kasir() {
     e.preventDefault();
     if (!barcode.trim()) return;
     
-    // TODO: implement real lookup logic
-    cart.addItem({ 
-      id: `barcode-${barcode}`, 
-      name: `Produk Scan ${barcode}`, 
-      price: 15000 
-    });
-    
-    setBarcode('');
+    // Exact match by SKU
+    const exactMatch = products.find(p => p.sku === barcode);
+    if (exactMatch) {
+      addProductToCart(exactMatch);
+    } else {
+      // If no exact match, just show the filtered list or select the first one if there's only one
+      if (filteredProducts.length === 1) {
+        addProductToCart(filteredProducts[0]);
+      } else {
+        setShowAutocomplete(true);
+      }
+    }
   };
 
   return (
@@ -73,16 +124,43 @@ export default function Kasir() {
         {/* Barcode Input */}
         <div className="bg-surface-container-lowest p-4 rounded-xl shadow-sm border border-outline-variant/30">
           <form onSubmit={handleBarcodeSubmit} className="flex gap-4">
-            <div className="relative flex-1">
+            <div className="relative flex-1" ref={autocompleteRef}>
               <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">barcode_scanner</span>
               <input
                 type="text"
                 autoFocus
-                placeholder="Scan barcode atau cari produk..."
+                placeholder="Scan barcode atau ketik nama produk..."
                 value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
+                onChange={(e) => {
+                  setBarcode(e.target.value);
+                  setShowAutocomplete(true);
+                }}
+                onFocus={() => setShowAutocomplete(true)}
                 className="w-full pl-10 pr-4 py-3 rounded-lg border border-outline-variant bg-surface focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent font-body-lg"
               />
+              
+              {/* Autocomplete Dropdown */}
+              {showAutocomplete && barcode.trim() !== '' && (
+                <div className="absolute z-10 w-full mt-1 bg-surface border border-outline-variant/50 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {filteredProducts.length === 0 ? (
+                    <div className="p-4 text-on-surface-variant text-body-md">Produk tidak ditemukan</div>
+                  ) : (
+                    filteredProducts.map(p => (
+                      <div 
+                        key={p.id}
+                        onClick={() => addProductToCart(p)}
+                        className="px-4 py-3 hover:bg-surface-container-lowest/50 cursor-pointer border-b border-outline-variant/20 last:border-0 flex justify-between items-center"
+                      >
+                        <div>
+                          <p className="font-title-sm text-on-surface">{p.name}</p>
+                          <p className="text-xs text-on-surface-variant font-mono">{p.sku}</p>
+                        </div>
+                        <p className="font-label-md text-primary">Rp {p.sell_price.toLocaleString('id-ID')}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
             <button 
               type="submit"
@@ -93,26 +171,33 @@ export default function Kasir() {
           </form>
         </div>
 
-        {/* Product Catalog Grid Placeholder */}
+        {/* Product Catalog Grid */}
         <div className="flex-1 bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/30 overflow-y-auto">
           <h2 className="text-title-md font-title-md text-on-surface mb-4">Katalog Produk</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-            {/* Placeholders */}
-            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-              <div 
-                key={i} 
-                onClick={() => cart.addItem({ id: String(i), name: `Produk Dummy ${i}`, price: 10000 * i })}
-                className="bg-surface-container-low rounded-lg p-4 border border-outline-variant/20 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 transition-colors"
-              >
-                <div className="w-16 h-16 bg-surface-container-high rounded-md flex items-center justify-center text-outline">
-                  <span className="material-symbols-outlined text-3xl">inventory_2</span>
+            {loading ? (
+              <div className="col-span-full py-8 text-center text-on-surface-variant">Memuat katalog...</div>
+            ) : products.length === 0 ? (
+              <div className="col-span-full py-8 text-center text-on-surface-variant">Belum ada produk aktif yang tersedia.</div>
+            ) : (
+              products.map((p) => (
+                <div 
+                  key={p.id} 
+                  onClick={() => addProductToCart(p)}
+                  className="bg-surface-container-low rounded-lg p-4 border border-outline-variant/20 flex flex-col items-center gap-2 cursor-pointer hover:border-primary/50 transition-colors"
+                >
+                  <div className="w-16 h-16 bg-surface-container-high rounded-md flex items-center justify-center text-outline overflow-hidden p-2">
+                    {/* Placeholder image, can be replaced if we add image_url to products */}
+                    <span className="material-symbols-outlined text-3xl">inventory_2</span>
+                  </div>
+                  <div className="text-center w-full">
+                    <p className="font-title-sm text-on-surface line-clamp-2" title={p.name}>{p.name}</p>
+                    <p className="font-label-md text-primary">Rp {p.sell_price.toLocaleString('id-ID')}</p>
+                    <p className="text-[10px] text-on-surface-variant mt-1">Stok: {p.stock} {p.unit}</p>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="font-title-sm text-on-surface">Produk {i}</p>
-                  <p className="font-label-md text-primary">Rp 10.000</p>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>
