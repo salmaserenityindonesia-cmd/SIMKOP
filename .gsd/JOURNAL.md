@@ -503,3 +503,28 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 Plan 8.3 is complete. Next session should begin with `/execute 8` to run Plan 8.4 (Refaktor UI Pinjaman - Dropdown jenis pinjaman & pencatatan cicilan parsial).
+
+---
+
+## Session: 2026-09-27 11:28
+
+### Objective
+Execute Plan 8.4 (Refaktor UI Pinjaman) inline.
+
+### Accomplished
+- Updated `ajukanPinjaman`, `getPendingPinjaman`, `updateStatusPinjaman`, and `getPinjamanById` in `koperasiService.ts` to use the `loans` table.
+- Updated `getMonthlyLoanCommitments` to accept an options filter `{ loanId: string }`.
+- Refactored `FormPengajuanPinjaman.tsx` to use dynamic dropdown for `loan_type_id` and validate max tenor.
+- Refactored `ApprovalPinjaman.tsx` to properly read `Loan` interface properties.
+- Refactored `DetailPinjaman.tsx` to use `monthly_loan_commitments` view to support dynamic monthly schedules and partial installments.
+- Updated `ROADMAP.md` marking Plan 8.4 as complete.
+- Passed `npm run build`.
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Plan 8.4 is complete. Next session should begin with `/execute 8` to run the final task, Plan 8.5 (Dashboard Analytics - Tracking status komitmen bulanan).
