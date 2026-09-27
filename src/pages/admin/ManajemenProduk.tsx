@@ -107,8 +107,9 @@ export default function ManajemenProduk() {
       }
       setIsModalOpen(false);
       fetchProducts();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving product', error);
+      alert(error.message || 'Gagal menyimpan produk');
     }
   };
 

@@ -9,6 +9,7 @@ import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 import DetailPinjaman from './pages/admin/DetailPinjaman';
 import ManajemenProduk from './pages/admin/ManajemenProduk';
 import ManajemenPembelian from './pages/admin/ManajemenPembelian';
+import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 
 export default function App() {
@@ -77,6 +78,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ManajemenProduk />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/admin/kategori" 
+          element={
+            <ProtectedRoute>
+              <ManajemenKategori />
             </ProtectedRoute>
           } 
         />

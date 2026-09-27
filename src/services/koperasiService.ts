@@ -1,3 +1,9 @@
+function shouldFallback(e: any): boolean {
+  if (!e) return false;
+  const msg = String(e.message || "").toLowerCase();
+  return e.code === "42P01" || msg.includes("schema cache") || msg.includes("fetch") || msg.includes("network") || msg.includes("failed to fetch");
+}
+
 import { supabase } from '../lib/supabaseClient';
 
 export interface Pengelola {
@@ -47,7 +53,7 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
     .order('created_at', { ascending: false });
 
   if (anggotaError) {
-    if (anggotaError.code === '42P01' || anggotaError.message.includes('schema cache')) {
+    if (shouldFallback(anggotaError)) {
       console.warn('Table "anggota" does not exist yet. Returning dummy data.');
       return [
         {
@@ -114,7 +120,7 @@ export async function getAnggota(): Promise<Anggota[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "anggota" does not exist yet. Returning empty array.');
       return [];
     }
@@ -179,7 +185,7 @@ export async function getPengelolaList(limit: number = 50, offset: number = 0) {
     .order('created_at', { ascending: false });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pengelola" does not exist yet. Returning empty array.');
       return { data: [], count: 0 };
     }
@@ -200,7 +206,7 @@ export async function getUserRestrictions(userId: string) {
     .eq('user_id', userId);
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "user_restrictions" does not exist yet. Returning empty array.');
       return [];
     }
@@ -226,7 +232,7 @@ export async function insertPengelola(pengelolaData: Omit<Pengelola, 'id'>) {
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pengelola" does not exist yet. Simulating success.');
       return { id: 'dummy-id', ...pengelolaData } as Pengelola;
     }
@@ -253,7 +259,7 @@ export async function updatePengelola(id: string, updates: Partial<Omit<Pengelol
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pengelola" does not exist yet. Simulating success.');
       return { id, ...updates } as Pengelola;
     }
@@ -286,7 +292,7 @@ export async function saveTransaction(items: any[], total: number, payment: numb
     .single();
 
   if (txError) {
-    if (txError.code === '42P01' || txError.message.includes('schema cache')) {
+    if (shouldFallback(txError)) {
       console.warn('Table "transaksi" does not exist yet. Simulating success.');
       return { id: 'dummy-tx-id', ...txData };
     }
@@ -310,7 +316,7 @@ export async function saveTransaction(items: any[], total: number, payment: numb
       .insert(itemsData);
 
     if (itemsError) {
-       if (itemsError.code === '42P01' || itemsError.message.includes('schema cache')) {
+       if (shouldFallback(itemsError)) {
          console.warn('Table "transaksi_item" does not exist yet. Simulating success.');
        } else {
          console.error('Error inserting transaction items:', itemsError.message);
@@ -338,7 +344,7 @@ export async function ajukanPinjaman(data: Omit<Pinjaman, 'id' | 'created_at' | 
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pinjaman" does not exist yet. Simulating success.');
       return { 
         id: `dummy-pinjaman-${Date.now()}`, 
@@ -370,7 +376,7 @@ export async function getPendingPinjaman() {
     .order('created_at', { ascending: true });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pinjaman" does not exist yet. Returning dummy pending data.');
       return [
         {
@@ -412,7 +418,7 @@ export async function updateStatusPinjaman(id: string, status: 'approved' | 'rej
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pinjaman" does not exist yet. Simulating update success.');
       return { id, status } as Partial<Pinjaman>;
     }
@@ -443,7 +449,7 @@ export async function getJadwalAngsuran(pinjaman_id: string, jumlah_pinjaman: nu
     .order('bulan_ke', { ascending: true });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "angsuran" does not exist yet. Generating dummy schedule.');
       // Generate dummy schedule based on jumlah / tenor
       const cicilanPerBulan = Math.floor(jumlah_pinjaman / tenor_bulan);
@@ -482,7 +488,7 @@ export async function bayarAngsuran(angsuran_id: string, _jumlah: number) {
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "angsuran" does not exist yet. Simulating payment success.');
       return { id: angsuran_id, status: 'lunas', tanggal_bayar: new Date().toISOString() };
     }
@@ -510,7 +516,7 @@ export async function getPinjamanById(id: string) {
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "pinjaman" does not exist yet. Returning dummy data.');
       return {
         id,
@@ -543,13 +549,51 @@ export async function getProductCategories(): Promise<ProductCategory[]> {
     .order('name');
   
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       return [{ id: 'cat-1', name: 'Sembako' }, { id: 'cat-2', name: 'Minuman' }];
     }
     console.error('Error fetching categories:', error.message);
     throw new Error(`Gagal mengambil kategori produk: ${error.message}`);
   }
   return data as ProductCategory[];
+}
+
+export async function addProductCategory(name: string): Promise<ProductCategory> {
+  const { data, error } = await supabase
+    .from('product_categories')
+    .insert([{ name }])
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal menambah kategori: ${error.message}`);
+  }
+  return data as ProductCategory;
+}
+
+export async function updateProductCategory(id: string, name: string): Promise<ProductCategory> {
+  const { data, error } = await supabase
+    .from('product_categories')
+    .update({ name })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal mengubah kategori: ${error.message}`);
+  }
+  return data as ProductCategory;
+}
+
+export async function deleteProductCategory(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('product_categories')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`Gagal menghapus kategori (Pastikan tidak ada produk yang menggunakan kategori ini): ${error.message}`);
+  }
 }
 
 export interface Produk {
@@ -581,11 +625,7 @@ export async function getProduk(): Promise<Produk[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
-      console.warn('Table "products" does not exist yet. Returning dummy data.');
-      return [...mockProdukList];
-    }
-    console.error('Error fetching products:', error.message);
+    console.error('Error fetching products:', error);
     throw new Error(`Gagal mengambil data produk: ${error.message}`);
   }
 
@@ -600,11 +640,7 @@ export async function addProduk(produk: Omit<Produk, 'id' | 'created_at' | 'upda
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
-      const newProduk = { ...produk, id: `prod-${Date.now()}` } as Produk;
-      mockProdukList.push(newProduk);
-      return newProduk;
-    }
+    console.error('Error adding product:', error);
     throw new Error(`Gagal menambah produk: ${error.message}`);
   }
   return data;
@@ -619,14 +655,7 @@ export async function updateProduk(id: string, updates: Partial<Omit<Produk, 'id
     .single();
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
-      const index = mockProdukList.findIndex(p => p.id === id);
-      if (index > -1) {
-        mockProdukList[index] = { ...mockProdukList[index], ...updates };
-        return mockProdukList[index];
-      }
-      throw new Error('Produk tidak ditemukan');
-    }
+    console.error('Error updating product:', error);
     throw new Error(`Gagal mengupdate produk: ${error.message}`);
   }
   return data;
@@ -639,10 +668,7 @@ export async function deleteProduk(id: string): Promise<void> {
     .eq('id', id);
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
-      mockProdukList = mockProdukList.filter(p => p.id !== id);
-      return;
-    }
+    console.error('Error deleting product:', error);
     throw new Error(`Gagal menghapus produk: ${error.message}`);
   }
 }
@@ -682,7 +708,7 @@ export async function getFakturPembelian(): Promise<FakturPembelian[]> {
     .order('purchase_date', { ascending: false });
 
   if (error) {
-    if (error.code === '42P01' || error.message.includes('schema cache')) {
+    if (shouldFallback(error)) {
       console.warn('Table "purchases" does not exist yet. Returning dummy data.');
       return [...mockFakturList].sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
     }
@@ -725,7 +751,7 @@ export async function catatRestockFaktur(faktur: Omit<FakturPembelian, 'id' | 't
     .single();
 
   if (purchaseError) {
-    if (purchaseError.code === '42P01' || purchaseError.message.includes('schema cache')) {
+    if (shouldFallback(purchaseError)) {
       // Fallback ke mock
       const newFaktur: FakturPembelian = {
         ...faktur,
