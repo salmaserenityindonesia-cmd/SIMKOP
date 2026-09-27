@@ -135,6 +135,19 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 7: Backup Database
+**Status**: ⬜ Not Started
+**Objective**: Menambahkan fungsi export data ke format Excel dan PDF.
+**Depends on**: Phase 6
+
+**Tasks**:
+- [ ] TBD (run /plan 7 to create)
+
+**Verification**:
+- TBD
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -157,6 +170,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 4 | Pinjaman (0% Bunga) & Simpanan | ✅ | 5/5 | 100% |
 | 5 | Inventori, Restock & Dashboard | ✅ | 5/5 | 100% |
 | 6 | Manajemen Anggota Koperasi | ✅ | 3/3 | 100% |
+| 7 | Backup Database | ⬜ | 0/0 | 0% |
 
 ---
 
@@ -170,4 +184,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 4 | — | — | — |
 | 5 | — | — | — |
 | 6 | — | 2026-09-27 | — |
-
+| 7 | — | — | — |
