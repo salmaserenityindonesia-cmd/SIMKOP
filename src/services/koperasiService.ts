@@ -40,6 +40,96 @@ export interface Pinjaman {
   created_at?: string;
 }
 
+// Phase 8: Dynamic Deposits and Loans
+export interface DepositType {
+  id: string;
+  code: string;
+  name: string;
+  frequency_type: 'once' | 'monthly' | 'yearly';
+  default_amount: number;
+  can_be_withdrawn: boolean;
+  is_active: boolean;
+}
+
+export interface MemberDeposit {
+  id: string;
+  member_id: string;
+  deposit_type_id: string;
+  is_terminated: boolean;
+  terminated_at?: string | null;
+  created_at?: string;
+}
+
+export interface DepositTransaction {
+  id: string;
+  member_deposit_id: string;
+  transaction_type: string;
+  amount: number;
+  description?: string;
+  for_month?: number | null;
+  for_year?: number | null;
+  created_at?: string;
+}
+
+export interface LoanType {
+  id: string;
+  code: string;
+  name: string;
+  max_duration_months: number;
+  is_active: boolean;
+}
+
+export interface Loan {
+  id: string;
+  loan_number: string;
+  member_id: string;
+  loan_type_id: string;
+  principal_amount: number;
+  agreed_tenor_months: number;
+  planned_installment_amount: number;
+  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'paid';
+  created_at?: string;
+}
+
+export interface LoanInstallment {
+  id: string;
+  loan_id: string;
+  amount: number;
+  payment_date: string;
+  for_month?: number | null;
+  for_year?: number | null;
+  notes?: string;
+  created_at?: string;
+}
+
+export interface MonthlyDepositCommitment {
+  member_deposit_id: string;
+  member_id: string;
+  deposit_type_id: string;
+  deposit_name: string;
+  commitment_amount: number;
+  for_month: number | null;
+  for_year: number | null;
+  total_paid: number;
+  remaining_balance: number;
+  status: 'lunas' | 'belum_lunas';
+  anggota?: {
+    nama: string;
+    nrp: string;
+  };
+}
+
+export interface MonthlyLoanCommitment {
+  loan_id: string;
+  member_id: string;
+  commitment_amount: number;
+  for_month: number | null;
+  for_year: number | null;
+  total_paid: number;
+  remaining_balance: number;
+  status: 'lunas' | 'belum_lunas';
+}
+
 export interface AnggotaWithSimpanan extends Anggota {
   simpanan_pokok: number;
   simpanan_wajib: number;
@@ -988,4 +1078,162 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     stokKritis,
     transaksiTersimpan: 0 // Will be handled by the UI via cartStore
   };
+}
+
+// Phase 8: Dynamic Deposits & Loans CRUD
+
+export async function getDepositTypes(): Promise<DepositType[]> {
+  const { data, error } = await supabase.from('deposit_types').select('*').order('name');
+  if (error) {
+    if (shouldFallback(error)) return [];
+    throw new Error(`Failed to fetch deposit types: ${error.message}`);
+  }
+  return data as DepositType[];
+}
+
+export async function addDepositType(depositType: Omit<DepositType, 'id'>): Promise<DepositType> {
+  const { data, error } = await supabase.from('deposit_types').insert([depositType]).select().single();
+  if (error) {
+    throw new Error(`Failed to add deposit type: ${error.message}`);
+  }
+  return data as DepositType;
+}
+
+export async function updateDepositType(id: string, updates: Partial<Omit<DepositType, 'id'>>): Promise<DepositType> {
+  const { data, error } = await supabase.from('deposit_types').update(updates).eq('id', id).select().single();
+  if (error) {
+    throw new Error(`Failed to update deposit type: ${error.message}`);
+  }
+  return data as DepositType;
+}
+
+export async function deleteDepositType(id: string): Promise<void> {
+  const { error } = await supabase.from('deposit_types').delete().eq('id', id);
+  if (error) {
+    throw new Error(`Failed to delete deposit type: ${error.message}`);
+  }
+}
+
+export async function getLoanTypes(): Promise<LoanType[]> {
+  const { data, error } = await supabase.from('loan_types').select('*').order('name');
+  if (error) {
+    if (shouldFallback(error)) return [];
+    throw new Error(`Failed to fetch loan types: ${error.message}`);
+  }
+  return data as LoanType[];
+}
+
+export async function addLoanType(loanType: Omit<LoanType, 'id'>): Promise<LoanType> {
+  const { data, error } = await supabase.from('loan_types').insert([loanType]).select().single();
+  if (error) {
+    throw new Error(`Failed to add loan type: ${error.message}`);
+  }
+  return data as LoanType;
+}
+
+export async function updateLoanType(id: string, updates: Partial<Omit<LoanType, 'id'>>): Promise<LoanType> {
+  const { data, error } = await supabase.from('loan_types').update(updates).eq('id', id).select().single();
+  if (error) {
+    throw new Error(`Failed to update loan type: ${error.message}`);
+  }
+  return data as LoanType;
+}
+
+export async function deleteLoanType(id: string): Promise<void> {
+  const { error } = await supabase.from('loan_types').delete().eq('id', id);
+  if (error) {
+    throw new Error(`Failed to delete loan type: ${error.message}`);
+  }
+}
+
+export async function getMemberDeposits(memberId: string): Promise<MemberDeposit[]> {
+  const { data, error } = await supabase.from('member_deposits').select('*').eq('member_id', memberId);
+  if (error) {
+    if (shouldFallback(error)) return [];
+    throw new Error(`Failed to fetch member deposits: ${error.message}`);
+  }
+  return data as MemberDeposit[];
+}
+
+export async function getLoans(memberId: string): Promise<Loan[]> {
+  const { data, error } = await supabase.from('loans').select('*').eq('member_id', memberId).order('created_at', { ascending: false });
+  if (error) {
+    if (shouldFallback(error)) return [];
+    throw new Error(`Failed to fetch loans: ${error.message}`);
+  }
+  return data as Loan[];
+}
+
+export async function addDepositTransaction(
+  member_deposit_id: string, 
+  amount: number, 
+  for_month: number, 
+  for_year: number, 
+  transaction_type: string = 'deposit',
+  description: string = 'Pembayaran cicilan simpanan'
+) {
+  const { data, error } = await supabase
+    .from('deposit_transactions')
+    .insert([{
+      member_deposit_id,
+      amount,
+      for_month,
+      for_year,
+      transaction_type,
+      description
+    }])
+    .select()
+    .single();
+
+  if (error) {
+    if (shouldFallback(error)) {
+      console.warn('Table "deposit_transactions" does not exist yet. Simulating success.');
+      return { member_deposit_id, amount, for_month, for_year, transaction_type };
+    }
+    throw new Error(`Failed to insert deposit transaction: ${error.message}`);
+  }
+  return data;
+}
+
+export async function addLoanInstallment(installment: Omit<LoanInstallment, 'id' | 'created_at'>): Promise<LoanInstallment> {
+  const { data, error } = await supabase.from('loan_installments').insert([installment]).select().single();
+  if (error) {
+    throw new Error(`Failed to insert loan installment: ${error.message}`);
+  }
+  return data as LoanInstallment;
+}
+
+export async function getMonthlyDepositCommitments(month?: number, year?: number) {
+  let query = supabase.from('monthly_deposit_commitments').select(`
+    *,
+    anggota!member_id (nama, nrp)
+  `);
+  
+  if (month) query = query.eq('for_month', month);
+  if (year) query = query.eq('for_year', year);
+
+  const { data, error } = await query;
+  
+  if (error) {
+    if (shouldFallback(error)) {
+      console.warn('View "monthly_deposit_commitments" does not exist yet. Returning empty array.');
+      return [];
+    }
+    throw new Error(`Failed to fetch monthly deposit commitments: ${error.message}`);
+  }
+  
+  return data;
+}
+
+export async function getMonthlyLoanCommitments(memberId?: string): Promise<MonthlyLoanCommitment[]> {
+  let query = supabase.from('monthly_loan_commitments').select('*');
+  if (memberId) {
+    query = query.eq('member_id', memberId);
+  }
+  const { data, error } = await query;
+  if (error) {
+    if (shouldFallback(error)) return [];
+    throw new Error(`Failed to fetch monthly loan commitments: ${error.message}`);
+  }
+  return data as MonthlyLoanCommitment[];
 }

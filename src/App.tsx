@@ -11,6 +11,7 @@ import ManajemenProduk from './pages/admin/ManajemenProduk';
 import ManajemenPembelian from './pages/admin/ManajemenPembelian';
 import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
+import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
 
 export default function App() {
   return (
@@ -60,6 +61,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <ApprovalPinjaman />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/admin/master-simpan-pinjam" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <ManajemenProdukSimpanPinjam />
             </ProtectedRoute>
           } 
         />

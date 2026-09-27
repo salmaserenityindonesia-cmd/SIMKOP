@@ -136,15 +136,31 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 7: Backup Database
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: Menambahkan fungsi export data ke format Excel dan PDF.
 **Depends on**: Phase 6
 
 **Tasks**:
-- [ ] TBD (run /plan 7 to create)
+- [x] Plan 7.1: Master Data Export (Anggota & Produk)
+- [x] Plan 7.2: Export Transaksi dan Pinjaman (Excel & PDF)
 
 **Verification**:
-- TBD
+- [x] Tombol export (Excel/PDF) tersedia di modul Pinjaman, Riwayat Transaksi, Anggota, Produk.
+- [x] Data yang diexport mencerminkan data aktual di tabel antarmuka.
+
+---
+
+### Phase 8: Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis
+**Status**: ⬜ Not Started
+**Objective**: Memungkinkan pembuatan jenis simpanan dan pinjaman secara dinamis dengan persyaratannya masing-masing, mendukung pembayaran cicilan parsial, dan melacak status pelunasan komitmen bulanan.
+**Depends on**: Phase 4, Phase 7
+
+**Plans**:
+- [x] Plan 8.1: Migrasi skema database & update service layer ke tabel bahasa Inggris (`deposit_types`, `loans`, dll).
+- [x] Plan 8.2: Modul Admin - CRUD Jenis Simpanan (`deposit_types`) & Jenis Pinjaman (`loan_types`).
+- [ ] Plan 8.3: Refaktor UI Simpanan - Mendukung multiple jenis simpanan per anggota & pembayaran parsial per bulan.
+- [ ] Plan 8.4: Refaktor UI Pinjaman - Mendukung multiple jenis pinjaman, tenor dinamis, & cicilan angsuran parsial per bulan.
+- [ ] Plan 8.5: Dashboard Analytics - Menampilkan tracking status komitmen bulanan (Lunas / Belum Lunas).
 
 ---
 
@@ -170,7 +186,8 @@ updated: 2026-09-26T19:28:00+07:00
 | 4 | Pinjaman (0% Bunga) & Simpanan | ✅ | 5/5 | 100% |
 | 5 | Inventori, Restock & Dashboard | ✅ | 5/5 | 100% |
 | 6 | Manajemen Anggota Koperasi | ✅ | 3/3 | 100% |
-| 7 | Backup Database | ⬜ | 0/0 | 0% |
+| 7 | Backup Database | ✅ | 2/2 | 100% |
+| 8 | Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis | 🔄 | 2/5 | 40% |
 
 ---
 
@@ -184,4 +201,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 4 | — | — | — |
 | 5 | — | — | — |
 | 6 | — | 2026-09-27 | — |
-| 7 | — | — | — |
+| 7 | 2026-09-27 | 2026-09-27 | 1 day |
