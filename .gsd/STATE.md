@@ -1,14 +1,13 @@
 ## Current Position
-- **Phase**: 7 (Backup Database)
-- **Task**: Between plans. Finished Plan 7.1.
-- **Status**: Paused at 2026-09-27T10:23:51+07:00
+- **Phase**: 8 (Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis)
+- **Task**: Between plans. Finished Plan 8.1.
+- **Status**: Paused at 2026-09-27T10:57:25+07:00
 
 ## Last Session Summary
-Executed Plan 7.1 inline:
-- Installed `xlsx`, `jspdf`, `jspdf-autotable`.
-- Created export utility `src/lib/exportUtils.ts`.
-- Integrated Export Excel and PDF buttons into `ManajemenAnggota.tsx` and `ManajemenProduk.tsx`.
-- Successfully verified with `npm run build`.
+Executed Plan 8.1:
+- Added TypeScript interfaces for the new dynamic schema (`DepositType`, `Loan`, etc.).
+- Added CRUD and aggregation functions to `src/services/koperasiService.ts` to interface with the new Supabase tables.
+- Passed `npx tsc --noEmit` check.
 
 ## In-Progress Work
 - None.
@@ -17,5 +16,4 @@ Executed Plan 7.1 inline:
 - None.
 
 ## Next Steps
-1. /resume
-2. /execute 7 (to run Plan 7.2)
+1. Execute Plan 8.2: Modul Admin - CRUD Jenis Simpanan & Pinjaman.

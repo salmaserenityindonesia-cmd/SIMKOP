@@ -436,3 +436,25 @@ User invoked `/pause` command to refresh context between inline plan executions.
 
 ### Handoff Notes
 Phase 7 Plan 7.1 is complete. Next session should begin with `/execute 7` to run Plan 7.2 (Export Transaksi dan Pinjaman).
+
+---
+
+## Session: 2026-09-27 10:57
+
+### Objective
+Plan Phase 8 and execute Plan 8.1.
+
+### Accomplished
+- Created Phase 8 proposal with SQL migration script for dynamic deposits and loans.
+- Planned Phase 8 (Plans 8.1 - 8.5).
+- Executed Plan 8.1: Updated `koperasiService.ts` with Supabase schemas (`deposit_types`, `loans`, etc.) and CRUD functions.
+- Verified TypeScript internally.
+
+### Verification
+- [x] `koperasiService.ts` successfully type-checked via `npx tsc --noEmit`.
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Plan 8.1 is complete. Next session should begin with `/execute 8` to run Plan 8.2 (Modul Admin - CRUD Jenis Simpanan & Pinjaman).
