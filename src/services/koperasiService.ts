@@ -1142,3 +1142,45 @@ export async function getMonthlyLoanCommitments(options?: { memberId?: string, l
   }
   return data as MonthlyLoanCommitment[];
 }
+
+export interface CommitmentStats {
+  deposit: {
+    lunas: number;
+    belum_lunas: number;
+  };
+  loan: {
+    lunas: number;
+    belum_lunas: number;
+  };
+}
+
+export async function getCommitmentStats(month: number, year: number): Promise<CommitmentStats> {
+  const stats: CommitmentStats = {
+    deposit: { lunas: 0, belum_lunas: 0 },
+    loan: { lunas: 0, belum_lunas: 0 }
+  };
+
+  const { data: deposits, error: depError } = await supabase
+    .from('monthly_deposit_commitments')
+    .select('status')
+    .eq('for_month', month)
+    .eq('for_year', year);
+
+  if (!depError && deposits) {
+    stats.deposit.lunas = deposits.filter((d: any) => d.status === 'lunas').length;
+    stats.deposit.belum_lunas = deposits.filter((d: any) => d.status === 'belum_lunas').length;
+  }
+
+  const { data: loans, error: loanError } = await supabase
+    .from('monthly_loan_commitments')
+    .select('status')
+    .eq('for_month', month)
+    .eq('for_year', year);
+
+  if (!loanError && loans) {
+    stats.loan.lunas = loans.filter((l: any) => l.status === 'lunas').length;
+    stats.loan.belum_lunas = loans.filter((l: any) => l.status === 'belum_lunas').length;
+  }
+
+  return stats;
+}

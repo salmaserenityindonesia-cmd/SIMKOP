@@ -1,25 +1,31 @@
 import { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getDashboardStats, DashboardStats } from '../../services/koperasiService';
+import { getDashboardStats, DashboardStats, getCommitmentStats, CommitmentStats } from '../../services/koperasiService';
 import { useCart } from '../../lib/cartStore';
 import { Link } from 'react-router-dom';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [commitmentStats, setCommitmentStats] = useState<CommitmentStats | null>(null);
   const [loading, setLoading] = useState(true);
   const { parkedTransactions } = useCart();
 
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+
   useEffect(() => {
-    getDashboardStats()
-      .then(data => {
-        setStats(data);
-        setLoading(false);
-      })
-      .catch(error => {
-        console.error('Failed to load dashboard stats:', error);
-        setLoading(false);
-      });
-  }, []);
+    Promise.all([
+      getDashboardStats(),
+      getCommitmentStats(currentMonth, currentYear)
+    ]).then(([dashboardData, commitmentData]) => {
+      setStats(dashboardData);
+      setCommitmentStats(commitmentData);
+      setLoading(false);
+    }).catch(error => {
+      console.error('Failed to load dashboard stats:', error);
+      setLoading(false);
+    });
+  }, [currentMonth, currentYear]);
 
   return (
     <AdminLayout>
@@ -125,6 +131,50 @@ export default function AdminDashboard() {
                <Link to="/kasir" className="text-primary hover:underline flex items-center gap-1 font-medium">
                 Buka Kasir <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
               </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* COMMITMENT STATS (PHASE 8 Analytics) */}
+      {!loading && (
+        <section className="mt-8">
+          <h2 className="text-title-lg font-title-lg text-primary mb-4">Status Komitmen Bulan Ini ({currentMonth}/{currentYear})</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Deposit Commitments */}
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/40 p-5 shadow-sm">
+              <h3 className="text-title-md font-title-md text-on-surface mb-3 flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">savings</span>
+                Simpanan Wajib
+              </h3>
+              <div className="flex gap-4 items-center">
+                <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
+                  <div className="text-headline-sm font-semibold text-[#10B981]">{commitmentStats?.deposit.lunas || 0}</div>
+                  <div className="text-label-sm text-on-surface-variant">Sudah Lunas</div>
+                </div>
+                <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
+                  <div className="text-headline-sm font-semibold text-error">{commitmentStats?.deposit.belum_lunas || 0}</div>
+                  <div className="text-label-sm text-on-surface-variant">Belum Lunas</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Loan Commitments */}
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/40 p-5 shadow-sm">
+              <h3 className="text-title-md font-title-md text-on-surface mb-3 flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">account_balance_wallet</span>
+                Cicilan Pinjaman
+              </h3>
+              <div className="flex gap-4 items-center">
+                <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
+                  <div className="text-headline-sm font-semibold text-[#10B981]">{commitmentStats?.loan.lunas || 0}</div>
+                  <div className="text-label-sm text-on-surface-variant">Sudah Lunas</div>
+                </div>
+                <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
+                  <div className="text-headline-sm font-semibold text-error">{commitmentStats?.loan.belum_lunas || 0}</div>
+                  <div className="text-label-sm text-on-surface-variant">Belum Lunas</div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
