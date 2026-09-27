@@ -3,11 +3,11 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { 
   getAnggota, 
   Anggota,
-  getMonthlyDepositCommitments,
   getLoans,
   getMonthlyLoanCommitments,
   addDepositTransaction,
-  addLoanInstallment
+  addLoanInstallment,
+  getMemberDepositBills
 } from '../../services/koperasiService';
 import { Search, Loader2, DollarSign, CheckCircle2 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -58,9 +58,8 @@ export default function TerimaSetoran() {
       setError(null);
       setSelectedBills({});
 
-      // 1. Fetch Deposit Commitments
-      const deposits = await getMonthlyDepositCommitments(targetMonth, targetYear);
-      const memberDeposits = deposits.filter((d: any) => d.member_id === memberId && d.remaining_balance > 0);
+      // 1. Fetch Deposit Commitments (Auto enrolls and calculates both 'once' and 'monthly' types)
+      const memberDeposits = await getMemberDepositBills(memberId, targetMonth, targetYear);
       setDepositBills(memberDeposits);
 
       // 2. Fetch Loan Commitments

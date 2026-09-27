@@ -1054,6 +1054,84 @@ export async function getMemberDeposits(memberId: string): Promise<MemberDeposit
   return data as MemberDeposit[];
 }
 
+export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
+  // 1. Fetch deposit_types
+  let { data: dTypes, error: dtError } = await supabase.from('deposit_types').select('*');
+  if (dtError && shouldFallback(dtError)) return; // fallback
+  
+  if (!dTypes || dTypes.length === 0) {
+    // seed them
+    const seeds = [
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'once', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true }
+    ];
+    await supabase.from('deposit_types').insert(seeds);
+    const { data: refreshed } = await supabase.from('deposit_types').select('*');
+    dTypes = refreshed;
+  }
+
+  // 2. Fetch member_deposits for this member
+  const { data: mDeposits } = await supabase.from('member_deposits').select('*').eq('member_id', memberId);
+  const enrolledTypeIds = mDeposits?.map(md => md.deposit_type_id) || [];
+
+  // 3. Enroll missing
+  const toEnroll = dTypes?.filter(dt => !enrolledTypeIds.includes(dt.id) && dt.is_active) || [];
+  if (toEnroll.length > 0) {
+    const inserts = toEnroll.map(dt => ({
+      member_id: memberId,
+      deposit_type_id: dt.id,
+      is_terminated: false
+    }));
+    await supabase.from('member_deposits').insert(inserts);
+  }
+}
+
+export async function getMemberDepositBills(memberId: string, month: number, year: number) {
+  await ensureMandatoryDepositsAndEnroll(memberId);
+  const dTypes = await getDepositTypes();
+  const mDeposits = await getMemberDeposits(memberId);
+  
+  const mdIds = mDeposits.map(md => md.id);
+  let txs: any[] = [];
+  if (mdIds.length > 0) {
+    const { data } = await supabase.from('deposit_transactions').select('*').in('member_deposit_id', mdIds);
+    if (data) txs = data;
+  }
+  
+  const bills = [];
+  for (const md of mDeposits) {
+    const dt = dTypes.find(d => d.id === md.deposit_type_id);
+    if (!dt) continue;
+
+    if (dt.frequency_type === 'once') {
+      const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
+      const remaining = dt.default_amount - totalPaid;
+      if (remaining > 0) {
+        bills.push({
+          member_deposit_id: md.id,
+          deposit_name: dt.name,
+          remaining_balance: remaining
+        });
+      }
+    } else if (dt.frequency_type === 'monthly') {
+      const totalPaid = txs
+        .filter(tx => tx.member_deposit_id === md.id && tx.for_month === month && tx.for_year === year)
+        .reduce((sum, tx) => sum + tx.amount, 0);
+      const remaining = dt.default_amount - totalPaid;
+      if (remaining > 0) {
+        bills.push({
+          member_deposit_id: md.id,
+          deposit_name: dt.name,
+          remaining_balance: remaining
+        });
+      }
+    }
+  }
+  return bills;
+}
+
 export async function getLoans(memberId: string): Promise<Loan[]> {
   const { data, error } = await supabase.from('loans').select('*').eq('member_id', memberId).order('created_at', { ascending: false });
   if (error) {
