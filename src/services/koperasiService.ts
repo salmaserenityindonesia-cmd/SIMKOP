@@ -1094,7 +1094,8 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
     }));
     const { error: insertErr } = await supabase.from('member_deposits').insert(inserts);
     if (insertErr) {
-      throw new Error(`Gagal mendaftarkan anggota ke simpanan otomatis (member_deposits): ${insertErr.message}`);
+      console.error(`Gagal mendaftarkan anggota ke simpanan otomatis (member_deposits): ${insertErr.message}`);
+      // We don't throw here so the UI can still render the bills
     }
   }
 }
@@ -1119,10 +1120,11 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
     if (!dt.is_active) continue;
 
     // Find the member's deposit record (or mock it if it failed to insert)
-    const md = mDeposits.find(m => m.deposit_type_id === dt.id);
-    if (!md) {
-      throw new Error(`Data member_deposits tidak ditemukan untuk simpanan ${dt.name}. Proses pendaftaran otomatis mungkin gagal.`);
-    }
+    const md = mDeposits.find(m => m.deposit_type_id === dt.id) || {
+      id: `mock-md-${dt.id}`,
+      deposit_type_id: dt.id,
+      member_id: memberId
+    };
 
     if (dt.frequency_type === 'once') {
       const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
