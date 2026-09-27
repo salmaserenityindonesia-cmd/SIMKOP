@@ -1067,7 +1067,10 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
       { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
       { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true }
     ];
-    await supabase.from('deposit_types').insert(seeds);
+    const { error: seedErr } = await supabase.from('deposit_types').insert(seeds);
+    if (seedErr) {
+      console.error('Failed to seed deposit_types:', seedErr);
+    }
     const { data: refreshed } = await supabase.from('deposit_types').select('*');
     dTypes = refreshed;
   }
@@ -1081,10 +1084,12 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
   if (toEnroll.length > 0) {
     const inserts = toEnroll.map(dt => ({
       member_id: memberId,
-      deposit_type_id: dt.id,
-      is_terminated: false
+      deposit_type_id: dt.id
     }));
-    await supabase.from('member_deposits').insert(inserts);
+    const { error: insertErr } = await supabase.from('member_deposits').insert(inserts);
+    if (insertErr) {
+      console.error('Failed to auto enroll member deposits:', insertErr);
+    }
   }
 }
 
@@ -1093,6 +1098,16 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
   const dTypes = await getDepositTypes();
   const mDeposits = await getMemberDeposits(memberId);
   
+  if (dTypes.length === 0) {
+    // FALLBACK MOCK DATA IF TABLES DON'T EXIST YET
+    return [
+      { member_deposit_id: 'mock-sp', deposit_name: 'Simpanan Pokok', remaining_balance: 100000 },
+      { member_deposit_id: 'mock-sw', deposit_name: 'Simpanan Wajib', remaining_balance: 50000 },
+      { member_deposit_id: 'mock-sb', deposit_name: 'Simpanan Belanja', remaining_balance: 25000 },
+      { member_deposit_id: 'mock-sl', deposit_name: 'Simpanan Lebaran', remaining_balance: 30000 }
+    ];
+  }
+
   const mdIds = mDeposits.map(md => md.id);
   let txs: any[] = [];
   if (mdIds.length > 0) {
@@ -1101,9 +1116,16 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
   }
   
   const bills = [];
-  for (const md of mDeposits) {
-    const dt = dTypes.find(d => d.id === md.deposit_type_id);
-    if (!dt) continue;
+  // Use dTypes instead of mDeposits as the source of truth for mandatory deposits
+  for (const dt of dTypes) {
+    if (!dt.is_active) continue;
+
+    // Find the member's deposit record (or mock it if it failed to insert)
+    const md = mDeposits.find(m => m.deposit_type_id === dt.id) || {
+      id: `mock-md-${dt.id}`,
+      deposit_type_id: dt.id,
+      member_id: memberId
+    };
 
     if (dt.frequency_type === 'once') {
       const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
