@@ -1,7 +1,7 @@
 ## Current Position
 - **Phase**: 8 (Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis)
 - **Task**: Plan 8.4 complete. Ready for Plan 8.5 (Dashboard Analytics).
-- **Status**: Paused at 2026-09-27 11:28
+- **Status**: Active (resumed 2026-09-27 11:33)
 
 ## Last Session Summary
 Executed Plan 8.4 inline. Successfully migrated `ajukanPinjaman` and related services in `koperasiService.ts` to use the new `loans` table. Updated `FormPengajuanPinjaman.tsx` to handle dynamic loan types and correct tenor validation. Refactored `ApprovalPinjaman.tsx` to read the new `Loan` interface properties. Completely rewrote `DetailPinjaman.tsx` to dynamically render an installment schedule that integrates partial payments using the `monthly_loan_commitments` view and `addLoanInstallment` API. Passed build tests successfully.

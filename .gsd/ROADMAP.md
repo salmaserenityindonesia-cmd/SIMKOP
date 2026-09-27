@@ -159,7 +159,7 @@ updated: 2026-09-26T19:28:00+07:00
 - [x] Plan 8.1: Migrasi skema database & update service layer ke tabel bahasa Inggris (`deposit_types`, `loans`, dll).
 - [x] Plan 8.2: Modul Admin - CRUD Jenis Simpanan (`deposit_types`) & Jenis Pinjaman (`loan_types`).
 - [ ] Plan 8.3: Refaktor UI Simpanan - Mendukung multiple jenis simpanan per anggota & pembayaran parsial per bulan.
-- [ ] Plan 8.4: Refaktor UI Pinjaman - Mendukung multiple jenis pinjaman, tenor dinamis, & cicilan angsuran parsial per bulan.
+- [x] Plan 8.4: Refaktor UI Pinjaman - Mendukung multiple jenis pinjaman, tenor dinamis, & cicilan angsuran parsial per bulan.
 - [ ] Plan 8.5: Dashboard Analytics - Menampilkan tracking status komitmen bulanan (Lunas / Belum Lunas).
 
 ---

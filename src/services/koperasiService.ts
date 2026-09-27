@@ -31,14 +31,7 @@ export interface Simpanan {
   tanggal: string;
 }
 
-export interface Pinjaman {
-  id: string;
-  anggota_id: string;
-  jumlah: number;
-  tenor_bulan: number;
-  status: 'pending' | 'approved' | 'rejected' | 'paid';
-  created_at?: string;
-}
+
 
 // Phase 8: Dynamic Deposits and Loans
 export interface DepositType {
@@ -437,36 +430,36 @@ export async function saveTransaction(items: any[], total: number, payment: numb
 
   return tx;
 }
-
 /**
  * Mengajukan pinjaman baru (0% bunga)
  */
-export async function ajukanPinjaman(data: Omit<Pinjaman, 'id' | 'created_at' | 'status'>) {
-  const pinjamanData = {
+export async function ajukanPinjaman(data: Omit<Loan, 'id' | 'created_at' | 'status' | 'loan_number'>) {
+  const loanData = {
     ...data,
+    loan_number: `LOAN-${Date.now()}`,
     status: 'pending',
   };
 
   const { data: result, error } = await supabase
-    .from('pinjaman')
-    .insert([pinjamanData])
+    .from('loans')
+    .insert([loanData])
     .select()
     .single();
 
   if (error) {
     if (shouldFallback(error)) {
-      console.warn('Table "pinjaman" does not exist yet. Simulating success.');
+      console.warn('Table "loans" does not exist yet. Simulating success.');
       return { 
-        id: `dummy-pinjaman-${Date.now()}`, 
-        ...pinjamanData, 
+        id: `dummy-loan-${Date.now()}`, 
+        ...loanData, 
         created_at: new Date().toISOString() 
-      } as Pinjaman;
+      } as Loan;
     }
-    console.error('Error inserting pinjaman:', error.message);
+    console.error('Error inserting loan:', error.message);
     throw new Error(`Gagal mengajukan pinjaman: ${error.message}`);
   }
 
-  return result as Pinjaman;
+  return result as Loan;
 }
 
 /**
@@ -474,10 +467,10 @@ export async function ajukanPinjaman(data: Omit<Pinjaman, 'id' | 'created_at' | 
  */
 export async function getPendingPinjaman() {
   const { data, error } = await supabase
-    .from('pinjaman')
+    .from('loans')
     .select(`
       *,
-      anggota (
+      anggota!member_id (
         nama,
         nrp
       )
@@ -487,29 +480,10 @@ export async function getPendingPinjaman() {
 
   if (error) {
     if (shouldFallback(error)) {
-      console.warn('Table "pinjaman" does not exist yet. Returning dummy pending data.');
-      return [
-        {
-          id: 'dummy-pinjaman-1',
-          anggota_id: 'dummy-anggota-1',
-          jumlah: 5000000,
-          tenor_bulan: 12,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          anggota: { nama: 'Budi Santoso', nrp: '123456' }
-        },
-        {
-          id: 'dummy-pinjaman-2',
-          anggota_id: 'dummy-anggota-2',
-          jumlah: 2000000,
-          tenor_bulan: 6,
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          anggota: { nama: 'Siti Aminah', nrp: '654321' }
-        }
-      ];
+      console.warn('Table "loans" does not exist yet. Returning dummy pending data.');
+      return [];
     }
-    console.error('Error fetching pending pinjaman:', error.message);
+    console.error('Error fetching pending loans:', error.message);
     throw new Error(`Gagal memuat daftar pinjaman pending: ${error.message}`);
   }
 
@@ -521,7 +495,7 @@ export async function getPendingPinjaman() {
  */
 export async function updateStatusPinjaman(id: string, status: 'approved' | 'rejected') {
   const { data, error } = await supabase
-    .from('pinjaman')
+    .from('loans')
     .update({ status })
     .eq('id', id)
     .select()
@@ -529,84 +503,14 @@ export async function updateStatusPinjaman(id: string, status: 'approved' | 'rej
 
   if (error) {
     if (shouldFallback(error)) {
-      console.warn('Table "pinjaman" does not exist yet. Simulating update success.');
-      return { id, status } as Partial<Pinjaman>;
+      console.warn('Table "loans" does not exist yet. Simulating update success.');
+      return { id, status } as Partial<Loan>;
     }
-    console.error(`Error updating pinjaman status to ${status}:`, error.message);
+    console.error(`Error updating loan status to ${status}:`, error.message);
     throw new Error(`Gagal memperbarui status pinjaman: ${error.message}`);
   }
 
-  return data as Pinjaman;
-}
-
-export interface Angsuran {
-  id: string;
-  pinjaman_id: string;
-  bulan_ke: number;
-  jumlah_bayar: number;
-  tanggal_bayar: string | null;
-  status: 'belum' | 'lunas';
-}
-
-/**
- * Mengambil jadwal angsuran berdasarkan pinjaman_id
- */
-export async function getJadwalAngsuran(pinjaman_id: string, jumlah_pinjaman: number, tenor_bulan: number): Promise<Angsuran[]> {
-  const { data, error } = await supabase
-    .from('angsuran')
-    .select('*')
-    .eq('pinjaman_id', pinjaman_id)
-    .order('bulan_ke', { ascending: true });
-
-  if (error) {
-    if (shouldFallback(error)) {
-      console.warn('Table "angsuran" does not exist yet. Generating dummy schedule.');
-      // Generate dummy schedule based on jumlah / tenor
-      const cicilanPerBulan = Math.floor(jumlah_pinjaman / tenor_bulan);
-      const schedule: Angsuran[] = [];
-      for (let i = 1; i <= tenor_bulan; i++) {
-        schedule.push({
-          id: `dummy-angsuran-${pinjaman_id}-${i}`,
-          pinjaman_id,
-          bulan_ke: i,
-          jumlah_bayar: cicilanPerBulan,
-          tanggal_bayar: null,
-          status: 'belum'
-        });
-      }
-      return schedule;
-    }
-    console.error('Error fetching jadwal angsuran:', error.message);
-    throw new Error(`Gagal memuat jadwal angsuran: ${error.message}`);
-  }
-
-  return data as Angsuran[];
-}
-
-/**
- * Membayar angsuran bulan tertentu
- */
-export async function bayarAngsuran(angsuran_id: string, _jumlah: number) {
-  const { data, error } = await supabase
-    .from('angsuran')
-    .update({ 
-      status: 'lunas',
-      tanggal_bayar: new Date().toISOString()
-    })
-    .eq('id', angsuran_id)
-    .select()
-    .single();
-
-  if (error) {
-    if (shouldFallback(error)) {
-      console.warn('Table "angsuran" does not exist yet. Simulating payment success.');
-      return { id: angsuran_id, status: 'lunas', tanggal_bayar: new Date().toISOString() };
-    }
-    console.error(`Error updating angsuran ${angsuran_id}:`, error.message);
-    throw new Error(`Gagal membayar angsuran: ${error.message}`);
-  }
-
-  return data;
+  return data as Loan;
 }
 
 /**
@@ -614,12 +518,15 @@ export async function bayarAngsuran(angsuran_id: string, _jumlah: number) {
  */
 export async function getPinjamanById(id: string) {
   const { data, error } = await supabase
-    .from('pinjaman')
+    .from('loans')
     .select(`
       *,
-      anggota (
+      anggota!member_id (
         nama,
         nrp
+      ),
+      loan_types!loan_type_id (
+        name
       )
     `)
     .eq('id', id)
@@ -627,18 +534,10 @@ export async function getPinjamanById(id: string) {
 
   if (error) {
     if (shouldFallback(error)) {
-      console.warn('Table "pinjaman" does not exist yet. Returning dummy data.');
-      return {
-        id,
-        anggota_id: 'dummy-anggota',
-        jumlah: 12000000,
-        tenor_bulan: 12,
-        status: 'approved',
-        created_at: new Date().toISOString(),
-        anggota: { nama: 'Budi Santoso', nrp: '123456' }
-      };
+      console.warn('Table "loans" does not exist yet. Returning dummy data.');
+      throw new Error('Pinjaman tidak ditemukan (dummy)');
     }
-    console.error(`Error fetching pinjaman ${id}:`, error.message);
+    console.error(`Error fetching loan ${id}:`, error.message);
     throw new Error(`Gagal memuat detail pinjaman: ${error.message}`);
   }
 
@@ -1225,11 +1124,17 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
   return data;
 }
 
-export async function getMonthlyLoanCommitments(memberId?: string): Promise<MonthlyLoanCommitment[]> {
+export async function getMonthlyLoanCommitments(options?: { memberId?: string, loanId?: string }): Promise<MonthlyLoanCommitment[]> {
   let query = supabase.from('monthly_loan_commitments').select('*');
-  if (memberId) {
-    query = query.eq('member_id', memberId);
+  if (options?.memberId) {
+    query = query.eq('member_id', options.memberId);
   }
+  if (options?.loanId) {
+    query = query.eq('loan_id', options.loanId);
+  }
+  // Order by for_year, for_month
+  query = query.order('for_year', { ascending: true }).order('for_month', { ascending: true });
+  
   const { data, error } = await query;
   if (error) {
     if (shouldFallback(error)) return [];

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import { ajukanPinjaman } from '../../services/koperasiService';
+import { ajukanPinjaman, getLoanTypes, LoanType } from '../../services/koperasiService';
 
 interface FormPengajuanPinjamanProps {
   isOpen: boolean;
@@ -10,12 +10,38 @@ interface FormPengajuanPinjamanProps {
 }
 
 export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSuccess }: FormPengajuanPinjamanProps) {
+  const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
+  const [selectedLoanTypeId, setSelectedLoanTypeId] = useState<string>('');
+  
   const [jumlah, setJumlah] = useState<string>('');
   const [tenor, setTenor] = useState<number>(3);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      loadLoanTypes();
+    }
+  }, [isOpen]);
+
+  const loadLoanTypes = async () => {
+    try {
+      const types = await getLoanTypes();
+      const activeTypes = types.filter(t => t.is_active);
+      setLoanTypes(activeTypes);
+      if (activeTypes.length > 0) {
+        setSelectedLoanTypeId(activeTypes[0].id);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError('Gagal memuat jenis pinjaman');
+    }
+  };
+
   if (!isOpen || !anggota) return null;
+
+  const selectedLoanType = loanTypes.find(t => t.id === selectedLoanTypeId);
+  const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 12;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,13 +52,25 @@ export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSucc
       return;
     }
 
+    if (!selectedLoanTypeId) {
+      setError('Pilih jenis pinjaman');
+      return;
+    }
+
+    if (tenor > maxTenor) {
+      setError(`Tenor melebihi batas maksimal (${maxTenor} bulan)`);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
       await ajukanPinjaman({
-        anggota_id: anggota.id,
-        jumlah: parsedJumlah,
-        tenor_bulan: tenor
+        member_id: anggota.id,
+        loan_type_id: selectedLoanTypeId,
+        principal_amount: parsedJumlah,
+        agreed_tenor_months: tenor,
+        planned_installment_amount: Math.ceil(parsedJumlah / tenor)
       });
       onSuccess();
       onClose();
@@ -59,7 +97,28 @@ export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSucc
   };
 
   const parsedJumlah = parseInt(jumlah, 10) || 0;
-  const cicilanPerBulan = parsedJumlah / tenor;
+  const cicilanPerBulan = Math.ceil(parsedJumlah / (tenor || 1));
+
+  // Generate tenor options up to maxTenor
+  const tenorOptions = [];
+  for (let i = 1; i <= maxTenor; i++) {
+    if (i <= 12 && i % 3 !== 0 && i !== 1) continue; // Just common intervals like 1, 3, 6, 9, 12 if possible, or all if max is small
+    // Better: let's just generate 3, 6, 12... up to max
+  }
+  
+  const generateTenorOptions = (max: number) => {
+    const options = [];
+    const steps = [3, 6, 9, 12, 18, 24, 36, 48, 60];
+    for (const step of steps) {
+      if (step <= max) {
+        options.push(step);
+      }
+    }
+    if (!options.includes(max) && max > 0) {
+      options.push(max);
+    }
+    return options.sort((a, b) => a - b);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -86,6 +145,24 @@ export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSucc
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Pinjaman</label>
+            <select
+              required
+              value={selectedLoanTypeId}
+              onChange={(e) => setSelectedLoanTypeId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-white"
+            >
+              {loanTypes.length === 0 ? (
+                <option value="" disabled>Memuat...</option>
+              ) : (
+                loanTypes.map(t => (
+                  <option key={t.id} value={t.id}>{t.name} (Max {t.max_duration_months} bln)</option>
+                ))
+              )}
+            </select>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Jumlah Pinjaman (Rp)</label>
             <input
               type="text"
@@ -104,9 +181,9 @@ export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSucc
               onChange={(e) => setTenor(Number(e.target.value))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] bg-white"
             >
-              <option value={3}>3 Bulan</option>
-              <option value={6}>6 Bulan</option>
-              <option value={12}>12 Bulan</option>
+              {generateTenorOptions(maxTenor).map(t => (
+                <option key={t} value={t}>{t} Bulan</option>
+              ))}
             </select>
           </div>
 
@@ -131,7 +208,7 @@ export default function FormPengajuanPinjaman({ isOpen, onClose, anggota, onSucc
             </button>
             <button
               type="submit"
-              disabled={loading || parsedJumlah <= 0}
+              disabled={loading || parsedJumlah <= 0 || !selectedLoanTypeId}
               className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-opacity-90 font-medium flex items-center justify-center min-w-[120px] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (

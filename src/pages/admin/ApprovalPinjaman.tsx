@@ -54,10 +54,10 @@ export default function ApprovalPinjaman() {
 
   const handleExportExcel = () => {
     const data = pinjamanList.map(p => ({
-      'No. Anggota': p.anggota?.no_anggota || '-',
+      'No. Anggota': p.anggota?.no_anggota || p.anggota?.nrp || '-',
       'Nama Anggota': p.anggota?.nama || '-',
-      'Jumlah Pinjaman': p.jumlah,
-      'Tenor (Bulan)': p.tenor_bulan,
+      'Jumlah Pinjaman': p.principal_amount,
+      'Tenor (Bulan)': p.agreed_tenor_months,
       'Status': p.status || 'pending'
     }));
     exportToExcel(data, 'Data_Pinjaman');
@@ -66,10 +66,10 @@ export default function ApprovalPinjaman() {
   const handleExportPDF = () => {
     const headers = ['No. Anggota', 'Nama Anggota', 'Jumlah', 'Tenor', 'Status'];
     const data = pinjamanList.map(p => [
-      p.anggota?.no_anggota || '-',
+      p.anggota?.no_anggota || p.anggota?.nrp || '-',
       p.anggota?.nama || '-',
-      formatRupiah(p.jumlah),
-      `${p.tenor_bulan} Bulan`,
+      formatRupiah(p.principal_amount),
+      `${p.agreed_tenor_months} Bulan`,
       p.status || 'pending'
     ]);
     exportToPDF(headers, data, 'Data_Pinjaman', 'Laporan Data Pinjaman');
@@ -136,10 +136,10 @@ export default function ApprovalPinjaman() {
               ) : (
                 pinjamanList.map((p) => (
                   <tr key={p.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4 text-sm text-gray-900">{p.anggota?.no_anggota || '-'}</td>
+                    <td className="py-3 px-4 text-sm text-gray-900">{p.anggota?.no_anggota || p.anggota?.nrp || '-'}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{p.anggota?.nama || '-'}</td>
-                    <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.jumlah)}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.tenor_bulan} Bulan</td>
+                    <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">{formatRupiah(p.principal_amount)}</td>
+                    <td className="py-3 px-4 text-sm text-gray-700 text-center">{p.agreed_tenor_months} Bulan</td>
                     <td className="py-3 px-4 text-sm text-center">
                       <StatusBadge status={p.status || 'pending'} />
                     </td>

@@ -1,25 +1,123 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { 
   getPinjamanById, 
-  getJadwalAngsuran, 
-  bayarAngsuran, 
-  Angsuran, 
-  Pinjaman 
+  getMonthlyLoanCommitments, 
+  addLoanInstallment, 
+  MonthlyLoanCommitment
 } from '../../services/koperasiService';
-import { ArrowLeft, CheckCircle, Clock } from 'lucide-react';
+import { ArrowLeft, Loader2, DollarSign } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
+
+// Helper modal for partial payments
+function PaymentModal({ 
+  isOpen, 
+  onClose, 
+  onSubmit, 
+  defaultAmount, 
+  title, 
+  description 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onSubmit: (amount: number) => Promise<void>, 
+  defaultAmount: number,
+  title: string,
+  description: string
+}) {
+  const [amountStr, setAmountStr] = useState(defaultAmount.toString());
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setAmountStr(defaultAmount.toString());
+    }
+  }, [isOpen, defaultAmount]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseInt(amountStr.replace(/[^0-9]/g, ''), 10);
+    if (isNaN(val) || val <= 0) {
+      alert("Jumlah tidak valid");
+      return;
+    }
+    setLoading(true);
+    try {
+      await onSubmit(val);
+      onClose();
+    } catch (err: any) {
+      alert(err.message || 'Gagal menyimpan pembayaran');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/[^0-9]/g, '');
+    setAmountStr(val);
+  };
+
+  const formatRupiah = (val: string) => {
+    const num = parseInt(val, 10);
+    if (isNaN(num)) return '';
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(num).replace('Rp', '').trim();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+        <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+          <p className="text-sm text-gray-600">{description}</p>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Jumlah Bayar (Rp)</label>
+            <input
+              type="text"
+              required
+              value={formatRupiah(amountStr)}
+              onChange={handleAmountChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            />
+          </div>
+          <div className="pt-2 flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 font-medium disabled:opacity-50"
+            >
+              Batal
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !amountStr || parseInt(amountStr, 10) <= 0}
+              className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-opacity-90 font-medium flex items-center disabled:opacity-50"
+            >
+              {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <DollarSign className="w-4 h-4 mr-2" />}
+              Proses Bayar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 export default function DetailPinjaman() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   
   const [pinjaman, setPinjaman] = useState<any>(null);
-  const [jadwal, setJadwal] = useState<Angsuran[]>([]);
+  const [commitments, setCommitments] = useState<MonthlyLoanCommitment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isPaying, setIsPaying] = useState<string | null>(null);
+  
+  const [activePayment, setActivePayment] = useState<{ month: number, year: number, remaining: number } | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -27,20 +125,16 @@ export default function DetailPinjaman() {
     }
   }, [id]);
 
-  const loadData = async (pinjamanId: string) => {
+  const loadData = async (loanId: string) => {
     try {
       setLoading(true);
       setError(null);
       
-      const pinjamanData = await getPinjamanById(pinjamanId);
+      const pinjamanData = await getPinjamanById(loanId);
       setPinjaman(pinjamanData);
       
-      const jadwalData = await getJadwalAngsuran(
-        pinjamanId, 
-        pinjamanData.jumlah, 
-        pinjamanData.tenor_bulan
-      );
-      setJadwal(jadwalData);
+      const commitmentsData = await getMonthlyLoanCommitments({ loanId });
+      setCommitments(commitmentsData);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -48,146 +142,212 @@ export default function DetailPinjaman() {
     }
   };
 
-  const handleBayar = async (angsuranId: string, jumlah: number) => {
-    if (!window.confirm(`Konfirmasi pembayaran angsuran sebesar Rp ${jumlah.toLocaleString('id-ID')}?`)) return;
+  const handleProcessPayment = async (amount: number) => {
+    if (!activePayment || !id) return;
     
-    try {
-      setIsPaying(angsuranId);
-      await bayarAngsuran(angsuranId, jumlah);
-      // Reload schedule
-      if (id) {
-        const jadwalData = await getJadwalAngsuran(id, pinjaman.jumlah, pinjaman.tenor_bulan);
-        setJadwal(jadwalData);
-      }
-    } catch (err: any) {
-      alert(`Gagal membayar: ${err.message}`);
-    } finally {
-      setIsPaying(null);
-    }
+    await addLoanInstallment({
+      loan_id: id,
+      amount: amount,
+      payment_date: new Date().toISOString(),
+      for_month: activePayment.month,
+      for_year: activePayment.year,
+      notes: 'Pembayaran cicilan pinjaman (Admin)'
+    });
+
+    // Reload
+    await loadData(id);
   };
 
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+        <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" />
       </div>
     );
   }
 
   if (error || !pinjaman) {
     return (
-      <div className="bg-red-50 text-red-600 p-4 rounded-lg">
-        {error || 'Data pinjaman tidak ditemukan'}
-      </div>
+      <AdminLayout>
+        <div className="bg-red-50 border border-red-200 text-red-600 p-4 rounded-lg">
+          {error || 'Data pinjaman tidak ditemukan'}
+        </div>
+      </AdminLayout>
     );
   }
 
-  const lunasCount = jadwal.filter(j => j.status === 'lunas').length;
-  const sisaCicilan = pinjaman.tenor_bulan - lunasCount;
+  // Generate schedule based on agreed_tenor_months and created_at
+  const schedule = [];
+  const startDate = pinjaman.created_at ? new Date(pinjaman.created_at) : new Date();
+  
+  let lunasCount = 0;
+  
+  for (let i = 1; i <= pinjaman.agreed_tenor_months; i++) {
+    // Determine the month/year for this installment
+    const d = new Date(startDate);
+    d.setMonth(d.getMonth() + i);
+    const m = d.getMonth() + 1; // 1-12
+    const y = d.getFullYear();
+
+    const commitment = commitments.find(c => c.for_month === m && c.for_year === y);
+    
+    const total_paid = commitment ? commitment.total_paid : 0;
+    let status = commitment ? commitment.status : 'belum_lunas';
+    const commitment_amount = pinjaman.planned_installment_amount;
+    
+    // Safety check if overpaid or fully paid based on math
+    if (total_paid >= commitment_amount) {
+      status = 'lunas';
+    }
+
+    if (status === 'lunas') lunasCount++;
+
+    schedule.push({
+      bulan_ke: i,
+      for_month: m,
+      for_year: y,
+      commitment_amount,
+      total_paid,
+      remaining_balance: Math.max(0, commitment_amount - total_paid),
+      status
+    });
+  }
+
+  const sisaCicilan = pinjaman.agreed_tenor_months - lunasCount;
 
   return (
     <AdminLayout>
       <div className="space-y-6">
         <div className="flex items-center gap-4">
-        <button 
-          onClick={() => navigate(-1)}
-          className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-          title="Kembali"
-        >
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Detail Pinjaman</h1>
-          <p className="text-gray-500">
-            {pinjaman.anggota?.nama} ({pinjaman.anggota?.no_anggota})
-          </p>
+          <button 
+            onClick={() => navigate(-1)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+            title="Kembali"
+          >
+            <ArrowLeft className="w-5 h-5 text-gray-600" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Detail Pinjaman</h1>
+            <p className="text-gray-500">
+              {pinjaman.anggota?.nama} ({pinjaman.anggota?.no_anggota || pinjaman.anggota?.nrp})
+            </p>
+          </div>
         </div>
-      </div>
 
-      {/* Ringkasan Card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div>
-            <p className="text-sm text-gray-500 mb-1">Status Pinjaman</p>
-            <StatusBadge status={pinjaman.status} />
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 mb-1">Total Pinjaman</p>
-            <p className="text-xl font-bold text-gray-900">
-              Rp {pinjaman.jumlah.toLocaleString('id-ID')}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 mb-1">Tenor</p>
-            <p className="text-xl font-bold text-gray-900">
-              {pinjaman.tenor_bulan} Bulan
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-500 mb-1">Sisa Cicilan</p>
-            <p className="text-xl font-bold text-gray-900">
-              {sisaCicilan} Bulan
-            </p>
+        {/* Ringkasan Card */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Status Pinjaman</p>
+              <StatusBadge status={pinjaman.status} />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Jenis Pinjaman</p>
+              <p className="text-base font-medium text-gray-900">
+                {pinjaman.loan_types?.name || 'Reguler'}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Total Pinjaman</p>
+              <p className="text-xl font-bold text-gray-900">
+                Rp {pinjaman.principal_amount.toLocaleString('id-ID')}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Tenor</p>
+              <p className="text-xl font-bold text-gray-900">
+                {pinjaman.agreed_tenor_months} Bulan
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Sisa Cicilan</p>
+              <p className="text-xl font-bold text-gray-900">
+                {sisaCicilan} Bulan
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Jadwal Angsuran Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-semibold text-gray-900">Jadwal Angsuran</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 text-gray-600 text-sm">
-              <tr>
-                <th className="px-6 py-4 font-medium">Bulan Ke</th>
-                <th className="px-6 py-4 font-medium">Jumlah Bayar</th>
-                <th className="px-6 py-4 font-medium">Status</th>
-                <th className="px-6 py-4 font-medium">Tanggal Bayar</th>
-                <th className="px-6 py-4 font-medium text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {jadwal.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50/50">
-                  <td className="px-6 py-4 text-gray-900 font-medium">
-                    {item.bulan_ke}
-                  </td>
-                  <td className="px-6 py-4 text-gray-600">
-                    Rp {item.jumlah_bayar.toLocaleString('id-ID')}
-                  </td>
-                  <td className="px-6 py-4">
-                    <StatusBadge status={item.status} />
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {item.tanggal_bayar ? new Date(item.tanggal_bayar).toLocaleDateString('id-ID') : '-'}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    {item.status === 'belum' && (
-                      <button
-                        onClick={() => handleBayar(item.id, item.jumlah_bayar)}
-                        disabled={isPaying === item.id}
-                        className="inline-flex items-center px-3 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isPaying === item.id ? 'Memproses...' : 'Bayar'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {jadwal.length === 0 && (
+        {/* Jadwal Angsuran Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-900">Jadwal Angsuran</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 text-gray-600 text-sm">
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                    Jadwal angsuran tidak tersedia.
-                  </td>
+                  <th className="px-6 py-4 font-medium">Bulan Ke</th>
+                  <th className="px-6 py-4 font-medium">Periode</th>
+                  <th className="px-6 py-4 font-medium">Tagihan</th>
+                  <th className="px-6 py-4 font-medium">Total Dibayar</th>
+                  <th className="px-6 py-4 font-medium">Sisa Tagihan</th>
+                  <th className="px-6 py-4 font-medium">Status</th>
+                  <th className="px-6 py-4 font-medium text-right">Aksi</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {schedule.map((item) => (
+                  <tr key={`${item.for_month}-${item.for_year}`} className="hover:bg-gray-50/50">
+                    <td className="px-6 py-4 text-gray-900 font-medium text-center">
+                      {item.bulan_ke}
+                    </td>
+                    <td className="px-6 py-4 text-gray-900">
+                      {item.for_month}/{item.for_year}
+                    </td>
+                    <td className="px-6 py-4 text-gray-600">
+                      Rp {item.commitment_amount.toLocaleString('id-ID')}
+                    </td>
+                    <td className="px-6 py-4 text-green-600 font-medium">
+                      Rp {item.total_paid.toLocaleString('id-ID')}
+                    </td>
+                    <td className="px-6 py-4 text-red-500 font-medium">
+                      Rp {item.remaining_balance.toLocaleString('id-ID')}
+                    </td>
+                    <td className="px-6 py-4">
+                      {item.status === 'lunas' ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                          Lunas
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                          Belum Lunas
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {item.status !== 'lunas' && (
+                        <button
+                          onClick={() => setActivePayment({ month: item.for_month, year: item.for_year, remaining: item.remaining_balance })}
+                          className="inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          Bayar Parsial
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {schedule.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      Jadwal angsuran tidak tersedia.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
+
+      <PaymentModal 
+        isOpen={activePayment !== null}
+        onClose={() => setActivePayment(null)}
+        onSubmit={handleProcessPayment}
+        defaultAmount={activePayment ? activePayment.remaining : 0}
+        title="Pembayaran Cicilan Pinjaman"
+        description={activePayment ? `Pembayaran cicilan untuk periode ${activePayment.month}/${activePayment.year}` : ''}
+      />
     </AdminLayout>
   );
 }
