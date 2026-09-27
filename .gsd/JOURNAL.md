@@ -458,3 +458,26 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 Plan 8.1 is complete. Next session should begin with `/execute 8` to run Plan 8.2 (Modul Admin - CRUD Jenis Simpanan & Pinjaman).
+
+---
+
+## Session: 2026-09-27 11:03
+
+### Objective
+Execute Plan 8.2 (Modul Admin - CRUD Jenis Simpanan & Pinjaman).
+
+### Accomplished
+- Added missing CRUD functions for `deposit_types` and `loan_types` in `koperasiService.ts`.
+- Created `ManajemenProdukSimpanPinjam.tsx` UI page with dual-tabs for Deposit and Loan configurations.
+- Registered `/admin/master-simpan-pinjam` route in `App.tsx`.
+- Added navigation link in `AdminLayout.tsx`.
+- Added `formatCurrency.ts` utility.
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Plan 8.2 is complete. Next session should begin with `/execute 8` to run Plan 8.3 (Refaktor UI Simpanan).
