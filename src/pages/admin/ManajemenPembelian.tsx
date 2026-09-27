@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
+import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 
 export default function ManajemenPembelian() {
   const [fakturList, setFakturList] = useState<FakturPembelian[]>([]);
@@ -120,6 +121,27 @@ export default function ManajemenPembelian() {
   };
 
   const cartTotal = items.reduce((sum, item) => sum + (item.qty * item.hargaBeli), 0);
+
+  const handleExportExcel = () => {
+    const data = fakturList.map(f => ({
+      'Tanggal': f.tanggal,
+      'No. Faktur': f.noFaktur,
+      'Jml Item (Macam)': f.items.length,
+      'Total Nilai': f.totalNilai
+    }));
+    exportToExcel(data, 'Laporan_Pembelian');
+  };
+
+  const handleExportPDF = () => {
+    const headers = ['Tanggal', 'No. Faktur', 'Jml Item', 'Total Nilai'];
+    const data = fakturList.map(f => [
+      f.tanggal,
+      f.noFaktur,
+      `${f.items.length} Macam`,
+      `Rp ${f.totalNilai.toLocaleString('id-ID')}`
+    ]);
+    exportToPDF(headers, data, 'Laporan_Pembelian', 'Laporan Riwayat Pembelian');
+  };
 
   if (isFormOpen) {
     return (
@@ -313,13 +335,29 @@ export default function ManajemenPembelian() {
             <h1 className="text-display-sm font-display-sm text-primary">Manajemen Pembelian</h1>
             <p className="text-body-lg text-on-surface-variant mt-2">Riwayat faktur pembelian / barang masuk</p>
           </div>
-          <button 
-            onClick={handleOpenForm}
-            className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[20px]">post_add</span>
-            Input Faktur Baru
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleExportExcel}
+              className="flex items-center gap-2 bg-[#217346] text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-[#1e6b41] transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">table_chart</span>
+              Export Excel
+            </button>
+            <button 
+              onClick={handleExportPDF}
+              className="flex items-center gap-2 bg-[#db4437] text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-[#c53929] transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
+              Export PDF
+            </button>
+            <button 
+              onClick={handleOpenForm}
+              className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">post_add</span>
+              Input Faktur
+            </button>
+          </div>
         </div>
 
         <div className="bg-surface rounded-2xl shadow-sm border border-outline-variant overflow-hidden">
