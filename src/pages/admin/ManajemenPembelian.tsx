@@ -13,7 +13,7 @@ export default function ManajemenPembelian() {
   const [tanggal, setTanggal] = useState(new Date().toISOString().split('T')[0]);
   
   // Cart items
-  const [items, setItems] = useState<{ produkId: string; qty: number; hargaBeli: number }[]>([]);
+  const [items, setItems] = useState<{ id: string; produkId: string; qty: number; hargaBeli: number }[]>([]);
 
   // Item Form Modal
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
@@ -80,7 +80,12 @@ export default function ManajemenPembelian() {
       newItems[existingIndex].hargaBeli = hargaBeli; // update to latest typed price
       setItems(newItems);
     } else {
-      setItems([...items, { produkId: selectedProductId, qty, hargaBeli }]);
+      setItems([...items, { 
+      id: `temp-${Date.now()}`,
+      produkId: selectedProductId, 
+      qty, 
+      hargaBeli 
+    }]);
     }
     setIsItemModalOpen(false);
   };
