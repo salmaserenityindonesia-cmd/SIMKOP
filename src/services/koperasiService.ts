@@ -1057,7 +1057,9 @@ export async function getMemberDeposits(memberId: string): Promise<MemberDeposit
 export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
   // 1. Fetch deposit_types
   let { data: dTypes, error: dtError } = await supabase.from('deposit_types').select('*');
-  if (dtError && shouldFallback(dtError)) return; // fallback
+  if (dtError) {
+    throw new Error(`Gagal memuat deposit_types: ${dtError.message}. Pastikan tabel deposit_types sudah dibuat di Supabase.`);
+  }
   
   if (!dTypes || dTypes.length === 0) {
     // seed them
@@ -1069,14 +1071,18 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
     ];
     const { error: seedErr } = await supabase.from('deposit_types').insert(seeds);
     if (seedErr) {
-      console.error('Failed to seed deposit_types:', seedErr);
+      throw new Error(`Gagal membuat data awal deposit_types: ${seedErr.message}`);
     }
     const { data: refreshed } = await supabase.from('deposit_types').select('*');
     dTypes = refreshed;
   }
 
   // 2. Fetch member_deposits for this member
-  const { data: mDeposits } = await supabase.from('member_deposits').select('*').eq('member_id', memberId);
+  const { data: mDeposits, error: mdFetchErr } = await supabase.from('member_deposits').select('*').eq('member_id', memberId);
+  if (mdFetchErr) {
+    throw new Error(`Gagal memuat member_deposits: ${mdFetchErr.message}. Pastikan tabel member_deposits sudah dibuat.`);
+  }
+  
   const enrolledTypeIds = mDeposits?.map(md => md.deposit_type_id) || [];
 
   // 3. Enroll missing
@@ -1088,7 +1094,7 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
     }));
     const { error: insertErr } = await supabase.from('member_deposits').insert(inserts);
     if (insertErr) {
-      console.error('Failed to auto enroll member deposits:', insertErr);
+      throw new Error(`Gagal mendaftarkan anggota ke simpanan otomatis (member_deposits): ${insertErr.message}`);
     }
   }
 }
@@ -1098,15 +1104,7 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
   const dTypes = await getDepositTypes();
   const mDeposits = await getMemberDeposits(memberId);
   
-  if (dTypes.length === 0) {
-    // FALLBACK MOCK DATA IF TABLES DON'T EXIST YET
-    return [
-      { member_deposit_id: 'mock-sp', deposit_name: 'Simpanan Pokok', remaining_balance: 100000 },
-      { member_deposit_id: 'mock-sw', deposit_name: 'Simpanan Wajib', remaining_balance: 50000 },
-      { member_deposit_id: 'mock-sb', deposit_name: 'Simpanan Belanja', remaining_balance: 25000 },
-      { member_deposit_id: 'mock-sl', deposit_name: 'Simpanan Lebaran', remaining_balance: 30000 }
-    ];
-  }
+
 
   const mdIds = mDeposits.map(md => md.id);
   let txs: any[] = [];
@@ -1121,11 +1119,10 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
     if (!dt.is_active) continue;
 
     // Find the member's deposit record (or mock it if it failed to insert)
-    const md = mDeposits.find(m => m.deposit_type_id === dt.id) || {
-      id: `mock-md-${dt.id}`,
-      deposit_type_id: dt.id,
-      member_id: memberId
-    };
+    const md = mDeposits.find(m => m.deposit_type_id === dt.id);
+    if (!md) {
+      throw new Error(`Data member_deposits tidak ditemukan untuk simpanan ${dt.name}. Proses pendaftaran otomatis mungkin gagal.`);
+    }
 
     if (dt.frequency_type === 'once') {
       const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
@@ -1185,11 +1182,7 @@ export async function addDepositTransaction(
     .single();
 
   if (error) {
-    if (shouldFallback(error)) {
-      console.warn('Table "deposit_transactions" does not exist yet. Simulating success.');
-      return { member_deposit_id, amount, for_month, for_year, transaction_type };
-    }
-    throw new Error(`Failed to insert deposit transaction: ${error.message}`);
+    throw new Error(`Gagal menyimpan transaksi simpanan ke Supabase: ${error.message}`);
   }
   return data;
 }
