@@ -307,6 +307,14 @@ export default function TerimaSetoran() {
             <div className="flex-1 flex items-center justify-center">
               <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" />
             </div>
+          ) : error ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+              <div className="w-16 h-16 mb-4 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+                <span className="text-2xl font-bold">!</span>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Terjadi Kesalahan</h3>
+              <p className="text-red-600 max-w-md">{error}</p>
+            </div>
           ) : (depositBills.length === 0 && loanBills.length === 0) ? (
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
               <CheckCircle2 className="w-16 h-16 mb-4 text-green-200" />
