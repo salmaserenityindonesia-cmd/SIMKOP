@@ -308,7 +308,7 @@ export default function ManajemenProdukSimpanPinjam() {
               <div className="space-y-1.5">
                 <label className="text-label-md font-label-md text-on-surface">Frekuensi</label>
                 <select value={depositForm.frequency_type || 'monthly'} onChange={e => setDepositForm({...depositForm, frequency_type: e.target.value as any})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all">
-                  <option value="once">Sekali (Di awal)</option>
+                  <option value="one_time">Sekali (Di awal)</option>
                   <option value="monthly">Bulanan</option>
                   <option value="yearly">Tahunan</option>
                 </select>

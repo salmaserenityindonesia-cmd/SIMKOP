@@ -38,7 +38,7 @@ export interface DepositType {
   id: string;
   code: string;
   name: string;
-  frequency_type: 'once' | 'monthly' | 'yearly';
+  frequency_type: 'one_time' | 'monthly' | 'yearly' | string;
   default_amount: number;
   can_be_withdrawn: boolean;
   is_active: boolean;
@@ -1064,7 +1064,7 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
   if (!dTypes || dTypes.length === 0) {
     // seed them
     const seeds = [
-      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'once', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
       { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
       { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
       { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true }
@@ -1126,7 +1126,7 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
       member_id: memberId
     };
 
-    if (dt.frequency_type === 'once') {
+    if (dt.frequency_type === 'one_time' || dt.frequency_type === 'once') {
       const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
       const remaining = dt.default_amount - totalPaid;
       if (remaining > 0) {
