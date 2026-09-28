@@ -162,7 +162,7 @@ export default function ManajemenAnggota() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Gaji Pokok (THP)</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Gaji Bersih (THP Terakhir)</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
@@ -195,7 +195,7 @@ export default function ManajemenAnggota() {
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
                     <td className="py-3 px-4 text-sm text-gray-700 font-medium text-green-700">
-                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(anggota.master_thp || 0)}
+                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(anggota.take_home_pay || anggota.master_thp || 0)}
                     </td>
                     <td className="py-3 px-4 text-sm">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
@@ -303,20 +303,6 @@ export default function ManajemenAnggota() {
                     placeholder="Contoh: 5000000"
                   />
                   <p className="text-xs text-gray-500 mt-1">Gaji pokok akan digunakan untuk memvalidasi kelayakan limit pemotongan saat pengajuan pinjaman.</p>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Status
-                  </label>
-                  <select
-                    value={formData.status}
-                    onChange={(e) => setFormData({...formData, status: e.target.value})}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                  >
-                    <option value="aktif">Aktif</option>
-                    <option value="nonaktif">Nonaktif</option>
-                  </select>
                 </div>
               </div>
               

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Printer, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Search, Printer, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { Anggota, getAnggotaWithSimpanan } from '../../services/koperasiService';
 import { settlementService, SettlementSummary } from '../../services/settlementService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { ClearancePrintTemplate } from '../../components/settlement/ClearancePrintTemplate';
+import { ClearanceActionModal } from '../../components/settlement/ClearanceActionModal';
 import AdminLayout from '../../components/layout/AdminLayout';
-
 export default function SettlementClearance() {
   const [members, setMembers] = useState<Anggota[]>([]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
@@ -14,9 +14,9 @@ export default function SettlementClearance() {
   
   const [summary, setSummary] = useState<SettlementSummary | null>(null);
   const [loading, setLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const printRef = useRef<HTMLDivElement>(null);
 
@@ -78,32 +78,29 @@ export default function SettlementClearance() {
     window.location.reload(); // Quick reload to restore React event listeners after destructive DOM replace
   };
 
-  const handleProcessClearance = async () => {
+  const handleOpenModal = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleConfirmInstantPayoff = async (paymentMethod: string, notes: string) => {
     if (!summary || !selectedMember) return;
-    
-    if (summary.net_settlement < 0) {
-      setError('Tidak dapat memproses pengunduran diri karena anggota masih memiliki defisit utang yang belum dilunasi.');
-      return;
-    }
+    await settlementService.processInstantPayoff(selectedMember.id, paymentMethod, notes);
+    setSuccess(`Kliring berhasil diproses. ${selectedMember.nama} telah ditandai keluar (RESIGNED).`);
+    resetAfterProcess();
+  };
 
-    if (!window.confirm(`Apakah Anda yakin memproses kliring dan pengunduran diri untuk ${selectedMember.nama}? Aksi ini bersifat permanen.`)) {
-      return;
-    }
+  const handleConfirmDebtorTransition = async (notes: string) => {
+    if (!summary || !selectedMember) return;
+    await settlementService.processDebtorTransition(selectedMember.id, notes);
+    setSuccess(`Kliring berhasil diproses. ${selectedMember.nama} telah ditransisi ke Piutang Eks-Anggota (PENDING_RESIGNED).`);
+    resetAfterProcess();
+  };
 
-    setProcessing(true);
-    setError(null);
-    try {
-      await settlementService.processClearance(selectedMember.id);
-      setSuccess(`Kliring berhasil diproses. ${selectedMember.nama} telah ditandai keluar.`);
-      setSummary(null);
-      setSelectedMember(null);
-      setSelectedMemberId('');
-      fetchMembers(); // refresh
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setProcessing(false);
-    }
+  const resetAfterProcess = () => {
+    setSummary(null);
+    setSelectedMember(null);
+    setSelectedMemberId('');
+    fetchMembers(); // refresh
   };
 
   const filteredMembers = members.filter(m => 
@@ -112,7 +109,7 @@ export default function SettlementClearance() {
   );
 
   return (
-    <AdminLayout title="Kliring & Pembukuan Anggota Keluar">
+    <AdminLayout>
       <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Buku Pembantu & Kliring Anggota Keluar</h1>
@@ -132,12 +129,29 @@ export default function SettlementClearance() {
         </div>
       )}
 
+      {/* Readiness Alert if PENDING_RESIGNED and fully paid */}
+      {selectedMember?.membership_status === 'READY_TO_RESIGN' && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg flex items-start gap-3 shadow-sm">
+          <Info className="w-6 h-6 shrink-0 mt-0.5 text-blue-600" />
+          <div className="flex-1">
+            <h3 className="font-bold">Anggota Siap Keluar Final</h3>
+            <p className="text-sm mt-1">Sisa pinjaman anggota ini telah lunas sepenuhnya. Anda dapat mengesahkan pengunduran diri final.</p>
+          </div>
+          <button
+            onClick={() => handleConfirmInstantPayoff('Otomatis Lunas', 'Pengesahan final dari status READY_TO_RESIGN')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
+          >
+            Sahkan Pengunduran Diri Final
+          </button>
+        </div>
+      )}
+
       {/* Selector Card */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <div className="flex flex-col md:flex-row md:items-end gap-4">
+        <div className="flex flex-col md:flex-row gap-6">
           <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Pilih Anggota Aktif
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Cari Berdasarkan NRP/Nama
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -146,23 +160,28 @@ export default function SettlementClearance() {
               <input 
                 type="text" 
                 placeholder="Ketik NRP atau Nama..."
-                className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 mb-2"
+                className="pl-10 w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-2.5 bg-gray-50/50"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
               />
-              <select
-                value={selectedMemberId}
-                onChange={handleSelectMember}
-                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-              >
-                <option value="">-- Pilih Anggota ({filteredMembers.length} hasil) --</option>
-                {filteredMembers.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.nrp} - {m.nama}
-                  </option>
-                ))}
-              </select>
             </div>
+          </div>
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Pilih Anggota untuk Kliring
+            </label>
+            <select
+              value={selectedMemberId}
+              onChange={handleSelectMember}
+              className="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 px-4 py-2.5 bg-white font-medium"
+            >
+              <option value="">-- Pilih Anggota ({filteredMembers.length} hasil) --</option>
+              {filteredMembers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.nrp} - {m.nama}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
@@ -278,16 +297,16 @@ export default function SettlementClearance() {
               Cetak Lembar Settlement (PDF)
             </button>
             <button 
-              onClick={handleProcessClearance}
-              disabled={processing || summary.net_settlement < 0}
+              onClick={handleOpenModal}
+              disabled={selectedMember.membership_status === 'RESIGNED' || selectedMember.membership_status === 'PENDING_RESIGNED'}
               className={`px-6 py-2 rounded-lg text-white font-medium flex items-center ${
-                processing || summary.net_settlement < 0 
-                  ? 'bg-blue-300 cursor-not-allowed' 
+                selectedMember.membership_status === 'RESIGNED' || selectedMember.membership_status === 'PENDING_RESIGNED'
+                  ? 'bg-gray-400 cursor-not-allowed' 
                   : 'bg-blue-600 hover:bg-blue-700'
               }`}
             >
               <CheckCircle className="w-5 h-5 mr-2" />
-              {processing ? 'Memproses...' : 'Proses Pengunduran Diri'}
+              Proses Pengunduran Diri
             </button>
           </div>
 
@@ -295,6 +314,15 @@ export default function SettlementClearance() {
           <div className="hidden">
             <ClearancePrintTemplate ref={printRef} member={selectedMember} summary={summary} />
           </div>
+          
+          <ClearanceActionModal
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            summary={summary}
+            member={selectedMember}
+            onConfirmInstantPayoff={handleConfirmInstantPayoff}
+            onConfirmDebtorTransition={handleConfirmDebtorTransition}
+          />
         </>
       )}
     </div>

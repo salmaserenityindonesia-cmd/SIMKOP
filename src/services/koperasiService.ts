@@ -20,7 +20,10 @@ export interface Anggota {
   nama: string;
   pangkat?: string | null;
   status?: string;
+  membership_status?: 'ACTIVE' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
   master_thp?: number;
+  take_home_pay?: number;
+  bank_account_number?: string;
   created_at?: string;
 }
 

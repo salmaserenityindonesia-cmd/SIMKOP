@@ -247,6 +247,26 @@ export const loanService = {
         .from('loans')
         .update({ status: 'completed' })
         .eq('id', loanId);
+
+      // Auto-Detection for Final Resignation Approval
+      const { data: loanInfo } = await supabase.from('loans').select('member_id').eq('id', loanId).single();
+      if (loanInfo) {
+        // We only want to set READY_TO_RESIGN if ALL active loans for this member are completed, but
+        // since PENDING_RESIGNED means they're just paying off their final consolidation, checking this single loan is generally enough.
+        // For robustness, let's check if they have any other active loans.
+        const { data: otherLoans } = await supabase
+          .from('loans')
+          .select('id')
+          .eq('member_id', loanInfo.member_id)
+          .in('status', ['approved', 'active']);
+          
+        if (!otherLoans || otherLoans.length === 0) {
+          const { data: memberData } = await supabase.from('anggota').select('membership_status').eq('id', loanInfo.member_id).single();
+          if (memberData && memberData.membership_status === 'PENDING_RESIGNED') {
+            await supabase.from('anggota').update({ membership_status: 'READY_TO_RESIGN' }).eq('id', loanInfo.member_id);
+          }
+        }
+      }
     }
     
     return { success: true, excess_amount: remainingPayment };

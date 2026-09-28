@@ -205,6 +205,18 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 12: Member Resignation Settlement Actions (Instant Payoff & Debtor Transition)
+**Status**: ✅ Complete
+**Objective**: Mengimplementasikan alur interaktif tombol "Proses Pengunduran Diri" dengan opsi pelunasan seketika atau transisi ke piutang eks-anggota jika terjadi defisit.
+**Depends on**: Phase 11
+
+**Plans**:
+- [x] Plan 12.1: (Wave 1) Migration & Settlement Execution Service
+- [x] Plan 12.2: (Wave 2) Build Clearance Action Modal & Wire Button
+- [x] Plan 12.3: (Wave 2) Auto-Detection for Final Resignation Approval
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -232,6 +244,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 9 | Modul Pinjaman Komprehensif (THP & FIFO) | ✅ | 7/7 | 100% |
 | 10 | Export Template and Salary-Account Reconciliation Import | ✅ | 4/4 | 100% |
 | 11 | Buku Pembantu & Kliring Penyelesaian Hak-Kewajiban Anggota Keluar | ✅ | 3/3 | 100% |
+| 12 | Member Resignation Settlement Actions | ✅ | 3/3 | 100% |
 
 ---
 
@@ -250,3 +263,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 9 | — | — | — |
 | 10 | 2026-09-27 | 2026-09-27 | 1 day |
 | 11 | 2026-09-28 | 2026-09-28 | 1 day |
+| 12 | 2026-09-28 | 2026-09-28 | 1 day |

@@ -73,7 +73,51 @@ export const settlementService = {
   },
 
   /**
-   * Memproses pengunduran diri dan kliring via RPC
+   * Memproses pengunduran diri dengan metode Pelunasan Seketika (Instant Payoff / Surplus)
+   */
+  async processInstantPayoff(memberId: string, paymentMethod: string, notes: string): Promise<boolean> {
+    // Requires authenticated user id to be passed to RPC, but Supabase auth.uid() handles it in RPC if needed.
+    // We pass NULL for p_processed_by since the RPC will use auth.uid() internally if we rewrite it,
+    // or we can just fetch session.
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id || null;
+
+    const { data, error } = await supabase.rpc('process_instant_payoff_clearance', {
+      p_member_id: memberId,
+      p_payment_method: paymentMethod,
+      p_notes: notes,
+      p_processed_by: userId
+    });
+
+    if (error) {
+      throw new Error(`Gagal memproses kliring pelunasan seketika: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * Memproses pengunduran diri dengan metode Transisi Piutang Eks-Anggota
+   */
+  async processDebtorTransition(memberId: string, notes: string): Promise<boolean> {
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id || null;
+
+    const { data, error } = await supabase.rpc('process_debtor_transition_clearance', {
+      p_member_id: memberId,
+      p_notes: notes,
+      p_processed_by: userId
+    });
+
+    if (error) {
+      throw new Error(`Gagal memproses transisi piutang: ${error.message}`);
+    }
+
+    return data;
+  },
+
+  /**
+   * (Legacy/Deprecated) Memproses pengunduran diri dan kliring via RPC lama
    */
   async processClearance(memberId: string): Promise<boolean> {
     const { data, error } = await supabase.rpc('process_member_clearance', {
