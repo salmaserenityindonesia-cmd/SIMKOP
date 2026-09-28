@@ -6,50 +6,43 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | v20+ | Development environment |
-| Browser | Modern | Application runtime |
+| Node.js | >=18 (inferred) | Development environment |
+| Browser | N/A | Client runtime |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Database and Auth client |
-| react | ^19.3.0 | UI Library |
-| react-dom | ^19.3.0 | DOM rendering |
+| @supabase/supabase-js | ^2.117.2 | Supabase client for database and auth |
+| react | ^19.3.0 | UI library |
+| react-dom | ^19.3.0 | DOM bindings for React |
 | react-router-dom | ^7.18.4 | Routing |
-| lucide-react | ^1.48.0 | Icons |
-| exceljs | ^4.4.0 | Excel file generation/parsing |
-| xlsx | ^0.18.5 | Excel data extraction |
-| jspdf | ^4.2.1 | PDF export |
-| jspdf-autotable | ^5.0.8 | Tables in PDF export |
-| dotenv | ^18.0.4 | Environment variables |
+| tailwindcss | ^4.3.3 | Utility-first CSS framework |
+| lucide-react | ^1.48.0 | Icon library |
+| exceljs | ^4.4.0 | Excel file generation |
+| xlsx | ^0.18.5 | Excel parsing |
+| jspdf | ^4.2.1 | PDF generation |
+| html5-qrcode | ^2.3.8 | QR code scanning |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
 | vite | ^8.3.1 | Build tool and dev server |
+| vitest | ^5.0.2 | Test framework |
 | typescript | ^7.0.2 | Static typing |
-| tailwindcss | ^4.3.3 | Utility-first CSS framework |
-| vitest | ^5.0.2 | Test runner |
-| @vitejs/plugin-react | ^6.1.1 | React integration for Vite |
+| postcss | ^8.5.28 | CSS transformation |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Database | Supabase | PostgreSQL Database |
-| Auth | Supabase | Authentication |
+| Supabase | Supabase | Database, Auth, API |
 
 ## Configuration
 
 | Variable | Purpose | Location |
 |----------|---------|----------|
-| VITE_SUPABASE_URL | API URL for Supabase | .env |
-| VITE_SUPABASE_ANON_KEY | Public API key | .env |
-
-## Outdated Packages
-
-| Package | Current | Latest | Risk |
-|---------|---------|--------|------|
-| (Not checked) | - | - | Low |
+| Vite config | Build settings | `vite.config.ts` |
+| TypeScript | TS settings | `tsconfig.json` |
+| Environment | Env variables | `.env`, `.env.example` |

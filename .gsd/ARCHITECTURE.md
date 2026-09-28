@@ -4,71 +4,59 @@
 
 ## Overview
 
-SIMKOP (Sistem Informasi Manajemen Koperasi) is a React-based web application for managing cooperative (koperasi) operations. It includes modules for Point of Sale (POS), Inventory Management, Member Management, Savings (Simpanan), Loans (Pinjaman), and Salary Imports. It uses Supabase as its backend-as-a-service for database and authentication.
+SIMKOP is a React-based web application serving as an information system for cooperatives (Sistem Informasi Manajemen Koperasi). It uses Supabase as its backend-as-a-service for database and authentication.
 
 ```
 ┌─────────────────────────────────────────┐
-│              [App.tsx]                  │
+│              [React / Vite]             │
+│        src/main.tsx & src/App.tsx       │
 ├─────────────────────────────────────────┤
-│         [Pages / Components]            │
+│         [Services & Components]         │
+│     src/services & src/components       │
 ├─────────────────────────────────────────┤
-│       [Services (koperasiService)]      │
-├─────────────────────────────────────────┤
-│            [Supabase DB]                │
+│           [Supabase Backend]            │
+│            PostgreSQL + Auth            │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Admin Layout & Dashboard
-- **Purpose:** Shell for authenticated users and overview of stats.
-- **Location:** `src/components/layout/AdminLayout.tsx`, `src/pages/admin/AdminDashboard.tsx`
-- **Dependencies:** `lucide-react`, `react-router-dom`
+### React UI Components
+- **Purpose:** Provide user interface elements for authentication, admin dashboard, POS (kasir), loan management, etc.
+- **Location:** `src/components/`, `src/pages/`
+- **Dependencies:** React, Tailwind CSS, Lucide React, react-router-dom
 
-### Point of Sale (Kasir)
-- **Purpose:** POS interface, cart management, and receipt printing.
-- **Location:** `src/pages/admin/Kasir.tsx`, `src/lib/cartStore.ts`, `src/components/admin/ReceiptPrinter.tsx`
-- **Dependencies:** `lucide-react`
+### Services Layer
+- **Purpose:** Encapsulate database interactions and business logic for various domains (loans, settlements, salaries, matrices, etc.).
+- **Location:** `src/services/`
+- **Dependencies:** `@supabase/supabase-js`, `exceljs`, `xlsx`, `jspdf`
 
-### Inventory Management
-- **Purpose:** Manage products, categories, and purchases/restocks.
-- **Location:** `src/pages/admin/ManajemenProduk.tsx`, `src/pages/admin/ManajemenKategori.tsx`, `src/pages/admin/ManajemenPembelian.tsx`
-
-### Savings & Loans (Simpan Pinjam)
-- **Purpose:** Manage deposits, loan applications, approvals, and dynamic configurations.
-- **Location:** `src/pages/admin/DashboardSimpanan.tsx`, `src/pages/admin/PengajuanPinjaman.tsx`, `src/pages/admin/ApprovalPinjaman.tsx`, `src/pages/admin/DetailPinjaman.tsx`, `src/pages/admin/ManajemenProdukSimpanPinjam.tsx`, `src/pages/admin/TerimaSetoran.tsx`
-- **Dependencies:** `koperasiService.ts`, `loanService.ts`
-
-### Member Management
-- **Purpose:** CRUD operations for cooperative members.
-- **Location:** `src/pages/admin/ManajemenAnggota.tsx`
-
-### Salary Import
-- **Purpose:** Import salary data from Excel/CSV and reconcile with member accounts.
-- **Location:** `src/pages/admin/SalaryImport.tsx`, `src/services/salaryImportService.ts`, `src/services/salaryTemplateService.ts`
-- **Dependencies:** `xlsx`, `exceljs`
+### Supabase Client
+- **Purpose:** Initialize and provide the Supabase client instance.
+- **Location:** `src/lib/supabaseClient.ts`
+- **Dependencies:** `@supabase/supabase-js`
 
 ## Data Flow
 
-1. User interacts with UI components in `src/pages/admin`.
-2. UI components call functions from `src/services/*` (e.g., `koperasiService.ts`).
-3. Services interact with Supabase using `src/lib/supabaseClient.ts`.
-4. Supabase returns data which updates React state, triggering UI re-renders.
+1. User interacts with UI components in `src/pages/` or `src/components/`.
+2. UI components invoke functions from `src/services/`.
+3. Services execute queries or mutations via `src/lib/supabaseClient.ts`.
+4. Supabase processes the request and returns data.
+5. Services optionally parse/format data (e.g. into Excel or PDF) and return results to UI components.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | BaaS | Authentication and PostgreSQL Database |
+| Supabase | BaaS | Database, Authentication, and Storage |
 
 ## Technical Debt
 
-- [ ] `koperasiService.ts` is quite large (37KB) and handles many domains (auth, products, loans). It should be split into domain-specific services.
-- [ ] Cart state uses a custom store instead of Context/Zustand which might not scale for complex states.
-- [ ] No major code smells detected (TODOs/FIXMEs are clear).
+- No TODOs, FIXMEs, or HACKs were explicitly found in the codebase.
+- Testing coverage might be low (only `src/services/loanService.test.ts` was explicitly noted).
 
 ## Conventions
 
-**Naming:** PascalCase for React components, camelCase for services/utils.
-**Structure:** Feature-based pages, shared components in `src/components`, logic in `src/services` and `src/lib`.
-**Testing:** Vitest configured but test coverage is limited (`loanService.test.ts`).
+**Naming:** PascalCase for React components, camelCase for services and utilities.
+**Structure:** Feature-based pages with reusable components in `src/components`. Business logic separated into `src/services/`.
+**Testing:** Vitest setup is present, but test coverage appears minimal.
