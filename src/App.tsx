@@ -15,6 +15,7 @@ import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
 import TerimaSetoran from './pages/admin/TerimaSetoran';
 import SalaryImport from './pages/admin/SalaryImport';
+import SettlementClearance from './pages/admin/SettlementClearance';
 
 export default function App() {
   return (
@@ -145,6 +146,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <SalaryImport />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/admin/clearance" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <SettlementClearance />
             </ProtectedRoute>
           } 
         />

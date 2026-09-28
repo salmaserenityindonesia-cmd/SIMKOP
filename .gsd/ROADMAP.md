@@ -193,6 +193,18 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 11: Buku Pembantu & Kliring Penyelesaian Hak-Kewajiban Anggota Keluar
+**Status**: ✅ Complete
+**Objective**: Mengimplementasikan fitur Member Settlement & Clearance untuk menghitung hak bersih simpanan vs kewajiban sisa pinjaman saat anggota mengundurkan diri.
+**Depends on**: Phase 8, Phase 9
+
+**Plans**:
+- [x] Plan 11.1: (Wave 1) Create Settlement Service & SQL Aggregation Queries
+- [x] Plan 11.2: (Wave 2) Build Member Settlement Ledger Page and Cards
+- [x] Plan 11.3: (Wave 3) Add Printable Clearance Sheet and Finalize Action
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -219,6 +231,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 8 | Konfigurasi & Fleksibilitas Simpan Pinjam Dinamis | ✅ | 5/5 | 100% |
 | 9 | Modul Pinjaman Komprehensif (THP & FIFO) | ✅ | 7/7 | 100% |
 | 10 | Export Template and Salary-Account Reconciliation Import | ✅ | 4/4 | 100% |
+| 11 | Buku Pembantu & Kliring Penyelesaian Hak-Kewajiban Anggota Keluar | ✅ | 3/3 | 100% |
 
 ---
 
@@ -236,3 +249,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 8 | 2026-09-27 | 2026-09-27 | 1 day |
 | 9 | — | — | — |
 | 10 | 2026-09-27 | 2026-09-27 | 1 day |
+| 11 | 2026-09-28 | 2026-09-28 | 1 day |

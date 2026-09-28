@@ -1,13 +1,15 @@
 ## Current Position
-- **Phase**: 10 (completed)
-- **Task**: Post-Phase 10 UX Adjustments & Inline Editing for Salary Import
-- **Status**: Active (resumed 2026-09-28T07:28:18+07:00)
+- **Phase**: 11 (completed)
+- **Task**: Kliring Penyelesaian Hak-Kewajiban Anggota Keluar
+- **Status**: Completed
 
 ## Last Session Summary
-Codebase mapping complete.
-- 6 main component domains identified
-- 15 dependencies analyzed
-- 3 technical debt items found
+- Added Phase 11 to ROADMAP.md
+- Created SQL Migration `009_member_settlement.sql` for settlement aggregations and DB Transaction clearance.
+- Created `settlementService.ts` with manual REST fallback.
+- Created `SettlementClearance.tsx` UI and `ClearancePrintTemplate.tsx` printable sheet.
+- Registered route and navigation links in `App.tsx` and `AdminLayout.tsx`.
 
 ## Next Steps
-1. Proceed to wrap up Milestone (SIMKOP v1.0).
+1. /progress to verify status
+2. Proceed to wrap up Milestone.
