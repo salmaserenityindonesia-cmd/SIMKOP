@@ -16,6 +16,7 @@ import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinj
 import TerimaSetoran from './pages/admin/TerimaSetoran';
 import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
+import ComplianceMatrix from './pages/admin/ComplianceMatrix';
 
 export default function App() {
   return (
@@ -155,6 +156,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <SettlementClearance />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/compliance-matrix" 
+          element={
+            <ProtectedRoute>
+              <ComplianceMatrix />
             </ProtectedRoute>
           } 
         />
