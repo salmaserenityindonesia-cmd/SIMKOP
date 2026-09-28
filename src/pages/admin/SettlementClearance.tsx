@@ -4,6 +4,7 @@ import { Anggota, getAnggotaWithSimpanan } from '../../services/koperasiService'
 import { settlementService, SettlementSummary } from '../../services/settlementService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { ClearancePrintTemplate } from '../../components/settlement/ClearancePrintTemplate';
+import AdminLayout from '../../components/layout/AdminLayout';
 
 export default function SettlementClearance() {
   const [members, setMembers] = useState<Anggota[]>([]);
@@ -111,7 +112,8 @@ export default function SettlementClearance() {
   );
 
   return (
-    <div className="space-y-6">
+    <AdminLayout title="Kliring & Pembukuan Anggota Keluar">
+      <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Buku Pembantu & Kliring Anggota Keluar</h1>
       </div>
@@ -296,5 +298,6 @@ export default function SettlementClearance() {
         </>
       )}
     </div>
+    </AdminLayout>
   );
 }
