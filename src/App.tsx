@@ -3,7 +3,7 @@ import LoginPage from './pages/login';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
-import Kasir from './pages/admin/Kasir';
+import POSPage from './pages/pos';
 import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 import PengajuanPinjaman from './pages/admin/PengajuanPinjaman';
@@ -47,7 +47,7 @@ export default function App() {
           path="/admin/kasir" 
           element={
             <ProtectedRoute>
-              <Kasir />
+              <POSPage />
             </ProtectedRoute>
           } 
         />

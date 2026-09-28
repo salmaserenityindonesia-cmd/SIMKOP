@@ -217,6 +217,20 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 13: Refactoring Modul Kasir (POS) SIMKOP Enterprise
+**Status**: 🔄 In Progress
+**Objective**: Keyboard-First POS, Multi-Device Scanner Support (Camera/Bluetooth/Keyboard), and Stateless Receipt Delivery
+**Depends on**: Phase 3
+
+**Plans**:
+- [ ] Plan 13.1: (Wave 1) Generate POS Layout & Modals using Stitch MCP
+- [ ] Plan 13.2: (Wave 1) Implement Keyboard Navigation & Autocomplete Selection
+- [ ] Plan 13.3: (Wave 2) Quantity Autofocus Modal with Strict Keyboard Escape/Enter
+- [ ] Plan 13.4: (Wave 2) Mobile HTML5 Camera Barcode Scanner Modal
+- [ ] Plan 13.5: (Wave 3) Stateless Receipt Handlers (Direct Thermal, WA Link, Client PDF)
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -226,6 +240,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 3 | Phase 3 + Phase 4 | POS dan Pinjaman independen, dapat paralel |
 | 4 | Phase 5 | Inventori bergantung pada katalog produk dari POS; Dashboard butuh semua data |
 | 5 | Phase 6 | CRUD Anggota dapat ditambahkan setelah manajemen user |
+| 6 | Phase 13 | Refactoring Kasir, dapat berjalan mandiri |
 
 ---
 
@@ -245,6 +260,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 10 | Export Template and Salary-Account Reconciliation Import | ✅ | 4/4 | 100% |
 | 11 | Buku Pembantu & Kliring Penyelesaian Hak-Kewajiban Anggota Keluar | ✅ | 3/3 | 100% |
 | 12 | Member Resignation Settlement Actions | ✅ | 3/3 | 100% |
+| 13 | Refactoring Modul Kasir (POS) SIMKOP Enterprise | 🔄 | 0/5 | 0% |
 
 ---
 
@@ -264,3 +280,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 10 | 2026-09-27 | 2026-09-27 | 1 day |
 | 11 | 2026-09-28 | 2026-09-28 | 1 day |
 | 12 | 2026-09-28 | 2026-09-28 | 1 day |
+| 13 | 2026-09-28 | — | — |

@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+
+<html lang="id"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SIMKOP Enterprise - POS Kasir Toko</title>
+{/* Google Fonts & Material Symbols */}
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&amp;family=IBM+Plex+Serif:wght@500;600;700&amp;family=JetBrains+Mono:wght@400;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+{/* Tailwind CSS v3 */}
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          "colors": {
+            "tertiary-fixed": "#6ffbbe",
+            "primary-fixed": "#d1e4ff",
+            "on-secondary-fixed-variant": "#005049",
+            "secondary-container": "#86f2e4",
+            "on-secondary": "#ffffff",
+            "secondary-fixed-dim": "#6bd8cb",
+            "on-surface-variant": "#43474d",
+            "on-tertiary-container": "#00a270",
+            "on-surface": "#0b1c30",
+            "surface-tint": "#49607c",
+            "outline": "#74777e",
+            "primary": "#001428",
+            "surface-container": "#e5eeff",
+            "primary-container": "#0f2942",
+            "error-container": "#ffdad6",
+            "surface-variant": "#d3e4fe",
+            "on-primary-fixed-variant": "#314863",
+            "surface-container-lowest": "#ffffff",
+            "tertiary-fixed-dim": "#4edea3",
+            "on-secondary-container": "#006f66",
+            "inverse-primary": "#b0c9e8",
+            "on-background": "#0b1c30",
+            "on-tertiary-fixed-variant": "#005236",
+            "on-primary": "#ffffff",
+            "surface-bright": "#f8f9ff",
+            "outline-variant": "#c3c6ce",
+            "surface-container-low": "#eff4ff",
+            "on-tertiary-fixed": "#002113",
+            "surface-container-highest": "#d3e4fe",
+            "secondary-fixed": "#89f5e7",
+            "inverse-on-surface": "#eaf1ff",
+            "inverse-surface": "#213145",
+            "background": "#f8f9ff",
+            "surface-dim": "#cbdbf5",
+            "on-primary-fixed": "#011d35",
+            "on-secondary-fixed": "#00201d",
+            "on-primary-container": "#7991af",
+            "tertiary-container": "#002e1d",
+            "primary-fixed-dim": "#b0c9e8",
+            "surface-container-high": "#dce9ff",
+            "on-tertiary": "#ffffff",
+            "on-error-container": "#93000a",
+            "error": "#ba1a1a",
+            "tertiary": "#00170c",
+            "surface": "#f8f9ff",
+            "secondary": "#006a61",
+            "on-error": "#ffffff"
+          },
+          "borderRadius": {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+          "fontFamily": {
+            "display-lg-mobile": ["IBM Plex Serif"],
+            "headline-sm": ["Hanken Grotesk"],
+            "body-md": ["Hanken Grotesk"],
+            "title-sm": ["Hanken Grotesk"],
+            "label-sm": ["Hanken Grotesk"],
+            "display-lg": ["IBM Plex Serif"],
+            "headline-md": ["IBM Plex Serif"],
+            "body-sm": ["Hanken Grotesk"],
+            "label-md": ["Hanken Grotesk"],
+            "headline-lg-mobile": ["IBM Plex Serif"],
+            "title-md": ["Hanken Grotesk"],
+            "headline-lg": ["IBM Plex Serif"],
+            "body-lg": ["Hanken Grotesk"],
+            "mono": ["JetBrains Mono", "monospace"]
+          },
+          "fontSize": {
+            "display-lg-mobile": ["30px", { "lineHeight": "38px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+            "headline-sm": ["18px", { "lineHeight": "26px", "letterSpacing": "-0.005em", "fontWeight": "600" }],
+            "body-md": ["14px", { "lineHeight": "22px", "letterSpacing": "0em", "fontWeight": "400" }],
+            "title-sm": ["14px", { "lineHeight": "20px", "letterSpacing": "0.01em", "fontWeight": "600" }],
+            "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.04em", "fontWeight": "600" }],
+            "display-lg": ["40px", { "lineHeight": "48px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+            "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "500" }],
+            "body-sm": ["12px", { "lineHeight": "18px", "letterSpacing": "0.01em", "fontWeight": "400" }],
+            "label-md": ["13px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500" }],
+            "headline-lg-mobile": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+            "title-md": ["16px", { "lineHeight": "24px", "letterSpacing": "0em", "fontWeight": "600" }],
+            "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.015em", "fontWeight": "600" }],
+            "body-lg": ["16px", { "lineHeight": "26px", "letterSpacing": "0em", "fontWeight": "400" }]
+          }
+        }
+      }
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      display: inline-block;
+      vertical-align: middle;
+      line-height: 1;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    @keyframes scanLaser {
+      0% { top: 10%; opacity: 0.8; }
+      50% { top: 90%; opacity: 1; }
+      100% { top: 10%; opacity: 0.8; }
+    }
+    .laser-line {
+      animation: scanLaser 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body className="bg-background text-on-surface antialiased font-body-md select-none">
+{/* TOP HIGH-SPEED OPERATIONAL NAV BAR */}
+<header className="bg-primary-container text-surface-container-lowest border-b border-outline-variant/20 sticky top-0 z-30 shadow-md">
+<div className="px-4 py-2 flex flex-wrap items-center justify-between gap-3">
+{/* Brand & Shift Info */}
+<div className="flex items-center gap-3">
+<div className="flex items-center gap-2.5 pr-4 border-r border-outline-variant/30">
+<img alt="SIMKOP Emblem Logo" className="w-8 h-8 rounded-lg object-contain shadow-sm bg-primary/40 p-0.5" src="https://lh3.googleusercontent.com/aida/AEtjO1Whd4pgw9HaEqo5kTz-K1k9wAvARqNSndzwEF2qeSixP4bMzxmHYzGOt6aEnmKBK8UFFm9gdbBNTQj-IuYT58Ddl5IQ6REz9WEwXGClnIFa7IZl8SDyxhhuVOlHgmjGlVz639yNipzdPHtO0O5MR5zs9Nx8ldeOQinwmXp6WGmdP7ezP_u7f0o1KunLV1IAW1e6DjC2FeGWQlQqVqZzqndr2T83WCMDpTUp4oZgCj8jZyDPhGzVa-SwGEuM"/>
+<div>
+<div className="font-title-md text-title-md tracking-tight text-surface-container-lowest leading-tight">SIMKOP Enterprise</div>
+<div className="text-[10px] font-mono uppercase tracking-widest text-secondary-fixed">POS Kasir Toko v3.4</div>
+</div>
+</div>
+{/* Shift & Terminal Badge */}
+<div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded bg-surface-container-lowest/10 border border-surface-container-lowest/15 text-body-sm font-body-sm">
+<span className="inline-block w-2 h-2 rounded-full bg-secondary-fixed animate-pulse"></span>
+<span className="font-medium text-surface-container-lowest">Kasir 01 - Siti Rohmah</span>
+<span className="text-on-primary-container">|</span>
+<span className="text-secondary-fixed">Shift Pagi</span>
+</div>
+</div>
+{/* Live Clock & Hotkey Legend Pills */}
+<div className="flex items-center gap-2 overflow-x-auto py-1">
+<div className="hidden lg:flex items-center gap-1.5 text-body-sm text-surface-container-lowest/90 font-mono pr-2 border-r border-outline-variant/20">
+<span className="material-symbols-outlined text-secondary-fixed text-[18px]">schedule</span>
+<span id="liveClock">28 Mei 2025 • 09:42:15 WIB</span>
+</div>
+<div className="flex items-center gap-1.5 text-label-sm font-label-sm">
+<span className="px-2 py-0.5 rounded bg-surface-container-lowest/15 border border-surface-container-lowest/20 font-mono text-secondary-fixed cursor-pointer hover:bg-surface-container-lowest/25" title="Cari Barcode (F2)">F2 Barcode</span>
+<span className="px-2 py-0.5 rounded bg-surface-container-lowest/15 border border-surface-container-lowest/20 font-mono text-secondary-fixed cursor-pointer hover:bg-surface-container-lowest/25" onClick="openQtyModal()" title="Ubah Qty (F4)">F4 Qty</span>
+<span className="px-2 py-0.5 rounded bg-surface-container-lowest/15 border border-surface-container-lowest/20 font-mono text-secondary-fixed cursor-pointer hover:bg-surface-container-lowest/25" title="Diskon Transaksi (F8)">F8 Diskon</span>
+<span className="px-2 py-0.5 rounded bg-secondary-fixed text-primary font-mono font-bold cursor-pointer hover:bg-secondary-fixed-dim" onClick="openReceiptModal()" title="Buka Pembayaran (F9 / Space)">F9/Space Bayar</span>
+<span className="px-2 py-0.5 rounded bg-surface-container-lowest/15 border border-surface-container-lowest/20 font-mono text-secondary-fixed cursor-pointer hover:bg-surface-container-lowest/25" title="Tahan Transaksi (F12)">F12 Hold</span>
+</div>
+{/* Camera Scanner Launcher & Emergency Refresh */}
+<div className="flex items-center gap-1 pl-2 border-l border-outline-variant/20">
+<button className="flex items-center gap-1 px-2.5 py-1 bg-secondary text-surface-container-lowest hover:bg-secondary/90 rounded text-label-sm font-label-sm transition-transform active:scale-95 shadow-sm" onClick="openCameraModal()">
+<span className="material-symbols-outlined text-[16px]">qr_code_scanner</span>
+<span className="hidden md:inline">Scan Kamera</span>
+</button>
+<button className="p-1 rounded text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/10 transition-colors" onClick="resetTransaction()" title="Batal Transaksi (Esc)">
+<span className="material-symbols-outlined text-[18px]">refresh</span>
+</button>
+</div>
+</div>
+</div>
+</header>
+{/* MAIN OPERATIONAL WORKSPACE */}
+<main className="w-full max-w-[1720px] mx-auto p-3 lg:p-4 min-h-[calc(100vh-56px)] flex flex-col gap-3">
+<div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start flex-1">
+{/* LEFT REGION: 8 COLS (BARCODE INPUT + CART LEDGER TABLE) */}
+<section className="lg:col-span-8 flex flex-col gap-3">
+{/* HIGH CONTRAST BARCODE SEARCH BAR WITH AUTOCOMPLETE PREVIEW */}
+<div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-3 shadow-sm relative">
+<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+<div className="relative flex-1">
+<div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-outline">
+<span className="material-symbols-outlined text-[24px]">barcode_scanner</span>
+</div>
+<input autocomplete="off" className="w-full pl-12 pr-28 py-3 bg-surface border border-outline-variant/80 rounded-lg text-title-md font-title-md text-primary placeholder:text-outline focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-all font-mono tracking-tight" id="barcodeInput" onFocus="showAutocomplete()" onInput="showAutocomplete()" placeholder="Scan Barcode EAN-13 atau Ketik SKU / Nama Produk (Tekan F2)..." type="text" value="899"/>
+<div className="absolute inset-y-0 right-2 flex items-center gap-1.5">
+<span className="px-2 py-1 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono border border-outline-variant/40">ENTER ↵</span>
+</div>
+</div>
+<button className="px-4 py-3 bg-surface-container-low hover:bg-surface-container text-primary font-title-sm border border-outline-variant/60 rounded-lg flex items-center justify-center gap-2 transition-colors shrink-0" onClick="openCameraModal()">
+<span className="material-symbols-outlined text-secondary text-[20px]">photo_camera</span>
+<span>Scan Kamera</span>
+</button>
+</div>
+{/* Instant Autocomplete Dropdown Preview Overlay */}
+<div className="absolute left-3 right-3 top-full mt-1.5 bg-surface-container-lowest border border-outline-variant rounded-xl shadow-xl z-20 overflow-hidden divide-y divide-outline-variant/30" id="autocompleteBox">
+<div className="px-3.5 py-1.5 bg-surface-container-low flex justify-between items-center text-label-sm font-label-sm text-on-surface-variant">
+<span>Hasil Pencarian Cepat Produk (Gunakan Panah ↑ ↓ dan Enter)</span>
+<span className="font-mono text-secondary">3 Produk Ditemukan</span>
+</div>
+<div className="p-3 hover:bg-surface-container-low cursor-pointer flex items-center justify-between transition-colors group" onClick="addMockItem('8999908123', 'Beras Ramos Premium 5kg', 'Karung', 74500)">
+<div className="flex items-center gap-3">
+<div className="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-secondary group-hover:text-on-secondary transition-colors">
+<span className="material-symbols-outlined text-[20px]">inventory_2</span>
+</div>
+<div>
+<div className="flex items-center gap-2">
+<span className="font-mono text-body-sm text-outline">8999908123</span>
+<span className="font-title-sm text-title-sm text-on-surface">Beras Ramos Premium 5kg</span>
+<span className="px-1.5 py-0.2 rounded bg-tertiary-fixed/30 text-on-tertiary-container text-[11px] font-semibold">Grosir &amp; Eceran</span>
+</div>
+<div className="text-body-sm text-outline">Satuan: Karung | Rak: A-04 | Kategori: Sembako Utama</div>
+</div>
+</div>
+<div className="text-right">
+<div className="text-title-md font-bold text-primary font-mono">Rp 74.500</div>
+<div className="text-label-sm text-secondary font-medium">Stok: 48 Karung</div>
+</div>
+</div>
+<div className="p-3 hover:bg-surface-container-low cursor-pointer flex items-center justify-between transition-colors group" onClick="addMockItem('8992753123', 'Minyak Goreng Sania 2L', 'Pouch', 34000)">
+<div className="flex items-center gap-3">
+<div className="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-secondary group-hover:text-on-secondary transition-colors">
+<span className="material-symbols-outlined text-[20px]">shopping_basket</span>
+</div>
+<div>
+<div className="flex items-center gap-2">
+<span className="font-mono text-body-sm text-outline">8992753123</span>
+<span className="font-title-sm text-title-sm text-on-surface">Minyak Goreng Sania 2L</span>
+</div>
+<div className="text-body-sm text-outline">Satuan: Pouch | Rak: B-01 | Kategori: Minyak &amp; Mentega</div>
+</div>
+</div>
+<div className="text-right">
+<div className="text-title-md font-bold text-primary font-mono">Rp 34.000</div>
+<div className="text-label-sm text-secondary font-medium">Stok: 120 Pouch</div>
+</div>
+</div>
+<div className="p-3 hover:bg-surface-container-low cursor-pointer flex items-center justify-between transition-colors group" onClick="addMockItem('8996001410', 'Gula Pasir Gulaku Premium 1kg', 'Bungkus', 17500)">
+<div className="flex items-center gap-3">
+<div className="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-secondary group-hover:text-on-secondary transition-colors">
+<span className="material-symbols-outlined text-[20px]">package_2</span>
+</div>
+<div>
+<div className="flex items-center gap-2">
+<span className="font-mono text-body-sm text-outline">8996001410</span>
+<span className="font-title-sm text-title-sm text-on-surface">Gula Pasir Gulaku Premium 1kg</span>
+</div>
+<div className="text-body-sm text-outline">Satuan: Bungkus | Rak: B-03 | Kategori: Gula &amp; Bumbu</div>
+</div>
+</div>
+<div className="text-right">
+<div className="text-title-md font-bold text-primary font-mono">Rp 17.500</div>
+<div className="text-label-sm text-secondary font-medium">Stok: 85 Bungkus</div>
+</div>
+</div>
+<div className="px-3 py-2 bg-surface-container text-right">
+<span className="text-label-sm text-outline">Klik item atau tekan [ESC] untuk menutup dropdown</span>
+</div>
+</div>
+</div>
+{/* MAIN OPERATIONAL CART TABLE */}
+<div className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1">
+{/* Table Toolbar */}
+<div className="px-4 py-3 bg-surface-container-low/60 border-b border-outline-variant/30 flex flex-wrap items-center justify-between gap-2">
+<div className="flex items-center gap-2">
+<span className="font-headline-sm text-headline-sm text-primary">Daftar Belanja Transaksi</span>
+<span className="px-2.5 py-0.5 rounded-full bg-primary-container text-surface-container-lowest text-label-sm font-semibold" id="itemCountBadge">5 Baris Produk</span>
+</div>
+<div className="flex items-center gap-2">
+<button className="text-error hover:bg-error-container/40 px-2.5 py-1 rounded text-body-sm font-medium flex items-center gap-1 transition-colors" onClick="clearCart()">
+<span className="material-symbols-outlined text-[16px]">delete_sweep</span>
+<span>Kosongkan Keranjang</span>
+</button>
+<div className="h-4 w-[1px] bg-outline-variant"></div>
+<button className="text-on-surface-variant hover:bg-surface-container px-2.5 py-1 rounded text-body-sm flex items-center gap-1 transition-colors">
+<span className="material-symbols-outlined text-[16px]">print</span>
+<span>Slip Draft</span>
+</button>
+</div>
+</div>
+{/* Pure High-Throughput Ledger Table */}
+<div className="overflow-x-auto custom-scrollbar flex-1 max-h-[580px]">
+<table className="w-full text-left border-collapse min-w-[760px]">
+<thead className="bg-surface sticky top-0 z-10 text-on-surface-variant text-label-md font-label-md uppercase tracking-wider border-b border-outline-variant/40">
+<tr>
+<th className="py-2.5 px-3 w-10 text-center">#</th>
+<th className="py-2.5 px-3 w-36">Barcode / SKU</th>
+<th className="py-2.5 px-3">Nama Produk</th>
+<th className="py-2.5 px-3 w-28">Satuan &amp; Stok</th>
+<th className="py-2.5 px-3 w-32 text-right">Harga (Rp)</th>
+<th className="py-2.5 px-3 w-36 text-center">Qty</th>
+<th className="py-2.5 px-3 w-24 text-right">Diskon</th>
+<th className="py-2.5 px-3 w-36 text-right">Subtotal (Rp)</th>
+<th className="py-2.5 px-3 w-12 text-center">Aksi</th>
+</tr>
+</thead>
+<tbody className="divide-y divide-outline-variant/25 text-body-md font-body-md" id="cartTableBody">
+{/* Row 1: Beras Rojo Lele 5kg */}
+<tr className="hover:bg-surface-container-low/40 transition-colors group">
+<td className="py-3 px-3 text-center text-outline font-mono text-body-sm">1</td>
+<td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">8993005112</td>
+<td className="py-3 px-3">
+<div className="font-title-sm text-title-sm text-on-surface leading-snug">Beras Rojo Lele Super 5kg</div>
+<div className="text-[11px] text-outline">Kategori: Sembako Pokok • Rak A-02</div>
+</td>
+<td className="py-3 px-3">
+<span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">Karung (5kg)</span>
+<div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 32</div>
+</td>
+<td className="py-3 px-3 text-right font-mono font-medium text-on-surface">71.000</td>
+<td className="py-3 px-3">
+<div className="flex items-center justify-center gap-1">
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="decrementQty(1)">-</button>
+<input className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" min="1" onChange="calculateCart()" type="number" value="1"/>
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="incrementQty(1)">+</button>
+</div>
+</td>
+<td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+<td className="py-3 px-3 text-right font-mono font-bold text-primary">71.000</td>
+<td className="py-3 px-3 text-center">
+<button className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" onClick="removeRow(this)" title="Hapus Item">
+<span className="material-symbols-outlined text-[18px]">close</span>
+</button>
+</td>
+</tr>
+{/* Row 2: Minyak Kita 2L */}
+<tr className="hover:bg-surface-container-low/40 transition-colors group">
+<td className="py-3 px-3 text-center text-outline font-mono text-body-sm">2</td>
+<td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">8992144501</td>
+<td className="py-3 px-3">
+<div className="font-title-sm text-title-sm text-on-surface leading-snug">Minyak Goreng Minyakita 2L</div>
+<div className="text-[11px] text-outline">Kategori: Minyak Nabati • Rak B-01</div>
+</td>
+<td className="py-3 px-3">
+<span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">Bantal 2L</span>
+<div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 64</div>
+</td>
+<td className="py-3 px-3 text-right font-mono font-medium text-on-surface">29.000</td>
+<td className="py-3 px-3">
+<div className="flex items-center justify-center gap-1">
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="decrementQty(2)">-</button>
+<input className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" min="1" onChange="calculateCart()" type="number" value="1"/>
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="incrementQty(2)">+</button>
+</div>
+</td>
+<td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+<td className="py-3 px-3 text-right font-mono font-bold text-primary">29.000</td>
+<td className="py-3 px-3 text-center">
+<button className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" onClick="removeRow(this)" title="Hapus Item">
+<span className="material-symbols-outlined text-[18px]">close</span>
+</button>
+</td>
+</tr>
+{/* Row 3: Gula Pasir Gulaku 1kg */}
+<tr className="hover:bg-surface-container-low/40 transition-colors group">
+<td className="py-3 px-3 text-center text-outline font-mono text-body-sm">3</td>
+<td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">8996001410</td>
+<td className="py-3 px-3">
+<div className="font-title-sm text-title-sm text-on-surface leading-snug">Gula Pasir Gulaku Kuning 1kg</div>
+<div className="text-[11px] text-outline">Kategori: Gula &amp; Pemanis • Rak B-03</div>
+</td>
+<td className="py-3 px-3">
+<span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">Bungkus</span>
+<div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 42</div>
+</td>
+<td className="py-3 px-3 text-right font-mono font-medium text-on-surface">17.500</td>
+<td className="py-3 px-3">
+<div className="flex items-center justify-center gap-1">
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="decrementQty(3)">-</button>
+<input className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" min="1" onChange="calculateCart()" type="number" value="1"/>
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="incrementQty(3)">+</button>
+</div>
+</td>
+<td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+<td className="py-3 px-3 text-right font-mono font-bold text-primary">17.500</td>
+<td className="py-3 px-3 text-center">
+<button className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" onClick="removeRow(this)" title="Hapus Item">
+<span className="material-symbols-outlined text-[18px]">close</span>
+</button>
+</td>
+</tr>
+{/* Row 4: Telur Ayam Ras 1kg */}
+<tr className="hover:bg-surface-container-low/40 transition-colors group">
+<td className="py-3 px-3 text-center text-outline font-mono text-body-sm">4</td>
+<td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">2008819004</td>
+<td className="py-3 px-3">
+<div className="font-title-sm text-title-sm text-on-surface leading-snug">Telur Ayam Ras Segar Peternakan 1kg</div>
+<div className="text-[11px] text-outline">Kategori: Produk Segar • Tray Pendingin</div>
+</td>
+<td className="py-3 px-3">
+<span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">Kilogram</span>
+<div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 28 kg</div>
+</td>
+<td className="py-3 px-3 text-right font-mono font-medium text-on-surface">26.000</td>
+<td className="py-3 px-3">
+<div className="flex items-center justify-center gap-1">
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="decrementQty(4)">-</button>
+<input className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" min="1" onChange="calculateCart()" type="number" value="1"/>
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="incrementQty(4)">+</button>
+</div>
+</td>
+<td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+<td className="py-3 px-3 text-right font-mono font-bold text-primary">26.000</td>
+<td className="py-3 px-3 text-center">
+<button className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" onClick="removeRow(this)" title="Hapus Item">
+<span className="material-symbols-outlined text-[18px]">close</span>
+</button>
+</td>
+</tr>
+{/* Row 5: Teh Celup Sariwangi */}
+<tr className="hover:bg-surface-container-low/40 transition-colors group">
+<td className="py-3 px-3 text-center text-outline font-mono text-body-sm">5</td>
+<td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">8999999015</td>
+<td className="py-3 px-3">
+<div className="font-title-sm text-title-sm text-on-surface leading-snug">Teh Celup Asli Sariwangi Isi 25's</div>
+<div className="text-[11px] text-outline">Kategori: Minuman &amp; Kopi/Teh • Rak C-02</div>
+</td>
+<td className="py-3 px-3">
+<span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">Kotak</span>
+<div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 50</div>
+</td>
+<td className="py-3 px-3 text-right font-mono font-medium text-on-surface">5.000</td>
+<td className="py-3 px-3">
+<div className="flex items-center justify-center gap-1">
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="decrementQty(5)">-</button>
+<input className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" min="1" onChange="calculateCart()" type="number" value="1"/>
+<button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick="incrementQty(5)">+</button>
+</div>
+</td>
+<td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+<td className="py-3 px-3 text-right font-mono font-bold text-primary">5.000</td>
+<td className="py-3 px-3 text-center">
+<button className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" onClick="removeRow(this)" title="Hapus Item">
+<span className="material-symbols-outlined text-[18px]">close</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+{/* Bottom Operational Quick Bar in Cart */}
+<div className="p-3 bg-surface border-t border-outline-variant/30 flex flex-wrap items-center justify-between text-body-sm gap-2">
+<div className="flex items-center gap-3 text-outline">
+<span className="flex items-center gap-1 font-mono text-[12px]">
+<span className="material-symbols-outlined text-[16px] text-secondary">verified</span>
+                Pajak Terintegrasi PPN 0% Sembako Koperasi
+              </span>
+<span>•</span>
+<span className="font-mono text-[12px]">Printer Thermal: Terhubung (Ready)</span>
+</div>
+<div className="flex items-center gap-3">
+<span className="text-on-surface-variant font-medium">Item Terpilih: 5 Macam Barang</span>
+</div>
+</div>
+</div>
+</section>
+{/* RIGHT REGION: 4 COLS (MEMBER SELECTOR, FINANCIAL TOTAL CARD & FAST PAYMENTS) */}
+<aside className="lg:col-span-4 flex flex-col gap-3 sticky top-16">
+{/* ANGGOTA / MEMBER SELECTOR BANNER */}
+<div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-3.5 shadow-sm">
+<div className="flex items-center justify-between mb-2">
+<div className="flex items-center gap-1.5">
+<span className="material-symbols-outlined text-secondary text-[20px]">badge</span>
+<span className="font-title-sm text-title-sm text-primary">Identitas Anggota Koperasi</span>
+</div>
+<div className="inline-flex rounded-lg p-0.5 bg-surface-container border border-outline-variant/30 text-label-sm font-label-sm">
+<button className="px-2.5 py-1 rounded bg-surface-container-lowest text-primary font-bold shadow-xs" id="btnAnggota" onClick="toggleMemberType(true)">Anggota</button>
+<button className="px-2.5 py-1 rounded text-on-surface-variant hover:text-primary" id="btnNonAnggota" onClick="toggleMemberType(false)">Non-Anggota</button>
+</div>
+</div>
+{/* Member Active Profile Card */}
+<div className="p-3 rounded-lg bg-surface-container-low border border-secondary/30 relative" id="memberInfoBox">
+<div className="flex items-start justify-between">
+<div>
+<div className="flex items-center gap-2">
+<span className="px-2 py-0.5 rounded bg-primary-container text-secondary-fixed text-[11px] font-mono font-bold">NIA: 2024-0012</span>
+<span className="font-title-sm text-title-sm text-primary font-bold">Bambang Sutrisno</span>
+</div>
+<div className="text-[12px] text-on-surface-variant mt-1">Departemen Produksi • Anggota Aktif Reguler</div>
+<div className="mt-2.5 pt-2 border-t border-outline-variant/40 flex items-center justify-between">
+<span className="text-[12px] text-outline">Saldo Simpanan Sukarela:</span>
+<span className="font-mono text-body-md font-bold text-secondary">Rp 1.450.000</span>
+</div>
+<div className="text-[11px] text-on-tertiary-container flex items-center gap-1 mt-0.5 font-medium">
+<span className="material-symbols-outlined text-[14px]">check_circle</span>
+                  Dapat Dipotong Langsung via Saldo Simpanan
+                </div>
+</div>
+<button className="p-1 rounded text-outline hover:text-primary hover:bg-surface-container" title="Ganti Anggota">
+<span className="material-symbols-outlined text-[18px]">edit</span>
+</button>
+</div>
+</div>
+</div>
+{/* BIG HIGHLIGHTED TOTAL BELANJA CARD */}
+<div className="bg-primary-container text-surface-container-lowest rounded-xl p-4 shadow-lg border border-outline-variant/30 flex flex-col justify-between">
+<div className="flex justify-between items-center text-on-primary-container font-mono text-body-sm pb-2 border-b border-surface-container-lowest/10">
+<span>NO. TRANSAKSI</span>
+<span className="text-secondary-fixed font-bold">#POS-20250528-0042</span>
+</div>
+<div className="my-4">
+<div className="text-label-md font-label-md tracking-widest uppercase text-secondary-fixed font-bold">TOTAL TAGIHAN</div>
+<div className="flex items-baseline gap-1 mt-1">
+<span className="font-mono text-headline-sm text-secondary-fixed">Rp</span>
+<span className="font-mono text-[42px] leading-tight font-extrabold tracking-tight text-surface-container-lowest" id="grandTotalDisplay">141.075</span>
+</div>
+<div className="text-[12px] text-on-primary-container mt-1 font-mono">
+              Hemat Rp 7.425 via Diskon Khusus Anggota Koperasi (5%)
+            </div>
+</div>
+{/* Summary Breakdown Accordion */}
+<div className="space-y-1.5 pt-3 border-t border-surface-container-lowest/15 text-body-sm font-mono text-surface-container-lowest/90">
+<div className="flex justify-between">
+<span className="text-on-primary-container">Subtotal Kotor (5 Item):</span>
+<span>Rp 148.500</span>
+</div>
+<div className="flex justify-between text-secondary-fixed">
+<span>Diskon Member (5%):</span>
+<span>- Rp 7.425</span>
+</div>
+<div className="flex justify-between">
+<span className="text-on-primary-container">Pajak / PPN 0%:</span>
+<span>Rp 0</span>
+</div>
+<div className="flex justify-between font-bold pt-1 border-t border-surface-container-lowest/10 text-surface-container-lowest">
+<span>Total Bersih:</span>
+<span className="text-secondary-fixed">Rp 141.075</span>
+</div>
+</div>
+</div>
+{/* QUICK PAYMENT METHOD SELECTION */}
+<div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-3.5 shadow-sm">
+<div className="text-title-sm font-title-sm text-primary mb-2 flex items-center justify-between">
+<span>Metode Pembayaran Cepat</span>
+<span className="text-label-sm font-label-sm text-secondary font-mono">Pilih / Tekan 1-4</span>
+</div>
+<div className="grid grid-cols-2 gap-2">
+<button className="pay-btn p-2.5 rounded-lg border-2 border-secondary bg-surface-container-low text-primary flex items-center gap-2 font-title-sm hover:border-secondary transition-all text-left" onClick="selectPayment('Tunai')">
+<span className="material-symbols-outlined text-secondary text-[22px]">payments</span>
+<div>
+<div className="font-bold leading-tight">1. Tunai (Cash)</div>
+<div className="text-[10px] text-outline">Uang Pas / Kembalian</div>
+</div>
+</button>
+<button className="pay-btn p-2.5 rounded-lg border border-outline-variant/60 bg-surface-container-lowest text-primary flex items-center gap-2 font-title-sm hover:border-secondary transition-all text-left" onClick="selectPayment('Potong Saldo')">
+<span className="material-symbols-outlined text-secondary text-[22px]">account_balance_wallet</span>
+<div>
+<div className="font-bold leading-tight">2. Potong Simpanan</div>
+<div className="text-[10px] text-outline">Saldo Anggota</div>
+</div>
+</button>
+<button className="pay-btn p-2.5 rounded-lg border border-outline-variant/60 bg-surface-container-lowest text-primary flex items-center gap-2 font-title-sm hover:border-secondary transition-all text-left" onClick="selectPayment('QRIS')">
+<span className="material-symbols-outlined text-secondary text-[22px]">qr_code_2</span>
+<div>
+<div className="font-bold leading-tight">3. QRIS Dinamis</div>
+<div className="text-[10px] text-outline">BCA/Mandiri/Shopee</div>
+</div>
+</button>
+<button className="pay-btn p-2.5 rounded-lg border border-outline-variant/60 bg-surface-container-lowest text-primary flex items-center gap-2 font-title-sm hover:border-secondary transition-all text-left" onClick="selectPayment('Transfer')">
+<span className="material-symbols-outlined text-secondary text-[22px]">account_balance</span>
+<div>
+<div className="font-bold leading-tight">4. Transfer Bank</div>
+<div className="text-[10px] text-outline">VA Koperasi Mandiri</div>
+</div>
+</button>
+</div>
+{/* Quick Cash Denominations (Calculated based on 141.075) */}
+<div className="mt-3 pt-3 border-t border-outline-variant/30 flex items-center gap-1.5 overflow-x-auto pb-1">
+<span className="text-label-sm font-label-sm text-outline shrink-0">Uang Pas:</span>
+<button className="px-2.5 py-1 rounded bg-surface-container text-primary font-mono text-[12px] font-bold hover:bg-secondary hover:text-on-secondary transition-colors" onClick="setCashAmount(141075)">Rp 141.075</button>
+<button className="px-2.5 py-1 rounded bg-surface-container text-primary font-mono text-[12px] font-bold hover:bg-secondary hover:text-on-secondary transition-colors" onClick="setCashAmount(150000)">Rp 150.000</button>
+<button className="px-2.5 py-1 rounded bg-surface-container text-primary font-mono text-[12px] font-bold hover:bg-secondary hover:text-on-secondary transition-colors" onClick="setCashAmount(200000)">Rp 200.000</button>
+</div>
+</div>
+{/* PRIMARY EXECUTION CTA & ACTIONS */}
+<div className="space-y-2">
+<button className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2.5 shadow-md shadow-emerald-900/20 transition-all active:scale-[0.98]" onClick="openReceiptModal()">
+<span className="material-symbols-outlined text-[26px]">point_of_sale</span>
+<span>Bayar Transaksi [F9 / Space]</span>
+</button>
+<div className="grid grid-cols-2 gap-2">
+<button className="py-2.5 px-3 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container text-primary rounded-lg font-title-sm text-title-sm flex items-center justify-center gap-1.5 transition-colors" onClick="holdTransaction()">
+<span className="material-symbols-outlined text-[18px]">pause_circle</span>
+<span>Tahan Transaksi [F12]</span>
+</button>
+<button className="py-2.5 px-3 bg-surface-container-lowest border border-error/40 hover:bg-error-container/30 text-error rounded-lg font-title-sm text-title-sm flex items-center justify-center gap-1.5 transition-colors" onClick="resetTransaction()">
+<span className="material-symbols-outlined text-[18px]">cancel</span>
+<span>Batal [Esc]</span>
+</button>
+</div>
+</div>
+</aside>
+</div>
+</main>
+{/* ============================================================== */}
+{/* MODAL 1: QUANTITY INPUT MODAL (F4 or Double Click) */}
+{/* ============================================================== */}
+<div className="fixed inset-0 z-50 bg-primary/60 backdrop-blur-xs flex items-center justify-center p-4 hidden" id="qtyModal">
+<div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in duration-150">
+<div className="bg-primary-container text-surface-container-lowest px-5 py-3.5 flex justify-between items-center">
+<div className="flex items-center gap-2">
+<span className="material-symbols-outlined text-secondary-fixed text-[22px]">format_list_numbered</span>
+<span className="font-title-md text-title-md">Ubah Jumlah Kuantitas (Qty)</span>
+</div>
+<button className="text-surface-container-lowest/80 hover:text-surface-container-lowest" onClick="closeModal('qtyModal')">
+<span className="material-symbols-outlined">close</span>
+</button>
+</div>
+<div className="p-6 text-center">
+<div className="text-on-surface-variant font-medium text-body-sm">Item Terpilih:</div>
+<div className="font-headline-sm text-headline-sm text-primary mt-0.5">Beras Rojo Lele Super 5kg</div>
+<div className="text-label-sm text-outline font-mono mt-0.5">SKU: 8993005112 | Satuan: Karung | Harga: Rp 71.000</div>
+{/* Big Numeric Input & Large Tactile Buttons */}
+<div className="my-6 flex items-center justify-center gap-3">
+<button className="w-14 h-14 rounded-xl border border-outline-variant hover:bg-surface-container font-headline-md text-headline-md text-primary flex items-center justify-center shadow-xs active:scale-90 transition-all" onClick="changeModalQty(-1)">-</button>
+<input className="w-28 h-14 text-center font-mono font-extrabold text-[32px] border-2 border-secondary rounded-xl text-primary focus:outline-none focus:ring-4 focus:ring-secondary/20" id="modalQtyInput" min="1" type="number" value="2"/>
+<button className="w-14 h-14 rounded-xl border border-outline-variant hover:bg-surface-container font-headline-md text-headline-md text-primary flex items-center justify-center shadow-xs active:scale-90 transition-all" onClick="changeModalQty(1)">+</button>
+</div>
+<div className="grid grid-cols-4 gap-2 mb-4">
+<button className="py-2 bg-surface-container text-primary font-mono font-bold rounded-lg hover:bg-secondary-fixed" onClick="setModalQty(1)">1</button>
+<button className="py-2 bg-surface-container text-primary font-mono font-bold rounded-lg hover:bg-secondary-fixed" onClick="setModalQty(5)">5</button>
+<button className="py-2 bg-surface-container text-primary font-mono font-bold rounded-lg hover:bg-secondary-fixed" onClick="setModalQty(10)">10</button>
+<button className="py-2 bg-surface-container text-primary font-mono font-bold rounded-lg hover:bg-secondary-fixed" onClick="setModalQty(25)">25</button>
+</div>
+<div className="flex gap-2">
+<button className="flex-1 py-3 bg-surface-container text-primary font-title-sm rounded-lg hover:bg-surface-container-high transition-colors" onClick="closeModal('qtyModal')">
+            Batalkan [Esc]
+          </button>
+<button className="flex-1 py-3 bg-secondary text-on-secondary font-title-sm rounded-lg hover:bg-secondary/90 transition-all shadow-sm" onClick="applyModalQty()">
+            Simpan Qty [Enter]
+          </button>
+</div>
+<div className="text-[11px] text-outline font-mono mt-3">
+          Gunakan tombol keyboard panah [↑ / ↓] atau ketik langsung angka
+        </div>
+</div>
+</div>
+</div>
+{/* ============================================================== */}
+{/* MODAL 2: MOBILE/CAMERA SCANNER MODAL */}
+{/* ============================================================== */}
+<div className="fixed inset-0 z-50 bg-primary/75 backdrop-blur-sm flex items-center justify-center p-4 hidden" id="cameraModal">
+<div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in duration-150">
+<div className="bg-primary-container text-surface-container-lowest px-5 py-3.5 flex justify-between items-center">
+<div className="flex items-center gap-2">
+<span className="material-symbols-outlined text-secondary-fixed text-[22px]">photo_camera</span>
+<span className="font-title-md text-title-md">Pemindai Barcode Kamera HD</span>
+</div>
+<button className="text-surface-container-lowest/80 hover:text-surface-container-lowest" onClick="closeModal('cameraModal')">
+<span className="material-symbols-outlined">close</span>
+</button>
+</div>
+<div className="p-5 flex flex-col items-center">
+{/* Viewport Simulation */}
+<div className="w-full h-64 bg-primary rounded-xl relative overflow-hidden flex items-center justify-center border-2 border-dashed border-outline-variant">
+{/* Background Camera Grain Simulation */}
+<div className="absolute inset-0 bg-linear-to-b from-primary/80 via-primary-container/40 to-primary/80"></div>
+{/* Targeting Reticle Frame */}
+<div className="relative w-64 h-40 border-2 border-secondary-fixed rounded-lg z-10 flex flex-col justify-between p-2">
+{/* Laser Barcode Scanner Line */}
+<div className="laser-line absolute left-0 right-0 h-0.5 bg-tertiary-fixed shadow-[0_0_12px_#6ffbbe]"></div>
+<div className="flex justify-between">
+<span className="w-4 h-4 border-t-2 border-l-2 border-secondary-fixed"></span>
+<span className="w-4 h-4 border-t-2 border-r-2 border-secondary-fixed"></span>
+</div>
+<div className="flex justify-between">
+<span className="w-4 h-4 border-b-2 border-l-2 border-secondary-fixed"></span>
+<span className="w-4 h-4 border-b-2 border-r-2 border-secondary-fixed"></span>
+</div>
+</div>
+<div className="absolute bottom-3 text-center z-10 text-[12px] font-mono text-surface-container-lowest/80">
+            Arahkan barcode produk ke dalam kotak bidik
+          </div>
+</div>
+{/* Camera Controls */}
+<div className="flex items-center justify-between w-full mt-4 px-2">
+<button className="flex items-center gap-1 text-on-surface-variant hover:text-primary text-body-sm font-medium">
+<span className="material-symbols-outlined text-[20px]">flash_on</span>
+<span>Lampu Flash</span>
+</button>
+<button className="px-4 py-2 bg-secondary text-surface-container-lowest font-title-sm rounded-lg hover:bg-secondary/90 transition-colors shadow-sm flex items-center gap-1.5" onClick="simulateScanFound()">
+<span className="material-symbols-outlined text-[18px]">check</span>
+<span>Simulasi Temukan SKU</span>
+</button>
+<button className="flex items-center gap-1 text-on-surface-variant hover:text-primary text-body-sm font-medium">
+<span className="material-symbols-outlined text-[20px]">flip_camera_ios</span>
+<span>Ganti Kamera</span>
+</button>
+</div>
+<div className="text-[12px] text-outline text-center mt-3">
+          Mendukung format UPC-A, EAN-13, Code 128, QR Code Koperasi
+        </div>
+</div>
+</div>
+</div>
+{/* ============================================================== */}
+{/* MODAL 3: STATELESS RECEIPT MODAL (STRUK BELANJA KASIR) */}
+{/* ============================================================== */}
+<div className="fixed inset-0 z-50 bg-primary/70 backdrop-blur-xs flex items-center justify-center p-3 lg:p-4 hidden" id="receiptModal">
+<div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/60 shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[95vh] animate-in fade-in zoom-in duration-150">
+{/* Modal Header */}
+<div className="bg-primary-container text-surface-container-lowest px-4 py-3 flex justify-between items-center shrink-0">
+<div className="flex items-center gap-2">
+<span className="material-symbols-outlined text-secondary-fixed text-[20px]">receipt_long</span>
+<span className="font-title-md text-title-md">Struk Transaksi Selesai</span>
+</div>
+<button className="text-surface-container-lowest/80 hover:text-surface-container-lowest" onClick="closeModal('receiptModal')">
+<span className="material-symbols-outlined">close</span>
+</button>
+</div>
+{/* Thermal Receipt Paper Canvas (Scrollable) */}
+<div className="p-4 bg-surface-container-low/50 overflow-y-auto custom-scrollbar flex-1">
+<div className="bg-surface-container-lowest p-5 rounded-lg border border-outline-variant/40 shadow-xs font-mono text-[12px] text-primary">
+{/* Receipt Header */}
+<div className="text-center pb-3 border-b border-dashed border-outline-variant/80">
+<div className="flex justify-center mb-1">
+<img alt="SIMKOP Emblem Logo" className="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida/AEtjO1Whd4pgw9HaEqo5kTz-K1k9wAvARqNSndzwEF2qeSixP4bMzxmHYzGOt6aEnmKBK8UFFm9gdbBNTQj-IuYT58Ddl5IQ6REz9WEwXGClnIFa7IZl8SDyxhhuVOlHgmjGlVz639yNipzdPHtO0O5MR5zs9Nx8ldeOQinwmXp6WGmdP7ezP_u7f0o1KunLV1IAW1e6DjC2FeGWQlQqVqZzqndr2T83WCMDpTUp4oZgCj8jZyDPhGzVa-SwGEuM"/>
+</div>
+<div className="font-bold text-[14px] leading-tight">KOPERASI KONSUMEN SEJAHTERA MANDIRI</div>
+<div className="text-[11px] text-outline">Gedung Pusat SIMKOP, Jl. Merdeka No. 45 Jakarta</div>
+<div className="text-[10px] text-outline">Telp: (021) 8872-9011 • NPWP: 01.442.981.2-021.000</div>
+</div>
+{/* Metadata */}
+<div className="py-2.5 border-b border-dashed border-outline-variant/80 space-y-0.5 text-[11px]">
+<div className="flex justify-between">
+<span>No. Faktur:</span>
+<span className="font-bold">#POS-20250528-0042</span>
+</div>
+<div className="flex justify-between">
+<span>Waktu:</span>
+<span>28/05/2025 09:42 WIB</span>
+</div>
+<div className="flex justify-between">
+<span>Kasir / Pos:</span>
+<span>Siti Rohmah (K-01)</span>
+</div>
+<div className="flex justify-between text-secondary font-bold">
+<span>Anggota:</span>
+<span>Bambang Sutrisno (2024-0012)</span>
+</div>
+</div>
+{/* Itemized List */}
+<div className="py-3 border-b border-dashed border-outline-variant/80 space-y-2">
+<div>
+<div className="font-bold">Beras Rojo Lele Super 5kg</div>
+<div className="flex justify-between text-[11px] text-outline">
+<span>1 Karung x Rp 71.000</span>
+<span className="font-bold text-primary">Rp 71.000</span>
+</div>
+</div>
+<div>
+<div className="font-bold">Minyak Goreng Minyakita 2L</div>
+<div className="flex justify-between text-[11px] text-outline">
+<span>1 Bantal x Rp 29.000</span>
+<span className="font-bold text-primary">Rp 29.000</span>
+</div>
+</div>
+<div>
+<div className="font-bold">Gula Pasir Gulaku Kuning 1kg</div>
+<div className="flex justify-between text-[11px] text-outline">
+<span>1 Bungkus x Rp 17.500</span>
+<span className="font-bold text-primary">Rp 17.500</span>
+</div>
+</div>
+<div>
+<div className="font-bold">Telur Ayam Ras Segar 1kg</div>
+<div className="flex justify-between text-[11px] text-outline">
+<span>1 Kg x Rp 26.000</span>
+<span className="font-bold text-primary">Rp 26.000</span>
+</div>
+</div>
+<div>
+<div className="font-bold">Teh Celup Sariwangi 25's</div>
+<div className="flex justify-between text-[11px] text-outline">
+<span>1 Kotak x Rp 5.000</span>
+<span className="font-bold text-primary">Rp 5.000</span>
+</div>
+</div>
+</div>
+{/* Financial Calculation */}
+<div className="py-2.5 border-b border-dashed border-outline-variant/80 space-y-1 text-[11px]">
+<div className="flex justify-between">
+<span>Subtotal Kotor:</span>
+<span>Rp 148.500</span>
+</div>
+<div className="flex justify-between text-secondary">
+<span>Diskon Anggota (5%):</span>
+<span>- Rp 7.425</span>
+</div>
+<div className="flex justify-between">
+<span>PPN 0% (Bebas Sembako):</span>
+<span>Rp 0</span>
+</div>
+<div className="flex justify-between font-extrabold text-[13px] pt-1 border-t border-outline-variant/40 text-primary">
+<span>TOTAL AKHIR:</span>
+<span>Rp 141.075</span>
+</div>
+</div>
+{/* Payment Breakdown */}
+<div className="py-2.5 border-b border-dashed border-outline-variant/80 space-y-1 text-[11px]">
+<div className="flex justify-between font-bold">
+<span>Metode Bayar:</span>
+<span>Tunai (Cash)</span>
+</div>
+<div className="flex justify-between">
+<span>Nominal Bayar:</span>
+<span>Rp 150.000</span>
+</div>
+<div className="flex justify-between font-bold text-secondary">
+<span>Kembalian:</span>
+<span>Rp 8.925</span>
+</div>
+</div>
+{/* Receipt Footer Message */}
+<div className="pt-3 text-center text-[10px] text-outline space-y-0.5">
+<div>Terima kasih atas partisipasi Anda membangun Koperasi!</div>
+<div>SHU Anda otomatis terakumulasi dalam akun keanggotaan.</div>
+<div className="pt-1 font-bold text-primary">Barang yang dibeli tidak dapat ditukar</div>
+</div>
+</div>
+</div>
+{/* Action Buttons 3 Pillars */}
+<div className="p-4 bg-surface border-t border-outline-variant/30 flex flex-col gap-2 shrink-0">
+<button className="w-full py-2.5 bg-primary text-surface-container-lowest rounded-lg font-title-sm flex items-center justify-center gap-2 hover:bg-primary-container transition-colors shadow-sm" onClick="alert('Mencetak langsung ke Mini Thermal Printer (Port USB/Bluetooth 58mm)...')">
+<span className="material-symbols-outlined text-[18px]">print</span>
+<span>Direct Thermal Print (58/80mm)</span>
+</button>
+<div className="grid grid-cols-2 gap-2">
+<button className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-title-sm text-[13px] flex items-center justify-center gap-1.5 transition-colors" onClick="alert('Notifikasi struk digital berhasil dikirim ke WhatsApp Anggota Bambang Sutrisno!')">
+<span className="material-symbols-outlined text-[16px]">chat</span>
+<span>Kirim WhatsApp</span>
+</button>
+<button className="py-2 bg-surface-container-lowest border border-outline-variant text-primary hover:bg-surface-container rounded-lg font-title-sm text-[13px] flex items-center justify-center gap-1.5 transition-colors" onClick="alert('Mengunduh struk berformat PDF resmi Koperasi...')">
+<span className="material-symbols-outlined text-[16px]">download</span>
+<span>Download PDF Resep</span>
+</button>
+</div>
+<button className="text-center text-label-md text-outline hover:text-primary py-1" onClick="closeModal('receiptModal'); resetTransaction();">
+          Selesai &amp; Buka Transaksi Baru
+        </button>
+</div>
+</div>
+</div>
+{/* JAVASCRIPT MICRO-INTERACTIONS & HOTKEY CONTROLS */}
+<script>
+    // Live Clock Update
+    function updateClock() {
+      const now = new Date();
+      const options = { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' };
+      const el = document.getElementById('liveClock');
+      if (el) el.innerText = now.toLocaleDateString('id-ID', options) + ' WIB';
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // Autocomplete Toggle
+    function showAutocomplete() {
+      const val = document.getElementById('barcodeInput').value.trim();
+      const box = document.getElementById('autocompleteBox');
+      if (val.length > 0) {
+        box.classList.remove('hidden');
+      } else {
+        box.classList.add('hidden');
+      }
+    }
+
+    // Hide autocomplete on click outside
+    document.addEventListener('click', function(e) {
+      const box = document.getElementById('autocompleteBox');
+      const input = document.getElementById('barcodeInput');
+      if (box && input && !box.contains(e.target) && e.target !== input) {
+        box.classList.add('hidden');
+      }
+    });
+
+    // Add Mock Item from Autocomplete
+    function addMockItem(barcode, name, unit, price) {
+      const tbody = document.getElementById('cartTableBody');
+      const rowCount = tbody.rows.length + 1;
+      
+      const tr = document.createElement('tr');
+      tr.className = "hover:bg-surface-container-low/40 transition-colors group";
+      tr.innerHTML = `
+        <td className="py-3 px-3 text-center text-outline font-mono text-body-sm">${rowCount}</td>
+        <td className="py-3 px-3 font-mono text-body-sm font-semibold text-primary">${barcode}</td>
+        <td className="py-3 px-3">
+          <div className="font-title-sm text-title-sm text-on-surface leading-snug">${name}</div>
+          <div className="text-[11px] text-outline">Kategori: Sembako • Baru Masuk</div>
+        </td>
+        <td className="py-3 px-3">
+          <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">${unit}</span>
+          <div className="text-[11px] text-secondary font-mono mt-0.5">Sisa: 40</div>
+        </td>
+        <td className="py-3 px-3 text-right font-mono font-medium text-on-surface">${price.toLocaleString('id-ID')}</td>
+        <td className="py-3 px-3">
+          <div className="flex items-center justify-center gap-1">
+            <button onClick="decrementQty(${rowCount})" className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all">-</button>
+            <input type="number" value="1" min="1" className="w-12 py-1 text-center font-mono font-bold text-title-sm border border-outline-variant/60 rounded focus:ring-1 focus:ring-secondary focus:border-secondary p-0" onChange="calculateCart()" />
+            <button onClick="incrementQty(${rowCount})" className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all">+</button>
+          </div>
+        </td>
+        <td className="py-3 px-3 text-right font-mono text-secondary text-body-sm">-</td>
+        <td className="py-3 px-3 text-right font-mono font-bold text-primary">${price.toLocaleString('id-ID')}</td>
+        <td className="py-3 px-3 text-center">
+          <button onClick="removeRow(this)" className="text-outline hover:text-error p-1 rounded hover:bg-error-container/20 transition-colors" title="Hapus Item">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+      document.getElementById('autocompleteBox').classList.add('hidden');
+      document.getElementById('barcodeInput').value = '';
+      updateRowCount();
+    }
+
+    function removeRow(btn) {
+      const row = btn.closest('tr');
+      row.remove();
+      updateRowCount();
+    }
+
+    function updateRowCount() {
+      const tbody = document.getElementById('cartTableBody');
+      const count = tbody.rows.length;
+      document.getElementById('itemCountBadge').innerText = `${count} Baris Produk`;
+    }
+
+    function clearCart() {
+      if(confirm('Kosongkan seluruh daftar belanja kasir?')) {
+        document.getElementById('cartTableBody').innerHTML = '';
+        updateRowCount();
+      }
+    }
+
+    function incrementQty(idx) {
+      // micro interaction
+      calculateCart();
+    }
+
+    function decrementQty(idx) {
+      // micro interaction
+      calculateCart();
+    }
+
+    function calculateCart() {
+      // Visual feedback placeholder
+    }
+
+    // Modal Control
+    function openQtyModal() {
+      document.getElementById('qtyModal').classList.remove('hidden');
+      document.getElementById('modalQtyInput').focus();
+    }
+
+    function openCameraModal() {
+      document.getElementById('cameraModal').classList.remove('hidden');
+    }
+
+    function openReceiptModal() {
+      document.getElementById('receiptModal').classList.remove('hidden');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    function changeModalQty(delta) {
+      const input = document.getElementById('modalQtyInput');
+      let val = parseInt(input.value) || 1;
+      val = Math.max(1, val + delta);
+      input.value = val;
+    }
+
+    function setModalQty(val) {
+      document.getElementById('modalQtyInput').value = val;
+    }
+
+    function applyModalQty() {
+      closeModal('qtyModal');
+    }
+
+    function simulateScanFound() {
+      closeModal('cameraModal');
+      addMockItem('8999908123', 'Beras Ramos Premium 5kg', 'Karung', 74500);
+    }
+
+    // Member Toggle
+    function toggleMemberType(isMember) {
+      const btnA = document.getElementById('btnAnggota');
+      const btnNA = document.getElementById('btnNonAnggota');
+      const box = document.getElementById('memberInfoBox');
+
+      if (isMember) {
+        btnA.className = "px-2.5 py-1 rounded bg-surface-container-lowest text-primary font-bold shadow-xs";
+        btnNA.className = "px-2.5 py-1 rounded text-on-surface-variant hover:text-primary";
+        box.classList.remove('opacity-40');
+      } else {
+        btnNA.className = "px-2.5 py-1 rounded bg-surface-container-lowest text-primary font-bold shadow-xs";
+        btnA.className = "px-2.5 py-1 rounded text-on-surface-variant hover:text-primary";
+        box.classList.add('opacity-40');
+      }
+    }
+
+    // Quick Payment Selector
+    function selectPayment(type) {
+      const buttons = document.querySelectorAll('.pay-btn');
+      buttons.forEach(btn => {
+        btn.classList.remove('border-2', 'border-secondary', 'bg-surface-container-low');
+        btn.classList.add('border-outline-variant/60', 'bg-surface-container-lowest');
+      });
+      event.currentTarget.classList.remove('border-outline-variant/60', 'bg-surface-container-lowest');
+      event.currentTarget.classList.add('border-2', 'border-secondary', 'bg-surface-container-low');
+    }
+
+    function setCashAmount(amt) {
+      alert(`Nominal Tunai Dipilih: Rp ${amt.toLocaleString('id-ID')}\nKembalian: Rp ${(amt - 141075).toLocaleString('id-ID')}`);
+    }
+
+    function holdTransaction() {
+      alert('Transaksi #POS-20250528-0042 berhasil ditahan ke antrean.');
+    }
+
+    function resetTransaction() {
+      document.getElementById('barcodeInput').value = '';
+      document.getElementById('barcodeInput').focus();
+    }
+
+    // Keyboard Shortcuts (F2, F4, F9, Space, ESC, F12)
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        document.getElementById('barcodeInput').focus();
+        document.getElementById('barcodeInput').select();
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        openQtyModal();
+      } else if (e.key === 'F9') {
+        e.preventDefault();
+        openReceiptModal();
+      } else if (e.key === 'F12') {
+        e.preventDefault();
+        holdTransaction();
+      } else if (e.key === 'Escape') {
+        closeModal('qtyModal');
+        closeModal('cameraModal');
+        closeModal('receiptModal');
+        document.getElementById('autocompleteBox').classList.add('hidden');
+      }
+    });
+  </script>
+</body></html>
