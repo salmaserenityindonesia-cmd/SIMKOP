@@ -3,8 +3,8 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, addAnggota, updateAnggota, deleteAnggota, Anggota } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Trash2, X, Download, Upload } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
-import MemberImportModal from '../../components/members/MemberImportModal';
-import { exportMemberTemplate, parseMemberUpload, batchUpsertMembers, MemberParseResult } from '../../services/memberExcelService';
+import MemberMigrationModal from '../../components/members/MemberMigrationModal';
+import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 
 export default function ManajemenAnggota() {
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -150,10 +150,10 @@ export default function ManajemenAnggota() {
     
     setIsImporting(true);
     try {
-      await batchUpsertMembers(parseResult);
+      await executeMigration(parseResult);
       setIsImportModalOpen(false);
       await loadData();
-      alert('Berhasil mengimpor data anggota!');
+      alert('Berhasil memigrasikan data anggota, simpanan, dan pinjaman!');
     } catch (error: any) {
       alert(error.message || 'Gagal mengimpor anggota');
     } finally {
@@ -411,12 +411,12 @@ export default function ManajemenAnggota() {
         </div>
       )}
 
-      <MemberImportModal 
+      <MemberMigrationModal 
         isOpen={isImportModalOpen}
         parseResult={parseResult}
         onClose={() => setIsImportModalOpen(false)}
         onConfirm={handleImportConfirm}
-        isSubmitting={isImporting}
+        isImporting={isImporting}
       />
     </AdminLayout>
   );
