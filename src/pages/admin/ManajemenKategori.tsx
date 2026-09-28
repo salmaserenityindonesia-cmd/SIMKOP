@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { ProductCategory, getProductCategories, addProductCategory, updateProductCategory, deleteProductCategory } from '../../services/koperasiService';
+import CategoryImportModal from '../../components/categories/CategoryImportModal';
+import { exportCategoryTemplate, parseCategoryUpload, batchInsertCategories, ParseResult } from '../../services/categoryExcelService';
 
 export default function ManajemenKategori() {
   const [categories, setCategories] = useState<ProductCategory[]>([]);
@@ -9,6 +11,12 @@ export default function ManajemenKategori() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<ProductCategory | null>(null);
   const [name, setName] = useState('');
+
+  // Import states
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [parseResult, setParseResult] = useState<ParseResult | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     fetchCategories();
@@ -66,6 +74,39 @@ export default function ManajemenKategori() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await parseCategoryUpload(file);
+      setParseResult(result);
+      setIsImportModalOpen(true);
+    } catch (error: any) {
+      alert(error.message || 'Gagal memproses file Excel');
+    }
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!parseResult) return;
+    
+    setIsImporting(true);
+    try {
+      await batchInsertCategories(parseResult.newCategories);
+      setIsImportModalOpen(false);
+      fetchCategories();
+      alert('Berhasil mengimpor kategori baru!');
+    } catch (error: any) {
+      alert(error.message || 'Gagal mengimpor kategori');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
@@ -74,13 +115,36 @@ export default function ManajemenKategori() {
             <h1 className="text-display-sm font-display-sm text-primary">Manajemen Kategori</h1>
             <p className="text-body-lg text-on-surface-variant mt-2">Kelola master kategori untuk produk</p>
           </div>
-          <button 
-            onClick={openAddModal}
-            className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
-          >
-            <span className="material-symbols-outlined text-[20px]">add</span>
-            Tambah Kategori
-          </button>
+          <div className="flex flex-wrap items-center gap-3 mt-4 sm:mt-0">
+            <button 
+              onClick={exportCategoryTemplate}
+              className="flex items-center gap-2 bg-surface-container-lowest border border-outline text-primary px-4 py-2 rounded-lg font-label-lg shadow-sm hover:bg-surface-container-low transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">download</span>
+              Unduh Template
+            </button>
+            <input 
+              type="file" 
+              accept=".xlsx" 
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 bg-secondary text-on-secondary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-secondary/90 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">upload_file</span>
+              Import Excel
+            </button>
+            <button 
+              onClick={openAddModal}
+              className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              Tambah Kategori
+            </button>
+          </div>
         </div>
 
         <div className="bg-surface rounded-2xl shadow-sm border border-outline-variant overflow-hidden max-w-4xl">
@@ -173,6 +237,14 @@ export default function ManajemenKategori() {
           </div>
         </div>
       )}
+
+      <CategoryImportModal 
+        isOpen={isImportModalOpen}
+        parseResult={parseResult}
+        onClose={() => setIsImportModalOpen(false)}
+        onConfirm={handleImportConfirm}
+        isSubmitting={isImporting}
+      />
     </AdminLayout>
   );
 }

@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Produk, getProduk, addProduk, updateProduk, deleteProduk, RiwayatStok, getRiwayatStok, ProductCategory, getProductCategories } from '../../services/koperasiService';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
+import ProductImportModal from '../../components/products/ProductImportModal';
+import { exportProductTemplate, parseProductUpload, batchUpsertProducts, ProductParseResult } from '../../services/productExcelService';
 
 export default function ManajemenProduk() {
   const [products, setProducts] = useState<Produk[]>([]);
@@ -27,6 +29,12 @@ export default function ManajemenProduk() {
   const [stock, setStock] = useState(0);
   const [minStockAlert, setMinStockAlert] = useState(0);
   const [unit, setUnit] = useState('pcs');
+
+  // Import states
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [parseResult, setParseResult] = useState<ProductParseResult | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     fetchProducts();
@@ -143,6 +151,39 @@ export default function ManajemenProduk() {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await parseProductUpload(file);
+      setParseResult(result);
+      setIsImportModalOpen(true);
+    } catch (error: any) {
+      alert(error.message || 'Gagal memproses file Excel');
+    }
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!parseResult) return;
+    
+    setIsImporting(true);
+    try {
+      await batchUpsertProducts(parseResult);
+      setIsImportModalOpen(false);
+      fetchProducts();
+      alert('Berhasil mengimpor katalog produk!');
+    } catch (error: any) {
+      alert(error.message || 'Gagal mengimpor produk');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleDelete = async (id: string) => {
     if (confirm('Yakin ingin menghapus produk ini?')) {
       try {
@@ -180,7 +221,29 @@ export default function ManajemenProduk() {
             <h1 className="text-display-sm font-display-sm text-primary">Katalog Produk</h1>
             <p className="text-body-lg text-on-surface-variant mt-2">Kelola master data produk dan inventory</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button 
+              onClick={exportProductTemplate}
+              className="flex items-center gap-2 bg-surface-container-lowest border border-outline text-primary px-4 py-2 rounded-lg font-label-lg shadow-sm hover:bg-surface-container-low transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">download</span>
+              Unduh Template
+            </button>
+            <input 
+              type="file" 
+              accept=".xlsx" 
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+            />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 bg-secondary text-on-secondary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-secondary/90 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">upload_file</span>
+              Import
+            </button>
+            <div className="w-px h-6 bg-outline-variant/50 mx-1"></div>
             <button 
               onClick={handleExportExcel}
               className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-green-700 transition-colors"
@@ -534,6 +597,13 @@ export default function ManajemenProduk() {
           </div>
         </div>
       )}
+      <ProductImportModal 
+        isOpen={isImportModalOpen}
+        parseResult={parseResult}
+        onClose={() => setIsImportModalOpen(false)}
+        onConfirm={handleImportConfirm}
+        isSubmitting={isImporting}
+      />
     </AdminLayout>
   );
 }

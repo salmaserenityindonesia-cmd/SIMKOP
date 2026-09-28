@@ -231,6 +231,28 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 14: Product Categories Excel Template Export and Batch Import
+**Status**: ✅ Complete
+**Objective**: Export Template Excel (.xlsx) Kategori & Import Batch Kategori Produk ke public.product_categories
+**Depends on**: Phase 1
+
+**Plans**:
+- [x] Plan 14.1: (Wave 1) Template Export & Stateless Upload Parser Logic
+- [x] Plan 14.2: (Wave 2) Category Management UI Action Buttons and Confirmation Modal
+
+---
+
+### Phase 15: Product Catalog Excel Template Export and Batch Import
+**Status**: 🔄 In Progress
+**Objective**: Export Template Excel (.xlsx) Produk & Batch Import Katalog Produk ke public.products dengan Auto-Category Matching
+**Depends on**: Phase 1, Phase 5
+
+**Plans**:
+- [ ] Plan 15.1: (Wave 1) Template Export & Stateless Upload Parser Logic for Products
+- [ ] Plan 15.2: (Wave 2) Product Catalog UI Action Buttons and Confirmation Modal
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -241,6 +263,8 @@ updated: 2026-09-26T19:28:00+07:00
 | 4 | Phase 5 | Inventori bergantung pada katalog produk dari POS; Dashboard butuh semua data |
 | 5 | Phase 6 | CRUD Anggota dapat ditambahkan setelah manajemen user |
 | 6 | Phase 13 | Refactoring Kasir, dapat berjalan mandiri |
+| 7 | Phase 14 | Export/Import Kategori Produk |
+| 8 | Phase 15 | Export/Import Katalog Produk |
 
 ---
 
@@ -260,7 +284,9 @@ updated: 2026-09-26T19:28:00+07:00
 | 10 | Export Template and Salary-Account Reconciliation Import | ✅ | 4/4 | 100% |
 | 11 | Buku Pembantu & Kliring Penyelesaian Hak-Kewajiban Anggota Keluar | ✅ | 3/3 | 100% |
 | 12 | Member Resignation Settlement Actions | ✅ | 3/3 | 100% |
-| 13 | Refactoring Modul Kasir (POS) SIMKOP Enterprise | 🔄 | 0/5 | 0% |
+| 13 | Refactoring Modul Kasir (POS) SIMKOP Enterprise | ✅ | 5/5 | 100% |
+| 14 | Product Categories Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
+| 15 | Product Catalog Excel Template Export and Batch Import | 🔄 | 0/2 | 0% |
 
 ---
 
@@ -280,4 +306,6 @@ updated: 2026-09-26T19:28:00+07:00
 | 10 | 2026-09-27 | 2026-09-27 | 1 day |
 | 11 | 2026-09-28 | 2026-09-28 | 1 day |
 | 12 | 2026-09-28 | 2026-09-28 | 1 day |
-| 13 | 2026-09-28 | — | — |
+| 13 | 2026-09-28 | 2026-09-28 | 1 day |
+| 14 | 2026-09-28 | 2026-09-28 | 1 day |
+| 15 | 2026-09-28 | — | — |
