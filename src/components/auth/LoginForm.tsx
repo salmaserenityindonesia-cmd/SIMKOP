@@ -22,8 +22,12 @@ export default function LoginForm() {
       if (error) {
         setErrorMsg(error.message || 'Kredensial tidak valid');
       } else {
-        // success - wait for auth guard to redirect or redirect here
-        window.location.href = '/';
+        const role = data.session?.user.app_metadata?.role;
+        if (role === 'admin') {
+          window.location.href = '/admin';
+        } else {
+          window.location.href = '/admin/kasir';
+        }
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Otentikasi Gagal');

@@ -1,8 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { CartItem } from '../../pages/pos/index';
 
-export default function QuantityModal({ isOpen, item, onClose, onConfirm }) {
+interface QuantityModalProps {
+  isOpen: boolean;
+  item: Omit<CartItem, 'qty'> | CartItem | null;
+  onClose: () => void;
+  onConfirm: (qty: number) => void;
+}
+
+export default function QuantityModal({ isOpen, item, onClose, onConfirm }: QuantityModalProps) {
   const [qty, setQty] = useState(1);
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -18,7 +26,7 @@ export default function QuantityModal({ isOpen, item, onClose, onConfirm }) {
 
   if (!isOpen || !item) return null;
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (qty > 0) onConfirm(qty);

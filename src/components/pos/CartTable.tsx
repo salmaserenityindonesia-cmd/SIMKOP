@@ -1,6 +1,13 @@
-import React from 'react';
+import { CartItem } from '../../pages/pos/index';
 
-export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear }) {
+interface CartTableProps {
+  cart: CartItem[];
+  onUpdateQty: (idx: number, qty: number) => void;
+  onRemoveItem: (idx: number) => void;
+  onClear: () => void;
+}
+
+export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear }: CartTableProps) {
   return (
     <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 mt-3">
       <div className="px-4 py-3 bg-surface-container-low/60 border-b border-outline-variant/30 flex flex-wrap items-center justify-between gap-2">
@@ -59,7 +66,7 @@ export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear }) 
             ))}
             {cart.length === 0 && (
               <tr>
-                <td colSpan="8" className="py-10 text-center text-outline">Keranjang belanja kosong. Scan barcode untuk memulai.</td>
+                <td colSpan={8} className="py-10 text-center text-outline">Keranjang belanja kosong. Scan barcode untuk memulai.</td>
               </tr>
             )}
           </tbody>

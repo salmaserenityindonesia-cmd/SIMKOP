@@ -1,4 +1,3 @@
-import React from 'react';
 import { ParseResult } from '../../services/categoryExcelService';
 
 interface CategoryImportModalProps {

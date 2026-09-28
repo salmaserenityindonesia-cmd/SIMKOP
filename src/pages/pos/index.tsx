@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import POSHeader from '../../components/pos/POSHeader';
 import ProductSearchInput from '../../components/pos/ProductSearchInput';
 import CartTable from '../../components/pos/CartTable';
@@ -6,11 +6,22 @@ import SummaryPanel from '../../components/pos/SummaryPanel';
 import QuantityModal from '../../components/pos/QuantityModal';
 import CameraScannerModal from '../../components/pos/CameraScannerModal';
 import ReceiptModal from '../../components/pos/ReceiptModal';
+import { Produk } from '../../services/koperasiService';
+
+export interface CartItem {
+  id: string;
+  barcode: string;
+  name: string;
+  unit: string;
+  price: number;
+  stock: number;
+  qty: number;
+}
 
 export default function POSPage() {
-  const [products, setProducts] = useState([]);
-  const [cart, setCart] = useState([]);
-  const [activeItemForQty, setActiveItemForQty] = useState(null);
+  const [products, setProducts] = useState<Produk[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [activeItemForQty, setActiveItemForQty] = useState<Omit<CartItem, 'qty'> | null>(null);
   
   useEffect(() => {
     import('../../services/koperasiService').then(s => {
@@ -24,7 +35,7 @@ export default function POSPage() {
     receipt: false,
   });
 
-  const searchInputRef = useRef(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
   const discount = subtotal * 0.05; // assuming member
@@ -32,14 +43,14 @@ export default function POSPage() {
 
   // Global Keyboard Shortcuts
   useEffect(() => {
-    const handleGlobalKeydown = (e) => {
+    const handleGlobalKeydown = (e: KeyboardEvent) => {
       // Don't trigger if a modal is open
       if (modals.qty || modals.camera || modals.receipt) return;
       
       if ((e.ctrlKey && e.key === 'k') || e.key === 'F2') {
         e.preventDefault();
         searchInputRef.current?.focus();
-      } else if (e.key === 'F9' || (e.key === ' ' && e.target.tagName !== 'INPUT')) {
+      } else if (e.key === 'F9' || (e.key === ' ' && (e.target as HTMLElement).tagName !== 'INPUT')) {
         if (cart.length > 0) {
           e.preventDefault();
           setModals(m => ({ ...m, receipt: true }));
@@ -50,12 +61,12 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
   }, [modals, cart]);
 
-  const handleSelectProduct = (product) => {
+  const handleSelectProduct = (product: Omit<CartItem, 'qty'>) => {
     setActiveItemForQty(product);
     setModals(m => ({ ...m, qty: true }));
   };
 
-  const handleConfirmQty = (qty) => {
+  const handleConfirmQty = (qty: number) => {
     setModals(m => ({ ...m, qty: false }));
     if (!activeItemForQty) return;
     
@@ -93,13 +104,13 @@ export default function POSPage() {
             />
             <CartTable 
               cart={cart}
-              onUpdateQty={(idx, q) => {
+              onUpdateQty={(idx: number, q: number) => {
                 if (q < 1) return;
                 const next = [...cart];
                 next[idx].qty = q;
                 setCart(next);
               }}
-              onRemoveItem={(idx) => {
+              onRemoveItem={(idx: number) => {
                 const next = [...cart];
                 next.splice(idx, 1);
                 setCart(next);
@@ -130,7 +141,7 @@ export default function POSPage() {
       <CameraScannerModal 
         isOpen={modals.camera}
         onClose={() => setModals(m => ({...m, camera: false}))}
-        onScanSuccess={(text) => {
+        onScanSuccess={(text: string) => {
           setModals(m => ({...m, camera: false}));
           const product = products.find(p => p.sku === text);
           if (product) {

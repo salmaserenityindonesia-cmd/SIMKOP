@@ -47,6 +47,19 @@ export default function POSHeader({ onOpenQty, onOpenReceipt, onOpenCamera, onRe
             <button className="p-1 rounded text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/10 transition-colors" onClick={onReset} title="Batal Transaksi (Esc)">
               <span className="material-symbols-outlined text-[18px]">refresh</span>
             </button>
+            <button 
+              aria-label="Logout" 
+              className="px-3 py-1.5 rounded-xl bg-surface-container text-secondary hover:text-error hover:bg-error-container/40 border border-outline-variant/40 hover:border-error/30 text-xs font-semibold flex items-center gap-1.5 shadow-sm transition active:scale-95 ml-1" 
+              title="Keluar / Logout"
+              onClick={() => {
+                import('../../lib/supabaseClient').then(({ supabase }) => {
+                  supabase.auth.signOut().then(() => window.location.href = '/login');
+                });
+              }}
+            >
+              <span className="material-symbols-outlined text-[16px]">logout</span>
+              <span className="hidden sm:inline">Logout</span>
+            </button>
           </div>
         </div>
       </div>

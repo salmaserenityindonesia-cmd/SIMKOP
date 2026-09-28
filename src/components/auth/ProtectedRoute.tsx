@@ -42,7 +42,7 @@ export default function ProtectedRoute({ children, requireAdmin = false }: { chi
 
   if (requireAdmin && !authState.isAdmin) {
     // Redirect to non-admin dashboard or unauthorized page
-    return <Navigate to="/" replace />;
+    return <Navigate to="/admin/kasir" replace />;
   }
 
   return <>{children}</>;

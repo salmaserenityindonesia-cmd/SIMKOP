@@ -1,18 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Produk } from '../../services/koperasiService';
 
-export default function ProductSearchInput({ products = [], onSelectProduct, onOpenCamera, searchRef }) {
+interface ProductSearchInputProps {
+  products?: Produk[];
+  onSelectProduct: (product: { barcode: string; name: string; unit: string; price: number; stock: number; id: string }) => void;
+  onOpenCamera: () => void;
+  searchRef: React.Ref<HTMLInputElement>;
+}
+
+export default function ProductSearchInput({ products = [], onSelectProduct, onOpenCamera, searchRef }: ProductSearchInputProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const containerRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const filtered = query.length > 0 
     ? products.filter(p => p.name.toLowerCase().includes(query.toLowerCase()) || p.sku.includes(query))
     : [];
 
   useEffect(() => {
-    const handleClickOutside = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     };
@@ -20,7 +28,7 @@ export default function ProductSearchInput({ products = [], onSelectProduct, onO
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!isOpen) return;
     
     if (e.key === 'ArrowDown') {
@@ -41,7 +49,7 @@ export default function ProductSearchInput({ products = [], onSelectProduct, onO
     }
   };
 
-  const handleSelect = (product) => {
+  const handleSelect = (product: Produk) => {
     onSelectProduct({ 
       barcode: product.sku, 
       name: product.name, 
