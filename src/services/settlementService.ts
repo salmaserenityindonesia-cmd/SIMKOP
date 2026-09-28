@@ -122,7 +122,7 @@ export const settlementService = {
     const { data: lData, error: lError } = await supabase
       .from('loans')
       .select(`
-        id, loan_number, purpose, amount, tenor,
+        id, loan_number, notes, amount, tenor,
         loan_repayments (amount_paid)
       `)
       .eq('member_id', memberId)
@@ -139,7 +139,7 @@ export const settlementService = {
         result.push({
           loan_id: loan.id,
           loan_number: loan.loan_number,
-          purpose: loan.purpose,
+          purpose: loan.notes || '-',
           principal_amount: Number(loan.amount),
           tenor: Number(loan.tenor),
           total_paid,

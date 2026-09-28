@@ -38,7 +38,7 @@ BEGIN
     SELECT 
         l.id AS loan_id,
         l.loan_number,
-        l.purpose,
+        l.notes AS purpose,
         l.amount AS principal_amount,
         l.tenor,
         COALESCE(SUM(lr.amount_paid), 0) AS total_paid,
@@ -47,7 +47,7 @@ BEGIN
     LEFT JOIN public.loan_repayments lr ON lr.loan_id = l.id
     WHERE l.member_id = p_member_id
       AND l.status IN ('approved', 'active')
-    GROUP BY l.id, l.loan_number, l.purpose, l.amount, l.tenor;
+    GROUP BY l.id, l.loan_number, l.notes, l.amount, l.tenor;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
