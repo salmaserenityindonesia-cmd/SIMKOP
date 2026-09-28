@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, addAnggota, updateAnggota, deleteAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Trash2, X, Download } from 'lucide-react';
+import { Search, Loader2, Plus, Edit2, Trash2, X, Download, Upload } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
+import MemberImportModal from '../../components/members/MemberImportModal';
+import { exportMemberTemplate, parseMemberUpload, batchUpsertMembers, MemberParseResult } from '../../services/memberExcelService';
 
 export default function ManajemenAnggota() {
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -21,6 +23,12 @@ export default function ManajemenAnggota() {
     master_thp: 0
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Import State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [parseResult, setParseResult] = useState<MemberParseResult | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -92,6 +100,17 @@ export default function ManajemenAnggota() {
     (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const getStatusText = (status?: string) => {
+    switch (status) {
+      case 'ACTIVE': return 'Aktif';
+      case 'PENDING_RESIGNED': return 'Menunggu Resign';
+      case 'READY_TO_RESIGN': return 'Siap Resign';
+      case 'RESIGNED': return 'Resign';
+      case 'BLOCKED': return 'Diblokir';
+      default: return 'Aktif';
+    }
+  };
+
   const handleExportExcel = () => {
     exportToExcel(filteredList, 'Data_Anggota');
   };
@@ -103,10 +122,43 @@ export default function ManajemenAnggota() {
       a.nama,
       a.pangkat || '-',
       new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(a.master_thp || 0),
-      a.status === 'aktif' ? 'Aktif' : 'Nonaktif',
+      getStatusText(a.membership_status),
       a.created_at ? new Date(a.created_at).toLocaleDateString('id-ID') : '-'
     ]);
     exportToPDF(headers, data, 'Data_Anggota', 'Laporan Data Anggota Koperasi');
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const result = await parseMemberUpload(file);
+      setParseResult(result);
+      setIsImportModalOpen(true);
+    } catch (error: any) {
+      alert(error.message || 'Gagal memproses file Excel');
+    }
+    
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    if (!parseResult) return;
+    
+    setIsImporting(true);
+    try {
+      await batchUpsertMembers(parseResult);
+      setIsImportModalOpen(false);
+      await loadData();
+      alert('Berhasil mengimpor data anggota!');
+    } catch (error: any) {
+      alert(error.message || 'Gagal mengimpor anggota');
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   return (
@@ -130,6 +182,27 @@ export default function ManajemenAnggota() {
             />
           </div>
           <div className="flex space-x-2">
+            <button
+              onClick={exportMemberTemplate}
+              className="flex items-center px-4 py-2 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-md hover:bg-blue-50 transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Template
+            </button>
+            <input 
+              type="file" 
+              accept=".xlsx" 
+              className="hidden" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center px-4 py-2 bg-slate-600 text-white rounded-md hover:bg-slate-700 transition-colors text-sm font-medium"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </button>
             <button
               onClick={handleExportExcel}
               className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
@@ -199,9 +272,13 @@ export default function ManajemenAnggota() {
                     </td>
                     <td className="py-3 px-4 text-sm">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                        anggota.status === 'aktif' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        anggota.membership_status === 'ACTIVE' || !anggota.membership_status ? 'bg-green-100 text-green-800' :
+                        anggota.membership_status === 'PENDING_RESIGNED' ? 'bg-orange-100 text-orange-800' :
+                        anggota.membership_status === 'READY_TO_RESIGN' ? 'bg-blue-100 text-blue-800' :
+                        anggota.membership_status === 'RESIGNED' ? 'bg-gray-100 text-gray-800' :
+                        'bg-red-100 text-red-800'
                       }`}>
-                        {anggota.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                        {getStatusText(anggota.membership_status)}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.created_at ? new Date(anggota.created_at).toLocaleDateString('id-ID') : '-'}</td>
@@ -333,6 +410,14 @@ export default function ManajemenAnggota() {
           </div>
         </div>
       )}
+
+      <MemberImportModal 
+        isOpen={isImportModalOpen}
+        parseResult={parseResult}
+        onClose={() => setIsImportModalOpen(false)}
+        onConfirm={handleImportConfirm}
+        isSubmitting={isImporting}
+      />
     </AdminLayout>
   );
 }

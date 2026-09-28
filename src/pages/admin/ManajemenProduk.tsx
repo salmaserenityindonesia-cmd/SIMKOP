@@ -36,6 +36,12 @@ export default function ManajemenProduk() {
   const [parseResult, setParseResult] = useState<ProductParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
+  // Sorting states
+  type SortField = 'name' | 'buy_price' | 'sell_price' | 'stock' | '';
+  const [sortField, setSortField] = useState<SortField>('');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [searchQuery, setSearchQuery] = useState('');
+
   useEffect(() => {
     fetchProducts();
   }, []);
@@ -213,6 +219,30 @@ export default function ManajemenProduk() {
     exportToPDF(headers, data, 'Data_Produk', 'Laporan Data Produk Koperasi');
   };
 
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const filteredProducts = products.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    p.sku.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const sortedProducts = [...filteredProducts].sort((a, b) => {
+    if (!sortField) return 0;
+    const modifier = sortDirection === 'asc' ? 1 : -1;
+    const valA = a[sortField];
+    const valB = b[sortField];
+    if (valA < valB) return -1 * modifier;
+    if (valA > valB) return 1 * modifier;
+    return 0;
+  });
+
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
@@ -282,16 +312,75 @@ export default function ManajemenProduk() {
           </div>
         )}
 
+        <div className="flex items-center gap-2 bg-surface px-4 py-2 rounded-xl border border-outline-variant max-w-md">
+          <span className="material-symbols-outlined text-on-surface-variant">search</span>
+          <input
+            type="text"
+            placeholder="Cari nama produk atau SKU..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-transparent border-none outline-none flex-1 text-body-md text-on-surface"
+          />
+        </div>
+
         <div className="bg-surface rounded-2xl shadow-sm border border-outline-variant overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surface-container-lowest border-b border-outline-variant text-label-md text-on-surface-variant">
                   <th className="p-4 font-label-md">SKU/Barcode</th>
-                  <th className="p-4 font-label-md">Nama Produk</th>
-                  <th className="p-4 font-label-md text-right">Harga Beli</th>
-                  <th className="p-4 font-label-md text-right">Harga Jual</th>
-                  <th className="p-4 font-label-md text-right">Stok</th>
+                  <th 
+                    className="p-4 font-label-md cursor-pointer hover:bg-surface-container-low transition-colors select-none"
+                    onClick={() => handleSort('name')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Nama Produk
+                      {sortField === 'name' && (
+                        <span className="material-symbols-outlined text-[16px]">
+                          {sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
+                    onClick={() => handleSort('buy_price')}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Harga Beli
+                      {sortField === 'buy_price' && (
+                        <span className="material-symbols-outlined text-[16px]">
+                          {sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
+                    onClick={() => handleSort('sell_price')}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Harga Jual
+                      {sortField === 'sell_price' && (
+                        <span className="material-symbols-outlined text-[16px]">
+                          {sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
+                  <th 
+                    className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
+                    onClick={() => handleSort('stock')}
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      Stok
+                      {sortField === 'stock' && (
+                        <span className="material-symbols-outlined text-[16px]">
+                          {sortDirection === 'asc' ? 'arrow_upward' : 'arrow_downward'}
+                        </span>
+                      )}
+                    </div>
+                  </th>
                   <th className="p-4 font-label-md text-right">Min. Stok</th>
                   <th className="p-4 font-label-md text-center">Aksi</th>
                 </tr>
@@ -305,8 +394,12 @@ export default function ManajemenProduk() {
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-on-surface-variant">Belum ada produk yang terdaftar.</td>
                   </tr>
+                ) : sortedProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-on-surface-variant">Produk tidak ditemukan untuk pencarian "{searchQuery}".</td>
+                  </tr>
                 ) : (
-                  products.map((p) => (
+                  sortedProducts.map((p) => (
                     <tr key={p.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
                       <td className="p-4 text-body-md text-on-surface font-mono text-sm">{p.sku}</td>
                       <td className="p-4 text-title-sm font-medium text-on-surface">{p.name}</td>

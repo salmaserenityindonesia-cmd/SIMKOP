@@ -112,7 +112,7 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
     if (!colIdx[c]) throw new Error(`Kolom wajib '${c}' tidak ditemukan.`);
   }
 
-  const rawProducts: ParsedProduct[] = [];
+  const rawProductsMap = new Map<string, ParsedProduct>();
   const incomingCategoryNames = new Set<string>();
 
   sheet.eachRow((row, rowNumber) => {
@@ -140,7 +140,7 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
       const categoryName = getVal('kategori') ? String(getVal('kategori')).trim() : null;
       if (categoryName) incomingCategoryNames.add(categoryName);
 
-      rawProducts.push({
+      rawProductsMap.set(sku, {
         sku,
         name,
         categoryName,
@@ -153,6 +153,8 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
       });
     }
   });
+
+  const rawProducts = Array.from(rawProductsMap.values());
 
   // Fetch existing products and categories
   const [existingProducts, existingCategories] = await Promise.all([
