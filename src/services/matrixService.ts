@@ -32,7 +32,7 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
   const lebaranId = typeMap['simpanan hari raya'] || typeMap['lebaran'];
 
   // 2. Fetch all active members
-  const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status').eq('status', 'aktif');
+  const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at').eq('status', 'aktif');
   if (!members) return [];
 
   // 3. Fetch deposit commitments / transactions for the year
@@ -83,10 +83,18 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
     const monthsData: (ComplianceMonthData | null)[] = [];
     let expectedCount = 0;
     let paidCount = 0;
+    
+    const joinDate = m.created_at ? new Date(m.created_at) : new Date(0);
+    const joinMonth = joinDate.getMonth(); // 0-indexed
+    const joinYear = joinDate.getFullYear();
 
     for (let i = 0; i < 12; i++) {
       // If it's a future month in the current year, or any month in a future year, we might set it to null
-      if (year > currentYear || (year === currentYear && i > currentMonth)) {
+      // OR if the month is before the member joined
+      const isBeforeJoin = year < joinYear || (year === joinYear && i < joinMonth);
+      const isFuture = year > currentYear || (year === currentYear && i > currentMonth);
+      
+      if (isFuture || isBeforeJoin) {
         monthsData.push(null);
       } else {
         const p = paymentsByMember[m.id]?.[i] || { w: false, b: false, l: false };

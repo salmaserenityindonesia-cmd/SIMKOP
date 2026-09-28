@@ -1204,7 +1204,7 @@ export async function addLoanInstallment(installment: Omit<LoanInstallment, 'id'
 export async function getMonthlyDepositCommitments(month?: number, year?: number) {
   let query = supabase.from('monthly_deposit_commitments').select(`
     *,
-    anggota!member_id (nama, nrp)
+    anggota!member_id (nama, nrp, created_at)
   `);
   
   if (month) query = query.eq('for_month', month);
@@ -1220,7 +1220,26 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
     throw new Error(`Failed to fetch monthly deposit commitments: ${error.message}`);
   }
   
-  return data;
+  // Filter out commitments that are prior to the member's join date
+  const filteredData = data.filter((c: any) => {
+    if (!c.anggota?.created_at) return true; // If no created_at, assume valid
+    
+    const joinDate = new Date(c.anggota.created_at);
+    const joinMonth = joinDate.getMonth() + 1; // 1-12
+    const joinYear = joinDate.getFullYear();
+    
+    const commitMonth = c.for_month;
+    const commitYear = c.for_year;
+    
+    // If commitment year is before join year, exclude
+    if (commitYear < joinYear) return false;
+    // If commitment year is same as join year, but month is before join month, exclude
+    if (commitYear === joinYear && commitMonth < joinMonth) return false;
+    
+    return true;
+  });
+  
+  return filteredData;
 }
 
 export async function getMonthlyLoanCommitments(options?: { memberId?: string, loanId?: string }): Promise<MonthlyLoanCommitment[]> {
