@@ -528,3 +528,27 @@ User invoked `/pause` command.
 
 ### Handoff Notes
 Plan 8.4 is complete. Next session should begin with `/execute 8` to run the final task, Plan 8.5 (Dashboard Analytics - Tracking status komitmen bulanan).
+
+---
+
+## Session: 2026-09-28 07:13
+
+### Objective
+Post-Phase 10 UX Adjustments & Inline Editing for Salary Import.
+
+### Accomplished
+- Fixed layout issue where "Import Gaji & Rekening" menu was cut off by making the sidebar scrollable.
+- Moved the "Import Gaji & Rekening" menu to be nested inside the "Simpan Pinjam" section.
+- Added a "Batal Konfirmasi" button to clear parsed results, including a confirmation prompt.
+- Implemented inline edit feature (GSD execution) for the "Rekening Baru" column with real-time status re-evaluation (toggles to MATCH if edited to match database account, otherwise CONFLICT).
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+- [x] Inline edit correctly toggles state and updates array.
+- [x] Confirmation prompt triggers correctly on cancel.
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Post-Phase 10 adjustments are complete. Next session should proceed to wrap up the Milestone (SIMKOP v1.0).
