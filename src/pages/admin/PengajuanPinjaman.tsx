@@ -31,7 +31,7 @@ export default function PengajuanPinjaman() {
   }, [selectedAnggota]);
 
   async function loadAnggota() {
-    const { data } = await supabase.from('anggota').select('*').order('nama');
+    const { data } = await supabase.from('anggota').select('*').eq('status', 'aktif').order('nama');
     if (data) setAnggotaList(data);
   }
 
