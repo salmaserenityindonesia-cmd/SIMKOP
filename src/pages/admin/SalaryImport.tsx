@@ -14,6 +14,32 @@ export default function SalaryImport() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  
+  const [editingRowIdx, setEditingRowIdx] = useState<number | null>(null);
+  const [tempAccountNumber, setTempAccountNumber] = useState<string>('');
+
+  const normalizeAccount = (acc: string | null) => (acc || '').replace(/[\s-]/g, '');
+
+  const handleSaveInlineEdit = (idx: number) => {
+    const newData = [...results];
+    const row = newData[idx];
+    
+    // Update account number
+    row.excel_account_number = tempAccountNumber;
+    
+    // Evaluate status
+    const normExcel = normalizeAccount(row.excel_account_number);
+    const normDb = normalizeAccount(row.db_account_number);
+    
+    if (normDb && normExcel === normDb) {
+        row.status = 'MATCH';
+    } else if (row.status !== 'NOT_FOUND') {
+        row.status = 'CONFLICT';
+    }
+    
+    setResults(newData);
+    setEditingRowIdx(null);
+  };
 
   const handleDownloadTemplate = async () => {
     try {
@@ -183,7 +209,38 @@ export default function SalaryImport() {
                       </td>
                       <td className="px-4 py-3">Rp {r.take_home_pay?.toLocaleString('id-ID') || '-'}</td>
                       <td className="px-4 py-3">{r.db_account_number || '-'}</td>
-                      <td className="px-4 py-3 font-medium text-primary">{r.excel_account_number || '-'}</td>
+                      <td className="px-4 py-3 font-medium text-primary">
+                        {editingRowIdx === idx ? (
+                           <div className="flex items-center gap-2">
+                             <input 
+                                type="text"
+                                value={tempAccountNumber}
+                                onChange={(e) => setTempAccountNumber(e.target.value.replace(/[^0-9-\s]/g, ''))}
+                                className="border border-outline-variant rounded px-2 py-1 text-sm w-36 bg-surface-container-lowest"
+                                autoFocus
+                             />
+                             <button onClick={() => handleSaveInlineEdit(idx)} className="text-success hover:text-success/80 flex items-center" title="Simpan">
+                               <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                             </button>
+                             <button onClick={() => setEditingRowIdx(null)} className="text-error hover:text-error/80 flex items-center" title="Batal">
+                               <span className="material-symbols-outlined text-[18px]">cancel</span>
+                             </button>
+                           </div>
+                        ) : (
+                           <div className="flex items-center gap-2">
+                             <span>{r.excel_account_number || '-'}</span>
+                             {r.status === 'CONFLICT' && (
+                               <button 
+                                 onClick={() => { setEditingRowIdx(idx); setTempAccountNumber(r.excel_account_number || ''); }} 
+                                 className="text-on-surface-variant hover:text-primary transition-colors flex items-center"
+                                 title="Edit Rekening Baru"
+                               >
+                                  <span className="material-symbols-outlined text-[16px]">edit</span>
+                               </button>
+                             )}
+                           </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
