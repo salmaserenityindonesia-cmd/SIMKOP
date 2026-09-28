@@ -6,44 +6,47 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | v26 (types) | Build & Development Environment |
+| Node.js | v20+ | Core runtime for development and build tools |
+| Web Browser | N/A | Execution environment for the React application |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Database & Auth Client |
-| react | ^19.3.0 | UI Library |
-| react-dom | ^19.3.0 | DOM bindings for React |
-| react-router-dom | ^7.18.4 | Routing |
-| tailwindcss | ^4.3.3 | Styling |
-| lucide-react | ^1.48.0 | Icons |
-| exceljs | ^4.4.0 | Excel Export |
-| jspdf / jspdf-autotable | ^4.2.1 / ^5.0.8 | PDF Export |
-| html5-qrcode | ^2.3.8 | QR/Barcode scanning |
+| @supabase/supabase-js | ^2.117.2 | Supabase client for database and auth |
+| dotenv | ^18.0.4 | Environment variable loading |
+| exceljs | ^4.4.0 | Excel file manipulation |
+| html5-qrcode | ^2.3.8 | QR and barcode scanning |
+| jspdf | ^4.2.1 | PDF document generation |
+| jspdf-autotable | ^5.0.8 | Table plugin for jsPDF |
+| lucide-react | ^1.48.0 | UI Icons |
+| react | ^19.3.0 | Core UI library |
+| react-dom | ^19.3.0 | React DOM rendering |
+| react-router-dom | ^7.18.4 | Client-side routing |
+| xlsx | ^0.18.5 | Excel spreadsheet parsing and writing |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
-| vite | ^8.3.1 | Build Tool / Bundler |
-| typescript | ^7.0.2 | Type System |
-| vitest | ^5.0.2 | Testing Framework |
+| @tailwindcss/postcss | ^4.3.3 | Tailwind CSS integration for PostCSS |
+| @types/* | Various | TypeScript definitions |
+| @vitejs/plugin-react | ^6.1.1 | Vite plugin for React |
+| tailwindcss | ^4.3.3 | Utility-first CSS framework |
+| typescript | ^7.0.2 | Typed JavaScript language |
+| vite | ^8.3.1 | Build tool and dev server |
+| vitest | ^5.0.2 | Testing framework |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Database | Supabase | Managed PostgreSQL |
+| Supabase | Supabase | Database, Authentication, API |
+| Hosting | TBD | Application deployment (likely Vercel, Netlify, or similar given Vite/React) |
 
 ## Configuration
 
 | Variable | Purpose | Location |
 |----------|---------|----------|
-| package.json | Dependency and script config | `/package.json` |
-
-## Outdated Packages
-
-| Package | Current | Latest | Risk |
-|---------|---------|--------|------|
-| (None identified) | | | |
+| VITE_SUPABASE_URL | Supabase project URL | `.env` |
+| VITE_SUPABASE_ANON_KEY | Supabase public API key | `.env` |

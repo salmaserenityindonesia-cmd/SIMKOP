@@ -4,67 +4,71 @@
 
 ## Overview
 
-SIMKOP (Sistem Informasi Manajemen Koperasi) is a cooperative management system for handling members, products, loans, and deposits, built using React and Supabase.
+SIMKOP is a web-based cooperative management system (Sistem Informasi Manajemen Koperasi). It provides administrative dashboards, Point of Sale (POS), member management, loan/deposit tracking (simpan pinjam), product and category management, and salary import/clearance features. The application uses a React frontend with a Supabase backend for database and authentication.
 
-```text
+```
 ┌─────────────────────────────────────────┐
-│              [main.tsx / App.tsx]       │
+│           React Frontend (Vite)         │
+│          App.tsx (Entry Point)          │
 ├─────────────────────────────────────────┤
-│         [Pages & Components Layer]      │
+│            Services Layer               │
+│         (src/services/*.ts)             │
 ├─────────────────────────────────────────┤
-│    [Services Layer (koperasiService)]   │
-├─────────────────────────────────────────┤
-│            [Supabase Data Layer]        │
+│           Supabase Backend              │
+│       (Auth, Database, RPCs)            │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Routing & Entry
-- **Purpose:** Application setup and route definitions
-- **Location:** `src/main.tsx`, `src/App.tsx`
-- **Dependencies:** `react-router-dom`, `react`
+### Frontend Application
+- **Purpose:** Provide the user interface for admins and cashiers.
+- **Location:** `src/`
+- **Dependencies:** React, react-router-dom, Tailwind CSS, Lucide React
 
-### Admin Pages
-- **Purpose:** Core business logic views (Dashboard, Members, Products, Loans, Deposits, Settlements, Approvals)
-- **Location:** `src/pages/admin/`
-- **Dependencies:** React components, `lucide-react`, local services
-
-### POS Module
-- **Purpose:** Point of sale interface
-- **Location:** `src/pages/pos/index.tsx`, `src/components/pos/`
-- **Dependencies:** `react`, local cart store
-
-### Services
-- **Purpose:** Data access and business logic handling
+### Services Layer
+- **Purpose:** Encapsulate business logic and data access (Supabase interactions).
 - **Location:** `src/services/`
-- **Dependencies:** `@supabase/supabase-js`, local utilities
-- **Key Files:** `koperasiService.ts`, `loanService.ts`, `settlementService.ts`, `matrixService.ts`
+- **Key Services:**
+  - `koperasiService.ts`: Core data fetching and mutations (products, deposits, etc.)
+  - `memberExcelService.ts`: Excel import/export for member data
+  - `loanService.ts`: Loan logic and calculations
+  - `settlementService.ts`: Settlement clearance logic
+  - `salaryImportService.ts`: Salary import and reconciliation
 
-### State & Utils
-- **Purpose:** Global state management (Cart) and common utilities
-- **Location:** `src/lib/` (e.g., `cartStore.ts`)
-- **Dependencies:** `react`
+### Pages & Routing
+- **Purpose:** Define application views and navigation.
+- **Location:** `src/pages/`
+- **Key Routes:**
+  - `/admin/*`: Admin dashboard and management screens (protected routes)
+  - `/admin/kasir`: Point of Sale (POS) interface
+  - `/login`: Authentication page
 
 ## Data Flow
 
 1. **User Interaction:** User interacts with UI components in `src/pages/` or `src/components/`.
-2. **State/Service Call:** Components call functions in `src/services/` (e.g., `koperasiService.ts`) or update global state via stores.
-3. **Data Operation:** Services interact with Supabase (via `supabaseClient.ts`) to read/write data to the PostgreSQL database.
-4. **UI Update:** Component state is updated upon receiving the service response, triggering a re-render.
+2. **Service Call:** Components invoke functions in `src/services/` (e.g., `koperasiService.getProducts()`).
+3. **Database Access:** Services make asynchronous calls to Supabase via `src/lib/supabaseClient.ts` (using Supabase JS SDK).
+4. **Data Return:** Data or errors are returned from Supabase, processed by the service, and then used to update component state.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | BaaS | Database, Authentication, API layer |
+| Supabase | Backend-as-a-Service | Authentication, PostgreSQL Database, and RPCs |
+| ExcelJS / XLSX | Library | Import/export data to/from Excel |
+| jsPDF | Library | Generate PDF reports |
+| html5-qrcode | Library | Barcode/QR code scanning for POS |
 
 ## Technical Debt
 
-- [ ] (No explicit `TODO` or `FIXME` comments found during scanning)
+- [ ] Consolidate Supabase clients: Check if multiple Supabase client instantiations exist or if they are properly centralized in `src/lib/supabaseClient.ts`.
+- [ ] Error Handling: Ensure consistent error handling across all services (some use `try-catch` and return `{ data, error }`, others might throw).
+- [ ] Test Coverage: Add tests for more services (`loanService.test.ts` exists, but others are missing).
+- [ ] Database RPCs: Heavy reliance on Supabase RPCs (e.g., `process_member_clearance`, `batch_update_salary_reconciliation`). Ensure these are versioned or documented in the repo.
 
 ## Conventions
 
-**Naming:** PascalCase for components (`AdminDashboard.tsx`), camelCase for services and utilities (`koperasiService.ts`).
-**Structure:** Feature-based pages with a centralized services layer for data access. Modular components directory.
-**Testing:** `vitest` configured, with tests like `loanService.test.ts` placed near the implementation or in `tests/`.
+**Naming:** PascalCase for React components, camelCase for services and utilities.
+**Structure:** Feature-based routing in `src/pages/`, reusable UI in `src/components/`, business logic in `src/services/`.
+**Styling:** Tailwind CSS utility classes.
