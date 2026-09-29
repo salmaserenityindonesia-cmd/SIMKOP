@@ -20,6 +20,7 @@ import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
 import { LoanMatrix } from './pages/admin/LoanMatrix';
 import BatchUpdater from './pages/admin/BatchUpdater';
+import LaporanKeuangan from './pages/admin/laporan-keuangan';
 
 export default function App() {
   return (
@@ -195,6 +196,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <BatchUpdater />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/laporan-keuangan" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <LaporanKeuangan />
             </ProtectedRoute>
           } 
         />

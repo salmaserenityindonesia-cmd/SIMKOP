@@ -319,7 +319,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span className="material-symbols-outlined">group</span>
                 <span>Manajemen User</span>
               </NavLink>
+
+              {/* ── LAPORAN SECTION ── */}
+              <div className="mt-2">
+                <div className="flex items-center gap-3 px-4 py-2 text-on-primary-container/70 font-label-md uppercase tracking-wider text-xs">
+                  <span className="material-symbols-outlined text-[16px]">analytics</span>
+                  <span>Laporan</span>
+                </div>
+                <NavLink 
+                  to="/admin/laporan-keuangan"
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
+                      isActive 
+                        ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                        : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                    }`
+                  }
+                >
+                  <span className="material-symbols-outlined text-[16px]">account_balance_wallet</span>
+                  <span>Laporan Keuangan</span>
+                </NavLink>
+              </div>
+
             </nav>
+
           </div>
 
           <div className="space-y-3 pt-4 border-t border-outline-variant/15">
