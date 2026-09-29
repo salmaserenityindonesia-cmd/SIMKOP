@@ -253,6 +253,24 @@ updated: 2026-09-26T19:28:00+07:00
 
 ---
 
+### Phase 16: Dashboard Laporan Keuangan Terpadu
+**Status**: ⬜ Not Started
+**Objective**: Membangun modul `/admin/laporan-keuangan` — Dashboard Keuangan Terpadu dengan dua tab: (1) Laporan Arus Kas Komprehensif (Cash Flow Statement) dan (2) Estimasi SHU Berjalan (Projected Net Operating Surplus) — terintegrasi dengan Stitch MCP untuk UI generation dan Supabase untuk agregasi data real-time.
+**Depends on**: Phase 5, Phase 8, Phase 9
+
+**Plans**:
+- [ ] Plan 16.1: (Wave 1) Generate Financial Reports Dashboard UI via Stitch MCP — breadcrumb, date range toolbar, tab switcher, metric cards, tabel arus kas, waterfall SHU cards, widget alokasi RAT.
+- [ ] Plan 16.2: (Wave 2) Build Cashflow & SHU Aggregation Service Layer — Supabase queries untuk `/api/reports/cash-flow` dan `/api/reports/shu-estimation` dengan formula HPP (SUM qty × buy_price), laba kotor, dan estimasi SHU bersih.
+- [ ] Plan 16.3: (Wave 3) Connect UI State, Sidebar Navigation & Export Handlers — reaktivitas filter tanggal, sidebar link, export Excel (.xlsx via exceljs), dan cetak PDF client-side.
+
+**Verification**:
+- Buka `/admin/laporan-keuangan`, ganti filter tanggal → data metric cards dan tabel reload otomatis.
+- Switch antar tab Arus Kas ↔ Estimasi SHU tanpa error.
+- Tombol Export Excel mengunduh file `.xlsx` dengan angka yang sinkron dengan tampilan.
+- Kalkulasi HPP, Laba Kotor, dan Estimasi SHU sesuai formula business rules.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -265,6 +283,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 6 | Phase 13 | Refactoring Kasir, dapat berjalan mandiri |
 | 7 | Phase 14 | Export/Import Kategori Produk |
 | 8 | Phase 15 | Export/Import Katalog Produk |
+| 9 | Phase 16 | Dashboard Laporan Keuangan Terpadu (Arus Kas + Estimasi SHU) |
 
 ---
 
@@ -287,6 +306,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 13 | Refactoring Modul Kasir (POS) SIMKOP Enterprise | ✅ | 5/5 | 100% |
 | 14 | Product Categories Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
 | 15 | Product Catalog Excel Template Export and Batch Import | 🔄 | 0/2 | 0% |
+| 16 | Dashboard Laporan Keuangan Terpadu | ⬜ | 0/3 | 0% |
 
 ---
 
@@ -309,3 +329,4 @@ updated: 2026-09-26T19:28:00+07:00
 | 13 | 2026-09-28 | 2026-09-28 | 1 day |
 | 14 | 2026-09-28 | 2026-09-28 | 1 day |
 | 15 | 2026-09-28 | — | — |
+| 16 | — | — | — |
