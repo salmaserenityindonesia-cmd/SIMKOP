@@ -330,42 +330,55 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
 
        const { data: newLoan } = await supabase.from('loans').insert(loanPayload).select('id').single();
        if (newLoan) {
-         // Insert Repayments untuk yang sudah diangsur
-         if (row.sudah_diangsur > 0) {
-            const repays = [];
-            let lDate = row.tgl_awal_pinjaman ? new Date(row.tgl_awal_pinjaman) : new Date();
-            for(let i=0; i<row.n_bulan_pinjaman; i++) {
-               const rDate = new Date(lDate);
-               rDate.setMonth(rDate.getMonth() + i + 1); // bulan depan
-               repays.push({
+         // Generate ALL schedules
+         const scheds = [];
+         let lDate = row.tgl_awal_pinjaman ? new Date(row.tgl_awal_pinjaman) : new Date();
+         const targetPerMonth = Math.floor(row.jumlah_pinjaman / row.tenor);
+         
+         for(let i = 0; i < row.tenor; i++) {
+             const d = new Date(lDate);
+             d.setMonth(d.getMonth() + i + 1);
+             
+             let paidAmt = 0;
+             let status = 'unpaid';
+             
+             if (i < row.n_bulan_pinjaman) {
+                 paidAmt = row.angsuran_lampau_per_bulan;
+                 if (paidAmt >= targetPerMonth) status = 'paid';
+                 else if (paidAmt > 0) status = 'partial';
+             }
+             
+             scheds.push({
                  loan_id: newLoan.id,
-                 amount_paid: row.angsuran_lampau_per_bulan,
-                 payment_method: 'migration',
-                 payment_date: rDate.toISOString(),
-                 notes: 'Migrasi Angsuran Lampau'
-               });
-            }
-            if (repays.length > 0) await supabase.from('loan_repayments').insert(repays);
+                 period_number: i + 1,
+                 due_date: d.toISOString().split('T')[0],
+                 target_amount: targetPerMonth,
+                 paid_amount: paidAmt,
+                 status: status
+             });
          }
          
-         // Insert Schedules untuk sisa_pinjaman
-         const remainingMonths = row.tenor - row.n_bulan_pinjaman;
-         if (remainingMonths > 0) {
-            const scheds = [];
-            let sDate = new Date();
-            for(let i=0; i<remainingMonths; i++) {
-               const d = new Date(sDate);
-               d.setMonth(d.getMonth() + i + 1);
-               scheds.push({
-                 loan_id: newLoan.id,
-                 period_number: row.n_bulan_pinjaman + i + 1,
-                 due_date: d.toISOString().split('T')[0],
-                 target_amount: Math.floor(row.sisa_pinjaman / remainingMonths),
-                 paid_amount: 0,
-                 status: 'unpaid'
-               });
-            }
-            if (scheds.length > 0) await supabase.from('loan_schedules').insert(scheds);
+         if (scheds.length > 0) {
+             const { data: insertedScheds } = await supabase.from('loan_schedules').insert(scheds).select('*');
+             
+             // Insert Repayments untuk yang sudah diangsur
+             if (row.sudah_diangsur > 0 && insertedScheds) {
+                const repays = [];
+                for(let i = 0; i < row.n_bulan_pinjaman; i++) {
+                   const sched = insertedScheds.find((s: any) => s.period_number === i + 1);
+                   if (sched) {
+                     repays.push({
+                       loan_id: newLoan.id,
+                       schedule_id: sched.id,
+                       amount_paid: row.angsuran_lampau_per_bulan,
+                       payment_method: 'migration',
+                       payment_date: sched.due_date,
+                       notes: 'Migrasi Angsuran Lampau'
+                     });
+                   }
+                }
+                if (repays.length > 0) await supabase.from('loan_repayments').insert(repays);
+             }
          }
        }
     }
