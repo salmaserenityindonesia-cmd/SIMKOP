@@ -187,6 +187,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </NavLink>
                 {user?.role === 'admin' && (
                   <NavLink 
+                    to="/admin/batch-update"
+                    className={({ isActive }) => 
+                      `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
+                        isActive 
+                          ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                          : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                      }`
+                    }
+                  >
+                    <span>Update Massal Bulanan</span>
+                  </NavLink>
+                )}
+                {user?.role === 'admin' && (
+                  <NavLink 
                     to="/admin/clearance"
                     className={({ isActive }) => 
                       `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${

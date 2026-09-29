@@ -18,6 +18,7 @@ import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
 import { LoanMatrix } from './pages/admin/LoanMatrix';
+import BatchUpdater from './pages/admin/BatchUpdater';
 
 export default function App() {
   return (
@@ -175,6 +176,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <LoanMatrix />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/batch-update" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <BatchUpdater />
             </ProtectedRoute>
           } 
         />
