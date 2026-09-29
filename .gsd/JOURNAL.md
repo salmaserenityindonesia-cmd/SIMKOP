@@ -575,28 +575,51 @@ User invoked `/pause` command.
 ### Handoff Notes
 Trigger migration is saved but not executed on Supabase yet (`ProjectRefNotLinkedError` issue). The next session should wire `ComplianceMatrix.tsx` to actual backend data or continue with remaining milestone wrap-up.
 
- - - - 
- 
- # #   S e s s i o n :   2 0 2 6 - 0 9 - 2 9   0 0 : 0 8 
- 
- # # #   O b j e c t i v e 
- R e s o l v e   m i n o r   b u g   f i x e s   r e p o r t e d   b y   t h e   u s e r   ( S t a t u s   A n g g o t a   a n d   E n u m   E r r o r   o n   L o a n   R e j e c t i o n ) . 
- 
- # # #   A c c o m p l i s h e d 
- -   S w i t c h e d   t h e   U I   l o g i c   i n   \ M a n a j e m e n A n g g o t a . t s x \   t o   r e a d   f r o m   t h e   \ m e m b e r s h i p _ s t a t u s \   f i e l d   i n s t e a d   o f   \ s t a t u s \   s o   t h e   U I   c o r r e c t l y   r e f l e c t s   m e m b e r   l i f e c y c l e   s t a t e s . 
- -   I n v e s t i g a t e d   a   d a t a b a s e   e r r o r   t h r o w i n g   \ i n v a l i d   i n p u t   v a l u e   f o r   e n u m   l o a n _ s t a t u s :   \  
- r e j e c t e d \ \ . 
- -   I d e n t i f i e d   t h a t   t h e   r e m o t e   P o s t g r e S Q L   d a t a b a s e   w a s   m i s s i n g   t h e   \ ' r e j e c t e d ' \   v a l u e   i n   t h e   \ l o a n _ s t a t u s \   e n u m . 
- -   C r e a t e d   \   1 4 _ a d d _ r e j e c t e d _ l o a n _ s t a t u s . s q l \   a n d   p r o v i d e d   i n s t r u c t i o n s   t o   t h e   u s e r   t o   e x e c u t e   i t   v i a   t h e   S u p a b a s e   S Q L   E d i t o r . 
- 
- # # #   V e r i f i c a t i o n 
- -   [ x ]   A p p l i c a t i o n   b u i l d s   s u c c e s s f u l l y   ( \ 
- p m   r u n   b u i l d \ ) . 
- -   [   ]   U s e r   r u n s   t h e   m i g r a t i o n   s c r i p t   i n   S u p a b a s e   D a s h b o a r d . 
- 
- # # #   P a u s e d   B e c a u s e 
- U s e r   i n v o k e d   \ / p a u s e \   c o m m a n d . 
- 
- # # #   H a n d o f f   N o t e s 
- W a i t   f o r   t h e   u s e r   t o   r u n   t h e   p r o v i d e d   S Q L   s c r i p t   t o   f i x   t h e   l o a n   r e j e c t i o n   i s s u e .   N e x t   s e s s i o n   c a n   r e s u m e   n o r m a l   d e v e l o p m e n t .  
- 
+---
+
+## Session: 2026-09-29 00:08
+
+### Objective
+Resolve minor bug fixes reported by the user (Status Anggota and Enum Error on Loan Rejection).
+
+### Accomplished
+- Switched the UI logic in `ManajemenAnggota.tsx` to read from the `membership_status` field instead of `status` so the UI correctly reflects member lifecycle states.
+- Investigated a database error throwing `invalid input value for enum loan_status: "rejected"`.
+- Identified that the remote PostgreSQL database was missing the `"rejected"` value in the `loan_status` enum.
+- Created `14_add_rejected_loan_status.sql` and provided instructions to the user to execute it via the Supabase SQL Editor.
+
+### Verification
+- [x] Application builds successfully (`npm run build`).
+- [ ] User runs the migration script in Supabase Dashboard.
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Wait for the user to run the provided SQL script to fix the loan rejection issue. Next session can resume normal development.
+
+---
+
+## Session: 2026-09-29 08:13
+
+### Objective
+Fix member data import errors regarding deposit transactions and compliance matrix logic.
+
+### Accomplished
+- Identified and fixed column name mismatch in `memberExcelService.ts` for `deposit_transactions` (`notes` -> `description`, etc).
+- Fixed `transaction_type` enum value (was `'payment'`, now `'deposit'`).
+- Fixed dynamic matching of deposit types in `memberExcelService.ts` and `matrixService.ts` using `.find(k => k.includes('...'))` to gracefully handle naming differences between UI code and database.
+- Created `MemberLedgerModal.tsx` ("Buku Bantu") and integrated it into `ComplianceMatrix.tsx` via the Eye button, complete with aggregate balances for each deposit type.
+- Made the top KPI cards on the Compliance Matrix dashboard completely dynamic and real-time.
+
+### Verification
+- [x] Import script works flawlessly now with proper column names and `deposit_types` matching.
+- [x] Matriks Kepatuhan correctly renders "Lunas" and "Belum" for Wajib, Belanja, and Lebaran deposits.
+- [x] "Buku Bantu" modal fetches and computes aggregates correctly.
+- [x] Real-time KPI cards function based on dynamic queries.
+
+### Paused Because
+User invoked `/pause` command.
+
+### Handoff Notes
+Everything appears stable. Ready for user validation.
