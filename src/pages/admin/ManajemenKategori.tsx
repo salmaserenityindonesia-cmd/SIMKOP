@@ -18,6 +18,9 @@ export default function ManajemenKategori() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   useEffect(() => {
     fetchCategories();
   }, []);
@@ -107,6 +110,9 @@ export default function ManajemenKategori() {
     }
   };
 
+  const totalPages = Math.ceil(categories.length / itemsPerPage);
+  const paginatedCategories = categories.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
@@ -167,9 +173,9 @@ export default function ManajemenKategori() {
                     <td colSpan={3} className="p-8 text-center text-on-surface-variant">Belum ada kategori yang terdaftar.</td>
                   </tr>
                 ) : (
-                  categories.map((cat, index) => (
+                  paginatedCategories.map((cat, index) => (
                     <tr key={cat.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
-                      <td className="p-4 text-body-md text-on-surface text-center">{index + 1}</td>
+                      <td className="p-4 text-body-md text-on-surface text-center">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                       <td className="p-4 text-title-sm font-medium text-on-surface">{cat.name}</td>
                       <td className="p-4 flex items-center justify-center gap-2">
                         <button 
@@ -192,6 +198,49 @@ export default function ManajemenKategori() {
                 )}
               </tbody>
             </table>
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant">
+            <div className="flex items-center gap-2 text-on-surface-variant">
+              <span>
+                Menampilkan {categories.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                {Math.min(currentPage * itemsPerPage, categories.length)} dari {categories.length} kategori
+              </span>
+              <select 
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="ml-2 bg-transparent border-none font-medium text-on-surface outline-none cursor-pointer focus:ring-0"
+              >
+                <option value={10}>10 / halaman</option>
+                <option value={25}>25 / halaman</option>
+                <option value={50}>50 / halaman</option>
+                <option value={100}>100 / halaman</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Prev
+              </button>
+              <span className="text-sm font-medium px-2 text-on-surface">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>

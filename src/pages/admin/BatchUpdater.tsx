@@ -19,6 +19,9 @@ export default function BatchUpdater() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+  
   const handleDownloadTemplate = async () => {
     try {
       await downloadBatchTemplate(updateType, month, year);
@@ -33,6 +36,7 @@ export default function BatchUpdater() {
       setResults([]);
       setErrorMsg(null);
       setSuccessMsg(null);
+      setCurrentPage(1);
     }
   };
 
@@ -43,6 +47,7 @@ export default function BatchUpdater() {
     try {
       const data = await parseBatchUpdateFile(file, updateType, month, year);
       setResults(data);
+      setCurrentPage(1);
     } catch (err: any) {
       setErrorMsg('Gagal memproses file: ' + err.message);
     } finally {
@@ -68,6 +73,9 @@ export default function BatchUpdater() {
 
   const totalCollected = results.reduce((sum, r) => sum + r.nominal_baru, 0);
   const validRows = results.filter(r => r.status === 'READY').length;
+
+  const totalPages = Math.ceil(results.length / itemsPerPage);
+  const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <AdminLayout>
@@ -216,7 +224,7 @@ export default function BatchUpdater() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/20">
-                  {results.map((r, idx) => (
+                  {paginatedResults.map((r, idx) => (
                     <tr key={idx} className="hover:bg-surface-container-lowest/50">
                       <td className="px-4 py-3">{r.nrp}</td>
                       <td className="px-4 py-3">{r.nama}</td>
@@ -237,6 +245,49 @@ export default function BatchUpdater() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Footer */}
+            <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm mt-4">
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <span>
+                  Menampilkan {results.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                  {Math.min(currentPage * itemsPerPage, results.length)} dari {results.length} baris
+                </span>
+                <select 
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="ml-2 bg-transparent border-none font-medium text-on-surface outline-none cursor-pointer focus:ring-0"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Prev
+                </button>
+                <span className="text-sm font-medium px-2 text-on-surface">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || totalPages === 0}
+                  className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         )}

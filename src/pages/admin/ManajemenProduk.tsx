@@ -42,6 +42,13 @@ export default function ManajemenProduk() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [searchQuery, setSearchQuery] = useState('');
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, sortField, sortDirection]);
+
   useEffect(() => {
     fetchProducts();
   }, []);
@@ -243,6 +250,9 @@ export default function ManajemenProduk() {
     return 0;
   });
 
+  const totalPages = Math.ceil(sortedProducts.length / itemsPerPage);
+  const paginatedProducts = sortedProducts.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
@@ -399,7 +409,7 @@ export default function ManajemenProduk() {
                     <td colSpan={7} className="p-8 text-center text-on-surface-variant">Produk tidak ditemukan untuk pencarian "{searchQuery}".</td>
                   </tr>
                 ) : (
-                  sortedProducts.map((p) => (
+                  paginatedProducts.map((p) => (
                     <tr key={p.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
                       <td className="p-4 text-body-md text-on-surface font-mono text-sm">{p.sku}</td>
                       <td className="p-4 text-title-sm font-medium text-on-surface">{p.name}</td>
@@ -451,6 +461,49 @@ export default function ManajemenProduk() {
                 )}
               </tbody>
             </table>
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant">
+            <div className="flex items-center gap-2 text-on-surface-variant">
+              <span>
+                Menampilkan {sortedProducts.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                {Math.min(currentPage * itemsPerPage, sortedProducts.length)} dari {sortedProducts.length} produk
+              </span>
+              <select 
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="ml-2 bg-transparent border-none font-medium text-on-surface outline-none cursor-pointer focus:ring-0"
+              >
+                <option value={10}>10 / halaman</option>
+                <option value={25}>25 / halaman</option>
+                <option value={50}>50 / halaman</option>
+                <option value={100}>100 / halaman</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Prev
+              </button>
+              <span className="text-sm font-medium px-2 text-on-surface">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>
