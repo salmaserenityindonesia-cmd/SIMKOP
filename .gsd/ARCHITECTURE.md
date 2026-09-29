@@ -4,71 +4,56 @@
 
 ## Overview
 
-SIMKOP is a web-based cooperative management system (Sistem Informasi Manajemen Koperasi). It provides administrative dashboards, Point of Sale (POS), member management, loan/deposit tracking (simpan pinjam), product and category management, and salary import/clearance features. The application uses a React frontend with a Supabase backend for database and authentication.
+SIMKOP is a React-based web application for managing a cooperative's business operations. It uses Supabase as its backend-as-a-service for database, authentication, and RPC functions. It serves multiple modules including Member Management, POS (Kasir), Inventory Management, Loan and Savings Management, and Settlement.
 
 ```
 ┌─────────────────────────────────────────┐
-│           React Frontend (Vite)         │
-│          App.tsx (Entry Point)          │
+│              [App.tsx]                  │
 ├─────────────────────────────────────────┤
-│            Services Layer               │
-│         (src/services/*.ts)             │
+│         [React Components / UI]         │
 ├─────────────────────────────────────────┤
-│           Supabase Backend              │
-│       (Auth, Database, RPCs)            │
+│         [Service Layer (*.ts)]          │
+├─────────────────────────────────────────┤
+│        [Supabase BaaS Layer]            │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Frontend Application
-- **Purpose:** Provide the user interface for admins and cashiers.
-- **Location:** `src/`
-- **Dependencies:** React, react-router-dom, Tailwind CSS, Lucide React
+### Components
+- **Purpose:** Reusable UI components.
+- **Location:** `src/components/`
+- **Modules:** `admin`, `auth`, `categories`, `layout`, `members`, `pos`, `products`, `settlement`, `ui`.
 
-### Services Layer
-- **Purpose:** Encapsulate business logic and data access (Supabase interactions).
-- **Location:** `src/services/`
-- **Key Services:**
-  - `koperasiService.ts`: Core data fetching and mutations (products, deposits, etc.)
-  - `memberExcelService.ts`: Excel import/export for member data
-  - `loanService.ts`: Loan logic and calculations
-  - `settlementService.ts`: Settlement clearance logic
-  - `salaryImportService.ts`: Salary import and reconciliation
-
-### Pages & Routing
-- **Purpose:** Define application views and navigation.
+### Pages
+- **Purpose:** Top level routing components.
 - **Location:** `src/pages/`
-- **Key Routes:**
-  - `/admin/*`: Admin dashboard and management screens (protected routes)
-  - `/admin/kasir`: Point of Sale (POS) interface
-  - `/login`: Authentication page
+
+### Services
+- **Purpose:** Business logic and data access (Supabase integration).
+- **Location:** `src/services/`
+- **Modules:** `koperasiService.ts`, `loanService.ts`, `matrixService.ts`, `memberExcelService.ts`, `productExcelService.ts`, `salaryImportService.ts`, `settlementService.ts`, `salaryTemplateService.ts`, `categoryExcelService.ts`.
 
 ## Data Flow
 
-1. **User Interaction:** User interacts with UI components in `src/pages/` or `src/components/`.
-2. **Service Call:** Components invoke functions in `src/services/` (e.g., `koperasiService.getProducts()`).
-3. **Database Access:** Services make asynchronous calls to Supabase via `src/lib/supabaseClient.ts` (using Supabase JS SDK).
-4. **Data Return:** Data or errors are returned from Supabase, processed by the service, and then used to update component state.
+1. User interacts with UI components inside `src/pages` or `src/components`.
+2. Components call functions from `src/services/*.ts`.
+3. Services communicate with Supabase using `@supabase/supabase-js`.
+4. Supabase responds with data or confirms actions.
+5. React re-renders components with the updated state.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | Backend-as-a-Service | Authentication, PostgreSQL Database, and RPCs |
-| ExcelJS / XLSX | Library | Import/export data to/from Excel |
-| jsPDF | Library | Generate PDF reports |
-| html5-qrcode | Library | Barcode/QR code scanning for POS |
+| Supabase | BaaS | Database, Authentication, and RPC logic. |
 
 ## Technical Debt
 
-- [ ] Consolidate Supabase clients: Check if multiple Supabase client instantiations exist or if they are properly centralized in `src/lib/supabaseClient.ts`.
-- [ ] Error Handling: Ensure consistent error handling across all services (some use `try-catch` and return `{ data, error }`, others might throw).
-- [ ] Test Coverage: Add tests for more services (`loanService.test.ts` exists, but others are missing).
-- [ ] Database RPCs: Heavy reliance on Supabase RPCs (e.g., `process_member_clearance`, `batch_update_salary_reconciliation`). Ensure these are versioned or documented in the repo.
+- [ ] Consolidate data fetching patterns across services (some use raw queries, some use RPCs).
 
 ## Conventions
 
-**Naming:** PascalCase for React components, camelCase for services and utilities.
-**Structure:** Feature-based routing in `src/pages/`, reusable UI in `src/components/`, business logic in `src/services/`.
-**Styling:** Tailwind CSS utility classes.
+**Naming:** PascalCase for components, camelCase for services and utils.
+**Structure:** Feature-based service layer with domain-specific files.
+**Testing:** Vitest setup found but tests are minimal (`loanService.test.ts`).

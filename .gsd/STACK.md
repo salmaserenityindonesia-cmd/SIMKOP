@@ -6,47 +6,48 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | v20+ | Core runtime for development and build tools |
-| Web Browser | N/A | Execution environment for the React application |
+| Node.js | v26+ | Build and development runtime |
+| Browser | N/A | Application runtime |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Supabase client for database and auth |
-| dotenv | ^18.0.4 | Environment variable loading |
-| exceljs | ^4.4.0 | Excel file manipulation |
-| html5-qrcode | ^2.3.8 | QR and barcode scanning |
-| jspdf | ^4.2.1 | PDF document generation |
-| jspdf-autotable | ^5.0.8 | Table plugin for jsPDF |
-| lucide-react | ^1.48.0 | UI Icons |
-| react | ^19.3.0 | Core UI library |
-| react-dom | ^19.3.0 | React DOM rendering |
-| react-router-dom | ^7.18.4 | Client-side routing |
-| xlsx | ^0.18.5 | Excel spreadsheet parsing and writing |
+| @supabase/supabase-js | ^2.117.2 | Database and Backend |
+| react | ^19.3.0 | UI Framework |
+| react-dom | ^19.3.0 | DOM renderer |
+| react-router-dom | ^7.18.4 | Routing |
+| lucide-react | ^1.48.0 | Icons |
+| html5-qrcode | ^2.3.8 | QR/Barcode scanning |
+| exceljs | ^4.4.0 | Excel data handling |
+| xlsx | ^0.18.5 | Excel parsing |
+| jspdf / jspdf-autotable | ^4.2.1 / ^5.0.8 | PDF Generation |
+| dotenv | ^18.0.4 | Environment variables |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @tailwindcss/postcss | ^4.3.3 | Tailwind CSS integration for PostCSS |
-| @types/* | Various | TypeScript definitions |
-| @vitejs/plugin-react | ^6.1.1 | Vite plugin for React |
-| tailwindcss | ^4.3.3 | Utility-first CSS framework |
-| typescript | ^7.0.2 | Typed JavaScript language |
-| vite | ^8.3.1 | Build tool and dev server |
+| vite | ^8.3.1 | Build tool / Bundler |
+| typescript | ^7.0.2 | Type safety |
+| tailwindcss | ^4.3.3 | Styling framework |
 | vitest | ^5.0.2 | Testing framework |
+| tsx | ^4.23.15 | TypeScript execution |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Supabase | Supabase | Database, Authentication, API |
-| Hosting | TBD | Application deployment (likely Vercel, Netlify, or similar given Vite/React) |
+| Database & Auth | Supabase | Postgres DB & Authentication |
 
 ## Configuration
 
 | Variable | Purpose | Location |
 |----------|---------|----------|
-| VITE_SUPABASE_URL | Supabase project URL | `.env` |
-| VITE_SUPABASE_ANON_KEY | Supabase public API key | `.env` |
+| N/A | Environment config | .env |
+
+## Outdated Packages
+
+| Package | Current | Latest | Risk |
+|---------|---------|--------|------|
+| (Not checked) | - | - | - |
