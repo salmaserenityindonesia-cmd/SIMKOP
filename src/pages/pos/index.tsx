@@ -47,6 +47,7 @@ export default function POSPage() {
     receipt: false,
     splitPayment: false,
   });
+  const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -160,7 +161,12 @@ export default function POSPage() {
             members={members}
             selectedMember={selectedMember}
             onSelectMember={setSelectedMember}
-            onPay={() => { if(cart.length>0) setModals(m => ({...m, splitPayment: true})) }}
+            onPay={(method: string) => { 
+              if(cart.length>0) {
+                setInitialPaymentMethod(method);
+                setModals(m => ({...m, splitPayment: true}));
+              } 
+            }}
             onHold={() => alert('Fitur Tahan Transaksi (Placeholder)')}
             onReset={() => setCart([])}
           />
@@ -197,6 +203,7 @@ export default function POSPage() {
         cart={cart}
         total={total}
         memberId={selectedMember?.id || null}
+        initialMethod={initialPaymentMethod}
         onConfirm={handleCheckoutConfirm}
       />
       

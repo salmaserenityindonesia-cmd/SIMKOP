@@ -81,12 +81,12 @@ export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [
       <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-3.5 shadow-sm">
         <div className="text-title-sm font-title-sm text-primary mb-2">Metode Pembayaran Cepat</div>
         <div className="grid grid-cols-2 gap-2">
-          {['Tunai', 'Potong Saldo', 'QRIS', 'Transfer'].map(type => (
+          {['Tunai', 'Potong Simpanan', 'Bon Toko'].map(type => (
             <button 
               key={type}
               className={`p-2.5 rounded-lg border flex items-center gap-2 font-title-sm text-left transition-all ${paymentType === type ? 'border-2 border-secondary bg-surface-container-low text-primary' : 'border-outline-variant/60 bg-surface-container-lowest text-primary hover:border-secondary'}`} 
               onClick={() => setPaymentType(type)}>
-              <span className="material-symbols-outlined text-secondary text-[22px]">{type === 'Tunai' ? 'payments' : type === 'Potong Saldo' ? 'account_balance_wallet' : type === 'QRIS' ? 'qr_code_2' : 'account_balance'}</span>
+              <span className="material-symbols-outlined text-secondary text-[22px]">{type === 'Tunai' ? 'payments' : type === 'Potong Simpanan' ? 'account_balance_wallet' : 'receipt_long'}</span>
               <div className="font-bold leading-tight">{type}</div>
             </button>
           ))}
@@ -94,7 +94,7 @@ export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [
       </div>
 
       <div className="space-y-2 mt-2">
-        <button className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2.5 shadow-md transition-all active:scale-[0.98]" onClick={onPay}>
+        <button className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2.5 shadow-md transition-all active:scale-[0.98]" onClick={() => onPay(paymentType)}>
           <span className="material-symbols-outlined text-[26px]">point_of_sale</span>
           <span>Bayar Transaksi [F9 / Space]</span>
         </button>

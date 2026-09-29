@@ -62,9 +62,9 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
        sale_id: saleId,
        product_id: item.id,
        product_name: item.name,
-       qty: item.qty,
-       price: item.price,
-       subtotal: item.qty * item.price
+       quantity: item.qty, // renamed from qty to quantity to match existing table schema
+       unit_price: item.price // renamed from price to unit_price
+       // subtotal: is likely a generated column in DB, omitting to avoid constraint error
     }));
 
     const { error: itemsError } = await supabase.from('sale_items').insert(items);

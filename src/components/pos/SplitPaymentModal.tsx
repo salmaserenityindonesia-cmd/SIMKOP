@@ -8,10 +8,11 @@ interface Props {
   cart: any[];
   total: number;
   memberId: string | null;
+  initialMethod?: string;
   onConfirm: (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => void;
 }
 
-export default function SplitPaymentModal({ isOpen, onClose, cart, total, memberId, onConfirm }: Props) {
+export default function SplitPaymentModal({ isOpen, onClose, cart, total, memberId, initialMethod = 'Tunai', onConfirm }: Props) {
   const [paidCash, setPaidCash] = useState<string>('');
   const [paidDeposit, setPaidDeposit] = useState<string>('');
   const [paidCredit, setPaidCredit] = useState<string>('');
@@ -20,11 +21,28 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
 
   useEffect(() => {
     if (isOpen) {
-      setPaidCash('');
-      setPaidDeposit('');
-      setPaidCredit('');
+      if (initialMethod === 'Potong Simpanan') {
+        setPaidDeposit(total.toString());
+        setPaidCash('');
+        setPaidCredit('');
+      } else if (initialMethod === 'Bon Toko') {
+        setPaidCredit(total.toString());
+        setPaidCash('');
+        setPaidDeposit('');
+      } else {
+        setPaidCash(total.toString());
+        setPaidDeposit('');
+        setPaidCredit('');
+      }
+      import('../../services/posCreditService').then(s => {
+        if (memberId) {
+          s.getMemberFinancials(memberId).then(setFinancials);
+        } else {
+          setFinancials(null);
+        }
+      });
     }
-  }, [isOpen]);
+  }, [isOpen, memberId, total, initialMethod]);
 
   if (!isOpen) return null;
 
