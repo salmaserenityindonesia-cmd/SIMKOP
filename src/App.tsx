@@ -14,6 +14,7 @@ import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
 import TerimaSetoran from './pages/admin/TerimaSetoran';
+import PenarikanSimpanan from './pages/admin/penarikan-simpanan';
 import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
@@ -68,6 +69,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <TerimaSetoran />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/penarikan-simpanan" 
+          element={
+            <ProtectedRoute>
+              <PenarikanSimpanan />
             </ProtectedRoute>
           } 
         />

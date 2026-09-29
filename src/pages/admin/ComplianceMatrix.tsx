@@ -78,18 +78,18 @@ export default function ComplianceMatrix() {
     // We'll check the CURRENT_MONTH of the selected year if we assume they might owe in the past, but the prompt says "Bulan Ini"
     // Let's use CURRENT_MONTH data.
     const currentMonthData = row.months[CURRENT_MONTH];
-    if (currentMonthData && (!currentMonthData.w || !currentMonthData.b || !currentMonthData.l)) {
+    if (currentMonthData && (currentMonthData.w <= 0 || currentMonthData.b <= 0 || currentMonthData.l <= 0)) {
       return true;
     }
     return false;
   }).length;
 
-  const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number) => {
+  const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number, row: ComplianceMatrixRow) => {
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
     
-    const { w, b, l } = monthData;
-    const allPaid = w && b && l;
-    const unpaidCount = (!w ? 1 : 0) + (!b ? 1 : 0) + (!l ? 1 : 0);
+    const { w, b, l, bal_w, bal_b, bal_l } = monthData;
+    const allPaid = w > 0 && b > 0 && l > 0;
+    const unpaidCount = (w <= 0 ? 1 : 0) + (b <= 0 ? 1 : 0) + (l <= 0 ? 1 : 0);
 
     return (
       <div className="relative group flex justify-center items-center w-full h-full">
@@ -102,20 +102,29 @@ export default function ComplianceMatrix() {
         )}
 
         {/* Tooltip */}
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
           <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{MONTHS[monthIndex]} {year}</div>
           <div className="space-y-1.5">
-            <div className="flex justify-between items-center gap-4">
+            <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Wajib:</span>
-              {w ? <span className="text-emerald-400">{formatCurrency(targets.wajib)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              <div className="text-right">
+                <div>{w > 0 ? <span className="text-emerald-400">{formatCurrency(w)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_w.toLocaleString('id-ID')}</div>
+              </div>
             </div>
-            <div className="flex justify-between items-center gap-4">
+            <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Belanja:</span>
-              {b ? <span className="text-emerald-400">{formatCurrency(targets.belanja)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              <div className="text-right">
+                <div>{b > 0 ? <span className="text-emerald-400">{formatCurrency(b)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_b.toLocaleString('id-ID')}</div>
+              </div>
             </div>
-            <div className="flex justify-between items-center gap-4">
+            <div className="flex justify-between items-center gap-2">
               <span>Lebaran:</span>
-              {l ? <span className="text-emerald-400">{formatCurrency(targets.lebaran)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              <div className="text-right">
+                <div>{l > 0 ? <span className="text-emerald-400">{formatCurrency(l)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_l.toLocaleString('id-ID')}</div>
+              </div>
             </div>
           </div>
           {/* Arrow */}
@@ -287,7 +296,7 @@ export default function ComplianceMatrix() {
                   
                   {row.months.map((month, idx) => (
                     <td key={idx} className={`py-3 px-1 border-b border-slate-100 align-middle ${idx === CURRENT_MONTH ? 'bg-emerald-50/20 border-x-2 border-x-emerald-100/50' : ''}`}>
-                      {renderCell(month, idx)}
+                      {renderCell(month, idx, row)}
                     </td>
                   ))}
 

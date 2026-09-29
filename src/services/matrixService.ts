@@ -2,9 +2,12 @@
 import { supabase } from '../lib/supabaseClient';
 
 export interface ComplianceMonthData {
-  w: boolean;
-  b: boolean;
-  l: boolean;
+  w: number;
+  b: number;
+  l: number;
+  bal_w: number;
+  bal_b: number;
+  bal_l: number;
 }
 
 export interface ComplianceMatrixRow {
@@ -13,6 +16,7 @@ export interface ComplianceMatrixRow {
   nama: string;
   pokokLunas: boolean;
   compliance: number;
+  balances: { w: number, b: number, l: number };
   months: (ComplianceMonthData | null)[];
 }
 export interface ComplianceMatrixResult {
@@ -44,17 +48,16 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
   const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at').eq('status', 'aktif');
   if (!members) return { rows: [], targets: { wajib: 0, belanja: 0, lebaran: 0 } };
 
-  // 3. Fetch deposit commitments / transactions for the year
-  // Let's use deposit_transactions joined with member_deposits
+  // 3. Fetch deposit commitments / transactions
+  // We fetch all to calculate total accumulated balance, but only use 'for_year' for the matrix checkboxes
   const { data: transactions } = await supabase
     .from('deposit_transactions')
-    .select('*, member_deposits(member_id, deposit_type_id)')
-    .eq('for_year', year);
+    .select('amount, transaction_type, for_year, for_month, created_at, member_deposits!inner(member_id, deposit_type_id)');
     
   // Also check pokok which might not be tied to a specific month/year, but just paid.
   const { data: pokokTxs } = await supabase
     .from('deposit_transactions')
-    .select('amount, member_deposits(member_id, deposit_type_id)')
+    .select('amount, member_deposits!inner(member_id, deposit_type_id)')
     .eq('member_deposits.deposit_type_id', pokokId);
 
   const pokokPaidByMember = new Set<string>();
@@ -66,22 +69,42 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
     });
   }
 
-  // Aggregate monthly payments
-  const paymentsByMember: Record<string, Record<number, { w: boolean, b: boolean, l: boolean }>> = {};
+  // Aggregate monthly payments & transactions for running balance
+  const paymentsByMember: Record<string, Record<number, { w: number, b: number, l: number }>> = {};
+  const memberTxs: Record<string, Array<{ year: number, month: number, type: string, amt: number, tId: string }>> = {};
   
   if (transactions) {
     transactions.forEach((tx: any) => {
-      if (!tx.member_deposits || !tx.for_month) return;
+      if (!tx.member_deposits) return;
       const mId = tx.member_deposits.member_id;
       const tId = tx.member_deposits.deposit_type_id;
-      const month = tx.for_month - 1; // 0-indexed for the array
+      const amt = Number(tx.amount) || 0;
+      
+      let txYear = 0;
+      let txMonth = 0;
+      
+      if (tx.transaction_type === 'deposit') {
+        txYear = tx.for_year || new Date(tx.created_at).getFullYear();
+        txMonth = tx.for_month ? tx.for_month - 1 : new Date(tx.created_at).getMonth();
+      } else {
+        const d = new Date(tx.created_at);
+        txYear = d.getFullYear();
+        txMonth = d.getMonth();
+      }
+      
+      if (!memberTxs[mId]) memberTxs[mId] = [];
+      memberTxs[mId].push({ year: txYear, month: txMonth, type: tx.transaction_type, amt, tId });
 
-      if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
-      if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: false, b: false, l: false };
+      // Check monthly compliance for the selected year
+      if (tx.for_year === year && tx.for_month && tx.transaction_type === 'deposit') {
+        const month = tx.for_month - 1; // 0-indexed for the array
+        if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
+        if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
 
-      if (tId === wajibId) paymentsByMember[mId][month].w = true;
-      if (tId === belanjaId) paymentsByMember[mId][month].b = true;
-      if (tId === lebaranId) paymentsByMember[mId][month].l = true;
+        if (tId === wajibId) paymentsByMember[mId][month].w += amt;
+        if (tId === belanjaId) paymentsByMember[mId][month].b += amt;
+        if (tId === lebaranId) paymentsByMember[mId][month].l += amt;
+      }
     });
   }
 
@@ -106,13 +129,34 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
       if (isFuture || isBeforeJoin) {
         monthsData.push(null);
       } else {
-        const p = paymentsByMember[m.id]?.[i] || { w: false, b: false, l: false };
-        monthsData.push(p);
+        const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
+        
+        // Calculate running balance up to (year, i)
+        const memberTxList = memberTxs[m.id] || [];
+        let balW = 0;
+        let balB = 0;
+        let balL = 0;
+        
+        for (const t of memberTxList) {
+          if (t.year < year || (t.year === year && t.month <= i)) {
+            if (t.type === 'deposit') {
+              if (t.tId === wajibId) balW += t.amt;
+              if (t.tId === belanjaId) balB += t.amt;
+              if (t.tId === lebaranId) balL += t.amt;
+            } else if (t.type === 'withdrawal') {
+              if (t.tId === wajibId) balW -= t.amt;
+              if (t.tId === belanjaId) balB -= t.amt;
+              if (t.tId === lebaranId) balL -= t.amt;
+            }
+          }
+        }
+        
+        monthsData.push({ ...p, bal_w: balW, bal_b: balB, bal_l: balL });
         
         expectedCount += 3;
-        if (p.w) paidCount++;
-        if (p.b) paidCount++;
-        if (p.l) paidCount++;
+        if (p.w > 0) paidCount++;
+        if (p.b > 0) paidCount++;
+        if (p.l > 0) paidCount++;
       }
     }
 
@@ -124,6 +168,7 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
       nama: m.nama,
       pokokLunas: pokokPaidByMember.has(m.id),
       compliance,
+      balances: { w: 0, b: 0, l: 0 }, // no longer used globally
       months: monthsData
     };
   });

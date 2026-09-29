@@ -281,6 +281,12 @@ export const LoanMatrix: React.FC = () => {
                                   <span>Terbayar:</span>
                                   <span>{formatCurrency(cell.paidAmount)}</span>
                                 </div>
+                                {cell.remainingBalance !== undefined && (
+                                  <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
+                                    <span>Sisa Angsuran:</span>
+                                    <span>{formatCurrency(cell.remainingBalance)}</span>
+                                  </div>
+                                )}
                                 
                                 {/* Pointer arrow */}
                                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>

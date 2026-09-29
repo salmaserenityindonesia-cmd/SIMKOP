@@ -195,7 +195,6 @@ export default function SalaryImport() {
                   <tr>
                     <th className="px-4 py-3 font-medium">NRP</th>
                     <th className="px-4 py-3 font-medium">Nama</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">THP</th>
                     <th className="px-4 py-3 font-medium">Rekening Lama</th>
                     <th className="px-4 py-3 font-medium">Rekening Baru</th>
@@ -208,15 +207,6 @@ export default function SalaryImport() {
                     <tr key={actualIdx} className="hover:bg-surface-container-lowest/50">
                       <td className="px-4 py-3">{r.nrp}</td>
                       <td className="px-4 py-3">{r.nama}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            r.status === 'MATCH' ? 'bg-success/20 text-success' :
-                            r.status === 'CONFLICT' ? 'bg-error/20 text-error' :
-                            'bg-surface-variant text-on-surface-variant'
-                        }`}>
-                            {r.status}
-                        </span>
-                      </td>
                       <td className="px-4 py-3">Rp {r.take_home_pay?.toLocaleString('id-ID') || '-'}</td>
                       <td className="px-4 py-3">{r.db_account_number || '-'}</td>
                       <td className="px-4 py-3 font-medium text-primary">

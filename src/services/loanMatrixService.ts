@@ -5,6 +5,7 @@ export interface LoanMatrixMonth {
   status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'NONE';
   targetAmount: number;
   paidAmount: number;
+  remainingBalance?: number;
   loanId?: string;
   loanNumber?: string;
   tenor?: number;
@@ -37,6 +38,30 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   const startOfYear = `${year}-01-01`;
   const endOfYear = `${year}-12-31`;
 
+  const { data: yearSchedules, error: yearError } = await supabase
+    .from('loan_schedules')
+    .select('loan_id')
+    .gte('due_date', startOfYear)
+    .lte('due_date', endOfYear);
+
+  if (yearError) {
+    console.error('Error fetching loan matrix schedules:', yearError);
+    throw yearError;
+  }
+
+  const loanIds = Array.from(new Set(yearSchedules?.map(s => s.loan_id) || []));
+
+  if (loanIds.length === 0) {
+    return {
+      complianceYTD: 100,
+      totalCollectedYTD: 0,
+      projectedNextMonth: 0,
+      unpaidMembersCount: 0,
+      members: []
+    };
+  }
+
+  // Fetch ALL schedules for those loans so we can calculate running balance properly
   const { data: schedules, error: scheduleError } = await supabase
     .from('loan_schedules')
     .select(`
@@ -51,6 +76,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         loan_number,
         tenor,
         status,
+        monthly_target,
         member:anggota (
           id,
           nrp,
@@ -58,12 +84,11 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         )
       )
     `)
-    .gte('due_date', startOfYear)
-    .lte('due_date', endOfYear)
+    .in('loan_id', loanIds)
     .order('due_date', { ascending: true });
 
   if (scheduleError) {
-    console.error('Error fetching loan matrix schedules:', scheduleError);
+    console.error('Error fetching full loan matrix schedules:', scheduleError);
     throw scheduleError;
   }
 
@@ -76,6 +101,9 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   let totalCollectedYTD = 0;
   let projectedNextMonth = 0;
   const unpaidMembersSet = new Set<string>();
+  
+  // To track running balance per loan
+  const loanBalances: Record<string, number> = {};
 
   (schedules || []).forEach((sched: any) => {
     if (!sched.loan || !sched.loan.member) return;
@@ -85,6 +113,15 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     const dueDate = new Date(sched.due_date);
     const month = dueDate.getMonth() + 1;
     const scheduleYear = dueDate.getFullYear();
+
+    // Initialize running balance for this loan if not exists
+    // The total loan expected is tenor * monthly_target
+    if (loanBalances[loan.id] === undefined) {
+      loanBalances[loan.id] = (Number(loan.tenor) || 0) * (Number(loan.monthly_target) || 0);
+    }
+    
+    // Decrease the remaining balance by what has been paid in this schedule
+    loanBalances[loan.id] -= Number(sched.paid_amount);
 
     if (!membersMap[member.id]) {
       membersMap[member.id] = {
@@ -113,52 +150,61 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       }
     }
 
-    // Determine cell status
-    let cellStatus: LoanMatrixMonth['status'] = 'NONE';
-    
-    if (scheduleYear > currentYear || (scheduleYear === currentYear && month > currentMonth)) {
-      // Future month
-      if (Number(sched.paid_amount) >= Number(sched.target_amount) && Number(sched.target_amount) > 0) {
-        cellStatus = 'PAID';
-        totalTargetYTD += Number(sched.target_amount);
-        totalCollectedYTD += Number(sched.paid_amount);
-      } else if (Number(sched.paid_amount) > 0) {
-        cellStatus = 'PARTIAL';
-        totalTargetYTD += Number(sched.target_amount);
-        totalCollectedYTD += Number(sched.paid_amount);
-      } else {
-        cellStatus = 'PROJECTED';
-        if (month === currentMonth + 1 && scheduleYear === currentYear) {
-          projectedNextMonth += Number(sched.target_amount);
-        }
-      }
-    } else {
-      // Past or current month
-      totalTargetYTD += Number(sched.target_amount);
-      totalCollectedYTD += Number(sched.paid_amount);
+    // ONLY populate matrix cell and YTD stats if the schedule is in the requested matrix year
+    if (scheduleYear === year) {
+      // Determine cell status
+      let cellStatus: LoanMatrixMonth['status'] = 'NONE';
       
-      if (Number(sched.paid_amount) >= Number(sched.target_amount)) {
-        cellStatus = 'PAID';
-      } else if (Number(sched.paid_amount) > 0) {
-        cellStatus = 'PARTIAL';
+      if (scheduleYear > currentYear || (scheduleYear === currentYear && month > currentMonth)) {
+        // Future month
+        if (Number(sched.paid_amount) >= Number(sched.target_amount) && Number(sched.target_amount) > 0) {
+          cellStatus = 'PAID';
+          totalTargetYTD += Number(sched.target_amount);
+          totalCollectedYTD += Number(sched.paid_amount);
+        } else if (Number(sched.paid_amount) > 0) {
+          cellStatus = 'PARTIAL';
+          totalTargetYTD += Number(sched.target_amount);
+          totalCollectedYTD += Number(sched.paid_amount);
+        } else {
+          cellStatus = 'PROJECTED';
+          if (month === currentMonth + 1 && scheduleYear === currentYear) {
+            projectedNextMonth += Number(sched.target_amount);
+          }
+        }
       } else {
-        cellStatus = 'UNPAID';
-        if (month === currentMonth && scheduleYear === currentYear) {
-           unpaidMembersSet.add(member.id);
+        // Past or current month
+        totalTargetYTD += Number(sched.target_amount);
+        totalCollectedYTD += Number(sched.paid_amount);
+        
+        if (Number(sched.paid_amount) >= Number(sched.target_amount)) {
+          cellStatus = 'PAID';
+        } else if (Number(sched.paid_amount) > 0) {
+          cellStatus = 'PARTIAL';
+        } else {
+          cellStatus = 'UNPAID';
+          if (month === currentMonth && scheduleYear === currentYear) {
+             unpaidMembersSet.add(member.id);
+          }
         }
       }
-    }
 
-    membersMap[member.id].months[month] = {
-      month,
-      status: cellStatus,
-      targetAmount: Number(sched.target_amount),
-      paidAmount: Number(sched.paid_amount),
-      loanId: loan.id,
-      loanNumber: loan.loan_number,
-      tenor: loan.tenor,
-      periodNumber: sched.period_number
-    };
+      // If the loan is completed/finished, the status can reflect it
+      if (loan.status === 'completed' && cellStatus === 'PAID') {
+        cellStatus = 'FINISHED';
+      }
+
+      membersMap[member.id].months[month] = {
+        month,
+        status: cellStatus,
+        targetAmount: Number(sched.target_amount),
+        paidAmount: Number(sched.paid_amount),
+        remainingBalance: Math.max(0, loanBalances[loan.id]), // Ensure it doesn't go below 0 visually
+        loanId: loan.id,
+        loanNumber: loan.loan_number,
+        tenor: loan.tenor,
+        periodNumber: sched.period_number
+      };
+    }
   });
 
   // Calculate compliance per member and handle FINISHED logic
