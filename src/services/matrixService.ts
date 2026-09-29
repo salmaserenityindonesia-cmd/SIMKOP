@@ -27,7 +27,7 @@ export interface ComplianceMatrixResult {
 export async function getComplianceMatrixData(year: number): Promise<ComplianceMatrixResult> {
   // 1. Fetch deposit types to identify Pokok, Wajib, Belanja, Lebaran
   const { data: dTypes } = await supabase.from('deposit_types').select('*');
-  if (!dTypes) return [];
+  if (!dTypes) return { rows: [], targets: { wajib: 0, belanja: 0, lebaran: 0 } };
 
   const typeMap: Record<string, string> = {}; // lowercase name -> id
   dTypes.forEach((dt: any) => {
@@ -42,7 +42,7 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
 
   // 2. Fetch all active members
   const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at').eq('status', 'aktif');
-  if (!members) return [];
+  if (!members) return { rows: [], targets: { wajib: 0, belanja: 0, lebaran: 0 } };
 
   // 3. Fetch deposit commitments / transactions for the year
   // Let's use deposit_transactions joined with member_deposits

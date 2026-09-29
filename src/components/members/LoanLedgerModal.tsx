@@ -14,8 +14,8 @@ interface LoanDetails {
   loan_number: string;
   principal_amount: number;
   tenor: number;
-  schedules: any[];
-  repayments: any[];
+  loan_schedules: any[];
+  loan_repayments: any[];
 }
 
 export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose }: Props) {

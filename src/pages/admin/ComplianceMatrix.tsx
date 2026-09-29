@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, Eye } from 'lucide-react';
-import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData, ComplianceMatrixResult } from '../../services/matrixService';
+import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';

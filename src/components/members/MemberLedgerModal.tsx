@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, FileText, Download } from 'lucide-react';
+import { X, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 
 interface Props {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp, Eye } from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
-import { getLoanMatrix, LoanMatrixSummary, LoanMatrixMember } from '../../services/loanMatrixService';
+import { getLoanMatrix, LoanMatrixSummary } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
 import AdminLayout from '../../components/layout/AdminLayout';
