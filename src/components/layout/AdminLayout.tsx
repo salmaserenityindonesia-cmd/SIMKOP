@@ -1,12 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, NavLink } from 'react-router-dom';
+import { useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import AdminProfileModal from '../admin/AdminProfileModal';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [user, setUser] = useState<{ email: string; name: string; role: string } | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setIsSidebarOpen(true);
+      } else {
+        setIsSidebarOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -37,8 +57,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="bg-background text-on-surface antialiased font-body-md text-body-md overflow-x-hidden min-h-screen">
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 z-30 lg:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
       {/* SIDEBAR NAVIGATION */}
-      <aside className="fixed top-0 left-0 h-screen w-72 flex flex-col z-30 bg-primary-container text-on-primary-container shadow-md border-r border-outline-variant/20">
+      <aside className={`fixed top-0 left-0 h-screen w-72 flex flex-col z-40 bg-primary-container text-on-primary-container shadow-md border-r border-outline-variant/20 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="w-72 h-full flex flex-col justify-between p-4">
           <div className="space-y-6 flex-1 overflow-y-auto pb-4">
             <div className="flex items-center gap-3 px-2 py-1">
@@ -301,8 +329,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       {/* TOP APP BAR */}
       <header className="sticky top-0 right-0 h-16 w-full z-20 bg-surface-container-lowest shadow-sm border-b border-outline-variant/40">
-        <div className="flex justify-between items-center h-16 px-6 ml-72">
-          <div className="flex items-center gap-6 flex-1 max-w-2xl">
+        <div className={`flex justify-between items-center h-16 px-4 lg:px-6 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-72' : ''}`}>
+          <div className="flex items-center gap-4 flex-1 max-w-2xl">
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors flex items-center justify-center"
+            >
+              <span className="material-symbols-outlined">menu</span>
+            </button>
             <div className="hidden xl:flex items-center gap-2 text-label-md font-label-md text-on-surface-variant">
               <span className="font-title-sm text-primary">SIMKOP</span>
               <span className="text-outline-variant">/</span>
@@ -329,7 +363,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </header>
 
       {/* MAIN CONTENT */}
-      <main className="ml-72 p-8 max-w-[1440px] space-y-8">
+      <main className={`p-4 lg:p-8 max-w-[1440px] space-y-8 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-72' : ''}`}>
         {children}
       </main>
 

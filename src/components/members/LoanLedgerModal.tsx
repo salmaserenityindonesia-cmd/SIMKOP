@@ -216,39 +216,6 @@ export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose
                 </button>
               </div>
             </div>
-            
-             {/* Riwayat Pembayaran Tambahan */}
-             {loan.loan_repayments && loan.loan_repayments.length > 0 && (
-                 <div className="mt-8">
-                     <h3 className="text-md font-bold text-slate-800 mb-4">Riwayat Pembayaran Angsuran</h3>
-                     <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                        <table className="w-full text-sm text-left">
-                        <thead className="bg-slate-50 text-slate-600 font-medium">
-                        <tr>
-                            <th className="py-3 px-4 border-b">Tanggal Bayar</th>
-                            <th className="py-3 px-4 border-b">Catatan</th>
-                            <th className="py-3 px-4 border-b text-right">Nominal (Rp)</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {loan.loan_repayments.map((rep: any) => (
-                            <tr key={rep.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
-                            <td className="py-3 px-4">
-                                {new Date(rep.payment_date).toLocaleDateString('id-ID', {
-                                day: '2-digit', month: 'short', year: 'numeric'
-                                })}
-                            </td>
-                            <td className="py-3 px-4 text-slate-600">{rep.notes || '-'}</td>
-                            <td className="py-3 px-4 text-right font-medium text-emerald-600">
-                                {rep.amount_paid.toLocaleString('id-ID')}
-                            </td>
-                            </tr>
-                        ))}
-                        </tbody>
-                    </table>
-                     </div>
-                 </div>
-             )}
 
           </div>
           )}
