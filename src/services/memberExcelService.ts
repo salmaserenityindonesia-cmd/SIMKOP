@@ -293,7 +293,9 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
          let startDate = row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota) : new Date();
          for(let i=0; i < row.n_bulan_simpanan; i++) {
             const mDate = new Date(startDate);
-            mDate.setMonth(mDate.getMonth() + i);
+            const sm = mDate.getMonth();
+            mDate.setMonth(sm + i);
+            if (mDate.getMonth() !== (sm + i) % 12) mDate.setDate(0);
             txsToInsert.push({
                member_deposit_id: mdId,
                amount: dt.monthly || 0,
@@ -339,7 +341,9 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
          
          for(let i = 0; i < row.tenor; i++) {
              const d = new Date(lDate);
-             d.setMonth(d.getMonth() + i + 1);
+             const sm = d.getMonth();
+             d.setMonth(sm + i + 1);
+             if (d.getMonth() !== (sm + i + 1) % 12) d.setDate(0);
              
              let paidAmt = 0;
              let status = 'unpaid';

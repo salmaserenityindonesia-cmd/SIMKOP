@@ -15,8 +15,16 @@ export interface ComplianceMatrixRow {
   compliance: number;
   months: (ComplianceMonthData | null)[];
 }
+export interface ComplianceMatrixResult {
+  rows: ComplianceMatrixRow[];
+  targets: {
+    wajib: number;
+    belanja: number;
+    lebaran: number;
+  };
+}
 
-export async function getComplianceMatrixData(year: number): Promise<ComplianceMatrixRow[]> {
+export async function getComplianceMatrixData(year: number): Promise<ComplianceMatrixResult> {
   // 1. Fetch deposit types to identify Pokok, Wajib, Belanja, Lebaran
   const { data: dTypes } = await supabase.from('deposit_types').select('*');
   if (!dTypes) return [];
@@ -120,6 +128,13 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
     };
   });
 
-  return results;
+  return {
+    rows: results,
+    targets: {
+      wajib: dTypes.find((dt: any) => dt.id === wajibId)?.default_amount || 25000,
+      belanja: dTypes.find((dt: any) => dt.id === belanjaId)?.default_amount || 50000,
+      lebaran: dTypes.find((dt: any) => dt.id === lebaranId)?.default_amount || 50000
+    }
+  };
 }
 

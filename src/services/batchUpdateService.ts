@@ -164,9 +164,11 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
             const nrp = getVal(row, 1);
             if (!nrp) return;
             
-            // Adjust to new column index: Jumlah Bayar is now column 8
+            // Kolom 7: Telah Dibayar, Kolom 8: Jumlah Bayar
+            const nominalLamaStr = getVal(row, 7);
             const nominalBaruStr = getVal(row, 8); 
             const nominal_baru = parseFloat(nominalBaruStr.replace(/[^0-9.-]+/g, '')) || 0;
+            const nominal_lama = parseFloat(nominalLamaStr.replace(/[^0-9.-]+/g, '')) || 0;
             const kode_simpanan = getVal(row, 6);
 
             const m = memberMap.get(nrp);
@@ -190,7 +192,7 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
                 nomor_rekening: getVal(row, 3),
                 periode: `${month.toString().padStart(2, '0')}/${year}`,
                 jenis_tagihan: kode_simpanan,
-                nominal_lama: 0,
+                nominal_lama,
                 nominal_baru,
                 status,
                 ref_id
@@ -202,11 +204,11 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
             const nrp = getVal(row, 1);
             if (!nrp) return;
             
-            // Adjust to new column indices
-            const targetAngsuranStr = getVal(row, 7);
-            const nominalBaruStr = getVal(row, 9); // Jumlah Bayar is now column 9
+            // Kolom 8: Telah Dibayar, Kolom 9: Jumlah Bayar
+            const nominalLamaStr = getVal(row, 8);
+            const nominalBaruStr = getVal(row, 9);
             const nominal_baru = parseFloat(nominalBaruStr.replace(/[^0-9.-]+/g, '')) || 0;
-            const nominal_lama = parseFloat(targetAngsuranStr.replace(/[^0-9.-]+/g, '')) || 0;
+            const nominal_lama = parseFloat(nominalLamaStr.replace(/[^0-9.-]+/g, '')) || 0;
 
             const loan_number = getVal(row, 4);
 
@@ -228,16 +230,17 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
 };
 
 export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savings' | 'loans', month: number, year: number) => {
-    const validRows = payload.filter(r => r.status === 'READY' && r.nominal_baru > 0);
+    // We only process rows where nominal_baru > 0 AND it's different from what was already paid
+    const validRows = payload.filter(r => r.status === 'READY' && r.nominal_baru > 0 && r.nominal_baru !== r.nominal_lama);
     if (validRows.length === 0) {
-        throw new Error("Tidak ada data dengan nominal pembayaran > 0 yang bisa dieksekusi.");
+        throw new Error("Tidak ada data dengan nominal pembayaran > 0 yang berbeda dari nilai Telah Dibayar sebelumnya.");
     }
 
     // Fast client-side bulk operations
     if (type === 'savings') {
         const txs = validRows.map(r => ({
             member_deposit_id: r.ref_id,
-            amount: r.nominal_baru,
+            amount: r.nominal_baru - r.nominal_lama,
             for_month: month,
             for_year: year,
             transaction_type: 'deposit',
@@ -261,7 +264,10 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
                 });
                 
                 if (sched) {
-                    const newPaid = (sched.paid_amount || 0) + r.nominal_baru;
+                    const delta = r.nominal_baru - sched.paid_amount;
+                    if (delta === 0) continue;
+
+                    const newPaid = r.nominal_baru;
                     const newStatus = newPaid >= sched.target_amount ? 'paid' : 'partial';
                     
                     // Update schedule
@@ -271,9 +277,9 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
                     await supabase.from('loan_repayments').insert({
                         loan_id: sched.loan_id,
                         schedule_id: sched.id,
-                        amount_paid: r.nominal_baru,
+                        amount_paid: delta,
                         payment_method: 'batch_transfer',
-                        notes: `Batch Update ${month}/${year}`
+                        notes: `Batch Update Correction ${month}/${year}`
                     });
                 }
             }

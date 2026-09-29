@@ -235,7 +235,7 @@ export default function ManajemenAnggota() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Gaji Bersih (THP Terakhir)</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Nomor Rekening</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
@@ -267,8 +267,8 @@ export default function ManajemenAnggota() {
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700 font-medium text-green-700">
-                      {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(anggota.take_home_pay || anggota.master_thp || 0)}
+                    <td className="py-3 px-4 text-sm text-gray-700 font-medium">
+                      {anggota.bank_account_number || '-'}
                     </td>
                     <td className="py-3 px-4 text-sm">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${

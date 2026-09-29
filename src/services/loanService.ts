@@ -154,7 +154,9 @@ export const loanService = {
     const start = new Date(startDate);
     for (let i = 1; i <= loan.tenor; i++) {
       const dueDate = new Date(start);
-      dueDate.setMonth(start.getMonth() + i);
+      const sm = start.getMonth();
+      dueDate.setMonth(sm + i);
+      if (dueDate.getMonth() !== (sm + i) % 12) dueDate.setDate(0);
       
       schedules.push({
         loan_id: loan.id,

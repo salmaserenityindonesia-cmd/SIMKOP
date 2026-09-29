@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, Eye } from 'lucide-react';
-import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
+import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData, ComplianceMatrixResult } from '../../services/matrixService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import { supabase } from '../../lib/supabaseClient';
+import { formatCurrency } from '../../utils/formatCurrency';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const CURRENT_MONTH = new Date().getMonth();
@@ -14,6 +15,7 @@ export default function ComplianceMatrix() {
   const [search, setSearch] = useState('');
   
   const [data, setData] = useState<ComplianceMatrixRow[]>([]);
+  const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
   const [loading, setLoading] = useState(true);
   const [selectedMember, setSelectedMember] = useState<{id: string, nrp: string, nama: string} | null>(null);
   const [totalSetoran, setTotalSetoran] = useState(0);
@@ -23,7 +25,10 @@ export default function ComplianceMatrix() {
       setLoading(true);
       try {
         const matrixData = await getComplianceMatrixData(parseInt(year));
-        setData(matrixData);
+        setData(matrixData.rows || []);
+        if (matrixData.targets) {
+           setTargets(matrixData.targets);
+        }
         
         // Fetch total setoran
         const { data: txs } = await supabase
@@ -89,17 +94,17 @@ export default function ComplianceMatrix() {
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
           <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{MONTHS[monthIndex]} {year}</div>
           <div className="space-y-1.5">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-4">
               <span>Wajib:</span>
-              {w ? <span className="text-emerald-400">Rp 25.000 (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              {w ? <span className="text-emerald-400">{formatCurrency(targets.wajib)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-4">
               <span>Belanja:</span>
-              {b ? <span className="text-emerald-400">Rp 50.000 (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              {b ? <span className="text-emerald-400">{formatCurrency(targets.belanja)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center gap-4">
               <span>Lebaran:</span>
-              {l ? <span className="text-emerald-400">Rp 50.000 (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
+              {l ? <span className="text-emerald-400">{formatCurrency(targets.lebaran)} (Lunas)</span> : <span className="text-red-400 font-medium">Belum</span>}
             </div>
           </div>
           {/* Arrow */}

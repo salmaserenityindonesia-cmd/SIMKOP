@@ -119,7 +119,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     }`
                   }
                 >
-                  <span>Matriks Kepatuhan</span>
+                  <span>Matriks Simpanan</span>
                 </NavLink>
                 <NavLink 
                   to="/admin/loan-matrix"
