@@ -4,56 +4,62 @@
 
 ## Overview
 
-SIMKOP is a React-based web application for managing a cooperative's business operations. It uses Supabase as its backend-as-a-service for database, authentication, and RPC functions. It serves multiple modules including Member Management, POS (Kasir), Inventory Management, Loan and Savings Management, and Settlement.
+SIMKOP (Sistem Informasi Manajemen Koperasi) is a web-based cooperative management system. It provides functionalities for member management, point of sale (POS), loan and savings management, and reporting. The application is built as a single-page application (SPA) using React, styled with Tailwind CSS, and relies on Supabase as its Backend-as-a-Service (BaaS) for database, authentication, and serverless functions.
 
 ```
 ┌─────────────────────────────────────────┐
-│              [App.tsx]                  │
+│              [React UI (SPA)]           │
+│        (Pages, Components, Hooks)       │
 ├─────────────────────────────────────────┤
-│         [React Components / UI]         │
+│         [Services Layer (TypeScript)]   │
+│ (koperasiService, loanService, etc.)    │
 ├─────────────────────────────────────────┤
-│         [Service Layer (*.ts)]          │
-├─────────────────────────────────────────┤
-│        [Supabase BaaS Layer]            │
+│            [Supabase BaaS]              │
+│       (PostgreSQL DB, Auth, RPCs)       │
 └─────────────────────────────────────────┘
 ```
 
 ## Components
 
-### Components
-- **Purpose:** Reusable UI components.
-- **Location:** `src/components/`
-- **Modules:** `admin`, `auth`, `categories`, `layout`, `members`, `pos`, `products`, `settlement`, `ui`.
+### UI Layer (`src/pages/`, `src/components/`)
+- **Purpose:** Renders the application interface and handles user interactions. Organized by domains (e.g., Admin Dashboard, POS, Member Management).
+- **Location:** `src/pages/`, `src/components/`
+- **Dependencies:** React, React Router, Lucide React, internal services.
 
-### Pages
-- **Purpose:** Top level routing components.
-- **Location:** `src/pages/`
-
-### Services
-- **Purpose:** Business logic and data access (Supabase integration).
+### Services Layer (`src/services/`)
+- **Purpose:** Encapsulates business logic and data access. Acts as the intermediary between the UI and Supabase.
 - **Location:** `src/services/`
-- **Modules:** `koperasiService.ts`, `loanService.ts`, `matrixService.ts`, `memberExcelService.ts`, `productExcelService.ts`, `salaryImportService.ts`, `settlementService.ts`, `salaryTemplateService.ts`, `categoryExcelService.ts`.
+- **Dependencies:** `src/lib/supabaseClient.ts`
+
+### Supabase Client (`src/lib/supabaseClient.ts`)
+- **Purpose:** Initializes and configures the Supabase client for communication with the backend.
+- **Location:** `src/lib/supabaseClient.ts`
+- **Dependencies:** `@supabase/supabase-js`
+
+### Utilities (`src/utils/`, `src/lib/`)
+- **Purpose:** Helper functions for exports (Excel/PDF), formatting (Currency/Date), and other common tasks.
+- **Location:** `src/utils/`, `src/lib/`
 
 ## Data Flow
 
-1. User interacts with UI components inside `src/pages` or `src/components`.
-2. Components call functions from `src/services/*.ts`.
-3. Services communicate with Supabase using `@supabase/supabase-js`.
-4. Supabase responds with data or confirms actions.
-5. React re-renders components with the updated state.
+1. **User Interaction:** User interacts with a React component (e.g., submitting a loan application form in `FormPengajuanPinjaman.tsx`).
+2. **Service Call:** The component calls a dedicated function in the services layer (e.g., `loanService.ajukanPinjaman`).
+3. **Data Access (Supabase):** The service executes a query or RPC call to Supabase using the Supabase client.
+4. **State Update:** The service returns the result to the component, which updates its local state or context, triggering a re-render to display the changes to the user.
 
 ## Integration Points
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| Supabase | BaaS | Database, Authentication, and RPC logic. |
+| Supabase | BaaS | Database (PostgreSQL), Authentication, Edge Functions (RPCs) |
 
 ## Technical Debt
 
-- [ ] Consolidate data fetching patterns across services (some use raw queries, some use RPCs).
+- [ ] None detected via static analysis (TODO/FIXME search). Codebase appears relatively clean of inline debt markers.
+- [ ] Direct database access from frontend services (common in BaaS architectures, but can lead to bloated frontend logic if not carefully managed). Ensure complex logic is pushed to Supabase RPCs where appropriate (already happening for settlements: `get_member_deposit_settlement`, etc.).
 
 ## Conventions
 
-**Naming:** PascalCase for components, camelCase for services and utils.
-**Structure:** Feature-based service layer with domain-specific files.
-**Testing:** Vitest setup found but tests are minimal (`loanService.test.ts`).
+**Naming:** TypeScript strict camelCase for variables/functions, PascalCase for React components and types.
+**Structure:** Feature/Domain-based organization within `services`, `pages`, and `components`.
+**Testing:** Vitest is configured, though test coverage was not explicitly evaluated.

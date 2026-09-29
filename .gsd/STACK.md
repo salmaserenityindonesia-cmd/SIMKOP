@@ -6,48 +6,39 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Node.js | v26+ | Build and development runtime |
-| Browser | N/A | Application runtime |
+| Node.js | ^26.6.3 | Core runtime for development and build processes |
+| Web Browser| N/A | Client execution environment |
 
 ## Dependencies
 
 ### Production
 | Package | Version | Purpose |
 |---------|---------|---------|
-| @supabase/supabase-js | ^2.117.2 | Database and Backend |
-| react | ^19.3.0 | UI Framework |
-| react-dom | ^19.3.0 | DOM renderer |
-| react-router-dom | ^7.18.4 | Routing |
-| lucide-react | ^1.48.0 | Icons |
-| html5-qrcode | ^2.3.8 | QR/Barcode scanning |
-| exceljs | ^4.4.0 | Excel data handling |
-| xlsx | ^0.18.5 | Excel parsing |
-| jspdf / jspdf-autotable | ^4.2.1 / ^5.0.8 | PDF Generation |
-| dotenv | ^18.0.4 | Environment variables |
+| @supabase/supabase-js | ^2.117.2 | Database and authentication client |
+| react / react-dom | ^19.3.0 | UI Library |
+| react-router-dom | ^7.18.4 | Client-side routing |
+| lucide-react | ^1.48.0 | Icon library |
+| html5-qrcode | ^2.3.8 | Barcode scanning |
+| xlsx / exceljs | ^0.18.5 / ^4.4.0 | Excel export and parsing |
+| jspdf / jspdf-autotable | ^4.2.1 / ^5.0.8 | PDF generation |
+| dotenv | ^18.0.4 | Environment variable management |
 
 ### Development
 | Package | Version | Purpose |
 |---------|---------|---------|
-| vite | ^8.3.1 | Build tool / Bundler |
-| typescript | ^7.0.2 | Type safety |
-| tailwindcss | ^4.3.3 | Styling framework |
+| vite | ^8.3.1 | Build tool and development server |
+| typescript | ^7.0.2 | Static typing |
+| tailwindcss | ^4.3.3 | Utility-first CSS framework |
+| @tailwindcss/postcss | ^4.3.3 | PostCSS plugin for Tailwind |
 | vitest | ^5.0.2 | Testing framework |
-| tsx | ^4.23.15 | TypeScript execution |
+| tsx | ^4.23.15 | TypeScript execution for scripts |
 
 ## Infrastructure
 
 | Service | Provider | Purpose |
 |---------|----------|---------|
-| Database & Auth | Supabase | Postgres DB & Authentication |
-
-## Configuration
-
-| Variable | Purpose | Location |
-|----------|---------|----------|
-| N/A | Environment config | .env |
+| Database / Auth | Supabase | Managed PostgreSQL and Authentication |
 
 ## Outdated Packages
 
-| Package | Current | Latest | Risk |
-|---------|---------|--------|------|
-| (Not checked) | - | - | - |
+No outdated packages were found during the scan.
