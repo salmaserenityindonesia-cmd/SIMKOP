@@ -14,6 +14,9 @@ export default function UserManagement() {
   const [users, setUsers] = useState<Pengelola[]>([]);
   const [isFetching, setIsFetching] = useState(true);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   const fetchUsers = async () => {
     setIsFetching(true);
     try {
@@ -143,6 +146,9 @@ export default function UserManagement() {
       }
     }
   };
+
+  const totalPages = Math.ceil(users.length / itemsPerPage);
+  const paginatedUsers = users.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <AdminLayout>
@@ -278,7 +284,7 @@ export default function UserManagement() {
                     </td>
                   </tr>
                 ) : (
-                  users.map((user) => (
+                  paginatedUsers.map((user) => (
                     <tr key={user.id} className="hover:bg-surface-container-lowest/50 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-title-sm text-primary mb-0.5">{user.nama}</div>
@@ -319,6 +325,49 @@ export default function UserManagement() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination Footer */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant/40 bg-surface-container-low/10">
+            <div className="flex items-center gap-2 text-on-surface-variant">
+              <span>
+                Menampilkan {users.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                {Math.min(currentPage * itemsPerPage, users.length)} dari {users.length} pengelola
+              </span>
+              <select 
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="ml-2 bg-transparent border-none font-medium text-on-surface outline-none cursor-pointer focus:ring-0"
+              >
+                <option value={10}>10 / halaman</option>
+                <option value={25}>25 / halaman</option>
+                <option value={50}>50 / halaman</option>
+                <option value={100}>100 / halaman</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm bg-surface-container-lowest border border-outline-variant/50 hover:bg-surface-container-low text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Prev
+              </button>
+              <span className="text-sm font-medium px-2 text-on-surface">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-3 py-1 text-sm bg-surface-container-lowest border border-outline-variant/50 hover:bg-surface-container-low text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>
