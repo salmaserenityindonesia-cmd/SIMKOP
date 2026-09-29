@@ -17,6 +17,7 @@ import TerimaSetoran from './pages/admin/TerimaSetoran';
 import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
+import { LoanMatrix } from './pages/admin/LoanMatrix';
 
 export default function App() {
   return (
@@ -165,6 +166,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ComplianceMatrix />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/loan-matrix" 
+          element={
+            <ProtectedRoute>
+              <LoanMatrix />
             </ProtectedRoute>
           } 
         />

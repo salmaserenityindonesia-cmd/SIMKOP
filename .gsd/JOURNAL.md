@@ -622,4 +622,23 @@ Fix member data import errors regarding deposit transactions and compliance matr
 User invoked `/pause` command.
 
 ### Handoff Notes
-Everything appears stable. Ready for user validation.
+Everything appears stable. Ready for user validation.---
+
+## Session: 2026-09-29 10:11
+
+### Objective
+Implement Loan Compliance Monitoring and Cashflow Projection Matrix (/admin/loan-matrix).
+
+### Accomplished
+- Simulated UI creation and integration using Stitch MCP styling approaches.
+- Created loanMatrixService.ts to aggregate loan data directly from Supabase, computing 12-month status mapping (PAID, PARTIAL, UNPAID, PROJECTED, FINISHED) and YTD compliances.
+- Built LoanMatrix.tsx with dynamic KPI cards, a 12-month data grid, sticky rows/columns, hover tooltips for detailed loan breakdown, and Excel export functionality.
+- Integrated the new page into App.tsx routes and AdminLayout.tsx sidebar navigation under the Simpan Pinjam group.
+
+### Verification
+- [x] Application builds successfully (
+pm run build).
+- [x] Route /admin/loan-matrix accessible.
+
+### Handoff Notes
+Loan matrix feature is complete and ready for use.
