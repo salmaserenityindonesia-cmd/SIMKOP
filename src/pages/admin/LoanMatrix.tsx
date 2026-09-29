@@ -84,22 +84,22 @@ export const LoanMatrix: React.FC = () => {
 
   const getCellClasses = (status: string) => {
     switch (status) {
-      case 'PAID': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+      case 'PAID': 
+      case 'FINISHED': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
       case 'PARTIAL': return 'bg-amber-50 text-amber-600 border-amber-200';
       case 'UNPAID': return 'bg-rose-50 text-rose-600 border-rose-200';
       case 'PROJECTED': return 'bg-slate-50 text-slate-500 border-slate-200 border-dashed';
-      case 'FINISHED': return 'bg-slate-100 text-slate-400 border-slate-200';
       default: return 'bg-white border-slate-100';
     }
   };
 
   const getCellIcon = (status: string) => {
     switch (status) {
-      case 'PAID': return <CheckCircle2 className="w-5 h-5" />;
+      case 'PAID': 
+      case 'FINISHED': return <CheckCircle2 className="w-5 h-5" />;
       case 'PARTIAL': return <AlertCircle className="w-5 h-5" />;
       case 'UNPAID': return <XCircle className="w-5 h-5" />;
       case 'PROJECTED': return <Clock className="w-5 h-5" />;
-      case 'FINISHED': return <span className="font-bold">-</span>;
       default: return null;
     }
   };

@@ -117,9 +117,20 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     let cellStatus: LoanMatrixMonth['status'] = 'NONE';
     
     if (scheduleYear > currentYear || (scheduleYear === currentYear && month > currentMonth)) {
-      cellStatus = 'PROJECTED';
-      if (month === currentMonth + 1 && scheduleYear === currentYear) {
-        projectedNextMonth += Number(sched.target_amount);
+      // Future month
+      if (Number(sched.paid_amount) >= Number(sched.target_amount) && Number(sched.target_amount) > 0) {
+        cellStatus = 'PAID';
+        totalTargetYTD += Number(sched.target_amount);
+        totalCollectedYTD += Number(sched.paid_amount);
+      } else if (Number(sched.paid_amount) > 0) {
+        cellStatus = 'PARTIAL';
+        totalTargetYTD += Number(sched.target_amount);
+        totalCollectedYTD += Number(sched.paid_amount);
+      } else {
+        cellStatus = 'PROJECTED';
+        if (month === currentMonth + 1 && scheduleYear === currentYear) {
+          projectedNextMonth += Number(sched.target_amount);
+        }
       }
     } else {
       // Past or current month

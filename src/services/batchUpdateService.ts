@@ -87,9 +87,13 @@ export const downloadBatchTemplate = async (type: 'savings' | 'loans', month: nu
             if (member) {
               const schedules = loan.loan_schedules || [];
               // Find the schedule for the requested month/year
-              const currentSchedule = schedules.find((s: any) => s.due_month === month && s.due_year === year);
+              const currentSchedule = schedules.find((s: any) => {
+                  if (!s.due_date) return false;
+                  const d = new Date(s.due_date);
+                  return (d.getMonth() + 1) === month && d.getFullYear() === year;
+              });
               
-              const target = currentSchedule ? currentSchedule.amount_due : 0;
+              const target = currentSchedule ? currentSchedule.target_amount : 0;
               const paid = currentSchedule ? currentSchedule.paid_amount : 0;
               
               worksheet.addRow({
@@ -224,8 +228,10 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
 };
 
 export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savings' | 'loans', month: number, year: number) => {
-    const validRows = payload.filter(r => r.status === 'READY');
-    if (validRows.length === 0) return true;
+    const validRows = payload.filter(r => r.status === 'READY' && r.nominal_baru > 0);
+    if (validRows.length === 0) {
+        throw new Error("Tidak ada data dengan nominal pembayaran > 0 yang bisa dieksekusi.");
+    }
 
     // Fast client-side bulk operations
     if (type === 'savings') {
@@ -235,7 +241,6 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
             for_month: month,
             for_year: year,
             transaction_type: 'deposit',
-            payment_method: 'batch_transfer',
             description: `Batch Update ${month}/${year}`
         }));
         const { error } = await supabase.from('deposit_transactions').insert(txs);
@@ -244,22 +249,29 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
         // Loans are trickier because of schedules.
         // We will fetch all relevant schedules first
         const loanIds = validRows.map(r => r.ref_id).filter(Boolean);
-        const { data: schedules } = await supabase.from('loan_schedules').select('*').in('loan_id', loanIds).eq('due_month', month).eq('due_year', year);
+        const { data: schedules } = await supabase.from('loan_schedules').select('*').in('loan_id', loanIds);
         
         if (schedules) {
             for (const r of validRows) {
-                const sched = schedules.find(s => s.loan_id === r.ref_id);
+                const sched = schedules.find(s => {
+                    if (s.loan_id !== r.ref_id) return false;
+                    if (!s.due_date) return false;
+                    const d = new Date(s.due_date);
+                    return (d.getMonth() + 1) === month && d.getFullYear() === year;
+                });
+                
                 if (sched) {
                     const newPaid = (sched.paid_amount || 0) + r.nominal_baru;
-                    const newStatus = newPaid >= sched.amount_due ? 'paid' : 'partial';
+                    const newStatus = newPaid >= sched.target_amount ? 'paid' : 'partial';
                     
                     // Update schedule
                     await supabase.from('loan_schedules').update({ paid_amount: newPaid, status: newStatus }).eq('id', sched.id);
                     
                     // Insert repayment
                     await supabase.from('loan_repayments').insert({
+                        loan_id: sched.loan_id,
                         schedule_id: sched.id,
-                        amount: r.nominal_baru,
+                        amount_paid: r.nominal_baru,
                         payment_method: 'batch_transfer',
                         notes: `Batch Update ${month}/${year}`
                     });
