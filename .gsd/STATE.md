@@ -1,5 +1,25 @@
+## Current Position
+- **Phase**: Implementasi Modul Matriks Pinjaman
+- **Task**: Antarmuka Buku Bantu Angsuran (Modal Popup)
+- **Status**: Paused at 2026-09-29 12:40:43
+
 ## Last Session Summary
-Codebase mapping complete.
-- 12 components identified
-- 11 production dependencies analyzed
-- 1 technical debt items found
+Berhasil mengimplementasikan modul Matriks Monitoring Kepatuhan & Proyeksi Angsuran Pinjaman Tahunan (/admin/loan-matrix). Memperbaiki logika migrasi data historis angsuran lampau (memberExcelService.ts) dan mendistribusikan pembayaran secara sekuensial. Menambahkan fitur popup Buku Bantu Angsuran (LoanLedgerModal.tsx) ketika mengklik ikon mata di matriks.
+
+## In-Progress Work
+- Tidak ada. Semua fitur utama untuk sprint ini telah selesai diuji dan dikomit.
+- Files modified: src/services/memberExcelService.ts, src/pages/admin/LoanMatrix.tsx, src/components/members/LoanLedgerModal.tsx
+- Tests status: not run
+
+## Blockers
+- None
+
+## Context Dump
+
+### Decisions Made
+- **Sequential distribution in migrations**: Karena import pinjaman historis hanya menyediakan total dana terbayar, saya mengubah `memberExcelService.ts` untuk membagikan `sudah_diangsur` sesuai nilai `target_amount` secara penuh pada bulan-bulan terlama secara kronologis, alih-alih membaginya rata yang menyebabkan status pinjaman semuanya jadi `partial`.
+- **LoanLedgerModal inline popup**: Pengguna menginginkan `Buku Bantu Angsuran` muncul sebagai popup modal dan bukan redirect, mengikuti pola `MemberLedgerModal` untuk konsistensi UI.
+
+### Next Steps
+1. Minta user memvalidasi kembali sisa saldo, tenor, dan angsuran yang tampil di modal.
+2. Memulai fitur atau fase selanjutnya sesuai backlog di ROADMAP.
