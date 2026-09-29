@@ -1,28 +1,30 @@
 ## Current Position
-- **Phase**: 16 — Dashboard Laporan Keuangan Terpadu
-- **Task**: Plan 16.1 — Generate Financial Reports Dashboard UI via Stitch MCP
-- **Status**: Not Started (phase added 2026-09-30T00:52:00+07:00)
+- **Phase**: 16 — Dashboard Laporan Keuangan Terpadu (completed)
+- **Task**: All tasks complete
+- **Status**: Verified ✅ (2026-09-30T01:06:00+07:00)
 
 ## Last Session Summary
-Codebase mapping complete.
-- 5 components identified (React UI, Services, Supabase Client, Utils)
-- 16 dependencies analyzed (8 prod, 8 dev)
-- 0 technical debt items found via static analysis
+Phase 16 executed successfully. 3 plans, 3 waves completed in 1 session.
+- Commit: f89dcbac — feat(phase-16): Dashboard Laporan Keuangan Terpadu
+- Stitch MCP generated screen: a44d6e6dc7a944a18c8b03695b6e6505 (project 18269944387545554241)
+- Files created: src/pages/admin/laporan-keuangan/index.tsx
+- Files modified: src/App.tsx, src/components/layout/AdminLayout.tsx
 
 ## In-Progress Work
-- Tidak ada. Semua fitur utama untuk sprint ini telah selesai diuji dan dikomit.
-- Files modified: src/services/memberExcelService.ts, src/pages/admin/LoanMatrix.tsx, src/components/members/LoanLedgerModal.tsx
-- Tests status: not run
+- Phase 15 (Product Catalog Excel Import) masih 0/2 — dapat dilanjutkan kapan saja.
 
 ## Blockers
-- None
+- None. exceljs harus terinstall untuk Export Excel (npm install exceljs).
 
 ## Context Dump
 
 ### Decisions Made
-- **Sequential distribution in migrations**: Karena import pinjaman historis hanya menyediakan total dana terbayar, saya mengubah `memberExcelService.ts` untuk membagikan `sudah_diangsur` sesuai nilai `target_amount` secara penuh pada bulan-bulan terlama secara kronologis, alih-alih membaginya rata yang menyebabkan status pinjaman semuanya jadi `partial`.
-- **LoanLedgerModal inline popup**: Pengguna menginginkan `Buku Bantu Angsuran` muncul sebagai popup modal dan bukan redirect, mengikuti pola `MemberLedgerModal` untuk konsistensi UI.
+- **getCashFlowReport cross-check**: Jika cash_flow tidak memiliki kategori 'penjualan_tunai', sistem otomatis menarik sales.paid_cash sebagai inflow tambahan untuk reconciliation.
+- **HPP calculation**: Menggunakan sale_items.quantity × products.buy_price via join, bukan dari cash_flow (lebih akurat per-item level).
+- **RAT split**: Hardcoded 40%/60% per AD/ART standar koperasi; dapat dijadikan configurable di Phase berikutnya jika diperlukan.
+- **PDF export**: Menggunakan window.print() dengan media query @media print untuk hide elemen no-print — stateless, tanpa file storage.
 
 ### Next Steps
-1. Minta user memvalidasi kembali sisa saldo, tenor, dan angsuran yang tampil di modal.
-2. Memulai fitur atau fase selanjutnya sesuai backlog di ROADMAP.
+1. Install exceljs: `npm install exceljs` (jika belum ada) untuk mengaktifkan Export Excel.
+2. Lanjutkan Phase 15 (Product Catalog Batch Import) jika diperlukan.
+3. Atau buat phase baru untuk fitur berikutnya.
