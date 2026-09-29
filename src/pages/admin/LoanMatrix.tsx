@@ -3,6 +3,7 @@ import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, Ca
 import { getLoanMatrix, LoanMatrixSummary, LoanMatrixMember } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
+import AdminLayout from '../../components/layout/AdminLayout';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 
@@ -102,6 +103,7 @@ export const LoanMatrix: React.FC = () => {
   };
 
   return (
+    <AdminLayout>
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -296,5 +298,6 @@ export const LoanMatrix: React.FC = () => {
         </div>
       </div>
     </div>
+    </AdminLayout>
   );
 };
