@@ -22,6 +22,9 @@ export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose
   const [loan, setLoan] = useState<LoanDetails | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   useEffect(() => {
     const fetchLoanData = async () => {
       setLoading(true);
@@ -59,6 +62,10 @@ export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose
 
     fetchLoanData();
   }, [loanId]);
+
+  const schedules = loan?.loan_schedules || [];
+  const totalPages = Math.ceil(schedules.length / itemsPerPage);
+  const paginatedSchedules = schedules.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -134,7 +141,7 @@ export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose
                   </tr>
                 </thead>
                 <tbody>
-                  {(loan.loan_schedules || []).map((sched: any) => (
+                  {paginatedSchedules.map((sched: any) => (
                     <tr key={sched.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
                       <td className="py-3 px-4 whitespace-nowrap font-medium text-slate-700">
                         {sched.period_number}
@@ -165,6 +172,49 @@ export default function LoanLedgerModal({ loanId, memberNrp, memberName, onClose
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Footer */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-4 pt-4 border-t border-slate-200 text-sm">
+              <div className="flex items-center gap-2 text-slate-500">
+                <span>
+                  Menampilkan {schedules.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                  {Math.min(currentPage * itemsPerPage, schedules.length)} dari {schedules.length} angsuran
+                </span>
+                <select 
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="ml-2 bg-transparent border-none font-medium text-slate-700 outline-none cursor-pointer focus:ring-0"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={24}>24 / halaman</option>
+                  <option value={36}>36 / halaman</option>
+                  <option value={60}>60 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-sm bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  Prev
+                </button>
+                <span className="text-sm font-medium px-3 text-slate-600">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || totalPages === 0}
+                  className="px-3 py-1.5 text-sm bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  Next
+                </button>
+              </div>
             </div>
             
              {/* Riwayat Pembayaran Tambahan */}

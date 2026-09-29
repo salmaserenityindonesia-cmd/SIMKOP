@@ -24,6 +24,9 @@ export default function MemberLedgerModal({ memberId, memberNrp, memberName, onC
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   useEffect(() => {
     const fetchTransactions = async () => {
       setLoading(true);
@@ -62,6 +65,9 @@ export default function MemberLedgerModal({ memberId, memberNrp, memberName, onC
 
     fetchTransactions();
   }, [memberId]);
+
+  const totalPages = Math.ceil(transactions.length / itemsPerPage);
+  const paginatedTransactions = transactions.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -131,7 +137,7 @@ export default function MemberLedgerModal({ memberId, memberNrp, memberName, onC
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((tx) => (
+                  {paginatedTransactions.map((tx) => (
                     <tr key={tx.id} className="hover:bg-slate-50 border-b border-slate-100 last:border-0">
                       <td className="py-3 px-4 whitespace-nowrap">
                         {new Date(tx.created_at).toLocaleDateString('id-ID', {
@@ -159,6 +165,49 @@ export default function MemberLedgerModal({ memberId, memberNrp, memberName, onC
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Footer */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-4 pt-4 border-t border-slate-200 text-sm">
+              <div className="flex items-center gap-2 text-slate-500">
+                <span>
+                  Menampilkan {transactions.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                  {Math.min(currentPage * itemsPerPage, transactions.length)} dari {transactions.length} transaksi
+                </span>
+                <select 
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="ml-2 bg-transparent border-none font-medium text-slate-700 outline-none cursor-pointer focus:ring-0"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-sm bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  Prev
+                </button>
+                <span className="text-sm font-medium px-3 text-slate-600">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || totalPages === 0}
+                  className="px-3 py-1.5 text-sm bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
           )}

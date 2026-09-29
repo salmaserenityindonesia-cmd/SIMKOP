@@ -238,16 +238,30 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
 
     // Fast client-side bulk operations
     if (type === 'savings') {
-        const txs = validRows.map(r => ({
-            member_deposit_id: r.ref_id,
-            amount: r.nominal_baru - r.nominal_lama,
-            for_month: month,
-            for_year: year,
-            transaction_type: 'deposit',
-            description: `Batch Update ${month}/${year}`
-        }));
-        const { error } = await supabase.from('deposit_transactions').insert(txs);
-        if (error) throw error;
+        const refIds = validRows.map(r => r.ref_id).filter(Boolean);
+        if (refIds.length > 0) {
+            // Delete old transactions for this month/year for the affected deposits
+            const { error: delError } = await supabase
+                .from('deposit_transactions')
+                .delete()
+                .in('member_deposit_id', refIds)
+                .eq('for_month', month)
+                .eq('for_year', year);
+                
+            if (delError) throw delError;
+
+            // Insert new transactions with the updated total
+            const txs = validRows.map(r => ({
+                member_deposit_id: r.ref_id,
+                amount: r.nominal_baru,
+                for_month: month,
+                for_year: year,
+                transaction_type: 'deposit',
+                description: `Batch Update ${month}/${year}`
+            }));
+            const { error: insError } = await supabase.from('deposit_transactions').insert(txs);
+            if (insError) throw insError;
+        }
     } else {
         // Loans are trickier because of schedules.
         // We will fetch all relevant schedules first
