@@ -335,6 +335,8 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
          let lDate = row.tgl_awal_pinjaman ? new Date(row.tgl_awal_pinjaman) : new Date();
          const targetPerMonth = Math.floor(row.jumlah_pinjaman / row.tenor);
          
+         let remainingPaidAmt = row.sudah_diangsur;
+         
          for(let i = 0; i < row.tenor; i++) {
              const d = new Date(lDate);
              d.setMonth(d.getMonth() + i + 1);
@@ -342,10 +344,14 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
              let paidAmt = 0;
              let status = 'unpaid';
              
-             if (i < row.n_bulan_pinjaman) {
-                 paidAmt = row.angsuran_lampau_per_bulan;
-                 if (paidAmt >= targetPerMonth) status = 'paid';
-                 else if (paidAmt > 0) status = 'partial';
+             if (remainingPaidAmt >= targetPerMonth) {
+                 paidAmt = targetPerMonth;
+                 status = 'paid';
+                 remainingPaidAmt -= targetPerMonth;
+             } else if (remainingPaidAmt > 0) {
+                 paidAmt = remainingPaidAmt;
+                 status = 'partial';
+                 remainingPaidAmt = 0;
              }
              
              scheds.push({
@@ -364,13 +370,12 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
              // Insert Repayments untuk yang sudah diangsur
              if (row.sudah_diangsur > 0 && insertedScheds) {
                 const repays = [];
-                for(let i = 0; i < row.n_bulan_pinjaman; i++) {
-                   const sched = insertedScheds.find((s: any) => s.period_number === i + 1);
-                   if (sched) {
+                for (const sched of insertedScheds) {
+                   if (sched.paid_amount > 0) {
                      repays.push({
                        loan_id: newLoan.id,
                        schedule_id: sched.id,
-                       amount_paid: row.angsuran_lampau_per_bulan,
+                       amount_paid: sched.paid_amount,
                        payment_method: 'migration',
                        payment_date: sched.due_date,
                        notes: 'Migrasi Angsuran Lampau'
