@@ -26,10 +26,11 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
     typeMap[dt.name.toLowerCase()] = dt.id;
   });
 
-  const pokokId = typeMap['simpanan pokok'] || typeMap['pokok'];
-  const wajibId = typeMap['simpanan wajib'] || typeMap['wajib'];
-  const belanjaId = typeMap['simpanan belanja bulanan'] || typeMap['belanja'];
-  const lebaranId = typeMap['simpanan hari raya'] || typeMap['lebaran'];
+  const keys = Object.keys(typeMap);
+  const pokokId = typeMap[keys.find(k => k.includes('pokok')) || ''];
+  const wajibId = typeMap[keys.find(k => k.includes('wajib')) || ''];
+  const belanjaId = typeMap[keys.find(k => k.includes('belanja')) || ''];
+  const lebaranId = typeMap[keys.find(k => k.includes('lebaran') || k.includes('hari raya')) || ''];
 
   // 2. Fetch all active members
   const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at').eq('status', 'aktif');

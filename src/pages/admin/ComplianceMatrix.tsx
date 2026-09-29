@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, Eye } from 'lucide-react';
 import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
+import MemberLedgerModal from '../../components/members/MemberLedgerModal';
+import { supabase } from '../../lib/supabaseClient';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const CURRENT_MONTH = new Date().getMonth();
@@ -13,6 +15,8 @@ export default function ComplianceMatrix() {
   
   const [data, setData] = useState<ComplianceMatrixRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedMember, setSelectedMember] = useState<{id: string, nrp: string, nama: string} | null>(null);
+  const [totalSetoran, setTotalSetoran] = useState(0);
 
   useEffect(() => {
     const loadData = async () => {
@@ -20,6 +24,21 @@ export default function ComplianceMatrix() {
       try {
         const matrixData = await getComplianceMatrixData(parseInt(year));
         setData(matrixData);
+        
+        // Fetch total setoran
+        const { data: txs } = await supabase
+          .from('deposit_transactions')
+          .select('amount, transaction_type')
+          .eq('for_year', parseInt(year));
+          
+        let sum = 0;
+        if (txs) {
+           txs.forEach((tx: any) => {
+              if (tx.transaction_type === 'deposit') sum += Number(tx.amount);
+              else if (tx.transaction_type === 'withdrawal') sum -= Number(tx.amount);
+           });
+        }
+        setTotalSetoran(sum);
       } catch (err) {
         console.error('Failed to fetch compliance matrix', err);
       } finally {
@@ -33,6 +52,21 @@ export default function ComplianceMatrix() {
     row.nama.toLowerCase().includes(search.toLowerCase()) || 
     row.nrp.includes(search)
   );
+
+  const ytdCompliance = data.length > 0 
+    ? (data.reduce((acc, row) => acc + row.compliance, 0) / data.length).toFixed(1)
+    : '100';
+
+  const membersInArrears = data.filter(row => {
+    // Only check arrears if the current year matches the selected year, or if we want to show arrears for the selected year's current month?
+    // We'll check the CURRENT_MONTH of the selected year if we assume they might owe in the past, but the prompt says "Bulan Ini"
+    // Let's use CURRENT_MONTH data.
+    const currentMonthData = row.months[CURRENT_MONTH];
+    if (currentMonthData && (!currentMonthData.w || !currentMonthData.b || !currentMonthData.l)) {
+      return true;
+    }
+    return false;
+  }).length;
 
   const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number) => {
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
@@ -95,29 +129,29 @@ export default function ComplianceMatrix() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Tingkat Kepatuhan (YTD)</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-1">91.4%</h3>
+              <h3 className="text-2xl font-bold text-slate-800 mt-1">{ytdCompliance}%</h3>
             </div>
             <div className="p-2 bg-emerald-50 rounded-lg">
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             </div>
           </div>
           <div className="w-full bg-slate-100 rounded-full h-2">
-            <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '91.4%' }}></div>
+            <div className="bg-emerald-500 h-2 rounded-full" style={{ width: `${ytdCompliance}%` }}></div>
           </div>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col justify-between">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">Total Setoran Terkumpul (2026)</p>
-              <h3 className="text-2xl font-bold text-slate-800 mt-1">Rp 142.500.000</h3>
+              <p className="text-sm font-medium text-slate-500">Total Setoran Terkumpul ({year})</p>
+              <h3 className="text-2xl font-bold text-slate-800 mt-1">Rp {totalSetoran.toLocaleString('id-ID')}</h3>
             </div>
             <div className="p-2 bg-blue-50 rounded-lg">
               <FileSpreadsheet className="w-5 h-5 text-blue-600" />
             </div>
           </div>
           <p className="text-xs text-emerald-600 font-medium flex items-center mt-2">
-            <span className="mr-1">↑ 12%</span> dari tahun lalu
+            <span className="mr-1">Real-time update</span> dari database
           </p>
         </div>
 
@@ -125,7 +159,7 @@ export default function ComplianceMatrix() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="text-sm font-medium text-slate-500">Anggota Menunggak Bulan Ini</p>
-              <h3 className="text-2xl font-bold text-red-600 mt-1">3 Orang</h3>
+              <h3 className="text-2xl font-bold text-red-600 mt-1">{membersInArrears} Orang</h3>
             </div>
             <div className="p-2 bg-red-50 rounded-lg">
               <AlertTriangle className="w-5 h-5 text-red-600" />
@@ -254,7 +288,9 @@ export default function ComplianceMatrix() {
                           ></div>
                         </div>
                       </div>
-                      <button className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Buku Pembantu">
+                      <button 
+                        onClick={() => setSelectedMember({ id: row.member_id, nrp: row.nrp, nama: row.nama })}
+                        className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Buku Pembantu">
                         <Eye className="w-4 h-4" />
                       </button>
                     </div>
@@ -295,6 +331,14 @@ export default function ComplianceMatrix() {
         </div>
       </div>
 
+      {selectedMember && (
+        <MemberLedgerModal
+          memberId={selectedMember.id}
+          memberNrp={selectedMember.nrp}
+          memberName={selectedMember.nama}
+          onClose={() => setSelectedMember(null)}
+        />
+      )}
     </AdminLayout>
   );
 }

@@ -219,10 +219,11 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
   const { data: dTypes } = await supabase.from('deposit_types').select('*');
   const typeMap: Record<string, string> = {};
   dTypes?.forEach(dt => typeMap[dt.name.toLowerCase()] = dt.id);
-  const typePokok = typeMap['simpanan pokok'] || typeMap['pokok'];
-  const typeWajib = typeMap['simpanan wajib'] || typeMap['wajib'];
-  const typeBelanja = typeMap['simpanan belanja'] || typeMap['belanja'];
-  const typeLebaran = typeMap['simpanan lebaran'] || typeMap['lebaran'];
+  const keys = Object.keys(typeMap);
+  const typePokok = typeMap[keys.find(k => k.includes('pokok')) || ''];
+  const typeWajib = typeMap[keys.find(k => k.includes('wajib')) || ''];
+  const typeBelanja = typeMap[keys.find(k => k.includes('belanja')) || ''];
+  const typeLebaran = typeMap[keys.find(k => k.includes('lebaran') || k.includes('hari raya')) || ''];
 
   // 2. Ambil ID Tipe Pinjaman (Fallback ke tipe default pertama)
   const { data: lTypes } = await supabase.from('loan_types').select('*').eq('is_active', true).limit(1);
@@ -281,12 +282,10 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
          txsToInsert.push({
            member_deposit_id: mdId,
            amount: dt.amount,
-           transaction_type: 'payment',
-           status: 'completed',
+           transaction_type: 'deposit',
            for_month: row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota).getMonth() + 1 : 1,
            for_year: row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota).getFullYear() : new Date().getFullYear(),
-           payment_method: 'migration',
-           notes: 'One-Time Principal Deposit Migration',
+           description: 'One-Time Principal Deposit Migration',
            created_at: row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota).toISOString() : new Date().toISOString()
          });
       } else {
@@ -298,12 +297,10 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
             txsToInsert.push({
                member_deposit_id: mdId,
                amount: dt.monthly || 0,
-               transaction_type: 'payment',
-               status: 'completed',
+               transaction_type: 'deposit',
                for_month: mDate.getMonth() + 1,
                for_year: mDate.getFullYear(),
-               payment_method: 'migration',
-               notes: 'Historical Balance Migration',
+               description: 'Historical Balance Migration',
                created_at: mDate.toISOString()
             });
          }
@@ -317,16 +314,17 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
     // C. Setup Loans
     if (row.jumlah_pinjaman > 0 && loanTypeId) {
        const loanPayload = {
+         loan_number: `LOAN-MIG-${Date.now()}-${Math.floor(Math.random()*1000)}`,
          member_id: memberId,
          loan_type_id: loanTypeId,
          principal_amount: row.jumlah_pinjaman,
-         interest_amount: 0,
-         total_amount: row.jumlah_pinjaman,
-         remaining_amount: row.sisa_pinjaman,
-         tenor_months: row.tenor,
-         monthly_installment: Math.floor(row.jumlah_pinjaman / row.tenor),
+         agreed_tenor_months: row.tenor,
+         planned_installment_amount: Math.floor(row.jumlah_pinjaman / row.tenor),
+         amount: row.jumlah_pinjaman,
+         tenor: row.tenor,
+         monthly_target: Math.floor(row.jumlah_pinjaman / row.tenor),
          status: 'active',
-         approval_date: row.tgl_awal_pinjaman ? new Date(row.tgl_awal_pinjaman).toISOString() : new Date().toISOString(),
+         disbursed_at: row.tgl_awal_pinjaman ? new Date(row.tgl_awal_pinjaman).toISOString() : new Date().toISOString(),
          notes: 'Migrasi Histori Pinjaman'
        };
 
@@ -341,14 +339,10 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
                rDate.setMonth(rDate.getMonth() + i + 1); // bulan depan
                repays.push({
                  loan_id: newLoan.id,
-                 amount: row.angsuran_lampau_per_bulan,
-                 principal_portion: row.angsuran_lampau_per_bulan,
-                 interest_portion: 0,
+                 amount_paid: row.angsuran_lampau_per_bulan,
                  payment_method: 'migration',
-                 status: 'completed',
-                 for_month: rDate.getMonth() + 1,
-                 for_year: rDate.getFullYear(),
-                 created_at: rDate.toISOString()
+                 payment_date: rDate.toISOString(),
+                 notes: 'Migrasi Angsuran Lampau'
                });
             }
             if (repays.length > 0) await supabase.from('loan_repayments').insert(repays);
@@ -364,13 +358,11 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
                d.setMonth(d.getMonth() + i + 1);
                scheds.push({
                  loan_id: newLoan.id,
-                 due_date: d.toISOString(),
-                 installment_number: row.n_bulan_pinjaman + i + 1,
-                 amount_due: Math.floor(row.sisa_pinjaman / remainingMonths),
-                 amount_paid: 0,
-                 status: 'pending',
-                 for_month: d.getMonth() + 1,
-                 for_year: d.getFullYear()
+                 period_number: row.n_bulan_pinjaman + i + 1,
+                 due_date: d.toISOString().split('T')[0],
+                 target_amount: Math.floor(row.sisa_pinjaman / remainingMonths),
+                 paid_amount: 0,
+                 status: 'unpaid'
                });
             }
             if (scheds.length > 0) await supabase.from('loan_schedules').insert(scheds);
