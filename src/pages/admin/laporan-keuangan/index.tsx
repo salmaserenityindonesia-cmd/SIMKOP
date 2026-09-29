@@ -78,27 +78,23 @@ async function getCashFlowReport(
   unit: string
 ): Promise<CashFlowData> {
   // Fetch cash_flow table
-  let query = supabase
+  // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
+  const { data: cfRows, error: cfErr } = await supabase
     .from('cash_flow')
-    .select('id, created_at, description, category, direction, amount, unit')
+    .select('id, created_at, description, category, direction, amount, reference_id')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
     .order('created_at', { ascending: true });
-
-  if (unit !== 'all') {
-    query = query.eq('unit', unit);
-  }
-
-  const { data: cfRows, error: cfErr } = await query;
   if (cfErr) console.error('cash_flow query error:', cfErr);
 
   // Cross-check: also fetch sales.paid_cash for the period (retail inflow)
+  // NOTE: actual column is 'sale_status' (enum), not 'status'
   const { data: salesRows, error: salesErr } = await supabase
     .from('sales')
     .select('id, created_at, paid_cash, total_amount')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
-    .eq('status', 'completed')
+    .eq('sale_status', 'completed')
     .gt('paid_cash', 0);
   if (salesErr) console.error('sales query error:', salesErr);
 
@@ -116,7 +112,7 @@ async function getCashFlowReport(
       referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
       deskripsi: r.description ?? '-',
       kategori: r.category ?? 'lainnya',
-      unit_usaha: r.unit ?? 'Umum',
+      unit_usaha: 'Umum', // cash_flow table has no 'unit' column
       kas_masuk: masuk,
       kas_keluar: keluar,
       saldo_berjalan: runningSaldo,
@@ -167,12 +163,13 @@ async function getShuEstimation(
   endDate: string
 ): Promise<ShuEstimationData> {
   // 1. Total Omzet dari sales.total_amount (completed)
+  // NOTE: actual column is 'sale_status' (enum), not 'status'
   const { data: salesData, error: salesErr } = await supabase
     .from('sales')
     .select('id, total_amount, created_at')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
-    .eq('status', 'completed');
+    .eq('sale_status', 'completed');
   if (salesErr) console.error('shu sales error:', salesErr);
 
   const grossSales = (salesData ?? []).reduce((s: number, r: any) => s + Number(r.total_amount ?? 0), 0);
@@ -183,9 +180,11 @@ async function getShuEstimation(
   const marginMap: Record<string, { omzet: number; hpp: number; kategori: string }> = {};
 
   if (saleIds.length > 0) {
+    // NOTE: sale_items has both (quantity/unit_price) and (qty/price) columns.
+    // 'quantity' is NOT NULL so it's the canonical column for HPP calculation.
     const { data: saleItems, error: siErr } = await supabase
       .from('sale_items')
-      .select('quantity, price, product_id, sale_id')
+      .select('quantity, unit_price, product_id, sale_id')
       .in('sale_id', saleIds);
     if (siErr) console.error('sale_items error:', siErr);
 
@@ -221,8 +220,8 @@ async function getShuEstimation(
     for (const si of (saleItems ?? [])) {
       const prod = productMap[si.product_id];
       if (!prod) continue;
-      const itemHpp = Number(si.quantity ?? 0) * prod.buy_price;
-      const itemOmzet = Number(si.quantity ?? 0) * Number(si.price ?? 0);
+      const itemHpp   = Number(si.quantity ?? 0) * prod.buy_price;
+      const itemOmzet = Number(si.quantity ?? 0) * Number(si.unit_price ?? 0);
       cogs += itemHpp;
 
       const catName = catMap[prod.category_id] ?? 'Lainnya';

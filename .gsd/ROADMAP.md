@@ -1,13 +1,13 @@
 ---
 milestone: SIMKOP v1.0
 version: 1.0.0
-updated: 2026-09-26T19:28:00+07:00
+updated: 2026-09-30T05:21:00+07:00
 ---
 
 # Roadmap
 
-> **Current Phase:** 2 — Autentikasi & Manajemen User
-> **Status:** in progress
+> **Current Phase:** 16 — Dashboard Laporan Keuangan Terpadu
+> **Status:** ✅ All phases complete
 
 ## Must-Haves (from SPEC)
 
@@ -218,16 +218,16 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 13: Refactoring Modul Kasir (POS) SIMKOP Enterprise
-**Status**: 🔄 In Progress
+**Status**: ✅ Complete
 **Objective**: Keyboard-First POS, Multi-Device Scanner Support (Camera/Bluetooth/Keyboard), and Stateless Receipt Delivery
 **Depends on**: Phase 3
 
 **Plans**:
-- [ ] Plan 13.1: (Wave 1) Generate POS Layout & Modals using Stitch MCP
-- [ ] Plan 13.2: (Wave 1) Implement Keyboard Navigation & Autocomplete Selection
-- [ ] Plan 13.3: (Wave 2) Quantity Autofocus Modal with Strict Keyboard Escape/Enter
-- [ ] Plan 13.4: (Wave 2) Mobile HTML5 Camera Barcode Scanner Modal
-- [ ] Plan 13.5: (Wave 3) Stateless Receipt Handlers (Direct Thermal, WA Link, Client PDF)
+- [x] Plan 13.1: (Wave 1) Generate POS Layout & Modals using Stitch MCP
+- [x] Plan 13.2: (Wave 1) Implement Keyboard Navigation & Autocomplete Selection
+- [x] Plan 13.3: (Wave 2) Quantity Autofocus Modal with Strict Keyboard Escape/Enter
+- [x] Plan 13.4: (Wave 2) Mobile HTML5 Camera Barcode Scanner Modal
+- [x] Plan 13.5: (Wave 3) Stateless Receipt Handlers (Direct Thermal, WA Link, Client PDF)
 
 ---
 
@@ -243,13 +243,13 @@ updated: 2026-09-26T19:28:00+07:00
 ---
 
 ### Phase 15: Product Catalog Excel Template Export and Batch Import
-**Status**: 🔄 In Progress
+**Status**: ✅ Complete
 **Objective**: Export Template Excel (.xlsx) Produk & Batch Import Katalog Produk ke public.products dengan Auto-Category Matching
 **Depends on**: Phase 1, Phase 5
 
 **Plans**:
-- [ ] Plan 15.1: (Wave 1) Template Export & Stateless Upload Parser Logic for Products
-- [ ] Plan 15.2: (Wave 2) Product Catalog UI Action Buttons and Confirmation Modal
+- [x] Plan 15.1: (Wave 1) Template Export & Stateless Upload Parser Logic for Products
+- [x] Plan 15.2: (Wave 2) Product Catalog UI Action Buttons and Confirmation Modal
 
 ---
 
@@ -305,7 +305,7 @@ updated: 2026-09-26T19:28:00+07:00
 | 12 | Member Resignation Settlement Actions | ✅ | 3/3 | 100% |
 | 13 | Refactoring Modul Kasir (POS) SIMKOP Enterprise | ✅ | 5/5 | 100% |
 | 14 | Product Categories Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
-| 15 | Product Catalog Excel Template Export and Batch Import | 🔄 | 0/2 | 0% |
+| 15 | Product Catalog Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
 | 16 | Dashboard Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
 
 ---
@@ -328,5 +328,5 @@ updated: 2026-09-26T19:28:00+07:00
 | 12 | 2026-09-28 | 2026-09-28 | 1 day |
 | 13 | 2026-09-28 | 2026-09-28 | 1 day |
 | 14 | 2026-09-28 | 2026-09-28 | 1 day |
-| 15 | 2026-09-28 | — | — |
+| 15 | 2026-09-28 | 2026-09-30 | — |
 | 16 | 2026-09-30 | 2026-09-30 | 1 day |

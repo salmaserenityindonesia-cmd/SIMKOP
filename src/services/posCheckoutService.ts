@@ -58,13 +58,14 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
     const saleId = saleData.id;
 
     // 3. Insert sale items
+    // NOTE: sale_items has quantity (NOT NULL) and unit_price (NOT NULL) as canonical columns
     const items = payload.cart.map(item => ({
        sale_id: saleId,
        product_id: item.id,
        product_name: item.name,
-       quantity: item.qty, // renamed from qty to quantity to match existing table schema
-       unit_price: item.price // renamed from price to unit_price
-       // subtotal: is likely a generated column in DB, omitting to avoid constraint error
+       quantity: item.qty,
+       unit_price: item.price,
+       subtotal: item.qty * item.price
     }));
 
     const { error: itemsError } = await supabase.from('sale_items').insert(items);
@@ -105,13 +106,13 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
 
     // 6. If cash used, insert into cash_flow
     if (payload.paidCash > 0) {
-       await supabase.from('cash_flow').insert({
-          transaction_date: new Date().toISOString(),
+       const { error: cfError } = await supabase.from('cash_flow').insert({
           direction: 'in',
           amount: payload.paidCash,
           category: 'penjualan_tunai',
-          description: `Penjualan Tunai - Nota #${saleNumber}`
+          reference_id: saleId
        });
+       if (cfError) console.error('cash_flow insert error:', cfError);
     }
 
     return { success: true, saleId };
