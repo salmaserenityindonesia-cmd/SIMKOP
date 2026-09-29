@@ -12,6 +12,13 @@ export default function ManajemenAnggota() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(null);
@@ -99,6 +106,9 @@ export default function ManajemenAnggota() {
     a.nama.toLowerCase().includes(search.toLowerCase()) || 
     (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase()))
   );
+
+  const totalPages = Math.ceil(filteredList.length / itemsPerPage);
+  const paginatedList = filteredList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const getStatusText = (status?: string) => {
     switch (status) {
@@ -262,7 +272,7 @@ export default function ManajemenAnggota() {
                   </td>
                 </tr>
               ) : (
-                filteredList.map((anggota) => (
+                paginatedList.map((anggota) => (
                   <tr key={anggota.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
@@ -305,6 +315,49 @@ export default function ManajemenAnggota() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Footer */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-gray-200 bg-gray-50">
+          <div className="flex items-center gap-2 text-gray-600">
+            <span>
+              Menampilkan {filteredList.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+              {Math.min(currentPage * itemsPerPage, filteredList.length)} dari {filteredList.length} anggota
+            </span>
+            <select 
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="ml-2 bg-transparent border-none font-medium text-gray-900 outline-none cursor-pointer focus:ring-0"
+            >
+              <option value={10}>10 / halaman</option>
+              <option value={25}>25 / halaman</option>
+              <option value={50}>50 / halaman</option>
+              <option value={100}>100 / halaman</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 text-sm bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Prev
+            </button>
+            <span className="text-sm font-medium px-2 text-gray-700">
+              {currentPage} / {totalPages || 1}
+            </span>
+            <button 
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className="px-3 py-1 text-sm bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 
