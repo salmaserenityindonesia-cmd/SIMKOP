@@ -25,6 +25,9 @@ export default function ManajemenPembelian() {
   // View Detail Modal
   const [selectedFaktur, setSelectedFaktur] = useState<FakturPembelian | null>(null);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -142,6 +145,9 @@ export default function ManajemenPembelian() {
     ]);
     exportToPDF(headers, data, 'Laporan_Pembelian', 'Laporan Riwayat Pembelian');
   };
+
+  const totalPages = Math.ceil(fakturList.length / itemsPerPage);
+  const paginatedFakturList = fakturList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   if (isFormOpen) {
     return (
@@ -382,7 +388,7 @@ export default function ManajemenPembelian() {
                     <td colSpan={5} className="p-8 text-center text-on-surface-variant">Belum ada riwayat pembelian.</td>
                   </tr>
                 ) : (
-                  fakturList.map((faktur) => (
+                  paginatedFakturList.map((faktur) => (
                     <tr key={faktur.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
                       <td className="p-4 text-body-md text-on-surface">{faktur.tanggal}</td>
                       <td className="p-4 text-title-sm font-medium text-on-surface">{faktur.noFaktur}</td>
@@ -404,6 +410,49 @@ export default function ManajemenPembelian() {
                 )}
               </tbody>
             </table>
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant">
+            <div className="flex items-center gap-2 text-on-surface-variant">
+              <span>
+                Menampilkan {fakturList.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                {Math.min(currentPage * itemsPerPage, fakturList.length)} dari {fakturList.length} faktur
+              </span>
+              <select 
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="ml-2 bg-transparent border-none font-medium text-on-surface outline-none cursor-pointer focus:ring-0"
+              >
+                <option value={10}>10 / halaman</option>
+                <option value={25}>25 / halaman</option>
+                <option value={50}>50 / halaman</option>
+                <option value={100}>100 / halaman</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Prev
+              </button>
+              <span className="text-sm font-medium px-2 text-on-surface">
+                {currentPage} / {totalPages || 1}
+              </span>
+              <button 
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages || totalPages === 0}
+                className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
       </div>
