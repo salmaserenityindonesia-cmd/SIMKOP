@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp, Eye } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import LoanLedgerModal from '../../components/members/LoanLedgerModal';
 import { getLoanMatrix, LoanMatrixSummary, LoanMatrixMember } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
@@ -16,6 +16,7 @@ export const LoanMatrix: React.FC = () => {
   
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<LoanMatrixSummary | null>(null);
+  const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -296,13 +297,13 @@ export const LoanMatrix: React.FC = () => {
                       {(() => {
                         const loanId = Object.values(member.months).find(m => m.loanId)?.loanId;
                         return loanId ? (
-                          <Link 
-                            to={`/admin/pinjaman/${loanId}`}
+                          <button 
+                            onClick={() => setSelectedLoan({ loanId, nrp: member.nrp, nama: member.nama })}
                             className="inline-flex p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                             title="Lihat Buku Bantu Angsuran"
                           >
                             <Eye className="w-5 h-5" />
-                          </Link>
+                          </button>
                         ) : (
                           <span className="text-slate-300">-</span>
                         );
@@ -315,6 +316,15 @@ export const LoanMatrix: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {selectedLoan && (
+        <LoanLedgerModal
+          loanId={selectedLoan.loanId}
+          memberNrp={selectedLoan.nrp}
+          memberName={selectedLoan.nama}
+          onClose={() => setSelectedLoan(null)}
+        />
+      )}
     </div>
     </AdminLayout>
   );
