@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp } from 'lucide-react';
+import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp, Eye } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getLoanMatrix, LoanMatrixSummary, LoanMatrixMember } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
@@ -211,7 +212,8 @@ export const LoanMatrix: React.FC = () => {
                 {MONTHS.map(m => (
                   <th key={m} className="px-4 py-3 text-center min-w-[100px] border-l border-slate-200">{m}</th>
                 ))}
-                <th className="px-4 py-3 text-center sticky right-0 bg-slate-50 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] z-30">Kepatuhan YTD</th>
+                <th className="px-4 py-3 text-center border-l border-slate-200">Kepatuhan YTD</th>
+                <th className="px-4 py-3 text-center sticky right-0 bg-slate-50 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] z-30">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -281,7 +283,7 @@ export const LoanMatrix: React.FC = () => {
                       );
                     })}
 
-                    <td className="px-4 py-3 sticky right-0 bg-white group-hover:bg-slate-50 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
+                    <td className="px-4 py-3 border-l border-slate-100 bg-white group-hover:bg-slate-50 text-center">
                       <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
                         member.complianceYTD >= 100 ? 'bg-emerald-100 text-emerald-700' :
                         member.complianceYTD >= 50 ? 'bg-amber-100 text-amber-700' :
@@ -289,6 +291,22 @@ export const LoanMatrix: React.FC = () => {
                       }`}>
                         {member.complianceYTD.toFixed(0)}%
                       </div>
+                    </td>
+                    <td className="px-4 py-3 sticky right-0 bg-white group-hover:bg-slate-50 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
+                      {(() => {
+                        const loanId = Object.values(member.months).find(m => m.loanId)?.loanId;
+                        return loanId ? (
+                          <Link 
+                            to={`/admin/pinjaman/${loanId}`}
+                            className="inline-flex p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Lihat Buku Bantu Angsuran"
+                          >
+                            <Eye className="w-5 h-5" />
+                          </Link>
+                        ) : (
+                          <span className="text-slate-300">-</span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))
