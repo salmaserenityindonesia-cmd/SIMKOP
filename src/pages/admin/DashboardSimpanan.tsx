@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getMonthlyDepositCommitments, MonthlyDepositCommitment, addDepositTransaction } from '../../services/koperasiService';
-import { Search, Loader2, Download, FileText, Plus } from 'lucide-react';
+import { Search, Loader2, Download, FileText, Plus, ArrowUpDown } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { formatCurrency } from '../../utils/formatCurrency';
 
@@ -10,6 +10,10 @@ export default function DashboardSimpanan() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+  
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   
   // Payment Modal State
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -37,11 +41,66 @@ export default function DashboardSimpanan() {
     }
   }
 
-  const filteredList = commitments.filter(c => 
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  let filteredList = commitments.filter(c => 
     c.anggota?.nama?.toLowerCase().includes(search.toLowerCase()) || 
     c.anggota?.nrp?.toLowerCase().includes(search.toLowerCase()) ||
     c.deposit_name.toLowerCase().includes(search.toLowerCase())
   );
+
+  if (sortConfig !== null) {
+    filteredList.sort((a, b) => {
+      let aValue: any = '';
+      let bValue: any = '';
+
+      switch (sortConfig.key) {
+        case 'anggota':
+          aValue = a.anggota?.nama?.toLowerCase() || '';
+          bValue = b.anggota?.nama?.toLowerCase() || '';
+          break;
+        case 'jenis':
+          aValue = a.deposit_name.toLowerCase();
+          bValue = b.deposit_name.toLowerCase();
+          break;
+        case 'tagihan':
+          aValue = a.commitment_amount;
+          bValue = b.commitment_amount;
+          break;
+        case 'sudah_bayar':
+          aValue = a.total_paid;
+          bValue = b.total_paid;
+          break;
+        case 'sisa_tagihan':
+          aValue = a.remaining_balance;
+          bValue = b.remaining_balance;
+          break;
+        case 'status':
+          aValue = a.status;
+          bValue = b.status;
+          break;
+      }
+
+      if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  // Reset page when filters or sorting changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, sortConfig, targetMonth, targetYear]);
+
+  const totalFiltered = filteredList.length;
+  const totalPages = Math.ceil(totalFiltered / itemsPerPage);
+  const paginatedList = filteredList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleOpenPayment = (commitment: MonthlyDepositCommitment) => {
     setSelectedCommitment(commitment);
@@ -173,12 +232,24 @@ export default function DashboardSimpanan() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-100 text-gray-600 text-sm">
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Anggota</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Jenis Simpanan</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Tagihan</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Sudah Bayar</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right">Sisa Tagihan</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Status</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('anggota')}>
+                  <div className="flex items-center gap-1">Anggota <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('jenis')}>
+                  <div className="flex items-center gap-1">Jenis Simpanan <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('tagihan')}>
+                  <div className="flex items-center justify-end gap-1">Tagihan <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('sudah_bayar')}>
+                  <div className="flex items-center justify-end gap-1">Sudah Bayar <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-right cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('sisa_tagihan')}>
+                  <div className="flex items-center justify-end gap-1">Sisa Tagihan <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center cursor-pointer hover:bg-gray-200 transition-colors" onClick={() => handleSort('status')}>
+                  <div className="flex items-center justify-center gap-1">Status <ArrowUpDown className="w-3 h-3 text-gray-400" /></div>
+                </th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
               </tr>
             </thead>
@@ -196,14 +267,14 @@ export default function DashboardSimpanan() {
                     {error}
                   </td>
                 </tr>
-              ) : filteredList.length === 0 ? (
+              ) : paginatedList.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-gray-500">
                     Tidak ada data tagihan simpanan untuk bulan ini.
                   </td>
                 </tr>
               ) : (
-                filteredList.map((c) => (
+                paginatedList.map((c) => (
                   <tr key={`${c.member_id}-${c.deposit_type_id}`} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-4 text-sm">
                       <div className="font-medium text-gray-900">{c.anggota?.nama || '-'}</div>
@@ -236,6 +307,49 @@ export default function DashboardSimpanan() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Footer */}
+        <div className="p-4 border-t border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4 text-sm bg-gray-50">
+          <div className="flex items-center gap-2 text-gray-600">
+            <span>
+              Menampilkan {totalFiltered === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+              {Math.min(currentPage * itemsPerPage, totalFiltered)} dari {totalFiltered} data
+            </span>
+            <select 
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="ml-2 border border-gray-300 rounded-md py-1 px-2 focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] bg-white"
+            >
+              <option value={10}>10 / halaman</option>
+              <option value={25}>25 / halaman</option>
+              <option value={50}>50 / halaman</option>
+              <option value={100}>100 / halaman</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 bg-white border border-gray-300 hover:bg-gray-50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Prev
+            </button>
+            <span className="font-medium px-2 text-gray-700">
+              {currentPage} / {totalPages || 1}
+            </span>
+            <button 
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className="px-3 py-1 bg-white border border-gray-300 hover:bg-gray-50 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

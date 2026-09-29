@@ -13,6 +13,8 @@ export default function ComplianceMatrix() {
   const [year, setYear] = useState(new Date().getFullYear().toString());
   const [filterType, setFilterType] = useState('all');
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   
   const [data, setData] = useState<ComplianceMatrixRow[]>([]);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
@@ -57,6 +59,15 @@ export default function ComplianceMatrix() {
     row.nama.toLowerCase().includes(search.toLowerCase()) || 
     row.nrp.includes(search)
   );
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
+  const totalFiltered = filteredData.length;
+  const totalPages = Math.ceil(totalFiltered / itemsPerPage);
+  const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const ytdCompliance = data.length > 0 
     ? (data.reduce((acc, row) => acc + row.compliance, 0) / data.length).toFixed(1)
@@ -252,13 +263,13 @@ export default function ComplianceMatrix() {
                     </div>
                   </td>
                 </tr>
-              ) : filteredData.length === 0 ? (
+              ) : paginatedData.length === 0 ? (
                 <tr>
                   <td colSpan={14} className="text-center py-8 text-slate-500">
                     Tidak ada data anggota ditemukan.
                   </td>
                 </tr>
-              ) : filteredData.map((row) => (
+              ) : paginatedData.map((row) => (
                 <tr key={row.nrp} className="hover:bg-slate-50/50 transition-colors group/row">
                   <td className="sticky left-0 bg-white group-hover/row:bg-slate-50/90 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     <div className="flex flex-col">
@@ -327,12 +338,43 @@ export default function ComplianceMatrix() {
         </div>
 
         <div className="flex items-center gap-2 text-slate-500">
-          <span>Menampilkan 1-3 dari 120 anggota</span>
-          <select className="ml-2 bg-transparent border-none font-medium text-slate-700 outline-none cursor-pointer">
-            <option>10 / halaman</option>
-            <option>25 / halaman</option>
-            <option>50 / halaman</option>
+          <span>
+            Menampilkan {totalFiltered === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+            {Math.min(currentPage * itemsPerPage, totalFiltered)} dari {totalFiltered} anggota
+          </span>
+          <select 
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            className="ml-2 bg-transparent border-none font-medium text-slate-700 outline-none cursor-pointer"
+          >
+            <option value={10}>10 / halaman</option>
+            <option value={25}>25 / halaman</option>
+            <option value={50}>50 / halaman</option>
+            <option value={100}>100 / halaman</option>
           </select>
+
+          <div className="flex items-center gap-1 ml-4">
+            <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Prev
+            </button>
+            <span className="text-sm font-medium px-2 text-slate-700">
+              {currentPage} / {totalPages || 1}
+            </span>
+            <button 
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages || totalPages === 0}
+              className="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

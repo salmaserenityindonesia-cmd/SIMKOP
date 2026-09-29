@@ -13,6 +13,8 @@ export const LoanMatrix: React.FC = () => {
   const [year, setYear] = useState<number>(currentYear);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
   
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<LoanMatrixSummary | null>(null);
@@ -46,6 +48,15 @@ export const LoanMatrix: React.FC = () => {
       return matchSearch && matchStatus;
     });
   }, [data, search, statusFilter]);
+
+  // Reset page when search or filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter]);
+
+  const totalFiltered = filteredMembers.length;
+  const totalPages = Math.ceil(totalFiltered / itemsPerPage);
+  const paginatedMembers = filteredMembers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleExportExcel = async () => {
     if (!data) return;
@@ -222,12 +233,12 @@ export const LoanMatrix: React.FC = () => {
                 <tr>
                   <td colSpan={14} className="text-center py-8 text-slate-500">Memuat data matriks...</td>
                 </tr>
-              ) : filteredMembers.length === 0 ? (
+              ) : paginatedMembers.length === 0 ? (
                 <tr>
                   <td colSpan={14} className="text-center py-8 text-slate-500">Tidak ada data untuk tahun {year}</td>
                 </tr>
               ) : (
-                filteredMembers.map(member => (
+                paginatedMembers.map(member => (
                   <tr key={member.memberId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                       <div className="font-semibold text-slate-800">{member.nama}</div>
@@ -314,6 +325,49 @@ export const LoanMatrix: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Pagination Footer */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col md:flex-row justify-between items-center gap-4 text-sm mt-4">
+        <div className="flex items-center gap-2 text-slate-500">
+          <span>
+            Menampilkan {totalFiltered === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+            {Math.min(currentPage * itemsPerPage, totalFiltered)} dari {totalFiltered} anggota
+          </span>
+          <select 
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            className="ml-2 bg-transparent border-none font-medium text-slate-700 outline-none cursor-pointer focus:ring-0"
+          >
+            <option value={10}>10 / halaman</option>
+            <option value={25}>25 / halaman</option>
+            <option value={50}>50 / halaman</option>
+            <option value={100}>100 / halaman</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button 
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Prev
+          </button>
+          <span className="text-sm font-medium px-2 text-slate-700">
+            {currentPage} / {totalPages || 1}
+          </span>
+          <button 
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages || totalPages === 0}
+            className="px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Next
+          </button>
         </div>
       </div>
 

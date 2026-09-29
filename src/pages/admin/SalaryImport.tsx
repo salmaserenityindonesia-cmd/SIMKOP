@@ -18,6 +18,9 @@ export default function SalaryImport() {
   const [editingRowIdx, setEditingRowIdx] = useState<number | null>(null);
   const [tempAccountNumber, setTempAccountNumber] = useState<string>('');
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   const normalizeAccount = (acc: string | null) => (acc || '').replace(/[\s-]/g, '');
 
   const handleSaveInlineEdit = (idx: number) => {
@@ -65,6 +68,7 @@ export default function SalaryImport() {
     try {
       const data = await parseSalaryReconciliationFile(file);
       setResults(data);
+      setCurrentPage(1);
     } catch (err: any) {
       setErrorMsg('Gagal memproses file: ' + err.message);
     } finally {
@@ -92,6 +96,10 @@ export default function SalaryImport() {
       setIsConfirming(false);
     }
   };
+
+  const totalItems = results.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <AdminLayout>
@@ -194,8 +202,10 @@ export default function SalaryImport() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/20">
-                  {results.map((r, idx) => (
-                    <tr key={idx} className="hover:bg-surface-container-lowest/50">
+                  {paginatedResults.map((r, idx) => {
+                    const actualIdx = (currentPage - 1) * itemsPerPage + idx;
+                    return (
+                    <tr key={actualIdx} className="hover:bg-surface-container-lowest/50">
                       <td className="px-4 py-3">{r.nrp}</td>
                       <td className="px-4 py-3">{r.nama}</td>
                       <td className="px-4 py-3">
@@ -210,7 +220,7 @@ export default function SalaryImport() {
                       <td className="px-4 py-3">Rp {r.take_home_pay?.toLocaleString('id-ID') || '-'}</td>
                       <td className="px-4 py-3">{r.db_account_number || '-'}</td>
                       <td className="px-4 py-3 font-medium text-primary">
-                        {editingRowIdx === idx ? (
+                        {editingRowIdx === actualIdx ? (
                            <div className="flex items-center gap-2">
                              <input 
                                 type="text"
@@ -219,7 +229,7 @@ export default function SalaryImport() {
                                 className="border border-outline-variant rounded px-2 py-1 text-sm w-36 bg-surface-container-lowest"
                                 autoFocus
                              />
-                             <button onClick={() => handleSaveInlineEdit(idx)} className="text-success hover:text-success/80 flex items-center" title="Simpan">
+                             <button onClick={() => handleSaveInlineEdit(actualIdx)} className="text-success hover:text-success/80 flex items-center" title="Simpan">
                                <span className="material-symbols-outlined text-[18px]">check_circle</span>
                              </button>
                              <button onClick={() => setEditingRowIdx(null)} className="text-error hover:text-error/80 flex items-center" title="Batal">
@@ -231,7 +241,7 @@ export default function SalaryImport() {
                              <span>{r.excel_account_number || '-'}</span>
                              {r.status === 'CONFLICT' && (
                                <button 
-                                 onClick={() => { setEditingRowIdx(idx); setTempAccountNumber(r.excel_account_number || ''); }} 
+                                 onClick={() => { setEditingRowIdx(actualIdx); setTempAccountNumber(r.excel_account_number || ''); }} 
                                  className="text-on-surface-variant hover:text-primary transition-colors flex items-center"
                                  title="Edit Rekening Baru"
                                >
@@ -242,9 +252,51 @@ export default function SalaryImport() {
                         )}
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
+            </div>
+
+            <div className="p-4 border-t border-outline-variant/30 flex flex-col md:flex-row justify-between items-center gap-4 text-sm bg-surface-container-low/50">
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <span>
+                  Menampilkan {totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
+                  {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} data
+                </span>
+                <select 
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="ml-2 border border-outline-variant rounded-md py-1 px-2 focus:outline-none focus:ring-1 focus:ring-primary bg-surface-container-lowest"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Prev
+                </button>
+                <span className="font-medium px-2 text-on-surface">
+                  {currentPage} / {totalPages || 1}
+                </span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages || totalPages === 0}
+                  className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         )}
