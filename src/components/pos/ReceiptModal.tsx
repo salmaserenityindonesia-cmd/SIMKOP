@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function ReceiptModal({ isOpen, cart, onClose, subtotal, discount, total }) {
+export default function ReceiptModal({ isOpen, cart, onClose, subtotal, discount, total, payment }: any) {
   if (!isOpen) return null;
 
   const handleWA = () => {
@@ -64,6 +64,34 @@ export default function ReceiptModal({ isOpen, cart, onClose, subtotal, discount
                 <span>Rp {total.toLocaleString('id-ID')}</span>
               </div>
             </div>
+
+            {payment && (
+              <div className="py-2.5 space-y-1 text-[11px] border-t border-dashed border-outline-variant/80">
+                <div className="font-bold mb-1">Metode Pembayaran</div>
+                {payment.paidCash > 0 && (
+                  <div className="flex justify-between">
+                    <span>Tunai:</span>
+                    <span>Rp {payment.paidCash.toLocaleString('id-ID')}</span>
+                  </div>
+                )}
+                {payment.paidDeposit > 0 && (
+                  <div className="flex justify-between">
+                    <span>Simpanan Belanja:</span>
+                    <span>Rp {payment.paidDeposit.toLocaleString('id-ID')}</span>
+                  </div>
+                )}
+                {payment.paidCredit > 0 && (
+                  <div className="flex justify-between">
+                    <span>Bon Toko (Gaji):</span>
+                    <span>Rp {payment.paidCredit.toLocaleString('id-ID')}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-bold pt-1 border-t border-outline-variant/40 mt-1">
+                  <span>Kembalian:</span>
+                  <span>Rp {Math.max(0, (payment.paidCash + payment.paidDeposit + payment.paidCredit) - total).toLocaleString('id-ID')}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -6,6 +6,9 @@ import SummaryPanel from '../../components/pos/SummaryPanel';
 import QuantityModal from '../../components/pos/QuantityModal';
 import CameraScannerModal from '../../components/pos/CameraScannerModal';
 import ReceiptModal from '../../components/pos/ReceiptModal';
+import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
+import { processCheckout } from '../../services/posCheckoutService';
+import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 
 export interface CartItem {
@@ -20,12 +23,21 @@ export interface CartItem {
 
 export default function POSPage() {
   const [products, setProducts] = useState<Produk[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [selectedMember, setSelectedMember] = useState<any | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeItemForQty, setActiveItemForQty] = useState<Omit<CartItem, 'qty'> | null>(null);
+  const [lastPayment, setLastPayment] = useState<any>(null);
   
   useEffect(() => {
     import('../../services/koperasiService').then(s => {
       s.getProduk().then(data => setProducts(data.filter(p => p.is_active && p.stock > 0)));
+    });
+    supabase.from('anggota').select('id, nrp, nama, take_home_pay').eq('status', 'aktif').then(({ data }) => {
+      if (data && data.length > 0) {
+        setMembers(data);
+        setSelectedMember(data[0]); // default to first member
+      }
     });
   }, []);
 
@@ -33,12 +45,13 @@ export default function POSPage() {
     qty: false,
     camera: false,
     receipt: false,
+    splitPayment: false,
   });
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-  const discount = subtotal * 0.05; // assuming member
+  const discount = selectedMember ? subtotal * 0.05 : 0; 
   const total = subtotal - discount;
 
   // Global Keyboard Shortcuts
@@ -53,7 +66,7 @@ export default function POSPage() {
       } else if (e.key === 'F9' || (e.key === ' ' && (e.target as HTMLElement).tagName !== 'INPUT')) {
         if (cart.length > 0) {
           e.preventDefault();
-          setModals(m => ({ ...m, receipt: true }));
+          setModals(m => ({ ...m, splitPayment: true }));
         }
       }
     };
@@ -82,6 +95,29 @@ export default function POSPage() {
     
     // focus back to search after small delay
     setTimeout(() => searchInputRef.current?.focus(), 100);
+  };
+
+  const handleCheckoutConfirm = async (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => {
+    const cashierId = null; // Normally from auth context
+    const res = await processCheckout({
+      memberId: selectedMember?.id || null,
+      cashierId,
+      cart,
+      subtotal,
+      discount,
+      totalAmount: total,
+      paidCash: payload.paidCash,
+      paidDeposit: payload.paidDeposit,
+      paidCredit: payload.paidCredit,
+      paymentScheme: payload.scheme
+    });
+
+    if (res.success) {
+       setLastPayment(payload);
+       setModals(m => ({ ...m, splitPayment: false, receipt: true }));
+    } else {
+       alert('Checkout gagal: ' + res.error);
+    }
   };
 
   return (
@@ -121,7 +157,10 @@ export default function POSPage() {
           
           <SummaryPanel 
             cart={cart}
-            onPay={() => { if(cart.length>0) setModals(m => ({...m, receipt: true})) }}
+            members={members}
+            selectedMember={selectedMember}
+            onSelectMember={setSelectedMember}
+            onPay={() => { if(cart.length>0) setModals(m => ({...m, splitPayment: true})) }}
             onHold={() => alert('Fitur Tahan Transaksi (Placeholder)')}
             onReset={() => setCart([])}
           />
@@ -152,15 +191,26 @@ export default function POSPage() {
         }}
       />
       
+      <SplitPaymentModal 
+        isOpen={modals.splitPayment}
+        onClose={() => setModals(m => ({...m, splitPayment: false}))}
+        cart={cart}
+        total={total}
+        memberId={selectedMember?.id || null}
+        onConfirm={handleCheckoutConfirm}
+      />
+      
       <ReceiptModal 
         isOpen={modals.receipt}
         cart={cart}
         subtotal={subtotal}
         discount={discount}
         total={total}
+        payment={lastPayment}
         onClose={() => {
           setModals(m => ({...m, receipt: false}));
           setCart([]);
+          setLastPayment(null);
           setTimeout(() => searchInputRef.current?.focus(), 100);
         }}
       />

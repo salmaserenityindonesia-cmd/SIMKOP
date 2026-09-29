@@ -1,12 +1,22 @@
 import React, { useState } from 'react';
 
-export default function SummaryPanel({ cart, onPay, onHold, onReset }) {
-  const [isMember, setIsMember] = useState(true);
+export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [], selectedMember, onSelectMember }) {
+  const [isMemberMode, setIsMemberMode] = useState(selectedMember !== null || true);
   const [paymentType, setPaymentType] = useState('Tunai');
   
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
-  const discount = isMember ? subtotal * 0.05 : 0;
+  const discount = isMemberMode ? subtotal * 0.05 : 0;
   const total = subtotal - discount;
+
+  // Sync selectedMember when switching modes
+  const handleSetMemberMode = (mode: boolean) => {
+    setIsMemberMode(mode);
+    if (mode && !selectedMember && members.length > 0) {
+      onSelectMember(members[0]);
+    } else if (!mode) {
+      onSelectMember(null);
+    }
+  };
 
   return (
     <aside className="lg:col-span-4 flex flex-col gap-3 sticky top-16">
@@ -17,21 +27,31 @@ export default function SummaryPanel({ cart, onPay, onHold, onReset }) {
             <span className="font-title-sm text-title-sm text-primary">Identitas Anggota Koperasi</span>
           </div>
           <div className="inline-flex rounded-lg p-0.5 bg-surface-container border border-outline-variant/30 text-label-sm font-label-sm">
-            <button className={`px-2.5 py-1 rounded ${isMember ? 'bg-surface-container-lowest text-primary font-bold shadow-xs' : 'text-on-surface-variant hover:text-primary'}`} onClick={() => setIsMember(true)}>Anggota</button>
-            <button className={`px-2.5 py-1 rounded ${!isMember ? 'bg-surface-container-lowest text-primary font-bold shadow-xs' : 'text-on-surface-variant hover:text-primary'}`} onClick={() => setIsMember(false)}>Non-Anggota</button>
+            <button className={`px-2.5 py-1 rounded ${isMemberMode ? 'bg-surface-container-lowest text-primary font-bold shadow-xs' : 'text-on-surface-variant hover:text-primary'}`} onClick={() => handleSetMemberMode(true)}>Anggota</button>
+            <button className={`px-2.5 py-1 rounded ${!isMemberMode ? 'bg-surface-container-lowest text-primary font-bold shadow-xs' : 'text-on-surface-variant hover:text-primary'}`} onClick={() => handleSetMemberMode(false)}>Non-Anggota</button>
           </div>
         </div>
-        <div className={`p-3 rounded-lg bg-surface-container-low border border-secondary/30 relative ${!isMember ? 'opacity-40' : ''}`}>
+        <div className={`p-3 rounded-lg bg-surface-container-low border border-secondary/30 relative ${!isMemberMode ? 'opacity-40' : ''}`}>
           <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-primary-container text-secondary-fixed text-[11px] font-mono font-bold">NIA: 2024-0012</span>
-                <span className="font-title-sm text-title-sm text-primary font-bold">Bambang Sutrisno</span>
-              </div>
-              <div className="mt-2.5 pt-2 border-t border-outline-variant/40 flex items-center justify-between">
-                <span className="text-[12px] text-outline">Saldo Simpanan Sukarela:</span>
-                <span className="font-mono text-body-md font-bold text-secondary">Rp 1.450.000</span>
-              </div>
+            <div className="w-full">
+              {isMemberMode ? (
+                <>
+                  <select 
+                    className="w-full bg-surface border border-outline-variant rounded p-1 text-sm mb-2"
+                    value={selectedMember?.id || ''}
+                    onChange={e => onSelectMember(members.find(m => m.id === e.target.value) || null)}
+                  >
+                    {members.map(m => (
+                      <option key={m.id} value={m.id}>{m.nrp} - {m.nama}</option>
+                    ))}
+                  </select>
+                  <div className="mt-1 pt-2 border-t border-outline-variant/40 text-[11px] text-outline">
+                    Pilih anggota untuk memuat limit & saldo.
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm italic text-on-surface-variant py-2 text-center">Pembeli Umum</div>
+              )}
             </div>
           </div>
         </div>
@@ -44,7 +64,7 @@ export default function SummaryPanel({ cart, onPay, onHold, onReset }) {
             <span className="font-mono text-headline-sm text-secondary-fixed">Rp</span>
             <span className="font-mono text-[42px] leading-tight font-extrabold tracking-tight text-surface-container-lowest">{total.toLocaleString('id-ID')}</span>
           </div>
-          {isMember && <div className="text-[12px] text-on-primary-container mt-1 font-mono">Hemat Rp {discount.toLocaleString('id-ID')} via Diskon Anggota (5%)</div>}
+          {isMemberMode && <div className="text-[12px] text-on-primary-container mt-1 font-mono">Hemat Rp {discount.toLocaleString('id-ID')} via Diskon Anggota (5%)</div>}
         </div>
         <div className="space-y-1.5 pt-3 border-t border-surface-container-lowest/15 text-body-sm font-mono text-surface-container-lowest/90">
           <div className="flex justify-between">
