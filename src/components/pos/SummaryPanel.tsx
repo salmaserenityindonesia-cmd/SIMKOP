@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [], selectedMember, onSelectMember }) {
-  const [isMemberMode, setIsMemberMode] = useState(selectedMember !== null || true);
+  const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null || true);
   const [paymentType, setPaymentType] = useState('Tunai');
   
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
