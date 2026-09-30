@@ -3,11 +3,13 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { getDashboardStats, DashboardStats, getCommitmentStats, CommitmentStats } from '../../services/koperasiService';
 import { useCart } from '../../lib/cartStore';
 import { Link } from 'react-router-dom';
+import { generateDatabaseBackup } from '../../services/backupService';
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [commitmentStats, setCommitmentStats] = useState<CommitmentStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isBackingUp, setIsBackingUp] = useState(false);
   const { parkedTransactions } = useCart();
 
   const currentMonth = new Date().getMonth() + 1;
@@ -27,6 +29,29 @@ export default function AdminDashboard() {
     });
   }, [currentMonth, currentYear]);
 
+  const handleBackup = async () => {
+    if (!window.confirm('Apakah Anda yakin ingin membackup seluruh database? Proses ini mungkin memerlukan waktu beberapa saat.')) {
+      return;
+    }
+    
+    setIsBackingUp(true);
+    try {
+      const url = await generateDatabaseBackup();
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `simkop_backup_${new Date().toISOString().replace(/:/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert('Backup berhasil diunduh!');
+    } catch (error: any) {
+      alert('Terjadi kesalahan saat backup: ' + error.message);
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
   return (
     <AdminLayout>
       {/* DASHBOARD HEADER */}
@@ -38,6 +63,22 @@ export default function AdminDashboard() {
           </div>
           <h1 className="text-headline-md font-headline-md text-primary tracking-tight">Dashboard Operasional</h1>
           <p className="text-body-md font-body-md text-on-surface-variant">Ringkasan aktivitas unit Simpan Pinjam dan unit Retail (POS)</p>
+        </div>
+        
+        {/* ACTION BUTTONS */}
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleBackup} 
+            disabled={isBackingUp}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            {isBackingUp ? (
+              <span className="material-symbols-outlined animate-spin text-[20px]">sync</span>
+            ) : (
+              <span className="material-symbols-outlined text-[20px]">cloud_download</span>
+            )}
+            {isBackingUp ? 'Proses Backup...' : 'Backup Database'}
+          </button>
         </div>
       </div>
 
