@@ -1,19 +1,14 @@
 import React, { useState } from 'react';
-import { AdminLayout } from '../../../components/layout/AdminLayout';
+import AdminLayout from '../../../components/layout/AdminLayout';
 import { 
   FileSpreadsheet, 
   Printer, 
   RefreshCcw, 
   Calendar,
-  Filter,
-  TrendingUp,
-  Banknotes, // wait, lucide doesn't have Banknotes, I'll use Wallet or DollarSign
   Wallet,
-  CreditCard,
+  TrendingUp,
   Package,
   AlertTriangle,
-  CheckCircle,
-  BarChart3,
   Store
 } from 'lucide-react';
 
