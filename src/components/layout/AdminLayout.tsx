@@ -339,6 +339,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <span className="material-symbols-outlined text-[16px]">account_balance_wallet</span>
                   <span>Laporan Keuangan</span>
                 </NavLink>
+                <NavLink 
+                  to="/admin/laporan-retail"
+                  className={({ isActive }) => 
+                    `flex items-center gap-3 pl-12 pr-4 py-2 rounded-lg font-title-sm transition-colors text-sm ${
+                      isActive 
+                        ? 'bg-surface-container-lowest/10 text-surface-container-lowest border-l-4 border-secondary-fixed' 
+                        : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/5 font-label-md border-l-4 border-transparent'
+                    }`
+                  }
+                >
+                  <span className="material-symbols-outlined text-[16px]">storefront</span>
+                  <span>Laporan Retail & Stok</span>
+                </NavLink>
               </div>
 
             </nav>

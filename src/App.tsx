@@ -21,6 +21,7 @@ import ComplianceMatrix from './pages/admin/ComplianceMatrix';
 import { LoanMatrix } from './pages/admin/LoanMatrix';
 import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
+import LaporanRetail from './pages/admin/laporan-retail';
 
 export default function App() {
   return (
@@ -205,6 +206,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <LaporanKeuangan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/laporan-retail" 
+          element={
+            <ProtectedRoute>
+              <LaporanRetail />
             </ProtectedRoute>
           } 
         />
