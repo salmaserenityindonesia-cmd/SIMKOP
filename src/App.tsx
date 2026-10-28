@@ -23,6 +23,7 @@ import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
 import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
+import PengaturanKasir from './pages/admin/PengaturanKasir';
 import { FeedbackProvider } from './context/FeedbackContext';
 
 export default function App() {
@@ -228,6 +229,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <PengaturanKoperasi />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/pengaturan-kasir" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <PengaturanKasir />
             </ProtectedRoute>
           } 
         />

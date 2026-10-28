@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   TrendingUp,
   Settings,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -71,6 +72,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Inventori Produk', icon: Package, href: '/admin/produk' },
       { label: 'Kategori Produk', icon: Tags, href: '/admin/kategori' },
       { label: 'Manajemen Pembelian', icon: Truck, href: '/admin/pembelian' },
+      { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
     ],
   },
   {
