@@ -6,7 +6,7 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 16 — Dashboard Laporan Keuangan Terpadu
+> **Current Phase:** 17 — Dashboard Laporan Retail & Inventori POS
 > **Status:** ✅ All phases complete
 
 ## Must-Haves (from SPEC)
@@ -272,14 +272,14 @@ updated: 2026-09-30T05:21:00+07:00
 ---
 
 ### Phase 17: Dashboard Laporan Retail & Inventori POS
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: Mengimplementasikan modul `/admin/laporan-retail` — Laporan Penjualan (Tutup Kasir Harian), Produk Terlaris & Margin Laba, serta Status Stok & Valuasi Inventori.
 **Depends on**: Phase 16
 
 **Plans**:
-- [ ] Plan 17.1: (Wave 1) Generate Retail & Inventory Reports Dashboard with Stitch MCP
-- [ ] Plan 17.2: (Wave 2) Build Endpoints for End-of-Day, Fast-Moving Margin, and Stock Valuation
-- [ ] Plan 17.3: (Wave 3) Wire Frontend State, Sidebar Navigation, and Stateless Exporter
+- [x] Plan 17.1: (Wave 1) Generate Retail & Inventory Reports Dashboard with Stitch MCP
+- [x] Plan 17.2: (Wave 2) Build Endpoints for End-of-Day, Fast-Moving Margin, and Stock Valuation
+- [x] Plan 17.3: (Wave 3) Wire Frontend State, Sidebar Navigation, and Stateless Exporter
 
 **Verification**:
 - Pastikan antarmuka ter-generate rapi dengan Tailwind CSS.
@@ -325,7 +325,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 14 | Product Categories Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
 | 15 | Product Catalog Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
 | 16 | Dashboard Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
-| 17 | Dashboard Laporan Retail & Inventori POS | ⬜ | 0/3 | 0% |
+| 17 | Dashboard Laporan Retail & Inventori POS | ✅ | 3/3 | 100% |
 
 ---
 
@@ -349,4 +349,4 @@ updated: 2026-09-30T05:21:00+07:00
 | 14 | 2026-09-28 | 2026-09-28 | 1 day |
 | 15 | 2026-09-28 | 2026-09-30 | — |
 | 16 | 2026-09-30 | 2026-09-30 | 1 day |
-| 17 | 2026-09-30 | — | — |
+| 17 | 2026-09-30 | 2026-09-30 | 1 day |
