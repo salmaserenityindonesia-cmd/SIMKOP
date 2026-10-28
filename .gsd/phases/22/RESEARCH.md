@@ -50,3 +50,4 @@
   1. Dipicu saat kasir dimuat atau modal dibuka.
   2. Mengeksekusi RPC `cleanup_expired_parked_sales()`.
   3. Transaksi lewat batas waktu dibatalkan dan stok produk dikembalikan secara otomatis.
+

@@ -82,3 +82,4 @@ After all tasks complete, verify:
 - [ ] All tasks verified passing
 - [ ] Must-haves confirmed
 - [ ] Zero build warnings / errors
+
