@@ -4,24 +4,55 @@
  * Uses ExcelJS (already in project) for .xlsx and window.print() for PDF
  */
 
-import type { EndOfDayReport, FastMovingProduct, StockValuation } from '../services/retail-report.service';
+import type { EndOfDayReport, FastMovingProduct, StockValuation, CashierShift } from '../services/retail-report.service';
 
 const formatRp = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
 
 /**
- * Export the three report tabs to a multi-sheet .xlsx file
+ * Export the report tabs to a multi-sheet .xlsx file
  */
 export async function exportRetailToExcel(
   period: { startDate: string; endDate: string },
   eod: EndOfDayReport | null,
   fastMoving: FastMovingProduct[],
-  stock: StockValuation | null
+  stock: StockValuation | null,
+  shifts?: CashierShift[]
 ) {
   try {
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
     wb.creator = 'SIMKOP Enterprise';
     wb.created = new Date();
+
+    // ── Sheet: Rekonsiliasi Shift Kasir ─────────────────────────────────────
+    const shiftList = shifts && shifts.length > 0 ? shifts : (eod?.shifts || []);
+    if (shiftList.length > 0) {
+      const wsShift = wb.addWorksheet('Rekonsiliasi Shift Kasir');
+      wsShift.addRow(['LAPORAN RIWAYAT SESI SHIFT & REKONSILIASI KASIR - SIMKOP']);
+      wsShift.addRow([`Periode: ${period.startDate} s/d ${period.endDate}`]);
+      wsShift.addRow([]);
+      wsShift.addRow([
+        'No. Shift', 'Waktu Buka', 'Waktu Tutup', 'Kasir',
+        'Modal Awal', 'Penjualan Tunai', 'Estimasi Total Kas', 'Uang Fisik Kasir',
+        'Selisih Kas', 'Status', 'Catatan'
+      ]);
+      for (const s of shiftList) {
+        const diffText = s.difference === 0 ? 'Seimbang (Rp 0)' : `${s.difference > 0 ? '+' : ''}Rp ${s.difference.toLocaleString('id-ID')}`;
+        wsShift.addRow([
+          s.shift_number,
+          s.opened_at,
+          s.closed_at || '-',
+          s.cashier_name || '-',
+          s.initial_cash,
+          s.cash_sales,
+          s.expected_cash,
+          s.actual_cash,
+          diffText,
+          s.status.toUpperCase(),
+          s.notes || '-'
+        ]);
+      }
+    }
 
     // ── Sheet 1: Tutup Kasir ────────────────────────────────────────────────
     if (eod) {

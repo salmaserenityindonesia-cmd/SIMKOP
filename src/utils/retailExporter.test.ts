@@ -98,5 +98,36 @@ describe('retailExporter', () => {
     expect(mockClick).toHaveBeenCalled();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
   });
+
+  it('should export cashier shifts to Excel worksheet without error', async () => {
+    const mockShifts = [
+      {
+        id: 'shift-1',
+        cashier_id: 'user-1',
+        shift_number: 'SHF-20260930-080000',
+        opened_at: '2026-09-30T08:00:00.000Z',
+        closed_at: '2026-09-30T16:00:00.000Z',
+        initial_cash: 200000,
+        cash_sales: 300000,
+        expected_cash: 500000,
+        actual_cash: 500000,
+        difference: 0,
+        status: 'closed' as const,
+        notes: 'Shift seimbang',
+        cashier_name: 'Kasir Budi'
+      }
+    ];
+
+    await exportRetailToExcel(
+      { startDate: '2026-09-01', endDate: '2026-09-30' },
+      null,
+      [],
+      null,
+      mockShifts
+    );
+
+    const mockAnchor = ((globalThis as any).document.createElement as any)();
+    expect(mockAnchor.download).toBe('laporan-retail-2026-09-01-2026-09-30.xlsx');
+  });
 });
 

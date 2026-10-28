@@ -14,17 +14,24 @@ import {
   ChevronRight,
   ShoppingCart,
   BadgeDollarSign,
-  BarChart2
+  BarChart2,
+  Clock,
+  CheckCircle2,
+  Receipt,
+  X
 } from 'lucide-react';
 import {
   getEndOfDayReport,
   getFastMovingProducts,
   getStockValuation,
+  getShiftReconciliationReport,
   type EndOfDayReport,
   type FastMovingProduct,
-  type StockValuation
+  type StockValuation,
+  type CashierShift
 } from '../../../services/retail-report.service';
 import { exportRetailToExcel, printRetailPDF } from '../../../utils/retailExporter';
+import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../../services/settingsService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const formatRp = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
@@ -73,6 +80,64 @@ function StockBadge({ status }: { status: string }) {
   );
 }
 
+const formatDateTime = (dateStr?: string | null) => {
+  if (!dateStr) return '-';
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
+function ShiftDifferenceBadge({ diff }: { diff: number }) {
+  if (diff === 0) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+        Seimbang (Rp 0)
+      </span>
+    );
+  }
+  if (diff > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+        <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
+        Surplus (+{formatRp(diff)})
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+      Defisit (-{formatRp(Math.abs(diff))})
+    </span>
+  );
+}
+
+function ShiftStatusBadge({ status }: { status: 'open' | 'closed' }) {
+  if (status === 'open') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">
+        <Clock className="w-3 h-3 text-amber-700 animate-pulse" />
+        Sesi Aktif
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800">
+      <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+      Ditutup
+    </span>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function LaporanRetail() {
   const [activeTab, setActiveTab] = useState<TabKey>('tutup-kasir');
@@ -85,23 +150,37 @@ export default function LaporanRetail() {
   const [eodData, setEodData] = useState<EndOfDayReport | null>(null);
   const [fastMoving, setFastMoving] = useState<FastMovingProduct[]>([]);
   const [stockData, setStockData] = useState<StockValuation | null>(null);
+  const [shiftHistory, setShiftHistory] = useState<CashierShift[]>([]);
+  const [selectedShiftForZReport, setSelectedShiftForZReport] = useState<CashierShift | null>(null);
+  const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
 
   // Loading / error
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch Koperasi Profile on mount for Z-Report branding
+  useEffect(() => {
+    getKoperasiProfile()
+      .then(p => {
+        if (p) setKoperasiProfile(p);
+      })
+      .catch(() => {});
+  }, []);
+
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [eod, fast, stock] = await Promise.all([
+      const [eod, fast, stock, shifts] = await Promise.all([
         getEndOfDayReport(startDate, endDate),
         getFastMovingProducts(startDate, endDate),
         getStockValuation(),
+        getShiftReconciliationReport(startDate, endDate),
       ]);
       setEodData(eod);
       setFastMoving(fast);
       setStockData(stock);
+      setShiftHistory(shifts && shifts.length > 0 ? shifts : (eod?.shifts || []));
     } catch (e: any) {
       setError(e?.message || 'Gagal memuat data. Periksa koneksi dan konfigurasi Supabase.');
     } finally {
@@ -133,7 +212,7 @@ export default function LaporanRetail() {
   };
 
   const handleExportExcel = () =>
-    exportRetailToExcel({ startDate, endDate }, eodData, fastMoving, stockData);
+    exportRetailToExcel({ startDate, endDate }, eodData, fastMoving, stockData, shiftHistory);
   const handlePrintPDF = () =>
     printRetailPDF(`Laporan Retail SIMKOP – ${startDate} s/d ${endDate}`);
 
@@ -312,6 +391,103 @@ export default function LaporanRetail() {
                     formatRp(eodData?.paidCredit ?? 0),
                     'Jatuh tempo potong gaji bulan depan',
                     '#F59E0B'
+                  )}
+                </div>
+
+                {/* ── Section: Riwayat Sesi Shift & Rekonsiliasi Kasir ── */}
+                <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden shadow-sm">
+                  <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold text-[#0F2942] flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-[#0D9488]" />
+                        Riwayat Sesi Shift &amp; Rekonsiliasi Kasir
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Audit modal kas kecil awal, penjualan tunai, dan rekonsiliasi selisih kas fisik per kasir.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full font-medium">
+                        {shiftHistory.length} sesi shift
+                      </span>
+                    </div>
+                  </div>
+
+                  {shiftHistory.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400">
+                      <Wallet className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                      <p>Tidak ada riwayat sesi shift kasir pada rentang tanggal ini.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-[#F8FAFC] text-slate-500 text-xs uppercase font-semibold border-b border-[#CBD5E1]">
+                          <tr>
+                            <th className="px-4 py-3">No. Shift</th>
+                            <th className="px-4 py-3">Waktu Buka / Tutup</th>
+                            <th className="px-4 py-3">Kasir</th>
+                            <th className="px-4 py-3 text-right">Modal Awal</th>
+                            <th className="px-4 py-3 text-right text-[#0D9488]">Penjualan Tunai</th>
+                            <th className="px-4 py-3 text-right">Uang Fisik (Actual)</th>
+                            <th className="px-4 py-3 text-center">Selisih Kas</th>
+                            <th className="px-4 py-3 text-center">Status</th>
+                            <th className="px-4 py-3">Catatan</th>
+                            <th className="px-4 py-3 text-center">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E2E8F0]">
+                          {shiftHistory.map((s) => (
+                            <tr key={s.id} className="hover:bg-slate-50 transition">
+                              <td className="px-4 py-3 font-mono text-xs font-semibold text-[#0F2942]">
+                                {s.shift_number}
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-600">
+                                <div className="font-medium text-slate-700">{formatDateTime(s.opened_at)}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {s.closed_at ? `Tutup: ${formatDateTime(s.closed_at)}` : '(Masih Berjalan)'}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-slate-800 font-medium">
+                                {s.cashier_name || 'Kasir POS'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-medium text-slate-700">
+                                {formatRp(s.initial_cash)}
+                              </td>
+                              <td className="px-4 py-3 text-right font-medium text-[#0D9488]">
+                                {formatRp(s.cash_sales)}
+                              </td>
+                              <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                                {s.status === 'closed' ? formatRp(s.actual_cash) : <span className="text-slate-400 italic">Belum Tutup</span>}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {s.status === 'closed' ? (
+                                  <ShiftDifferenceBadge diff={s.difference} />
+                                ) : (
+                                  <span className="text-xs text-slate-400">-</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <ShiftStatusBadge status={s.status} />
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-500 max-w-[150px] truncate" title={s.notes || ''}>
+                                {s.notes || '-'}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedShiftForZReport(s)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-[#0D9488]/10 text-slate-700 hover:text-[#0D9488] border border-slate-200 hover:border-[#0D9488]/30 rounded-lg text-xs font-medium transition shadow-2xs"
+                                  title="Lihat Detail & Cetak Ulang Z-Report"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                  <span>Z-Report</span>
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </div>
 
@@ -514,7 +690,7 @@ export default function LaporanRetail() {
                       {formatRp(stockData?.potensiPenjualan ?? 0)}
                     </div>
                     <div className="text-xs text-slate-400 mt-1">
-                      Laba bruto: {formatRp((stockData?.potensiPenjualan ?? 0) - (stockData?.totalValuasiAset ?? 0))}
+                      Laba bruto: {formatRp(stockData?.labaBruto ?? ((stockData?.potensiPenjualan ?? 0) - (stockData?.totalValuasiAset ?? 0)))}
                     </div>
                   </div>
                   <div className={`p-5 rounded-xl border shadow-sm ${
@@ -604,6 +780,186 @@ export default function LaporanRetail() {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* ── Modal Cetak Ulang Z-Report ── */}
+        {selectedShiftForZReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto print:p-0 print:bg-white">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200 my-8 flex flex-col max-h-[90vh] print:max-w-none print:shadow-none print:border-none print:my-0">
+              
+              {/* Modal Header */}
+              <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0 print:hidden">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-[#F0FDFA] rounded-lg text-[#0D9488]">
+                    <Receipt className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-[#0F2942] text-sm">
+                      Struk Tutup Kasir (Z-Report)
+                    </h3>
+                    <p className="text-xs text-slate-500 font-mono">
+                      {selectedShiftForZReport.shift_number}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedShiftForZReport(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body / Printable Receipt Preview */}
+              <div className="p-6 overflow-y-auto bg-slate-100 flex justify-center print:bg-white print:p-0">
+                <div
+                  id="printable-zreport-modal"
+                  className="bg-white p-5 border border-slate-200 shadow-sm text-black font-mono text-xs w-full max-w-[320px] print:border-none print:shadow-none print:p-0 print:max-w-[80mm]"
+                >
+                  {/* Header Toko */}
+                  <div className="text-center pb-3 border-b border-dashed border-black">
+                    <h2 className="font-bold text-sm uppercase">
+                      {koperasiProfile.nama_koperasi || 'KOPERASI SIMKOP'}
+                    </h2>
+                    <p className="text-[10px] text-slate-700">
+                      {koperasiProfile.alamat || 'Unit Usaha Pertokoan Retail'}
+                    </p>
+                    {koperasiProfile.telepon && (
+                      <p className="text-[10px] text-slate-700">
+                        Telp: {koperasiProfile.telepon}
+                      </p>
+                    )}
+                    <div className="mt-2 py-0.5 px-2 bg-black text-white text-[10px] font-bold inline-block uppercase">
+                      STRUK TUTUP KASIR (Z-REPORT)
+                    </div>
+                  </div>
+
+                  {/* Meta Info */}
+                  <div className="py-2.5 border-b border-dashed border-black space-y-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span>No. Shift:</span>
+                      <span className="font-semibold">{selectedShiftForZReport.shift_number}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Kasir:</span>
+                      <span>{selectedShiftForZReport.cashier_name || 'Kasir POS'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Waktu Buka:</span>
+                      <span>{formatDateTime(selectedShiftForZReport.opened_at)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Waktu Tutup:</span>
+                      <span>{formatDateTime(selectedShiftForZReport.closed_at)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Status:</span>
+                      <span className="uppercase font-bold">{selectedShiftForZReport.status}</span>
+                    </div>
+                  </div>
+
+                  {/* Rincian Finansial Rekonsiliasi */}
+                  <div className="py-2.5 border-b border-dashed border-black space-y-1.5 text-[11px]">
+                    <div className="font-bold text-[10px] uppercase text-slate-800">
+                      Rincian Rekonsiliasi Kas (Cash Flow)
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Modal Awal Kas:</span>
+                      <span>{formatRp(selectedShiftForZReport.initial_cash)}</span>
+                    </div>
+                    <div className="flex justify-between text-[#0D9488]">
+                      <span>Penjualan Tunai (+):</span>
+                      <span>+{formatRp(selectedShiftForZReport.cash_sales)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold pt-1 border-t border-dotted border-black">
+                      <span>Estimasi Kas Sistem:</span>
+                      <span>{formatRp(selectedShiftForZReport.expected_cash)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold">
+                      <span>Uang Fisik Kasir:</span>
+                      <span>{formatRp(selectedShiftForZReport.actual_cash)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold pt-1 border-t border-dotted border-black">
+                      <span>SELISIH KAS:</span>
+                      <span className={selectedShiftForZReport.difference < 0 ? 'text-red-700' : ''}>
+                        {selectedShiftForZReport.difference === 0
+                          ? 'Rp 0 (SEIMBANG)'
+                          : `${selectedShiftForZReport.difference > 0 ? '+' : ''}${formatRp(selectedShiftForZReport.difference)}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Catatan Shift */}
+                  {selectedShiftForZReport.notes && (
+                    <div className="py-2 border-b border-dashed border-black text-[10px]">
+                      <span className="font-bold">Catatan:</span> {selectedShiftForZReport.notes}
+                    </div>
+                  )}
+
+                  {/* Tanda Tangan */}
+                  <div className="pt-4 grid grid-cols-2 text-center text-[10px] gap-4">
+                    <div>
+                      <p>Kasir Bertugas,</p>
+                      <div className="h-10"></div>
+                      <p className="border-t border-black pt-1">
+                        ({selectedShiftForZReport.cashier_name || 'Kasir POS'})
+                      </p>
+                    </div>
+                    <div>
+                      <p>Supervisor / Pengurus,</p>
+                      <div className="h-10"></div>
+                      <p className="border-t border-black pt-1">( ........................... )</p>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-3 text-[9px] italic text-slate-500">
+                    Dicetak ulang dari Sistem SIMKOP
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSelectedShiftForZReport(null)}
+                  className="py-2 px-4 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 font-medium text-xs transition"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="py-2 px-4 rounded-xl bg-[#0D9488] hover:bg-[#0f766e] text-white font-medium text-xs flex items-center gap-1.5 transition shadow-sm"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak Struk Z-Report</span>
+                </button>
+              </div>
+
+            </div>
+
+            {/* Print stylesheet for modal Z-Report */}
+            <style dangerouslySetInnerHTML={{__html: `
+              @media print {
+                body * { visibility: hidden !important; }
+                #printable-zreport-modal, #printable-zreport-modal * { visibility: visible !important; }
+                #printable-zreport-modal {
+                  display: block !important;
+                  position: absolute !important;
+                  left: 0 !important;
+                  top: 0 !important;
+                  width: 100% !important;
+                  max-width: 80mm !important;
+                  margin: 0 auto !important;
+                  background: white !important;
+                  color: black !important;
+                  padding: 4mm !important;
+                }
+              }
+            `}} />
           </div>
         )}
 
