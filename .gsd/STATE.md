@@ -1,18 +1,17 @@
 ## Current Position
-- **Phase**: 22
-- **Task**: Planning complete
-- **Status**: Ready for execution
+- **Phase**: 22 (completed)
+- **Task**: All tasks complete
+- **Status**: Verified (PASS - 4/4 plans, 9/9 tasks)
 
 ## Last Session Summary
-Phase 22 (Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir) planning completed:
-- Dekomposisi 4 Execution Waves (Plans 22.1 - 22.4):
-  * **Plan 22.1 (Wave 1)**: Database Migration (`supabase/migrations/018_pos_settings_and_parked_auto_expire.sql`) dengan tabel `pos_settings`, kolom `expires_at` pada `sales`, RPC `cleanup_expired_parked_sales()` untuk pengembalian stok otomatis, serta resilient service layer `posSettingsService.ts`.
-  * **Plan 22.2 (Wave 2)**: Halaman Admin `src/pages/admin/PengaturanKasir.tsx` untuk konfigurasi batas durasi penahanan transaksi (menit), switch toleransi minus, registrasi rute `/admin/pengaturan-kasir` di `App.tsx`, dan tautan menu di `Sidebar.tsx`.
-  * **Plan 22.3 (Wave 3)**: Pengalihan hotkey Tahan Transaksi dari F12 ke F8 (menghapus tombol F8 Diskon), modal daftar belanja ditahan `ParkedTransactionsModal.tsx` dengan aksi Reload (Muat Kembali) dan Hapus (Cancel & Restore Stock), serta background cleanup kadaluwarsa.
-  * **Plan 22.4 (Wave 4)**: Unit tests `src/services/posSettingsService.test.ts` (menguji default, localStorage fallback, error schema cache, RPC/client cleanup) serta validasi menyeluruh `vitest` dan `npm run build`.
+Phase 22 (Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir) telah selesai diimplementasikan dan diverifikasi secara komprehensif:
+- **Wave 1 (Plan 22.1)**: Berkas migrasi DDL `supabase/migrations/018_pos_settings_and_parked_auto_expire.sql` dibuat dengan skema tabel `pos_settings`, kolom `expires_at` pada `sales`, kompatibilitas `status` / `sale_status` & `quantity` / `qty`, serta PostgreSQL RPC `cleanup_expired_parked_sales()` untuk auto-restock. Modul `src/services/posSettingsService.ts` dibangun dengan strategi fallback berlapis (in-memory -> Supabase -> localStorage -> default 120 menit).
+- **Wave 2 (Plan 22.2)**: Halaman admin `src/pages/admin/PengaturanKasir.tsx` dibangun lengkap dengan input timeout tahan transaksi (menit), tombol preset cepat, toggle toleransi stok minus, tombol trigger pembersihan manual, dan status alert migrasi database. Terintegrasi ke rute `/admin/pengaturan-kasir` di `src/App.tsx` dan menu navigasi `src/components/layout/Sidebar.tsx`.
+- **Wave 3 (Plan 22.3)**: Hotkey F12 yang konflik dengan DevTools browser digantikan oleh hotkey F8 (shortcut F8 Diskon yang redundan dihapus). Layanan `src/services/posParkedService.ts` mereservasi stok produk secara real-time saat transaksi ditahan. Komponen modal `src/components/pos/ParkedTransactionsModal.tsx` dihubungkan ke kasir dengan aksi Muat Kembali (Reload) dan Hapus (Cancel & Restore Stock). Trigger pembersihan kadaluwarsa otomatis berjalan saat POS dimuat.
+- **Wave 4 (Plan 22.4)**: Unit tests komprehensif di `src/services/posSettingsService.test.ts` (7 tests) lulus 100%, total 27 unit tests di 6 files lulus, dan build Vite produksi sukses tanpa error (exit code 0).
 
 ## Next Steps
-1. `/execute 22`
+- Jalankan berkas DDL SQL `supabase/migrations/018_pos_settings_and_parked_auto_expire.sql` di Supabase SQL Editor pada database aktif untuk mengaktifkan sinkronisasi cloud dan RPC auto-restock PostgreSQL.
 
 ## Blockers
 - None.
@@ -20,6 +19,6 @@ Phase 22 (Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir) plan
 ## Context Dump
 
 ### Decisions Made
-- **Hotkey Repurposing (F12 -> F8)**: F12 selalu berbenturan dengan browser Developer Tools. F8 (Diskon) tidak digunakan karena diskon anggota dihitung otomatis (5%). Sehingga F8 dialokasikan sepenuhnya untuk Tahan Transaksi.
-- **Stock Reservation & Restock Guarantee**: Saat transaksi ditahan (parked), stok langsung dikurangi di tabel `products` untuk menghindari penjualan ganda (over-selling). Jika transaksi dibatalkan (dihapus manual atau kadaluwarsa via auto-cleanup RPC), stok secara otomatis dikembalikan ke `products`.
-- **Resilient Layered Storage**: `posSettingsService` mengadopsi pola in-memory -> Supabase -> localStorage -> default 120 menit, menjamin kestabilan kasir meski DDL migrasi belum diaplikasikan di server Supabase.
+- **F8 Hotkey Dedication**: Menghindari konflik dengan Developer Tools browser (F12) dan memanfaatkan tombol F8 yang sebelumnya tidak terpakai secara fungsional.
+- **Immediate Stock Reservation**: Mengurangi stok produk seketika saat ditahan guna mencegah over-selling barang pada operasional multi-kasir.
+- **Double Fallback Cleanup**: Pembersihan transaksi kadaluwarsa dan pemulihan stok dijamin berjalan baik melalui RPC PostgreSQL native maupun client-side fallback query jika RPC belum termigrasi.

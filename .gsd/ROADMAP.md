@@ -355,15 +355,15 @@ updated: 2026-09-30T05:21:00+07:00
 ---
 
 ### Phase 22: Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir
-**Status**: ⏳ Ready
+**Status**: ✅ Complete
 **Objective**: Mengganti hotkey Tahan Transaksi dari F12 ke F8 (menghapus shortcut F8 Diskon yang tidak digunakan) guna menghindari konflik Developer Tools browser. Menyediakan modal daftar transaksi tertahan dengan aksi Reload dan Hapus, sistem auto-expire dengan pengembalian stok barang otomatis ke inventory (RPC cleanup), dan halaman Pengaturan Kasir untuk konfigurasi timeout tahan barang.
 **Depends on**: Phase 21
 
 **Plans**:
-- [ ] Plan 22.1: Migrasi skema database (pos_settings & RPC cleanup_expired_parked_sales) dan resilient service layer posSettingsService
-- [ ] Plan 22.2: Halaman admin Pengaturan Kasir dan integrasi navigasi Sidebar/App routing
-- [ ] Plan 22.3: Refaktor hotkey POS (F8), modal belanja ditahan (ParkedTransactionsModal), serta alur simpan/muat/hapus dengan restock inventori
-- [ ] Plan 22.4: Pengujian unit test posSettingsService dan verifikasi build integritas aplikasi
+- [x] Plan 22.1: Migrasi skema database (pos_settings & RPC cleanup_expired_parked_sales) dan resilient service layer posSettingsService
+- [x] Plan 22.2: Halaman admin Pengaturan Kasir dan integrasi navigasi Sidebar/App routing
+- [x] Plan 22.3: Refaktor hotkey POS (F8), modal belanja ditahan (ParkedTransactionsModal), serta alur simpan/muat/hapus dengan restock inventori
+- [x] Plan 22.4: Pengujian unit test posSettingsService dan verifikasi build integritas aplikasi
 
 **Verification**:
 - File migrasi `018_pos_settings_and_parked_auto_expire.sql` siap dijalankan dengan tabel `pos_settings`, kolom `expires_at`, dan RPC `cleanup_expired_parked_sales()`.
@@ -422,7 +422,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 19 | Download PDF Struk Transaksi POS | ✅ | 1/1 | 100% |
 | 20 | Manajemen Profil Koperasi & Header Struk POS | ✅ | 1/1 | 100% |
 | 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi | ✅ | 1/1 | 100% |
-| 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir | ⏳ Ready | 0/4 | 0% |
+| 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir | ✅ | 4/4 | 100% |
 
 ---
 
@@ -451,6 +451,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 19 | 2026-10-28 | 2026-10-28 | 1 day |
 | 20 | 2026-10-28 | 2026-10-28 | 1 day |
 | 21 | 2026-10-28 | 2026-10-28 | 1 day |
-| 22 | 2026-10-28 | — | — |
+| 22 | 2026-10-28 | 2026-10-28 | 1 day |
 
 
