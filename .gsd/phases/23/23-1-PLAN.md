@@ -46,3 +46,4 @@ After all tasks complete, verify:
 - [ ] All tasks verified passing
 - [ ] Must-haves confirmed
 - [ ] No regression in sidebar rendering
+
