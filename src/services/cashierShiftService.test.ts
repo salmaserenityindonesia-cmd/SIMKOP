@@ -296,6 +296,49 @@ describe('cashierShiftService', () => {
       expect(summary.expectedCash).toBe(180000); // 100k + 80k
       expect(summary.transactionCount).toBe(3);
     });
+
+    it('should correctly fallback to total_amount when paid_cash is 0 but payment_scheme is cash', async () => {
+      const mockSales = [
+        { id: 's4', paid_cash: 0, paid_deposit: 0, paid_credit: 0, total_amount: 20900, payment_scheme: 'cash', sale_status: 'completed' }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'shift-11',
+                    initial_cash: 100000,
+                    status: 'open'
+                  },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: mockSales,
+                error: null
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const summary = await getShiftSalesSummary('shift-11');
+
+      expect(summary.initialCash).toBe(100000);
+      expect(summary.cashSales).toBe(20900);
+      expect(summary.expectedCash).toBe(120900);
+      expect(summary.transactionCount).toBe(1);
+    });
   });
 
   describe('closeShift', () => {

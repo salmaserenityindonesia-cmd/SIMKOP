@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { getMemberFinancials } from './posCreditService';
+import { getLocalActiveShift } from './cashierShiftService';
 
 export interface CheckoutPayload {
   memberId: string | null;
@@ -31,6 +32,21 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
       }
     }
 
+    // Determine active shift ID from payload or fallback to local storage active shift
+    const activeShift = getLocalActiveShift();
+    const effectiveShiftId = payload.shiftId || activeShift?.id || null;
+
+    // Calculate precision cash amount applied to transaction (handling change / kembalian)
+    const nonCash = (payload.paidDeposit || 0) + (payload.paidCredit || 0);
+    const cashPortion = Math.max(0, payload.totalAmount - nonCash);
+    let effectivePaidCash = payload.paidCash;
+
+    if (payload.paymentScheme === 'cash' || (payload.paidCash >= cashPortion && cashPortion > 0)) {
+      effectivePaidCash = cashPortion;
+    }
+
+    const effectivePaidAmount = payload.totalAmount;
+
     // Generate unique sale number
     const saleNumber = `INV-${Date.now()}`;
 
@@ -44,14 +60,16 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
         sale_number: saleNumber,
         member_id: payload.memberId,
         cashier_id: payload.cashierId,
-        shift_id: payload.shiftId || null,
+        shift_id: effectiveShiftId,
         subtotal: payload.subtotal,
         discount: payload.discount,
         total_amount: payload.totalAmount,
-        paid_cash: payload.paidCash,
+        paid_amount: effectivePaidAmount,
+        paid_cash: effectivePaidCash,
         paid_deposit: payload.paidDeposit,
         paid_credit: payload.paidCredit,
-        payment_scheme: payload.paymentScheme
+        payment_scheme: payload.paymentScheme,
+        sale_status: 'completed'
       })
       .select('id')
       .single();
@@ -107,10 +125,10 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
     }
 
     // 6. If cash used, insert into cash_flow
-    if (payload.paidCash > 0) {
+    if (effectivePaidCash > 0) {
        const { error: cfError } = await supabase.from('cash_flow').insert({
           direction: 'in',
-          amount: payload.paidCash,
+          amount: effectivePaidCash,
           category: 'penjualan_tunai',
           reference_id: saleId
        });

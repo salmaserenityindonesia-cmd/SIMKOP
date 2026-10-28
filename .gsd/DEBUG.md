@@ -64,3 +64,58 @@ Akibatnya, kalkulasi sub-teks Laba bruto: Rp -44.999.992.853.902 mengalami defis
   * `src/services/retailReport.test.ts`: 7 tests passed (100%)
   * Full test suite: 6 test files, 30 tests passed (100%)
   * Build produksi (`npm run build`): sukses (exit code 0).
+
+---
+
+# Debug Session: DEBUG-20261029-CASHIER-ZREPORT-ZERO-CASH
+
+## Status: FIXED
+
+## Symptom
+Saat kasir membuka shift (misal modal awal Rp 100.000) dan melakukan transaksi penjualan tunai (misal INV-1793209196270 senilai Rp 20.900), struk tutup kasir (Z-Report) dan laporan retail tetap menampilkan "Penjualan Tunai (+): +Rp 0" dan "Estimasi Kas Sistem: Rp 100.000".
+
+**When:** Saat kasir membuka modal shift dan memproses checkout penjualan tunai, lalu menutup shift via `TutupKasirModal` atau melihat audit shift di Laporan Retail (`src/pages/admin/laporan-retail/`).
+**Expected:** Penjualan tunai bertambah sesuai transaksi riil (`+Rp 20.900`), Estimasi Kas Sistem bertambah menjadi `Rp 120.900` (`modal awal + penjualan tunai`), dan rekonsiliasi kas laci kasir seimbang.
+**Actual:** Penjualan tunai tercatat `+Rp 0` dan estimasi kas tidak bertambah (`Rp 100.000`).
+
+## Root Cause
+1. Query agregasi di `cashierShiftService.ts` (`getShiftSalesSummary`) menyertakan kolom non-existent `status` bersama `sale_status` (`select('id, total_amount, paid_cash, paid_deposit, paid_credit, status, sale_status, created_at')`). Pada Supabase/PostgREST, pemilihan kolom yang tidak ada pada tabel menghasilkan error HTTP 400 (`code 42703: column sales.status does not exist`). Akibatnya, baik query relasi `shift_id` maupun fallback query waktu menghasilkan error `data: null`, sehingga `validSales` kosong dan `cashSales` bernilai 0.
+2. Pada `SplitPaymentModal.tsx`, logika penentuan `scheme` memiliki bug: `else if (depositAmount > 0 || cashAmount > 0) scheme = 'split'`. Akibatnya, transaksi tunai murni tanpa split/deposit keliru ditandai sebagai `payment_scheme = 'split'`.
+3. Pada `posCheckoutService.ts`, payload insert `sales` belum menyertakan `paid_amount: effectivePaidAmount` dan `sale_status: 'completed'`, serta belum ada fallback otomatis ke `getLocalActiveShift()` jika `shiftId` tidak disediakan oleh pemanggil. Selain itu, nilai `paid_cash` yang disimpan ke database belum disesuaikan terhadap uang kembalian (jika pembeli membayar dengan uang lebih besar dari total belanja).
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Schema & Data Contract Alignment
+- File: `supabase/migrations/021_link_sales_to_cashier_shifts.sql`
+- Membuat migrasi SQL idempotensial untuk memastikan:
+  * Foreign key `shift_id UUID REFERENCES public.cashier_shifts(id) ON DELETE SET NULL`.
+  * Index performa `idx_sales_shift_id ON public.sales(shift_id)`.
+  * Kolom `paid_amount numeric DEFAULT 0` dan `sale_status text DEFAULT 'completed'`.
+  * Backfill data historis `paid_amount = total_amount` untuk transaksi lunas.
+
+### Wave 2: Fix POS Checkout Payload
+- File: `src/services/posCheckoutService.ts`, `src/components/pos/SplitPaymentModal.tsx`
+- Memperbaiki `processCheckout`:
+  * Mengambil `shift_id` aktif secara aman dengan fallback `payload.shiftId || getLocalActiveShift()?.id || null`.
+  * Menghitung nilai presisi `effectivePaidCash` (menyesuaikan nominal uang pas atau kembalian).
+  * Menyertakan `paid_amount: effectivePaidAmount` dan `sale_status: 'completed'`.
+  * Memastikan mutasi `cash_flow` untuk penjualan tunai mencatat `effectivePaidCash`.
+- Memperbaiki `SplitPaymentModal.tsx`:
+  * Menetapkan `scheme = 'cash'` ketika transaksi murni tunai tanpa deposit / kredit toko.
+
+### Wave 3: Fix Reconciliation Aggregation Query
+- File: `src/services/cashierShiftService.ts`, `src/components/pos/TutupKasirModal.tsx`
+- Memperbarui query `getShiftSalesSummary`:
+  * Menghapus referensi kolom `status` yang menyebabkan PostgREST error 42703.
+  * Menambahkan `payment_scheme` pada kolom select.
+  * Menghitung `cashSales` dengan fallback otomatis: jika `paid_cash` 0 tetapi `payment_scheme === 'cash'`, gunakan `total_amount`.
+  * Menghitung `expectedCash = initialCash + cashSales`.
+  * Meneruskan rekonsiliasi yang benar ke `closeShift` untuk memperbarui `cashier_shifts.cash_sales` dan `cashier_shifts.expected_cash`, serta mutasi kas `PENJUALAN_KASIR_TUNAI`.
+- Memperbaiki data transaksi lama dan shift kasir terkait di database.
+
+### Wave 4: Build & Test Verification
+- Menambahkan unit test baru di `src/services/posCheckoutService.test.ts` dan test case baru di `src/services/cashierShiftService.test.ts`.
+- Hasil pengujian:
+  * Test suite: 8 test files, 44 tests passed (100%).
+  * Build bundler Vite (`npm run build`): Sukses tanpa type error (exit code 0).
+

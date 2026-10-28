@@ -437,10 +437,10 @@ export async function getShiftSalesSummary(
   let salesRows: any[] = [];
 
   try {
-    // Prioritaskan relasi langsung shift_id pada sales
+    // Prioritaskan relasi langsung shift_id pada sales (tanpa kolom non-existent 'status')
     const { data: salesByShift, error: shiftErr } = await supabase
       .from('sales')
-      .select('id, total_amount, paid_cash, paid_deposit, paid_credit, status, sale_status, created_at')
+      .select('id, total_amount, paid_cash, paid_deposit, paid_credit, payment_scheme, sale_status, created_at')
       .eq('shift_id', shiftId);
 
     if (!shiftErr && salesByShift && salesByShift.length > 0) {
@@ -449,7 +449,7 @@ export async function getShiftSalesSummary(
       // Fallback: cari sales berdasarkan rentang waktu shift aktif & cashier_id
       let fallbackQuery = supabase
         .from('sales')
-        .select('id, total_amount, paid_cash, paid_deposit, paid_credit, status, sale_status, created_at')
+        .select('id, total_amount, paid_cash, paid_deposit, paid_credit, payment_scheme, sale_status, created_at')
         .gte('created_at', effectiveOpenedAt);
 
       if (effectiveCashierId) {
@@ -459,8 +459,8 @@ export async function getShiftSalesSummary(
         fallbackQuery = fallbackQuery.lte('created_at', shift.closed_at);
       }
 
-      const { data: fallbackSales } = await fallbackQuery;
-      if (fallbackSales) {
+      const { data: fallbackSales, error: fallbackErr } = await fallbackQuery;
+      if (!fallbackErr && fallbackSales) {
         salesRows = fallbackSales;
       }
     }
@@ -470,7 +470,7 @@ export async function getShiftSalesSummary(
 
   // Filter transaksi yang valid (bukan dibatalkan atau parked)
   const validSales = salesRows.filter(s => {
-    const saleStatus = (s.sale_status || s.status || '').toLowerCase();
+    const saleStatus = (s.sale_status || (s as any).status || '').toLowerCase();
     return saleStatus !== 'cancelled' && saleStatus !== 'parked';
   });
 
@@ -480,10 +480,15 @@ export async function getShiftSalesSummary(
   let totalSales = 0;
 
   for (const s of validSales) {
-    const c = sanitizeNumber(s.paid_cash);
+    let c = sanitizeNumber(s.paid_cash);
     const d = sanitizeNumber(s.paid_deposit);
     const cr = sanitizeNumber(s.paid_credit);
     const tot = sanitizeNumber(s.total_amount, c + d + cr);
+
+    // Fallback jika paid_cash 0 tapi skema tunai
+    if (c === 0 && (s.payment_scheme === 'cash' || (!d && !cr && tot > 0))) {
+      c = tot;
+    }
 
     cashSales += c;
     depositSales += d;

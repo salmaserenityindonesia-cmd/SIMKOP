@@ -76,9 +76,17 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
     if (error) return;
     
     let scheme = 'cash';
-    if (depositAmount > 0 && creditAmount === 0 && cashAmount === 0) scheme = 'split'; // simple mapping
-    else if (creditAmount > 0) scheme = 'store_credit';
-    else if (depositAmount > 0 || cashAmount > 0) scheme = 'split';
+    if (creditAmount > 0 && (cashAmount > 0 || depositAmount > 0)) {
+      scheme = 'split';
+    } else if (creditAmount > 0) {
+      scheme = 'store_credit';
+    } else if (depositAmount > 0 && cashAmount > 0) {
+      scheme = 'split';
+    } else if (depositAmount > 0) {
+      scheme = 'split';
+    } else {
+      scheme = 'cash';
+    }
 
     onConfirm({
       paidCash: cashAmount,
