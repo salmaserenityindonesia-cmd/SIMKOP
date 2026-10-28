@@ -119,3 +119,47 @@ Saat kasir membuka shift (misal modal awal Rp 100.000) dan melakukan transaksi p
   * Test suite: 8 test files, 44 tests passed (100%).
   * Build bundler Vite (`npm run build`): Sukses tanpa type error (exit code 0).
 
+---
+
+# Debug Session: DEBUG-20261029-SHIFT-PERSISTENCE-AND-DATE-TIMEZONE
+
+## Status: FIXED
+
+## Symptom
+1. Pada modal "Tutup Shift & Rekonsiliasi Kasir" (Shift `SHF-20261029-010821`), Penjualan Tunai menampilkan "Rp 0 (0 transaksi lunas)", padahal terdapat transaksi tunai `INV-1793210925585` senilai Rp 19.000 (uang bayar 50.000, kembalian 31.000).
+2. Filter tanggal default di halaman Laporan Retail mengunci tanggal 28/10/2026 dan bukan tanggal aktif hari ini (29/10/2026).
+
+## Root Cause
+1. Nilai default filter tanggal diinisialisasi menggunakan `new Date().toISOString().slice(0, 10)`. Karena `toISOString()` mengevaluasi waktu dalam UTC, saat waktu lokal di Indonesia menunjukkan dini hari tanggal 29/10/2026 (01:00 WIB), waktu UTC masih berada pada 18:00 tanggal 28/10/2026. Akibatnya tanggal default terkunci ke `2026-10-28`.
+2. Persistensi active shift ID di client belum mencakup key cadangan mandiri (`simkop_active_shift_id`). Jika state memory/objek parsial terganggu, checkout berpotensi kehilangan referensi shift.
+3. Fallback agregasi penjualan di `cashierShiftService.ts` belum memiliki rentang toleransi buffer detik client-server (±2 menit dari `opened_at` dan `closed_at`).
+4. Pada transaksi tunai dengan kembalian (`paid_cash` = 50.000 untuk tagihan Rp 19.000), nilai kas toko yang ditambahkan ke laci kasir harus dipresisikan ke nilai netto belanja Rp 19.000.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Active Shift Persistence & Checkout Injection
+- File: `src/services/cashierShiftService.ts`, `src/services/posCheckoutService.ts`
+- Menyimpan `simkop_active_shift_id` dan `simkop_active_shift_data` secara persisten di `localStorage` saat `openShift`, dan menghapusnya saat `closeShift`.
+- Menambahkan fungsi helper `getActiveShiftId()` dengan prioritas: parameter input -> active shift memory -> `localStorage.getItem('simkop_active_shift_id')`.
+- Di `posCheckoutService.ts`, memastikan `shift_id`, `paid_cash: effectivePaidCash` (19000), `paid_amount` (19000), dan `total_amount` terinjeksi ke tabel `sales`.
+
+### Wave 2: Robust Cash Sales Aggregation in Shift Service
+- File: `src/services/cashierShiftService.ts`
+- Memperbaiki `getShiftSalesSummary`:
+  * Query langsung via `shift_id`.
+  * Fallback toleransi waktu ±2 menit buffer (`opened_at - 2 min` s/d `closed_at + 2 min`) untuk transaksi orphan/selisih timestamp.
+  * Presisi `cashSales`: menghitung nilai kas belanja riil yang masuk laci kasir (memperhitungkan kembalian dari `paid_cash`).
+  * `expectedCash = Number(initial_cash) + totalCashSales` (misal modal 50k + tunai 19k = 69k).
+- Memperbaiki data shift `SHF-20261029-010821` dan transaksi `INV-1793210925585` di database Supabase.
+
+### Wave 3: Fix Default Date Range in Retail Report
+- File: `src/pages/admin/laporan-retail/index.tsx`, `src/pages/admin/laporan-keuangan/index.tsx`
+- Menambahkan helper `getLocalDateString()` yang menggunakan `getFullYear()`, `getMonth() + 1`, dan `getDate()` lokal perangkat kasir (WIB).
+- Mengganti inisialisasi default `startDate` dan `endDate` dari `toISOString().slice(0, 10)` ke `getLocalDateString()`.
+
+### Wave 4: Build & Static Validation
+- Menambahkan unit test baru di `src/services/posCheckoutService.test.ts` dan `src/services/cashierShiftService.test.ts`.
+- Menjalankan `npm test`: 8 test files, 46 passed (100%).
+- Menjalankan `npm run build`: Vite build sukses (exit code 0).
+
+

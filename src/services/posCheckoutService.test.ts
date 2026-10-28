@@ -110,4 +110,63 @@ describe('posCheckoutService', () => {
       })
     );
   });
+
+  it('should fallback to getActiveShiftId() when shiftId is not passed and memory state is null', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-2' },
+          error: null
+        })
+      })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'products') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { stock: 10 }, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null })
+          })
+        };
+      }
+      if (table === 'cash_flow') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      return {};
+    });
+
+    vi.spyOn(cashierShiftService, 'getLocalActiveShift').mockReturnValue(null);
+    vi.spyOn(cashierShiftService, 'getActiveShiftId').mockReturnValue('shift-from-storage-id');
+
+    const res = await processCheckout({
+      memberId: null,
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-2', name: 'Gula Pasir', qty: 1, price: 19000 }],
+      subtotal: 19000,
+      discount: 0,
+      totalAmount: 19000,
+      paidCash: 19000,
+      paidDeposit: 0,
+      paidCredit: 0,
+      paymentScheme: 'cash'
+    });
+
+    expect(res.success).toBe(true);
+    expect(mockInsertSale).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shift_id: 'shift-from-storage-id',
+        paid_cash: 19000,
+        total_amount: 19000,
+        paid_amount: 19000,
+        payment_scheme: 'cash',
+        sale_status: 'completed'
+      })
+    );
+  });
 });
+

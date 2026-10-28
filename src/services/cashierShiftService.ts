@@ -45,8 +45,10 @@ export interface ShiftReconciliationSummary {
   transactionCount: number;
 }
 
-// Storage keys for dual-layer offline fallback
+// Storage keys for dual-layer offline fallback & persistent active shift tracking
 export const ACTIVE_SHIFT_STORAGE_KEY = 'simkop_active_shift';
+export const ACTIVE_SHIFT_ID_KEY = 'simkop_active_shift_id';
+export const ACTIVE_SHIFT_DATA_KEY = 'simkop_active_shift_data';
 export const SHIFT_HISTORY_STORAGE_KEY = 'simkop_shift_history';
 
 // In-memory cache
@@ -127,6 +129,24 @@ export function getLocalActiveShift(): CashierShift | null {
 }
 
 /**
+ * Retrieve active shift ID with maximum persistence
+ */
+export function getActiveShiftId(): string | null {
+  const local = getLocalActiveShift();
+  if (local?.id) return local.id;
+  try {
+    const storage = getStorage();
+    if (storage) {
+      const id = storage.getItem(ACTIVE_SHIFT_ID_KEY);
+      if (id) return id;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
  * Persist active shift to local storage / memory
  */
 export function saveLocalActiveShift(shift: CashierShift | null): void {
@@ -136,8 +156,12 @@ export function saveLocalActiveShift(shift: CashierShift | null): void {
     if (storage) {
       if (shift) {
         storage.setItem(ACTIVE_SHIFT_STORAGE_KEY, JSON.stringify(shift));
+        storage.setItem(ACTIVE_SHIFT_ID_KEY, shift.id);
+        storage.setItem(ACTIVE_SHIFT_DATA_KEY, JSON.stringify(shift));
       } else {
         storage.removeItem(ACTIVE_SHIFT_STORAGE_KEY);
+        storage.removeItem(ACTIVE_SHIFT_ID_KEY);
+        storage.removeItem(ACTIVE_SHIFT_DATA_KEY);
       }
     }
   } catch (e) {
@@ -212,6 +236,8 @@ export function resetLocalShiftState(): void {
     const storage = getStorage();
     if (storage) {
       storage.removeItem(ACTIVE_SHIFT_STORAGE_KEY);
+      storage.removeItem(ACTIVE_SHIFT_ID_KEY);
+      storage.removeItem(ACTIVE_SHIFT_DATA_KEY);
       storage.removeItem(SHIFT_HISTORY_STORAGE_KEY);
     }
   } catch {
@@ -437,30 +463,36 @@ export async function getShiftSalesSummary(
   let salesRows: any[] = [];
 
   try {
-    // Prioritaskan relasi langsung shift_id pada sales (tanpa kolom non-existent 'status')
+    // 1. Coba query berdasarkan shift_id langsung
     const { data: salesByShift, error: shiftErr } = await supabase
       .from('sales')
-      .select('id, total_amount, paid_cash, paid_deposit, paid_credit, payment_scheme, sale_status, created_at')
+      .select('id, total_amount, paid_cash, paid_deposit, paid_credit, paid_amount, payment_scheme, sale_status, created_at')
       .eq('shift_id', shiftId);
 
     if (!shiftErr && salesByShift && salesByShift.length > 0) {
       salesRows = salesByShift;
-    } else if (effectiveOpenedAt) {
-      // Fallback: cari sales berdasarkan rentang waktu shift aktif & cashier_id
+    }
+
+    // 2. Robust fallback jika shift_id masih kosong / tidak ditemukan (transaksi orphan atau selisih timestamp)
+    if (salesRows.length === 0 && effectiveOpenedAt) {
+      // Beri toleransi waktu mulai 2 menit sebelum opened_at untuk antisipasi jeda detik client-server
+      const openedAtTime = new Date(new Date(effectiveOpenedAt).getTime() - 2 * 60 * 1000).toISOString();
+      const closedAtTime = shift?.closed_at
+        ? new Date(new Date(shift.closed_at).getTime() + 2 * 60 * 1000).toISOString()
+        : new Date(Date.now() + 2 * 60 * 1000).toISOString();
+
       let fallbackQuery = supabase
         .from('sales')
-        .select('id, total_amount, paid_cash, paid_deposit, paid_credit, payment_scheme, sale_status, created_at')
-        .gte('created_at', effectiveOpenedAt);
+        .select('id, total_amount, paid_cash, paid_deposit, paid_credit, paid_amount, payment_scheme, sale_status, created_at')
+        .gte('created_at', openedAtTime)
+        .lte('created_at', closedAtTime);
 
       if (effectiveCashierId) {
         fallbackQuery = fallbackQuery.eq('cashier_id', effectiveCashierId);
       }
-      if (shift?.closed_at) {
-        fallbackQuery = fallbackQuery.lte('created_at', shift.closed_at);
-      }
 
       const { data: fallbackSales, error: fallbackErr } = await fallbackQuery;
-      if (!fallbackErr && fallbackSales) {
+      if (!fallbackErr && fallbackSales && fallbackSales.length > 0) {
         salesRows = fallbackSales;
       }
     }
@@ -474,37 +506,48 @@ export async function getShiftSalesSummary(
     return saleStatus !== 'cancelled' && saleStatus !== 'parked';
   });
 
-  let cashSales = 0;
+  // 3. Hitung total uang tunai masuk (cash sales) & transaksi
+  let totalCashSales = 0;
   let depositSales = 0;
   let creditSales = 0;
   let totalSales = 0;
+  let transactionCount = 0;
 
   for (const s of validSales) {
-    let c = sanitizeNumber(s.paid_cash);
     const d = sanitizeNumber(s.paid_deposit);
     const cr = sanitizeNumber(s.paid_credit);
-    const tot = sanitizeNumber(s.total_amount, c + d + cr);
+    const tot = sanitizeNumber(s.total_amount, sanitizeNumber(s.paid_cash) + d + cr);
+    const nonCash = d + cr;
+    const maxCashPortion = Math.max(0, tot - nonCash);
 
-    // Fallback jika paid_cash 0 tapi skema tunai
-    if (c === 0 && (s.payment_scheme === 'cash' || (!d && !cr && tot > 0))) {
+    let c = sanitizeNumber(s.paid_cash);
+
+    // Jika paid_cash > 0, uang fisik yang masuk ke kasir adalah nominal belanja tunai riil (setelah dipotong kembalian)
+    if (c > 0) {
+      c = maxCashPortion > 0 ? Math.min(c, maxCashPortion) : c;
+    } else if (s.payment_scheme === 'cash' || (!d && !cr && tot > 0)) {
       c = tot;
     }
 
-    cashSales += c;
+    if (c > 0 || tot > 0) {
+      transactionCount += 1;
+    }
+
+    totalCashSales += c;
     depositSales += d;
     creditSales += cr;
     totalSales += tot;
   }
 
   const nonCashSales = depositSales + creditSales;
-  const expectedCash = initialCash + cashSales;
+  const expectedCash = initialCash + totalCashSales;
   const actualCash = shift?.actual_cash !== undefined ? sanitizeNumber(shift.actual_cash) : 0;
   const difference = actualCash - expectedCash;
 
   return {
     shiftId,
     initialCash,
-    cashSales,
+    cashSales: totalCashSales,
     nonCashSales,
     depositSales,
     creditSales,
@@ -512,7 +555,7 @@ export async function getShiftSalesSummary(
     expectedCash,
     actualCash,
     difference,
-    transactionCount: validSales.length
+    transactionCount
   };
 }
 

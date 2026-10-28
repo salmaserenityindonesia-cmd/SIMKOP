@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { getMemberFinancials } from './posCreditService';
-import { getLocalActiveShift } from './cashierShiftService';
+import { getLocalActiveShift, getActiveShiftId } from './cashierShiftService';
 
 export interface CheckoutPayload {
   memberId: string | null;
@@ -32,9 +32,15 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
       }
     }
 
-    // Determine active shift ID from payload or fallback to local storage active shift
-    const activeShift = getLocalActiveShift();
-    const effectiveShiftId = payload.shiftId || activeShift?.id || null;
+    // Determine active shift ID with priority: parameter input -> active shift state -> localStorage active_shift_id
+    let effectiveShiftId = payload.shiftId || null;
+    if (!effectiveShiftId) {
+      const activeShift = getLocalActiveShift();
+      effectiveShiftId = activeShift?.id || null;
+    }
+    if (!effectiveShiftId) {
+      effectiveShiftId = getActiveShiftId();
+    }
 
     // Calculate precision cash amount applied to transaction (handling change / kembalian)
     const nonCash = (payload.paidDeposit || 0) + (payload.paidCredit || 0);

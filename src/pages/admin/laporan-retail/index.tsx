@@ -34,11 +34,16 @@ import { exportRetailToExcel, printRetailPDF } from '../../../utils/retailExport
 import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../../services/settingsService';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+const getLocalDateString = (d = new Date()) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const formatRp = (n: number) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
-const today = new Date().toISOString().slice(0, 10);
-const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-  .toISOString()
-  .slice(0, 10);
+const today = getLocalDateString();
+const startOfMonth = getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 
 type TabKey = 'tutup-kasir' | 'terlaris' | 'stok';
 
@@ -202,7 +207,7 @@ export default function LaporanRetail() {
     } else if (preset === 'yesterday') {
       const y = new Date(d);
       y.setDate(d.getDate() - 1);
-      const ys = y.toISOString().slice(0, 10);
+      const ys = getLocalDateString(y);
       setStartDate(ys);
       setEndDate(ys);
     } else {

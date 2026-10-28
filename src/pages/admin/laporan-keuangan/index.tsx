@@ -47,9 +47,16 @@ export interface ShuEstimationData {
 const formatRp = (n: number): string =>
   'Rp ' + Math.round(n).toLocaleString('id-ID');
 
+const getLocalDateString = (d = new Date()) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const today = new Date();
-const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-const todayStr = today.toISOString().slice(0, 10);
+const startOfMonth = getLocalDateString(new Date(today.getFullYear(), today.getMonth(), 1));
+const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   penjualan_tunai:    { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
@@ -296,7 +303,7 @@ export default function LaporanKeuangan() {
     if (preset === 'today') {
       setStartDate(todayStr); setEndDate(todayStr);
     } else if (preset === 'thisMonth') {
-      setStartDate(new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10));
+      setStartDate(getLocalDateString(new Date(d.getFullYear(), d.getMonth(), 1)));
       setEndDate(todayStr);
     } else {
       setStartDate('2026-01-01'); setEndDate('2026-12-31');

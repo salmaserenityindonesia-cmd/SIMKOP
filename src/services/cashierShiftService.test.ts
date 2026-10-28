@@ -339,6 +339,66 @@ describe('cashierShiftService', () => {
       expect(summary.expectedCash).toBe(120900);
       expect(summary.transactionCount).toBe(1);
     });
+
+    it('should fallback to timestamp window when salesByShift query returns empty (orphan sales)', async () => {
+      const shiftOpenedAt = '2026-10-28T18:08:21.000Z';
+      const mockFallbackSales = [
+        {
+          id: 's-orphan',
+          paid_cash: 50000,
+          paid_deposit: 0,
+          paid_credit: 0,
+          total_amount: 19000,
+          payment_scheme: 'cash',
+          sale_status: 'completed',
+          created_at: '2026-10-28T18:08:45.000Z'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'shift-orphan-test',
+                    opened_at: shiftOpenedAt,
+                    initial_cash: 50000,
+                    status: 'open'
+                  },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [], // shift_id query returns empty
+                error: null
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockResolvedValue({
+                  data: mockFallbackSales,
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const summary = await getShiftSalesSummary('shift-orphan-test', undefined, shiftOpenedAt);
+
+      expect(summary.initialCash).toBe(50000);
+      expect(summary.cashSales).toBe(19000); // capped to total_amount (19k)
+      expect(summary.expectedCash).toBe(69000); // 50k + 19k
+      expect(summary.transactionCount).toBe(1);
+    });
   });
 
   describe('closeShift', () => {

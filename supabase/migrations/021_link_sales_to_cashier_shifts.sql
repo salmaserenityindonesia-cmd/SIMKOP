@@ -31,3 +31,4 @@ SET paid_amount = total_amount
 WHERE (paid_amount IS NULL OR paid_amount = 0)
   AND total_amount > 0
   AND (paid_cash > 0 OR paid_deposit > 0);
+
