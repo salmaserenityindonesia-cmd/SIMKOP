@@ -77,7 +77,16 @@ describe('loanService', () => {
         })
       }));
 
-      // Third call is insert loan
+      // Third call is loan_types
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            limit: vi.fn().mockResolvedValue({ data: [{ id: 'type-1' }], error: null })
+          })
+        })
+      }));
+
+      // Fourth call is insert loan
       mockSupabase.mockImplementationOnce(() => ({
         insert: () => ({
           select: () => ({

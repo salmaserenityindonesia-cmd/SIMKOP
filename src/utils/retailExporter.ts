@@ -118,7 +118,7 @@ export async function exportRetailToExcel(
     URL.revokeObjectURL(url);
   } catch (e) {
     console.error('Excel export error:', e);
-    alert('Gagal export Excel.');
+    throw e;
   }
 }
 
