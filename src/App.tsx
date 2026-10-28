@@ -22,11 +22,13 @@ import { LoanMatrix } from './pages/admin/LoanMatrix';
 import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
+import { FeedbackProvider } from './context/FeedbackContext';
 
 export default function App() {
   return (
     <Router>
-      <Routes>
+      <FeedbackProvider>
+        <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/dashboard" element={<Navigate to="/admin" replace />} />
         
@@ -231,6 +233,7 @@ export default function App() {
           } 
         />
       </Routes>
+      </FeedbackProvider>
     </Router>
   );
 }
