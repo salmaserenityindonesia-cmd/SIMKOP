@@ -28,6 +28,7 @@ export default function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/dashboard" element={<Navigate to="/admin" replace />} />
         
         {/* Admin Route */}
         <Route 
