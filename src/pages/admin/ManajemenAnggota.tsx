@@ -5,8 +5,10 @@ import { Search, Loader2, Plus, Edit2, Trash2, X, Download, Upload } from 'lucid
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenAnggota() {
+  const { showToast, showConfirm } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -72,13 +74,20 @@ export default function ManajemenAnggota() {
   };
 
   const handleDelete = async (id: string, nama: string) => {
-    if (window.confirm(`Apakah Anda yakin ingin menghapus anggota "${nama}"?`)) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Anggota',
+      message: `Apakah Anda yakin ingin menghapus anggota "${nama}"?`,
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+    if (confirmed) {
       try {
         setLoading(true);
         await deleteAnggota(id);
+        showToast(`Anggota "${nama}" berhasil dihapus.`, 'success');
         await loadData();
       } catch (err: any) {
-        alert(err.message || 'Gagal menghapus anggota');
+        showToast(err.message || 'Gagal menghapus anggota', 'error');
         setLoading(false);
       }
     }
@@ -90,13 +99,15 @@ export default function ManajemenAnggota() {
       setIsSubmitting(true);
       if (editingAnggota) {
         await updateAnggota(editingAnggota.id, formData);
+        showToast('Data anggota berhasil diperbarui.', 'success');
       } else {
         await addAnggota(formData);
+        showToast('Anggota baru berhasil ditambahkan.', 'success');
       }
       setShowModal(false);
       await loadData();
     } catch (err: any) {
-      alert(err.message || 'Gagal menyimpan anggota');
+      showToast(err.message || 'Gagal menyimpan anggota', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -147,7 +158,7 @@ export default function ManajemenAnggota() {
       setParseResult(result);
       setIsImportModalOpen(true);
     } catch (error: any) {
-      alert(error.message || 'Gagal memproses file Excel');
+      showToast(error.message || 'Gagal memproses file Excel', 'error');
     }
     
     if (fileInputRef.current) {
@@ -163,9 +174,9 @@ export default function ManajemenAnggota() {
       await executeMigration(parseResult);
       setIsImportModalOpen(false);
       await loadData();
-      alert('Berhasil memigrasikan data anggota, simpanan, dan pinjaman!');
+      showToast('Berhasil memigrasikan data anggota, simpanan, dan pinjaman!', 'success');
     } catch (error: any) {
-      alert(error.message || 'Gagal mengimpor anggota');
+      showToast(error.message || 'Gagal mengimpor anggota', 'error');
     } finally {
       setIsImporting(false);
     }

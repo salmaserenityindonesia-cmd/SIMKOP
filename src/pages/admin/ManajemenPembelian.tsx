@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenPembelian() {
+  const { showToast } = useFeedback();
   const [fakturList, setFakturList] = useState<FakturPembelian[]>([]);
   const [products, setProducts] = useState<Produk[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,11 +104,11 @@ export default function ManajemenPembelian() {
 
   const handleSubmitFaktur = async () => {
     if (!noFaktur.trim()) {
-      alert('Nomor Faktur harus diisi');
+      showToast('Nomor Faktur harus diisi', 'warning');
       return;
     }
     if (items.length === 0) {
-      alert('Belum ada barang yang ditambahkan');
+      showToast('Belum ada barang yang ditambahkan', 'warning');
       return;
     }
 
@@ -116,10 +118,11 @@ export default function ManajemenPembelian() {
         tanggal,
         items
       });
+      showToast('Faktur pembelian berhasil dicatat', 'success');
       setIsFormOpen(false);
       fetchData();
     } catch (error: any) {
-      alert(error.message || 'Terjadi kesalahan saat menyimpan faktur');
+      showToast(error.message || 'Terjadi kesalahan saat menyimpan faktur', 'error');
     }
   };
 

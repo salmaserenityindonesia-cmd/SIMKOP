@@ -3,8 +3,10 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { ProductCategory, getProductCategories, addProductCategory, updateProductCategory, deleteProductCategory } from '../../services/koperasiService';
 import CategoryImportModal from '../../components/categories/CategoryImportModal';
 import { exportCategoryTemplate, parseCategoryUpload, batchInsertCategories, ParseResult } from '../../services/categoryExcelService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenKategori() {
+  const { showToast, showConfirm } = useFeedback();
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -56,23 +58,32 @@ export default function ManajemenKategori() {
     try {
       if (editingCategory) {
         await updateProductCategory(editingCategory.id, name);
+        showToast('Kategori berhasil diperbarui', 'success');
       } else {
         await addProductCategory(name);
+        showToast('Kategori baru berhasil ditambahkan', 'success');
       }
       setIsModalOpen(false);
       fetchCategories();
     } catch (error: any) {
-      alert(error.message || 'Gagal menyimpan kategori');
+      showToast(error.message || 'Gagal menyimpan kategori', 'error');
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('Yakin ingin menghapus kategori ini? Pastikan tidak ada produk yang terikat dengan kategori ini.')) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Kategori',
+      message: 'Yakin ingin menghapus kategori ini? Pastikan tidak ada produk yang terikat dengan kategori ini.',
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+    if (confirmed) {
       try {
         await deleteProductCategory(id);
+        showToast('Kategori berhasil dihapus', 'success');
         fetchCategories();
       } catch (error: any) {
-        alert(error.message || 'Gagal menghapus kategori');
+        showToast(error.message || 'Gagal menghapus kategori', 'error');
       }
     }
   };
@@ -86,7 +97,7 @@ export default function ManajemenKategori() {
       setParseResult(result);
       setIsImportModalOpen(true);
     } catch (error: any) {
-      alert(error.message || 'Gagal memproses file Excel');
+      showToast(error.message || 'Gagal memproses file Excel', 'error');
     }
     
     if (fileInputRef.current) {
@@ -102,9 +113,9 @@ export default function ManajemenKategori() {
       await batchInsertCategories(parseResult.newCategories);
       setIsImportModalOpen(false);
       fetchCategories();
-      alert('Berhasil mengimpor kategori baru!');
+      showToast('Berhasil mengimpor kategori baru!', 'success');
     } catch (error: any) {
-      alert(error.message || 'Gagal mengimpor kategori');
+      showToast(error.message || 'Gagal mengimpor kategori', 'error');
     } finally {
       setIsImporting(false);
     }

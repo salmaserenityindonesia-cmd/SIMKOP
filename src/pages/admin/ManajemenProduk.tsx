@@ -4,8 +4,10 @@ import { Produk, getProduk, addProduk, updateProduk, deleteProduk, RiwayatStok, 
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import ProductImportModal from '../../components/products/ProductImportModal';
 import { exportProductTemplate, parseProductUpload, batchUpsertProducts, ProductParseResult } from '../../services/productExcelService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenProduk() {
+  const { showToast, showConfirm } = useFeedback();
   const [products, setProducts] = useState<Produk[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -153,14 +155,16 @@ export default function ManajemenProduk() {
 
       if (editingProduct) {
         await updateProduk(editingProduct.id, productData);
+        showToast('Produk berhasil diperbarui', 'success');
       } else {
         await addProduk(productData);
+        showToast('Produk baru berhasil ditambahkan', 'success');
       }
       setIsModalOpen(false);
       fetchProducts();
     } catch (error: any) {
       console.error('Error saving product', error);
-      alert(error.message || 'Gagal menyimpan produk');
+      showToast(error.message || 'Gagal menyimpan produk', 'error');
     }
   };
 
@@ -173,7 +177,7 @@ export default function ManajemenProduk() {
       setParseResult(result);
       setIsImportModalOpen(true);
     } catch (error: any) {
-      alert(error.message || 'Gagal memproses file Excel');
+      showToast(error.message || 'Gagal memproses file Excel', 'error');
     }
     
     if (fileInputRef.current) {
@@ -189,21 +193,29 @@ export default function ManajemenProduk() {
       await batchUpsertProducts(parseResult);
       setIsImportModalOpen(false);
       fetchProducts();
-      alert('Berhasil mengimpor katalog produk!');
+      showToast('Berhasil mengimpor katalog produk!', 'success');
     } catch (error: any) {
-      alert(error.message || 'Gagal mengimpor produk');
+      showToast(error.message || 'Gagal mengimpor produk', 'error');
     } finally {
       setIsImporting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('Yakin ingin menghapus produk ini?')) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Produk',
+      message: 'Yakin ingin menghapus produk ini?',
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+    if (confirmed) {
       try {
         await deleteProduk(id);
+        showToast('Produk berhasil dihapus', 'success');
         fetchProducts();
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error deleting product', error);
+        showToast(error.message || 'Gagal menghapus produk', 'error');
       }
     }
   };

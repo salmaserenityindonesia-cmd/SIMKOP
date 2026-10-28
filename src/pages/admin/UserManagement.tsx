@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { supabaseAdmin } from '../../lib/supabaseClient';
 import { getPengelolaList, Pengelola } from '../../services/koperasiService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function UserManagement() {
+  const { showToast, showConfirm } = useFeedback();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nama, setNama] = useState('');
@@ -100,31 +102,45 @@ export default function UserManagement() {
 
   const handleDeleteUser = async (id: string, namaUser: string) => {
     if (!supabaseAdmin) {
-      alert('Service Role Key tidak dikonfigurasi.');
+      showToast('Service Role Key tidak dikonfigurasi.', 'error');
       return;
     }
     
-    if (window.confirm(`Apakah Anda yakin ingin menghapus pengelola "${namaUser}" secara permanen?`)) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Pengelola',
+      message: `Apakah Anda yakin ingin menghapus pengelola "${namaUser}" secara permanen?`,
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+
+    if (confirmed) {
       try {
         const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
         if (error) throw error;
         
+        showToast(`Pengelola "${namaUser}" berhasil dihapus.`, 'success');
         // Trigger refetch
         fetchUsers();
       } catch (err: any) {
-        alert(`Gagal menghapus user: ${err.message}`);
+        showToast(`Gagal menghapus user: ${err.message}`, 'error');
       }
     }
   };
 
   const handleToggleRole = async (user: Pengelola) => {
     if (!supabaseAdmin) {
-      alert('Service Role Key tidak dikonfigurasi.');
+      showToast('Service Role Key tidak dikonfigurasi.', 'error');
       return;
     }
 
     const newRole = user.role === 'admin' ? 'operator' : 'admin';
-    if (window.confirm(`Ubah hak akses "${user.nama}" menjadi ${newRole.toUpperCase()}?`)) {
+    const confirmed = await showConfirm({
+      title: 'Ubah Hak Akses',
+      message: `Ubah hak akses "${user.nama}" menjadi ${newRole.toUpperCase()}?`,
+      confirmText: 'Ubah',
+    });
+
+    if (confirmed) {
       try {
         // 1. Update auth.users metadata
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
@@ -140,9 +156,10 @@ export default function UserManagement() {
         
         if (dbError) throw dbError;
 
+        showToast(`Hak akses "${user.nama}" berhasil diubah menjadi ${newRole.toUpperCase()}.`, 'success');
         fetchUsers();
       } catch (err: any) {
-        alert(`Gagal mengubah role: ${err.message}`);
+        showToast(`Gagal mengubah role: ${err.message}`, 'error');
       }
     }
   };
