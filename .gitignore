@@ -11,3 +11,13 @@
 # OS generated
 Thumbs.db
 .DS_Store
+
+
+# Abaikan hasil build produksi
+dist/
+dist-ssr/
+
+# Abaikan cache internal alat pengujian dan bundler
+node_modules/
+.vite/
+.vitest/
