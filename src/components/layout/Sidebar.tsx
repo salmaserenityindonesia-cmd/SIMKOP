@@ -154,3 +154,4 @@ export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
     </nav>
   );
 }
+
