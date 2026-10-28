@@ -1,6 +1,9 @@
 import React from 'react';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ReceiptModal({ isOpen, cart, onClose, subtotal, discount, total, payment }: any) {
+  const { showToast } = useFeedback();
+
   if (!isOpen) return null;
 
   const handleWA = () => {
@@ -15,7 +18,7 @@ export default function ReceiptModal({ isOpen, cart, onClose, subtotal, discount
   };
 
   const handlePDF = () => {
-    alert("Fitur PDF akan memanfaatkan jsPDF (Placeholder)");
+    showToast("Fitur cetak PDF struk akan segera hadir", "info");
   };
 
   return (

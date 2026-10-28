@@ -10,6 +10,7 @@ import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
 import { processCheckout } from '../../services/posCheckoutService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export interface CartItem {
   id: string;
@@ -22,6 +23,7 @@ export interface CartItem {
 }
 
 export default function POSPage() {
+  const { showToast } = useFeedback();
   const [products, setProducts] = useState<Produk[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [selectedMember, setSelectedMember] = useState<any | null>(null);
@@ -117,7 +119,7 @@ export default function POSPage() {
        setLastPayment(payload);
        setModals(m => ({ ...m, splitPayment: false, receipt: true }));
     } else {
-       alert('Checkout gagal: ' + res.error);
+       showToast(res.error || 'Checkout gagal', 'error');
     }
   };
 
@@ -167,7 +169,7 @@ export default function POSPage() {
                 setModals(m => ({...m, splitPayment: true}));
               } 
             }}
-            onHold={() => alert('Fitur Tahan Transaksi (Placeholder)')}
+            onHold={() => showToast('Fitur Tahan Transaksi akan segera hadir', 'info')}
             onReset={() => setCart([])}
           />
         </div>
@@ -192,7 +194,7 @@ export default function POSPage() {
           if (product) {
             handleSelectProduct({ barcode: product.sku, name: product.name, unit: product.unit, price: product.sell_price, stock: product.stock, id: product.id });
           } else {
-            alert('Produk tidak ditemukan!');
+            showToast('Produk tidak ditemukan dalam katalog!', 'warning');
           }
         }}
       />
