@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import POSHeader from '../../components/pos/POSHeader';
 import ProductSearchInput from '../../components/pos/ProductSearchInput';
 import CartTable from '../../components/pos/CartTable';
@@ -7,7 +7,10 @@ import QuantityModal from '../../components/pos/QuantityModal';
 import CameraScannerModal from '../../components/pos/CameraScannerModal';
 import ReceiptModal from '../../components/pos/ReceiptModal';
 import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
+import ParkedTransactionsModal from '../../components/pos/ParkedTransactionsModal';
 import { processCheckout } from '../../services/posCheckoutService';
+import { holdTransaction, getParkedSales } from '../../services/posParkedService';
+import { cleanupExpiredParkedSales } from '../../services/posSettingsService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -33,43 +36,110 @@ export default function POSPage() {
   const [lastPayment, setLastPayment] = useState<any>(null);
   const [lastSaleNumber, setLastSaleNumber] = useState<string | null>(null);
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
-  
-  useEffect(() => {
-    getKoperasiProfile().then(setKoperasiProfile);
-    import('../../services/koperasiService').then(s => {
-      s.getProduk().then(data => setProducts(data.filter(p => p.is_active && p.stock > 0)));
-    });
-    supabase.from('anggota').select('id, nrp, nama, take_home_pay').eq('status', 'aktif').then(({ data }) => {
-      if (data && data.length > 0) {
-        setMembers(data);
-        setSelectedMember(data[0]); // default to first member
-      }
-    });
-  }, []);
+  const [parkedCount, setParkedCount] = useState<number>(0);
 
   const [modals, setModals] = useState({
     qty: false,
     camera: false,
     receipt: false,
     splitPayment: false,
+    parked: false,
   });
   const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const loadProductCatalog = useCallback(() => {
+    import('../../services/koperasiService').then(s => {
+      s.getProduk().then(data => setProducts(data.filter(p => p.is_active && p.stock > 0)));
+    });
+  }, []);
+
+  const refreshParkedCount = useCallback(async () => {
+    try {
+      const list = await getParkedSales();
+      setParkedCount(list.length);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    getKoperasiProfile().then(setKoperasiProfile);
+    loadProductCatalog();
+    refreshParkedCount();
+
+    // Auto-cleanup expired parked transactions on POS startup
+    cleanupExpiredParkedSales().then(res => {
+      if (res.success && res.cleanedCount > 0) {
+        showToast(`Auto-restock: ${res.cleanedCount} transaksi kadaluwarsa dibersihkan.`, 'info');
+        loadProductCatalog();
+        refreshParkedCount();
+      }
+    });
+
+    supabase.from('anggota').select('id, nrp, nama, take_home_pay').eq('status', 'aktif').then(({ data }) => {
+      if (data && data.length > 0) {
+        setMembers(data);
+        setSelectedMember(data[0]); // default to first member
+      }
+    });
+  }, [loadProductCatalog, refreshParkedCount, showToast]);
+
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
   const discount = selectedMember ? subtotal * 0.05 : 0; 
   const total = subtotal - discount;
+
+  const handleHoldTransaction = useCallback(async () => {
+    if (cart.length === 0) {
+      showToast('Keranjang masih kosong untuk ditahan.', 'warning');
+      return;
+    }
+
+    try {
+      const res = await holdTransaction({
+        cart,
+        member: selectedMember,
+      });
+
+      if (res.success) {
+        const timeFormatted = res.expiresAt
+          ? new Date(res.expiresAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+          : '';
+        showToast(
+          `Transaksi #${res.saleNumber} berhasil ditahan ${timeFormatted ? `(hingga ${timeFormatted} WIB)` : ''}. Stok direservasi.`,
+          'success'
+        );
+        setCart([]);
+        await refreshParkedCount();
+        loadProductCatalog();
+        setTimeout(() => searchInputRef.current?.focus(), 100);
+      } else {
+        showToast(res.error || 'Gagal menahan transaksi.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Terjadi kesalahan sistem saat menahan transaksi', 'error');
+    }
+  }, [cart, selectedMember, showToast, refreshParkedCount, loadProductCatalog]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalKeydown = (e: KeyboardEvent) => {
       // Don't trigger if a modal is open
-      if (modals.qty || modals.camera || modals.receipt) return;
+      if (modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked) return;
       
       if ((e.ctrlKey && e.key === 'k') || e.key === 'F2') {
         e.preventDefault();
         searchInputRef.current?.focus();
+      } else if (e.key === 'F4') {
+        if (cart.length > 0) {
+          e.preventDefault();
+          setActiveItemForQty(cart[cart.length - 1]);
+          setModals(m => ({ ...m, qty: true }));
+        }
+      } else if (e.key === 'F8') {
+        e.preventDefault();
+        handleHoldTransaction();
       } else if (e.key === 'F9' || (e.key === ' ' && (e.target as HTMLElement).tagName !== 'INPUT')) {
         if (cart.length > 0) {
           e.preventDefault();
@@ -79,7 +149,7 @@ export default function POSPage() {
     };
     window.addEventListener('keydown', handleGlobalKeydown);
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
-  }, [modals, cart]);
+  }, [modals, cart, handleHoldTransaction]);
 
   const handleSelectProduct = (product: Omit<CartItem, 'qty'>) => {
     setActiveItemForQty(product);
@@ -91,7 +161,7 @@ export default function POSPage() {
     if (!activeItemForQty) return;
     
     setCart(prev => {
-      const existing = prev.findIndex(p => p.barcode === activeItemForQty.barcode);
+      const existing = prev.findIndex(p => p.barcode === activeItemForQty.barcode || p.id === activeItemForQty.id);
       if (existing >= 0) {
         const next = [...prev];
         next[existing].qty += qty;
@@ -123,18 +193,33 @@ export default function POSPage() {
        setLastPayment(payload);
        setLastSaleNumber(res.saleNumber || null);
        setModals(m => ({ ...m, splitPayment: false, receipt: true }));
+       loadProductCatalog();
     } else {
        showToast(res.error || 'Checkout gagal', 'error');
     }
+  };
+
+  const handleReloadParked = (items: CartItem[], memberId?: string | null) => {
+    setCart(items);
+    if (memberId && members.length > 0) {
+      const found = members.find(m => m.id === memberId);
+      if (found) setSelectedMember(found);
+    }
+    refreshParkedCount();
+    loadProductCatalog();
+    setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
   return (
     <div className="bg-background text-on-surface antialiased font-body-md select-none min-h-screen flex flex-col">
       <POSHeader 
         onOpenQty={() => { if(cart.length>0) setModals(m => ({...m, qty: true})) }}
-        onOpenReceipt={() => { if(cart.length>0) setModals(m => ({...m, receipt: true})) }}
+        onOpenReceipt={() => { if(cart.length>0) setModals(m => ({...m, splitPayment: true})) }}
         onOpenCamera={() => setModals(m => ({...m, camera: true}))}
         onReset={() => setCart([])}
+        onHold={handleHoldTransaction}
+        onOpenParked={() => setModals(m => ({...m, parked: true}))}
+        parkedCount={parkedCount}
       />
       
       <main className="w-full max-w-[1720px] mx-auto p-3 lg:p-4 flex-1 flex flex-col gap-3">
@@ -174,8 +259,10 @@ export default function POSPage() {
                 setModals(m => ({...m, splitPayment: true}));
               } 
             }}
-            onHold={() => showToast('Fitur Tahan Transaksi akan segera hadir', 'info')}
+            onHold={handleHoldTransaction}
             onReset={() => setCart([])}
+            parkedCount={parkedCount}
+            onOpenParked={() => setModals(m => ({...m, parked: true}))}
           />
         </div>
       </main>
@@ -231,6 +318,17 @@ export default function POSPage() {
           setLastSaleNumber(null);
           setTimeout(() => searchInputRef.current?.focus(), 100);
         }}
+      />
+
+      <ParkedTransactionsModal
+        isOpen={modals.parked}
+        onClose={() => {
+          setModals(m => ({...m, parked: false}));
+          refreshParkedCount();
+          loadProductCatalog();
+          setTimeout(() => searchInputRef.current?.focus(), 100);
+        }}
+        onReload={handleReloadParked}
       />
     </div>
   );

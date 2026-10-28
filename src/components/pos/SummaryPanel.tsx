@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
 
-export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [], selectedMember, onSelectMember }) {
+export default function SummaryPanel({
+  cart,
+  onPay,
+  onHold,
+  onReset,
+  members = [],
+  selectedMember,
+  onSelectMember,
+  parkedCount = 0,
+  onOpenParked,
+}: any) {
   const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null || true);
   const [paymentType, setPaymentType] = useState('Tunai');
   
@@ -101,13 +111,23 @@ export default function SummaryPanel({ cart, onPay, onHold, onReset, members = [
         <div className="grid grid-cols-2 gap-2">
           <button className="py-2.5 px-3 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container text-primary rounded-lg font-title-sm flex items-center justify-center gap-1.5 transition-colors" onClick={onHold}>
             <span className="material-symbols-outlined text-[18px]">pause_circle</span>
-            <span>Tahan [F12]</span>
+            <span>Tahan [F8]</span>
           </button>
           <button className="py-2.5 px-3 bg-surface-container-lowest border border-error/40 hover:bg-error-container/30 text-error rounded-lg font-title-sm flex items-center justify-center gap-1.5 transition-colors" onClick={onReset}>
             <span className="material-symbols-outlined text-[18px]">cancel</span>
             <span>Batal [Esc]</span>
           </button>
         </div>
+        {parkedCount > 0 && onOpenParked && (
+          <button
+            type="button"
+            className="w-full py-2 px-3 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+            onClick={onOpenParked}
+          >
+            <span className="material-symbols-outlined text-[16px] text-amber-600">inventory_2</span>
+            <span>Ada {parkedCount} Belanja Ditahan (Klik untuk Muat)</span>
+          </button>
+        )}
       </div>
     </aside>
   );

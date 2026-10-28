@@ -8,6 +8,9 @@ interface POSHeaderProps {
   onOpenReceipt?: () => void;
   onOpenCamera?: () => void;
   onReset?: () => void;
+  onHold?: () => void;
+  onOpenParked?: () => void;
+  parkedCount?: number;
 }
 
 export default function POSHeader({
@@ -15,6 +18,9 @@ export default function POSHeader({
   onOpenReceipt,
   onOpenCamera,
   onReset,
+  onHold,
+  onOpenParked,
+  parkedCount = 0,
 }: POSHeaderProps) {
   const [time, setTime] = useState(new Date());
   const [isAdmin, setIsAdmin] = useState(false);
@@ -123,10 +129,26 @@ export default function POSHeader({
             </span>
             <span
               className="px-2 py-0.5 rounded bg-surface-container-lowest/15 border border-surface-container-lowest/20 font-mono text-secondary-fixed cursor-pointer hover:bg-surface-container-lowest/25"
-              title="Diskon Transaksi (F8)"
+              onClick={onHold}
+              title="Tahan Transaksi (F8)"
             >
-              F8 Diskon
+              F8 Tahan
             </span>
+            <button
+              type="button"
+              className={`px-2 py-0.5 rounded font-mono text-label-sm font-semibold cursor-pointer transition-all flex items-center gap-1.5 ${
+                parkedCount > 0
+                  ? 'bg-amber-400 text-slate-900 shadow-sm'
+                  : 'bg-surface-container-lowest/15 border border-surface-container-lowest/20 text-surface-container-lowest/80 hover:bg-surface-container-lowest/25'
+              }`}
+              onClick={onOpenParked}
+              title="Lihat Daftar Belanja Ditahan"
+            >
+              <span>Ditahan</span>
+              <span className={`px-1 rounded-full text-[10px] ${parkedCount > 0 ? 'bg-slate-950 text-white font-bold' : 'bg-surface-container-lowest/20'}`}>
+                {parkedCount}
+              </span>
+            </button>
             <span
               className="px-2 py-0.5 rounded bg-secondary-fixed text-primary font-mono font-bold cursor-pointer hover:bg-secondary-fixed-dim"
               onClick={onOpenReceipt}
