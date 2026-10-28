@@ -141,6 +141,33 @@ export default function ManajemenProduk() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      if (buyPrice > 100000000) {
+        showToast('Harga beli tidak boleh melebihi Rp 100.000.000', 'error');
+        return;
+      }
+      if (sellPrice > 100000000) {
+        showToast('Harga jual tidak boleh melebihi Rp 100.000.000', 'error');
+        return;
+      }
+      if (stock > 100000) {
+        showToast('Stok awal tidak boleh melebihi 100.000 unit', 'error');
+        return;
+      }
+      if (buyPrice < 0 || sellPrice < 0 || stock < 0) {
+        showToast('Harga dan stok tidak boleh bernilai negatif', 'error');
+        return;
+      }
+
+      if (buyPrice > sellPrice && sellPrice > 0) {
+        const confirmSave = await showConfirm({
+          title: 'Konfirmasi Harga Rugi',
+          message: `Harga beli (Rp ${buyPrice.toLocaleString('id-ID')}) lebih tinggi dari harga jual (Rp ${sellPrice.toLocaleString('id-ID')}). Tetap simpan produk ini?`,
+          confirmText: 'Tetap Simpan',
+          variant: 'danger'
+        });
+        if (!confirmSave) return;
+      }
+
       const productData = {
         name,
         sku,
@@ -179,7 +206,7 @@ export default function ManajemenProduk() {
     } catch (error: any) {
       showToast(error.message || 'Gagal memproses file Excel', 'error');
     }
-    
+
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -187,7 +214,7 @@ export default function ManajemenProduk() {
 
   const handleImportConfirm = async () => {
     if (!parseResult) return;
-    
+
     setIsImporting(true);
     try {
       await batchUpsertProducts(parseResult);
@@ -247,8 +274,8 @@ export default function ManajemenProduk() {
     }
   };
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+  const filteredProducts = products.filter(p =>
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.sku.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -274,21 +301,21 @@ export default function ManajemenProduk() {
             <p className="text-body-lg text-on-surface-variant mt-2">Kelola master data produk dan inventory</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button 
+            <button
               onClick={exportProductTemplate}
               className="flex items-center gap-2 bg-surface-container-lowest border border-outline text-primary px-4 py-2 rounded-lg font-label-lg shadow-sm hover:bg-surface-container-low transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">download</span>
               Unduh Template
             </button>
-            <input 
-              type="file" 
-              accept=".xlsx" 
-              className="hidden" 
-              ref={fileInputRef} 
-              onChange={handleFileUpload} 
+            <input
+              type="file"
+              accept=".xlsx"
+              className="hidden"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
             />
-            <button 
+            <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 bg-secondary text-on-secondary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-secondary/90 transition-colors"
             >
@@ -296,21 +323,21 @@ export default function ManajemenProduk() {
               Import
             </button>
             <div className="w-px h-6 bg-outline-variant/50 mx-1"></div>
-            <button 
+            <button
               onClick={handleExportExcel}
               className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-green-700 transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">download</span>
               Excel
             </button>
-            <button 
+            <button
               onClick={handleExportPDF}
               className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-red-700 transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">download</span>
               PDF
             </button>
-            <button 
+            <button
               onClick={openAddModal}
               className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
             >
@@ -351,7 +378,7 @@ export default function ManajemenProduk() {
               <thead>
                 <tr className="bg-surface-container-lowest border-b border-outline-variant text-label-md text-on-surface-variant">
                   <th className="p-4 font-label-md">SKU/Barcode</th>
-                  <th 
+                  <th
                     className="p-4 font-label-md cursor-pointer hover:bg-surface-container-low transition-colors select-none"
                     onClick={() => handleSort('name')}
                   >
@@ -364,7 +391,7 @@ export default function ManajemenProduk() {
                       )}
                     </div>
                   </th>
-                  <th 
+                  <th
                     className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
                     onClick={() => handleSort('buy_price')}
                   >
@@ -377,7 +404,7 @@ export default function ManajemenProduk() {
                       )}
                     </div>
                   </th>
-                  <th 
+                  <th
                     className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
                     onClick={() => handleSort('sell_price')}
                   >
@@ -390,7 +417,7 @@ export default function ManajemenProduk() {
                       )}
                     </div>
                   </th>
-                  <th 
+                  <th
                     className="p-4 font-label-md text-right cursor-pointer hover:bg-surface-container-low transition-colors select-none"
                     onClick={() => handleSort('stock')}
                   >
@@ -446,21 +473,21 @@ export default function ManajemenProduk() {
                         {p.min_stock_alert}
                       </td>
                       <td className="p-4 flex items-center justify-center gap-2">
-                        <button 
+                        <button
                           onClick={() => openHistoryModal(p)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-tertiary hover:bg-tertiary/10 transition-colors"
                           title="Kartu Stok (Riwayat)"
                         >
                           <span className="material-symbols-outlined text-[18px]">history</span>
                         </button>
-                        <button 
+                        <button
                           onClick={() => openEditModal(p)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
                           title="Edit Produk"
                         >
                           <span className="material-symbols-outlined text-[18px]">edit</span>
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleDelete(p.id)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-error hover:bg-error/10 transition-colors"
                           title="Hapus Produk"
@@ -474,7 +501,7 @@ export default function ManajemenProduk() {
               </tbody>
             </table>
           </div>
-          
+
           {/* Pagination Footer */}
           <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant">
             <div className="flex items-center gap-2 text-on-surface-variant">
@@ -482,7 +509,7 @@ export default function ManajemenProduk() {
                 Menampilkan {sortedProducts.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
                 {Math.min(currentPage * itemsPerPage, sortedProducts.length)} dari {sortedProducts.length} produk
               </span>
-              <select 
+              <select
                 value={itemsPerPage}
                 onChange={(e) => {
                   setItemsPerPage(Number(e.target.value));
@@ -498,7 +525,7 @@ export default function ManajemenProduk() {
             </div>
 
             <div className="flex items-center gap-1">
-              <button 
+              <button
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
                 className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -508,7 +535,7 @@ export default function ManajemenProduk() {
               <span className="text-sm font-medium px-2 text-on-surface">
                 {currentPage} / {totalPages || 1}
               </span>
-              <button 
+              <button
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages || totalPages === 0}
                 className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -528,12 +555,12 @@ export default function ManajemenProduk() {
                 {editingProduct ? 'Edit Produk' : 'Tambah Produk Baru'}
               </h2>
             </div>
-            
+
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 p-6 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-label-md font-label-md text-on-surface-variant">Nama Produk</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -543,7 +570,7 @@ export default function ManajemenProduk() {
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-label-md font-label-md text-on-surface-variant">Kategori</label>
-                <select 
+                <select
                   value={categoryId}
                   onChange={(e) => setCategoryId(e.target.value)}
                   className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -558,8 +585,8 @@ export default function ManajemenProduk() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-label-md font-label-md text-on-surface-variant">SKU / Barcode</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={sku}
                     onChange={(e) => setSku(e.target.value)}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all font-mono"
@@ -568,8 +595,8 @@ export default function ManajemenProduk() {
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-label-md font-label-md text-on-surface-variant">Satuan</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -581,38 +608,101 @@ export default function ManajemenProduk() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-label-md font-label-md text-on-surface-variant">Harga Beli (Rp)</label>
-                  <input 
-                    type="number" 
+                  <div className="flex items-center justify-between">
+                    <label className="text-label-md font-label-md text-on-surface-variant">Harga Beli (Rp)</label>
+                    <span className="text-[11px] text-on-surface-variant/60">Maks. 100 Jt</span>
+                  </div>
+                  <input
+                    type="number"
                     value={buyPrice}
-                    onChange={(e) => setBuyPrice(Number(e.target.value))}
+                    onChange={(e) => {
+                      const valStr = e.target.value;
+                      if (valStr === '') {
+                        setBuyPrice(0);
+                        return;
+                      }
+                      const val = Number(valStr);
+                      // Deteksi barcode scanner tak sengaja terpindai (10 digit ke atas) atau nilai ekstrim
+                      if (valStr.length > 9 || val > 100000000) {
+                        showToast('Harga beli dibatasi maksimal Rp 100.000.000. Periksa apakah barcode terpindai ke kolom ini.', 'warning');
+                        setBuyPrice(100000000);
+                        return;
+                      }
+                      setBuyPrice(val < 0 ? 0 : val);
+                    }}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                     min="0"
+                    max="100000000"
                     required
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-label-md font-label-md text-on-surface-variant">Harga Jual (Rp)</label>
-                  <input 
-                    type="number" 
+                  <div className="flex items-center justify-between">
+                    <label className="text-label-md font-label-md text-on-surface-variant">Harga Jual (Rp)</label>
+                    <span className="text-[11px] text-on-surface-variant/60">Maks. 100 Jt</span>
+                  </div>
+                  <input
+                    type="number"
                     value={sellPrice}
-                    onChange={(e) => setSellPrice(Number(e.target.value))}
+                    onChange={(e) => {
+                      const valStr = e.target.value;
+                      if (valStr === '') {
+                        setSellPrice(0);
+                        return;
+                      }
+                      const val = Number(valStr);
+                      if (valStr.length > 9 || val > 100000000) {
+                        showToast('Harga jual dibatasi maksimal Rp 100.000.000.', 'warning');
+                        setSellPrice(100000000);
+                        return;
+                      }
+                      setSellPrice(val < 0 ? 0 : val);
+                    }}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                     min="0"
+                    max="100000000"
                     required
                   />
                 </div>
               </div>
 
+              {/* Peringatan visual jika harga beli lebih tinggi dari harga jual */}
+              {buyPrice > 0 && sellPrice > 0 && buyPrice > sellPrice && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-xs">
+                  <span className="material-symbols-outlined text-[18px] text-amber-600 shrink-0 mt-0.5">warning</span>
+                  <div>
+                    <span className="font-semibold block mb-0.5">Peringatan: Potensi Rugi Kotor</span>
+                    Harga beli (Rp {buyPrice.toLocaleString('id-ID')}) lebih tinggi dari harga jual (Rp {sellPrice.toLocaleString('id-ID')}). Margin keuntungan akan bernilai minus.
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-label-md font-label-md text-on-surface-variant">Stok Awal</label>
-                  <input 
-                    type="number" 
+                  <div className="flex items-center justify-between">
+                    <label className="text-label-md font-label-md text-on-surface-variant">Stok Awal</label>
+                    <span className="text-[11px] text-on-surface-variant/60">Maks. 100.000</span>
+                  </div>
+                  <input
+                    type="number"
                     value={stock}
-                    onChange={(e) => setStock(Number(e.target.value))}
+                    onChange={(e) => {
+                      const valStr = e.target.value;
+                      if (valStr === '') {
+                        setStock(0);
+                        return;
+                      }
+                      const val = Number(valStr);
+                      if (val > 100000) {
+                        showToast('Stok awal dibatasi maksimal 100.000 unit.', 'warning');
+                        setStock(100000);
+                        return;
+                      }
+                      setStock(val < 0 ? 0 : val);
+                    }}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                     min="0"
+                    max="100000"
                     disabled={!!editingProduct} // Disable stok edit for existing product
                     required
                   />
@@ -622,27 +712,34 @@ export default function ManajemenProduk() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-label-md font-label-md text-on-surface-variant">Min. Stok (Alert)</label>
-                  <input 
-                    type="number" 
+                  <div className="flex items-center justify-between">
+                    <label className="text-label-md font-label-md text-on-surface-variant">Min. Stok (Alert)</label>
+                    <span className="text-[11px] text-on-surface-variant/60">Maks. 100.000</span>
+                  </div>
+                  <input
+                    type="number"
                     value={minStockAlert}
-                    onChange={(e) => setMinStockAlert(Number(e.target.value))}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setMinStockAlert(Math.max(0, Math.min(100000, val)));
+                    }}
                     className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                     min="0"
+                    max="100000"
                     required
                   />
                 </div>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-outline-variant/30 mt-4">
-                <button 
+                <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 rounded-lg text-primary font-label-lg hover:bg-primary/5 transition-colors"
                 >
                   Batal
                 </button>
-                <button 
+                <button
                   type="submit"
                   className="bg-primary text-on-primary px-6 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
                 >
@@ -667,13 +764,13 @@ export default function ManajemenProduk() {
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
-              
+
               {/* Date Filters */}
               <div className="flex gap-4 items-center bg-surface-container-lowest p-3 rounded-lg border border-outline-variant/30">
                 <div className="flex items-center gap-2">
                   <label className="text-label-md text-on-surface-variant">Dari:</label>
-                  <input 
-                    type="date" 
+                  <input
+                    type="date"
                     value={historyStartDate}
                     onChange={(e) => setHistoryStartDate(e.target.value)}
                     className="px-2 py-1 bg-surface border border-outline-variant rounded focus:outline-primary text-body-sm"
@@ -681,15 +778,15 @@ export default function ManajemenProduk() {
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-label-md text-on-surface-variant">Sampai:</label>
-                  <input 
-                    type="date" 
+                  <input
+                    type="date"
                     value={historyEndDate}
                     onChange={(e) => setHistoryEndDate(e.target.value)}
                     className="px-2 py-1 bg-surface border border-outline-variant rounded focus:outline-primary text-body-sm"
                   />
                 </div>
                 {(historyStartDate || historyEndDate) && (
-                  <button 
+                  <button
                     onClick={() => { setHistoryStartDate(''); setHistoryEndDate(''); }}
                     className="text-label-sm text-primary hover:underline ml-2"
                   >
@@ -698,7 +795,7 @@ export default function ManajemenProduk() {
                 )}
               </div>
             </div>
-            
+
             <div className="p-6 overflow-y-auto">
               {loadingHistory ? (
                 <div className="text-center py-8 text-on-surface-variant">Memuat riwayat stok...</div>
@@ -706,7 +803,7 @@ export default function ManajemenProduk() {
                 <div className="text-center py-8 text-on-surface-variant">Belum ada riwayat pergerakan stok.</div>
               ) : displayedHistory.length === 0 && showOpeningBalance ? (
                 <div className="text-center py-8 text-on-surface-variant">
-                  Tidak ada transaksi pada periode ini.<br/>
+                  Tidak ada transaksi pada periode ini.<br />
                   <span className="font-bold mt-2 inline-block">Saldo Akhir: {openingBalance}</span>
                 </div>
               ) : (
@@ -729,7 +826,7 @@ export default function ManajemenProduk() {
                         <td className="p-3 text-body-md font-bold text-right text-primary">{openingBalance}</td>
                       </tr>
                     )}
-                    
+
                     {/* Filtered History Rows */}
                     {displayedHistory.map(h => (
                       <tr key={h.id} className="border-b border-outline-variant/50 hover:bg-surface-container-lowest/50 transition-colors">
@@ -755,7 +852,7 @@ export default function ManajemenProduk() {
           </div>
         </div>
       )}
-      <ProductImportModal 
+      <ProductImportModal
         isOpen={isImportModalOpen}
         parseResult={parseResult}
         onClose={() => setIsImportModalOpen(false)}
