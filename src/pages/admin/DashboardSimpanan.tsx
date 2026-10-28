@@ -4,8 +4,10 @@ import { getMonthlyDepositCommitments, MonthlyDepositCommitment, addDepositTrans
 import { Search, Loader2, Download, FileText, Plus, ArrowUpDown } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function DashboardSimpanan() {
+  const { showToast } = useFeedback();
   const [commitments, setCommitments] = useState<MonthlyDepositCommitment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +115,7 @@ export default function DashboardSimpanan() {
     if (!selectedCommitment) return;
     
     if (paymentAmount <= 0) {
-      alert("Nominal pembayaran harus lebih dari 0");
+      showToast("Nominal pembayaran harus lebih dari 0", 'warning');
       return;
     }
 
@@ -130,9 +132,9 @@ export default function DashboardSimpanan() {
       
       setIsPaymentModalOpen(false);
       loadData();
-      alert("Pembayaran berhasil dicatat!");
+      showToast("Pembayaran berhasil dicatat!", 'success');
     } catch (err: any) {
-      alert(err.message || 'Gagal memproses pembayaran');
+      showToast(err.message || 'Gagal memproses pembayaran', 'error');
     } finally {
       setIsSubmitting(false);
     }

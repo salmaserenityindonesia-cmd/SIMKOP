@@ -4,6 +4,7 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService } from '../../services/loanService';
 import { ArrowLeft, Loader2, DollarSign } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { useFeedback } from '../../context/FeedbackContext';
 
 // Helper modal for partial payments
 function PaymentModal({ 
@@ -21,6 +22,7 @@ function PaymentModal({
   title: string,
   description: string
 }) {
+  const { showToast } = useFeedback();
   const [amountStr, setAmountStr] = useState(defaultAmount.toString());
   const [loading, setLoading] = useState(false);
 
@@ -36,15 +38,16 @@ function PaymentModal({
     e.preventDefault();
     const val = parseInt(amountStr.replace(/[^0-9]/g, ''), 10);
     if (isNaN(val) || val <= 0) {
-      alert("Jumlah tidak valid");
+      showToast("Jumlah tidak valid", 'warning');
       return;
     }
     setLoading(true);
     try {
       await onSubmit(val);
+      showToast('Pembayaran berhasil disimpan', 'success');
       onClose();
     } catch (err: any) {
-      alert(err.message || 'Gagal menyimpan pembayaran');
+      showToast(err.message || 'Gagal menyimpan pembayaran', 'error');
     } finally {
       setLoading(false);
     }

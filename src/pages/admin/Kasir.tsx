@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useCart } from '../../lib/cartStore';
 import { saveTransaction, getProduk, Produk } from '../../services/koperasiService';
 import ReceiptPrinter, { TransactionData } from '../../components/admin/ReceiptPrinter';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function Kasir() {
+  const { showToast, showConfirm } = useFeedback();
   const cart = useCart();
   const [barcode, setBarcode] = useState('');
   const [showParkModal, setShowParkModal] = useState(false);
@@ -64,14 +66,14 @@ export default function Kasir() {
   const handleCheckout = async () => {
     const payment = parseInt(paymentAmount.replace(/\D/g, ''), 10) || 0;
     if (payment < cart.total) {
-      alert('Jumlah bayar kurang dari total transaksi.');
+      showToast('Jumlah bayar kurang dari total transaksi.', 'warning');
       return;
     }
     
     setIsSubmitting(true);
     try {
       const tx = await saveTransaction(cart.items, cart.total, payment);
-      alert('Transaksi berhasil disimpan!');
+      showToast('Transaksi berhasil disimpan!', 'success');
       
       setLastTransaction({
         id: tx?.id || `TX-${Date.now()}`,
@@ -92,7 +94,7 @@ export default function Kasir() {
       }, 300);
       
     } catch (error: any) {
-      alert(error.message || 'Gagal menyimpan transaksi');
+      showToast(error.message || 'Gagal menyimpan transaksi', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -413,9 +415,14 @@ export default function Kasir() {
                         </div>
                       </div>
                       <button 
-                        onClick={() => {
+                        onClick={async () => {
                           if (cart.items.length > 0) {
-                            if (!window.confirm('Keranjang aktif saat ini tidak kosong. Mengambil transaksi tersimpan akan menggantikan keranjang aktif. Lanjutkan?')) {
+                            const confirmed = await showConfirm({
+                              title: 'Ganti Keranjang Aktif',
+                              message: 'Keranjang aktif saat ini tidak kosong. Mengambil transaksi tersimpan akan menggantikan keranjang aktif. Lanjutkan?',
+                              confirmText: 'Lanjutkan',
+                            });
+                            if (!confirmed) {
                               return;
                             }
                           }

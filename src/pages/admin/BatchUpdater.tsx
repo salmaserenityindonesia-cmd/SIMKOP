@@ -6,8 +6,10 @@ import {
     BatchPreviewRow
 } from '../../services/batchUpdateService';
 import AdminLayout from '../../components/layout/AdminLayout';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function BatchUpdater() {
+  const { showConfirm } = useFeedback();
   const [updateType, setUpdateType] = useState<'savings' | 'loans'>('savings');
   const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
   const [year, setYear] = useState<number>(new Date().getFullYear());
@@ -189,10 +191,16 @@ export default function BatchUpdater() {
               </div>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => {
-                    if (window.confirm("Batal melakukan pemutakhiran?")) {
-                        setResults([]);
-                        setFile(null);
+                  onClick={async () => {
+                    const confirmed = await showConfirm({
+                      title: 'Batal Pemutakhiran',
+                      message: 'Batal melakukan pemutakhiran?',
+                      confirmText: 'Ya, Batalkan',
+                      variant: 'danger',
+                    });
+                    if (confirmed) {
+                      setResults([]);
+                      setFile(null);
                     }
                   }}
                   disabled={isConfirming}

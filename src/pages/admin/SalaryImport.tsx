@@ -6,8 +6,10 @@ import {
     confirmSalaryReconciliation 
 } from '../../services/salaryImportService';
 import AdminLayout from '../../components/layout/AdminLayout';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function SalaryImport() {
+  const { showConfirm } = useFeedback();
   const [file, setFile] = useState<File | null>(null);
   const [results, setResults] = useState<ReconciliationResult[]>([]);
   const [isParsing, setIsParsing] = useState(false);
@@ -165,8 +167,13 @@ export default function SalaryImport() {
               <h3 className="text-title-md font-title-md text-on-surface">Hasil Pengecekan ({results.length} baris)</h3>
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => {
-                    const confirmed = window.confirm("Apakah Anda yakin ingin membatalkan? Data hasil pengecekan yang belum disimpan akan hilang.");
+                  onClick={async () => {
+                    const confirmed = await showConfirm({
+                      title: 'Batal Konfirmasi Impor',
+                      message: 'Apakah Anda yakin ingin membatalkan? Data hasil pengecekan yang belum disimpan akan hilang.',
+                      confirmText: 'Ya, Batalkan',
+                      variant: 'danger',
+                    });
                     if (confirmed) {
                         setResults([]);
                         setFile(null);

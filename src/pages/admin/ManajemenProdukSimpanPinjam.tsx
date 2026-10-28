@@ -13,8 +13,10 @@ import {
 } from '../../services/koperasiService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import AdminLayout from '../../components/layout/AdminLayout';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenProdukSimpanPinjam() {
+  const { showToast, showConfirm } = useFeedback();
   const [activeTab, setActiveTab] = useState<'simpanan' | 'pinjaman'>('simpanan');
   
   // Data States
@@ -72,23 +74,32 @@ export default function ManajemenProdukSimpanPinjam() {
     try {
       if (depositForm.id) {
         await updateDepositType(depositForm.id, depositForm as Omit<DepositType, 'id'>);
+        showToast('Jenis simpanan berhasil diperbarui', 'success');
       } else {
         await addDepositType(depositForm as Omit<DepositType, 'id'>);
+        showToast('Jenis simpanan berhasil ditambahkan', 'success');
       }
       setDepositModalOpen(false);
       fetchData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message || 'Gagal menyimpan jenis simpanan', 'error');
     }
   };
 
   const handleDeleteDeposit = async (id: string) => {
-    if (window.confirm('Yakin ingin menghapus jenis simpanan ini?')) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Jenis Simpanan',
+      message: 'Yakin ingin menghapus jenis simpanan ini?',
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+    if (confirmed) {
       try {
         await deleteDepositType(id);
+        showToast('Jenis simpanan berhasil dihapus', 'success');
         fetchData();
       } catch (err: any) {
-        alert(err.message);
+        showToast(err.message || 'Gagal menghapus jenis simpanan', 'error');
       }
     }
   };
@@ -111,23 +122,32 @@ export default function ManajemenProdukSimpanPinjam() {
     try {
       if (loanForm.id) {
         await updateLoanType(loanForm.id, loanForm as Omit<LoanType, 'id'>);
+        showToast('Jenis pinjaman berhasil diperbarui', 'success');
       } else {
         await addLoanType(loanForm as Omit<LoanType, 'id'>);
+        showToast('Jenis pinjaman berhasil ditambahkan', 'success');
       }
       setLoanModalOpen(false);
       fetchData();
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message || 'Gagal menyimpan jenis pinjaman', 'error');
     }
   };
 
   const handleDeleteLoan = async (id: string) => {
-    if (window.confirm('Yakin ingin menghapus jenis pinjaman ini?')) {
+    const confirmed = await showConfirm({
+      title: 'Hapus Jenis Pinjaman',
+      message: 'Yakin ingin menghapus jenis pinjaman ini?',
+      confirmText: 'Hapus',
+      variant: 'danger',
+    });
+    if (confirmed) {
       try {
         await deleteLoanType(id);
+        showToast('Jenis pinjaman berhasil dihapus', 'success');
         fetchData();
       } catch (err: any) {
-        alert(err.message);
+        showToast(err.message || 'Gagal menghapus jenis pinjaman', 'error');
       }
     }
   };

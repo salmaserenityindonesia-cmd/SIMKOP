@@ -4,8 +4,10 @@ import { loanService } from '../../services/loanService';
 import { Loader2, CheckCircle, XCircle, Download, FileText } from 'lucide-react';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ApprovalPinjaman() {
+  const { showToast, showConfirm } = useFeedback();
   const [pinjamanList, setPinjamanList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +30,14 @@ export default function ApprovalPinjaman() {
   }
 
   const handleAction = async (id: string, action: 'approved' | 'rejected') => {
-    if (!window.confirm(`Apakah Anda yakin ingin ${action === 'approved' ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?`)) {
+    const isApprove = action === 'approved';
+    const confirmed = await showConfirm({
+      title: isApprove ? 'Setujui Pinjaman' : 'Tolak Pinjaman',
+      message: `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?`,
+      confirmText: isApprove ? 'Setujui' : 'Tolak',
+      variant: isApprove ? 'primary' : 'danger',
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -37,13 +46,15 @@ export default function ApprovalPinjaman() {
       if (action === 'approved') {
         const startDate = new Date().toISOString().split('T')[0]; // simple today date
         await loanService.approveLoan(id, startDate);
+        showToast('Pinjaman berhasil disetujui', 'success');
       } else {
         await loanService.rejectLoan(id);
+        showToast('Pinjaman berhasil ditolak', 'success');
       }
       // Remove from list or refresh
       setPinjamanList(prev => prev.filter(p => p.id !== id));
     } catch (err: any) {
-      alert(err.message || 'Terjadi kesalahan');
+      showToast(err.message || 'Terjadi kesalahan', 'error');
     } finally {
       setActionLoading(null);
     }

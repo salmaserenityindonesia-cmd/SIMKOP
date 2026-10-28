@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
+import { useFeedback } from '../../../context/FeedbackContext';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -260,6 +261,7 @@ async function getShuEstimation(
 // ─── Main Page Component ──────────────────────────────────────────────────────
 
 export default function LaporanKeuangan() {
+  const { showToast } = useFeedback();
   const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>('cashflow');
   const [startDate, setStartDate] = useState(startOfMonth);
   const [endDate, setEndDate]     = useState(todayStr);
@@ -347,9 +349,10 @@ export default function LaporanKeuangan() {
       a.download = `laporan-keuangan-${startDate}-${endDate}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
+      showToast('Laporan keuangan berhasil diexport ke Excel', 'success');
     } catch (e) {
       console.error('Excel export error:', e);
-      alert('Gagal export Excel. Pastikan exceljs terinstall: npm install exceljs');
+      showToast('Gagal export Excel. Pastikan exceljs terinstall: npm install exceljs', 'error');
     }
   };
 

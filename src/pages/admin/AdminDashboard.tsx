@@ -4,8 +4,10 @@ import { getDashboardStats, DashboardStats, getCommitmentStats, CommitmentStats 
 import { useCart } from '../../lib/cartStore';
 import { Link } from 'react-router-dom';
 import { generateDatabaseBackup } from '../../services/backupService';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function AdminDashboard() {
+  const { showToast, showConfirm } = useFeedback();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [commitmentStats, setCommitmentStats] = useState<CommitmentStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +32,12 @@ export default function AdminDashboard() {
   }, [currentMonth, currentYear]);
 
   const handleBackup = async () => {
-    if (!window.confirm('Apakah Anda yakin ingin membackup seluruh database? Proses ini mungkin memerlukan waktu beberapa saat.')) {
+    const confirmed = await showConfirm({
+      title: 'Konfirmasi Backup',
+      message: 'Apakah Anda yakin ingin membackup seluruh database? Proses ini mungkin memerlukan waktu beberapa saat.',
+      confirmText: 'Backup',
+    });
+    if (!confirmed) {
       return;
     }
     
@@ -44,9 +51,9 @@ export default function AdminDashboard() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert('Backup berhasil diunduh!');
+      showToast('Backup berhasil diunduh!', 'success');
     } catch (error: any) {
-      alert('Terjadi kesalahan saat backup: ' + error.message);
+      showToast('Terjadi kesalahan saat backup: ' + error.message, 'error');
     } finally {
       setIsBackingUp(false);
     }

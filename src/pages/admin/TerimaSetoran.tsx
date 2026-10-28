@@ -11,8 +11,10 @@ import {
 } from '../../services/koperasiService';
 import { Search, Loader2, DollarSign, CheckCircle2 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { useFeedback } from '../../context/FeedbackContext';
 
 export default function TerimaSetoran() {
+  const { showToast, showConfirm } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [search, setSearch] = useState('');
   const [selectedAnggota, setSelectedAnggota] = useState<Anggota | null>(null);
@@ -145,7 +147,12 @@ export default function TerimaSetoran() {
     const totalToPay = getTotalSelected();
     if (totalToPay <= 0) return;
 
-    if (!window.confirm(`Proses pembayaran sebesar Rp ${totalToPay.toLocaleString('id-ID')}?`)) {
+    const confirmed = await showConfirm({
+      title: 'Konfirmasi Pembayaran',
+      message: `Proses pembayaran sebesar Rp ${totalToPay.toLocaleString('id-ID')}?`,
+      confirmText: 'Proses Pembayaran',
+    });
+    if (!confirmed) {
       return;
     }
 
@@ -182,11 +189,11 @@ export default function TerimaSetoran() {
         }
       }
 
-      alert("Pembayaran berhasil diproses!");
+      showToast("Pembayaran berhasil diproses!", 'success');
       await loadMemberBilling(selectedAnggota.id);
       
     } catch (err: any) {
-      alert(err.message || 'Gagal memproses pembayaran');
+      showToast(err.message || 'Gagal memproses pembayaran', 'error');
     } finally {
       setSubmitting(false);
     }
