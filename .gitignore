@@ -21,3 +21,6 @@ dist-ssr/
 node_modules/
 .vite/
 .vitest/
+
+# Local IDE / Gemini configuration
+.gemini/
