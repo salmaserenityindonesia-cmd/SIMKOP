@@ -379,13 +379,13 @@ updated: 2026-09-30T05:21:00+07:00
 ---
 
 ### Phase 23: Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori
-**Status**: ⏳ Ready
+**Status**: ✅ Complete
 **Objective**: Memindahkan item navigasi menu "Laporan Retail & Stok" (/admin/laporan-retail) dari seksi "LAPORAN & ANALITIK" ke seksi "TOKO RETAIL & INVENTORI" (tepat di bawah "Pengaturan Kasir") pada sidebar admin untuk alur kerja operasional retail yang lebih terintegrasi.
 **Depends on**: Phase 22
 
 **Plans**:
-- [ ] Plan 23.1: Relokasi item navigasi Laporan Retail & Stok di Sidebar.tsx
-- [ ] Plan 23.2: Validasi tipe TypeScript dan build integritas aplikasi
+- [x] Plan 23.1: Relokasi item navigasi Laporan Retail & Stok di Sidebar.tsx
+- [x] Plan 23.2: Validasi tipe TypeScript dan build integritas aplikasi
 
 **Verification**:
 - Menu "Laporan Retail & Stok" tampil di bawah "Pengaturan Kasir" pada seksi "TOKO RETAIL & INVENTORI".
@@ -442,7 +442,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 20 | Manajemen Profil Koperasi & Header Struk POS | ✅ | 1/1 | 100% |
 | 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi | ✅ | 1/1 | 100% |
 | 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir | ✅ | 4/4 | 100% |
-| 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori | ⏳ Ready | 0/2 | 0% |
+| 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori | ✅ | 2/2 | 100% |
 
 ---
 
@@ -472,6 +472,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 20 | 2026-10-28 | 2026-10-28 | 1 day |
 | 21 | 2026-10-28 | 2026-10-28 | 1 day |
 | 22 | 2026-10-28 | 2026-10-28 | 1 day |
-| 23 | 2026-10-28 | — | — |
+| 23 | 2026-10-28 | 2026-10-28 | 1 day |
 
 
