@@ -13,7 +13,7 @@ export default function SummaryPanel({
 }: any) {
   const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null || true);
   const [paymentType, setPaymentType] = useState('Tunai');
-  
+
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
   const discount = isMemberMode ? subtotal * 0.05 : 0;
   const total = subtotal - discount;
@@ -46,7 +46,7 @@ export default function SummaryPanel({
             <div className="w-full">
               {isMemberMode ? (
                 <>
-                  <select 
+                  <select
                     className="w-full bg-surface border border-outline-variant rounded p-1 text-sm mb-2"
                     value={selectedMember?.id || ''}
                     onChange={e => onSelectMember(members.find(m => m.id === e.target.value) || null)}
@@ -92,9 +92,9 @@ export default function SummaryPanel({
         <div className="text-title-sm font-title-sm text-primary mb-2">Metode Pembayaran Cepat</div>
         <div className="grid grid-cols-2 gap-2">
           {['Tunai', 'Potong Simpanan', 'Bon Toko'].map(type => (
-            <button 
+            <button
               key={type}
-              className={`p-2.5 rounded-lg border flex items-center gap-2 font-title-sm text-left transition-all ${paymentType === type ? 'border-2 border-secondary bg-surface-container-low text-primary' : 'border-outline-variant/60 bg-surface-container-lowest text-primary hover:border-secondary'}`} 
+              className={`p-2.5 rounded-lg border flex items-center gap-2 font-title-sm text-left transition-all ${paymentType === type ? 'border-2 border-secondary bg-surface-container-low text-primary' : 'border-outline-variant/60 bg-surface-container-lowest text-primary hover:border-secondary'}`}
               onClick={() => setPaymentType(type)}>
               <span className="material-symbols-outlined text-secondary text-[22px]">{type === 'Tunai' ? 'payments' : type === 'Potong Simpanan' ? 'account_balance_wallet' : 'receipt_long'}</span>
               <div className="font-bold leading-tight">{type}</div>
