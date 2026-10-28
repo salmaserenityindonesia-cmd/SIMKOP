@@ -10,6 +10,7 @@ export default function SummaryPanel({
   onSelectMember,
   parkedCount = 0,
   onOpenParked,
+  isShiftActive = true,
 }: any) {
   const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null || true);
   const [paymentType, setPaymentType] = useState('Tunai');
@@ -104,9 +105,21 @@ export default function SummaryPanel({
       </div>
 
       <div className="space-y-2 mt-2">
-        <button className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2.5 shadow-md transition-all active:scale-[0.98]" onClick={() => onPay(paymentType)}>
+        <button 
+          disabled={!isShiftActive || cart.length === 0}
+          className={`w-full py-4 px-6 rounded-xl font-headline-sm text-headline-sm flex items-center justify-center gap-2.5 transition-all ${
+            !isShiftActive 
+              ? 'bg-slate-400 text-slate-200 cursor-not-allowed opacity-60 shadow-none' 
+              : cart.length === 0
+              ? 'bg-emerald-600/60 text-white cursor-not-allowed shadow-none'
+              : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-md active:scale-[0.98]'
+          }`} 
+          onClick={() => {
+            if (isShiftActive && cart.length > 0) onPay(paymentType);
+          }}
+        >
           <span className="material-symbols-outlined text-[26px]">point_of_sale</span>
-          <span>Bayar Transaksi [F9 / Space]</span>
+          <span>{isShiftActive ? 'Bayar Transaksi [F9 / Space]' : 'Shift Kasir Belum Buka'}</span>
         </button>
         <div className="grid grid-cols-2 gap-2">
           <button className="py-2.5 px-3 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container text-primary rounded-lg font-title-sm flex items-center justify-center gap-1.5 transition-colors" onClick={onHold}>

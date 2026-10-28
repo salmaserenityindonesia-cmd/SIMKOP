@@ -8,9 +8,12 @@ import CameraScannerModal from '../../components/pos/CameraScannerModal';
 import ReceiptModal from '../../components/pos/ReceiptModal';
 import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
 import ParkedTransactionsModal from '../../components/pos/ParkedTransactionsModal';
+import BukaKasirModal from '../../components/pos/BukaKasirModal';
+import TutupKasirModal from '../../components/pos/TutupKasirModal';
 import { processCheckout } from '../../services/posCheckoutService';
 import { holdTransaction, getParkedSales } from '../../services/posParkedService';
 import { cleanupExpiredParkedSales } from '../../services/posSettingsService';
+import { getActiveShift, CashierShift } from '../../services/cashierShiftService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -38,12 +41,18 @@ export default function POSPage() {
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
   const [parkedCount, setParkedCount] = useState<number>(0);
 
+  // Shift & Cashier State
+  const [activeShift, setActiveShift] = useState<CashierShift | null>(null);
+  const [currentCashier, setCurrentCashier] = useState<{ id: string; nama?: string } | null>(null);
+
   const [modals, setModals] = useState({
     qty: false,
     camera: false,
     receipt: false,
     splitPayment: false,
     parked: false,
+    bukaKasir: false,
+    tutupKasir: false,
   });
   const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
 
@@ -65,6 +74,46 @@ export default function POSPage() {
   }, []);
 
   useEffect(() => {
+    async function initSession() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        let cashierInfo = {
+          id: user?.id || '00000000-0000-0000-0000-000000000000',
+          nama: 'Kasir POS',
+        };
+
+        if (user?.id) {
+          const { data: pengelola } = await supabase
+            .from('pengelola')
+            .select('id, nama')
+            .eq('id', user.id)
+            .single();
+          if (pengelola?.nama) {
+            cashierInfo = { id: pengelola.id, nama: pengelola.nama };
+          }
+        }
+        setCurrentCashier(cashierInfo);
+
+        const shift = await getActiveShift(cashierInfo.id);
+        if (shift) {
+          setActiveShift(shift);
+        } else {
+          setActiveShift(null);
+          setModals(m => ({ ...m, bukaKasir: true }));
+        }
+      } catch (err) {
+        console.warn('Gagal memuat active shift:', err);
+        const shift = await getActiveShift();
+        if (shift) {
+          setActiveShift(shift);
+        } else {
+          setActiveShift(null);
+          setModals(m => ({ ...m, bukaKasir: true }));
+        }
+      }
+    }
+
+    initSession();
     getKoperasiProfile().then(setKoperasiProfile);
     loadProductCatalog();
     refreshParkedCount();
@@ -91,6 +140,12 @@ export default function POSPage() {
   const total = subtotal - discount;
 
   const handleHoldTransaction = useCallback(async () => {
+    if (!activeShift) {
+      showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+      setModals(m => ({ ...m, bukaKasir: true }));
+      return;
+    }
+
     if (cart.length === 0) {
       showToast('Keranjang masih kosong untuk ditahan.', 'warning');
       return;
@@ -120,18 +175,39 @@ export default function POSPage() {
     } catch (err: any) {
       showToast(err.message || 'Terjadi kesalahan sistem saat menahan transaksi', 'error');
     }
-  }, [cart, selectedMember, showToast, refreshParkedCount, loadProductCatalog]);
+  }, [cart, selectedMember, activeShift, showToast, refreshParkedCount, loadProductCatalog]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleGlobalKeydown = (e: KeyboardEvent) => {
       // Don't trigger if a modal is open
-      if (modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked) return;
+      if (modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked || modals.bukaKasir || modals.tutupKasir) return;
       
+      if (e.key === 'F1') {
+        e.preventDefault();
+        if (!activeShift) {
+          setModals(m => ({ ...m, bukaKasir: true }));
+        } else {
+          setModals(m => ({ ...m, tutupKasir: true }));
+        }
+        return;
+      }
+
       if ((e.ctrlKey && e.key === 'k') || e.key === 'F2') {
         e.preventDefault();
+        if (!activeShift) {
+          showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+          setModals(m => ({ ...m, bukaKasir: true }));
+          return;
+        }
         searchInputRef.current?.focus();
       } else if (e.key === 'F4') {
+        if (!activeShift) {
+          e.preventDefault();
+          showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+          setModals(m => ({ ...m, bukaKasir: true }));
+          return;
+        }
         if (cart.length > 0) {
           e.preventDefault();
           setActiveItemForQty(cart[cart.length - 1]);
@@ -141,6 +217,12 @@ export default function POSPage() {
         e.preventDefault();
         handleHoldTransaction();
       } else if (e.key === 'F9' || (e.key === ' ' && (e.target as HTMLElement).tagName !== 'INPUT')) {
+        if (!activeShift) {
+          e.preventDefault();
+          showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+          setModals(m => ({ ...m, bukaKasir: true }));
+          return;
+        }
         if (cart.length > 0) {
           e.preventDefault();
           setModals(m => ({ ...m, splitPayment: true }));
@@ -149,9 +231,14 @@ export default function POSPage() {
     };
     window.addEventListener('keydown', handleGlobalKeydown);
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
-  }, [modals, cart, handleHoldTransaction]);
+  }, [modals, cart, activeShift, handleHoldTransaction, showToast]);
 
   const handleSelectProduct = (product: Omit<CartItem, 'qty'>) => {
+    if (!activeShift) {
+      showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+      setModals(m => ({ ...m, bukaKasir: true }));
+      return;
+    }
     setActiveItemForQty(product);
     setModals(m => ({ ...m, qty: true }));
   };
@@ -175,10 +262,17 @@ export default function POSPage() {
   };
 
   const handleCheckoutConfirm = async (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => {
-    const cashierId = null; // Normally from auth context
+    if (!activeShift) {
+      showToast('Shift kasir belum aktif! Harap buka shift kasir terlebih dahulu.', 'error');
+      setModals(m => ({ ...m, bukaKasir: true }));
+      return;
+    }
+
+    const cashierId = activeShift.cashier_id || currentCashier?.id || null;
     const res = await processCheckout({
       memberId: selectedMember?.id || null,
       cashierId,
+      shiftId: activeShift.id,
       cart,
       subtotal,
       discount,
@@ -213,13 +307,37 @@ export default function POSPage() {
   return (
     <div className="bg-background text-on-surface antialiased font-body-md select-none min-h-screen flex flex-col">
       <POSHeader 
-        onOpenQty={() => { if(cart.length>0) setModals(m => ({...m, qty: true})) }}
-        onOpenReceipt={() => { if(cart.length>0) setModals(m => ({...m, splitPayment: true})) }}
-        onOpenCamera={() => setModals(m => ({...m, camera: true}))}
+        onOpenQty={() => { 
+          if (!activeShift) {
+            showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+            setModals(m => ({ ...m, bukaKasir: true }));
+            return;
+          }
+          if(cart.length>0) setModals(m => ({...m, qty: true}));
+        }}
+        onOpenReceipt={() => { 
+          if (!activeShift) {
+            showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+            setModals(m => ({ ...m, bukaKasir: true }));
+            return;
+          }
+          if(cart.length>0) setModals(m => ({...m, splitPayment: true}));
+        }}
+        onOpenCamera={() => {
+          if (!activeShift) {
+            showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+            setModals(m => ({ ...m, bukaKasir: true }));
+            return;
+          }
+          setModals(m => ({...m, camera: true}));
+        }}
         onReset={() => setCart([])}
         onHold={handleHoldTransaction}
         onOpenParked={() => setModals(m => ({...m, parked: true}))}
         parkedCount={parkedCount}
+        activeShift={activeShift}
+        onOpenBukaKasir={() => setModals(m => ({ ...m, bukaKasir: true }))}
+        onOpenTutupKasir={() => setModals(m => ({ ...m, tutupKasir: true }))}
       />
       
       <main className="w-full max-w-[1720px] mx-auto p-3 lg:p-4 flex-1 flex flex-col gap-3">
@@ -228,8 +346,16 @@ export default function POSPage() {
             <ProductSearchInput 
               products={products}
               searchRef={searchInputRef}
+              disabled={!activeShift}
               onSelectProduct={handleSelectProduct}
-              onOpenCamera={() => setModals(m => ({...m, camera: true}))}
+              onOpenCamera={() => {
+                if (!activeShift) {
+                  showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+                  setModals(m => ({ ...m, bukaKasir: true }));
+                  return;
+                }
+                setModals(m => ({...m, camera: true}));
+              }}
             />
             <CartTable 
               cart={cart}
@@ -253,7 +379,13 @@ export default function POSPage() {
             members={members}
             selectedMember={selectedMember}
             onSelectMember={setSelectedMember}
+            isShiftActive={!!activeShift}
             onPay={(method: string) => { 
+              if (!activeShift) {
+                showToast('Harap buka shift kasir terlebih dahulu.', 'warning');
+                setModals(m => ({ ...m, bukaKasir: true }));
+                return;
+              }
               if(cart.length>0) {
                 setInitialPaymentMethod(method);
                 setModals(m => ({...m, splitPayment: true}));
@@ -310,6 +442,7 @@ export default function POSPage() {
         payment={lastPayment}
         saleNumber={lastSaleNumber}
         memberName={selectedMember ? `${selectedMember.nama} (${selectedMember.nrp})` : undefined}
+        cashierName={activeShift?.cashier_name || currentCashier?.nama || 'Kasir POS'}
         profile={koperasiProfile}
         onClose={() => {
           setModals(m => ({...m, receipt: false}));
@@ -329,6 +462,32 @@ export default function POSPage() {
           setTimeout(() => searchInputRef.current?.focus(), 100);
         }}
         onReload={handleReloadParked}
+      />
+
+      {/* Modal Buka Kasir Baru */}
+      <BukaKasirModal
+        isOpen={modals.bukaKasir}
+        cashierId={currentCashier?.id}
+        cashierName={currentCashier?.nama || 'Kasir POS'}
+        canCancel={activeShift !== null}
+        onClose={() => setModals(m => ({ ...m, bukaKasir: false }))}
+        onSuccess={(shift) => {
+          setActiveShift(shift);
+          setModals(m => ({ ...m, bukaKasir: false }));
+          setTimeout(() => searchInputRef.current?.focus(), 150);
+        }}
+      />
+
+      {/* Modal Tutup Kasir & Rekonsiliasi Z-Report */}
+      <TutupKasirModal
+        isOpen={modals.tutupKasir}
+        shift={activeShift}
+        onClose={() => setModals(m => ({ ...m, tutupKasir: false }))}
+        onSuccess={(_closedShift) => {
+          setActiveShift(null);
+          setCart([]);
+          setModals(m => ({ ...m, tutupKasir: false, bukaKasir: true }));
+        }}
       />
     </div>
   );

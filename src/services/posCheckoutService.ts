@@ -4,6 +4,7 @@ import { getMemberFinancials } from './posCreditService';
 export interface CheckoutPayload {
   memberId: string | null;
   cashierId: string | null;
+  shiftId?: string | null;
   cart: any[];
   subtotal: number;
   discount: number;
@@ -43,6 +44,7 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
         sale_number: saleNumber,
         member_id: payload.memberId,
         cashier_id: payload.cashierId,
+        shift_id: payload.shiftId || null,
         subtotal: payload.subtotal,
         discount: payload.discount,
         total_amount: payload.totalAmount,

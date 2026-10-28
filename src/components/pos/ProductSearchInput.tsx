@@ -6,9 +6,10 @@ interface ProductSearchInputProps {
   onSelectProduct: (product: { barcode: string; name: string; unit: string; price: number; stock: number; id: string }) => void;
   onOpenCamera: () => void;
   searchRef: React.Ref<HTMLInputElement>;
+  disabled?: boolean;
 }
 
-export default function ProductSearchInput({ products = [], onSelectProduct, onOpenCamera, searchRef }: ProductSearchInputProps) {
+export default function ProductSearchInput({ products = [], onSelectProduct, onOpenCamera, searchRef, disabled = false }: ProductSearchInputProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -72,19 +73,41 @@ export default function ProductSearchInput({ products = [], onSelectProduct, onO
           </div>
           <input
             ref={searchRef}
+            disabled={disabled}
             autoComplete="off"
-            className="w-full pl-12 pr-28 py-3 bg-surface border border-outline-variant/80 rounded-lg text-title-md font-title-md text-primary placeholder:text-outline focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-all font-mono tracking-tight"
-            placeholder="Scan Barcode EAN-13 atau Ketik SKU / Nama Produk (Tekan Ctrl+K / F2)..."
+            className={`w-full pl-12 pr-28 py-3 bg-surface border border-outline-variant/80 rounded-lg text-title-md font-title-md text-primary placeholder:text-outline focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-all font-mono tracking-tight ${
+              disabled ? 'opacity-60 bg-slate-100 cursor-not-allowed select-none' : ''
+            }`}
+            placeholder={
+              disabled 
+                ? "Harap buka shift kasir terlebih dahulu untuk memulai transaksi..." 
+                : "Scan Barcode EAN-13 atau Ketik SKU / Nama Produk (Tekan Ctrl+K / F2)..."
+            }
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setIsOpen(true); setActiveIndex(-1); }}
-            onFocus={() => setIsOpen(true)}
+            onChange={(e) => { 
+              if (disabled) return;
+              setQuery(e.target.value); 
+              setIsOpen(true); 
+              setActiveIndex(-1); 
+            }}
+            onFocus={() => {
+              if (!disabled) setIsOpen(true);
+            }}
             onKeyDown={handleKeyDown}
           />
           <div className="absolute inset-y-0 right-2 flex items-center gap-1.5">
             <span className="px-2 py-1 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono border border-outline-variant/40">ENTER ↵</span>
           </div>
         </div>
-        <button className="px-4 py-3 bg-surface-container-low hover:bg-surface-container text-primary font-title-sm border border-outline-variant/60 rounded-lg flex items-center justify-center gap-2 transition-colors shrink-0" onClick={onOpenCamera}>
+        <button 
+          disabled={disabled}
+          className={`px-4 py-3 bg-surface-container-low hover:bg-surface-container text-primary font-title-sm border border-outline-variant/60 rounded-lg flex items-center justify-center gap-2 transition-colors shrink-0 ${
+            disabled ? 'opacity-50 cursor-not-allowed' : ''
+          }`} 
+          onClick={() => {
+            if (!disabled) onOpenCamera();
+          }}
+        >
           <span className="material-symbols-outlined text-secondary text-[20px]">photo_camera</span>
           <span>Scan Kamera</span>
         </button>

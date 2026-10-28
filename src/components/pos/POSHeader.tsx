@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LayoutDashboard } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { CashierShift } from '../../services/cashierShiftService';
 
 interface POSHeaderProps {
   onOpenQty?: () => void;
@@ -11,6 +12,9 @@ interface POSHeaderProps {
   onHold?: () => void;
   onOpenParked?: () => void;
   parkedCount?: number;
+  activeShift?: CashierShift | null;
+  onOpenBukaKasir?: () => void;
+  onOpenTutupKasir?: () => void;
 }
 
 export default function POSHeader({
@@ -21,6 +25,9 @@ export default function POSHeader({
   onHold,
   onOpenParked,
   parkedCount = 0,
+  activeShift = null,
+  onOpenBukaKasir,
+  onOpenTutupKasir,
 }: POSHeaderProps) {
   const [time, setTime] = useState(new Date());
   const [isAdmin, setIsAdmin] = useState(false);
@@ -95,14 +102,42 @@ export default function POSHeader({
               </div>
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded bg-surface-container-lowest/10 border border-surface-container-lowest/15 text-body-sm font-body-sm">
-            <span className="inline-block w-2 h-2 rounded-full bg-secondary-fixed animate-pulse"></span>
-            <span className="font-medium text-surface-container-lowest">
-              {kasirName}
-            </span>
-            <span className="text-on-primary-container">|</span>
-            <span className="text-secondary-fixed">Shift Aktif</span>
-          </div>
+          {activeShift ? (
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-lg bg-surface-container-lowest/10 border border-surface-container-lowest/15 text-body-sm font-body-sm">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="font-medium text-surface-container-lowest">
+                  {activeShift.cashier_name || kasirName}
+                </span>
+                <span className="text-on-primary-container">|</span>
+                <span className="font-mono text-emerald-300 text-xs font-semibold">
+                  {activeShift.shift_number} (Rp {activeShift.initial_cash.toLocaleString('id-ID')})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenTutupKasir}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-label-sm font-label-sm font-semibold transition active:scale-95 shadow-sm cursor-pointer"
+                title="Tutup Shift & Rekonsiliasi Kasir"
+              >
+                <span className="material-symbols-outlined text-[16px]">lock_clock</span>
+                <span className="hidden md:inline">Tutup Kasir</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onOpenBukaKasir}
+                className="flex items-center gap-2 px-3 py-1 rounded-lg bg-rose-500/85 hover:bg-rose-500 text-white border border-rose-300/40 text-body-sm transition cursor-pointer active:scale-95 shadow-sm"
+                title="Klik untuk membuka shift kasir baru"
+              >
+                <span className="inline-block w-2 h-2 rounded-full bg-white animate-ping"></span>
+                <span className="font-semibold text-xs">Kasir Belum Buka</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/25 font-mono">Buka Shift</span>
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto py-1">
