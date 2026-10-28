@@ -1,4 +1,4 @@
----
+﻿---
 milestone: SIMKOP v1.0
 version: 1.0.0
 updated: 2026-09-30T05:21:00+07:00
@@ -288,6 +288,23 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 18: Refactor Native Browser Dialogs to React Modal & Toast System
+**Status**: 🟡 Ready for execution
+**Objective**: Memigrasikan seluruh pemanggilan browser alerts (window.alert, alert), konfirmasi (window.confirm, confirm), dan prompt dari aplikasi ke sistem React Feedback Modal dan Toast terpadu yang aman dari pemblokiran browser.
+**Depends on**: Phase 17
+
+**Plans**:
+- [ ] Plan 18.1: (Wave 1) Global Feedback UI Infrastructure (Toast & Confirm Modal System)
+- [ ] Plan 18.2: (Wave 2) Refactor Native Browser Dialogs in Admin Module Pages
+- [ ] Plan 18.3: (Wave 2) Refactor POS Module & Standalone Utilities Dialogs
+
+**Verification**:
+- FeedbackProvider terpasang dan dapat diakses dari seluruh route/komponen.
+- 0 instance alert(, confirm(, atau prompt( di codebase src/.
+- npm run build sukses dan unit tests lulus tanpa regresi.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -326,6 +343,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 15 | Product Catalog Excel Template Export and Batch Import | ✅ | 2/2 | 100% |
 | 16 | Dashboard Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
 | 17 | Dashboard Laporan Retail & Inventori POS | ✅ | 3/3 | 100% |
+| 18 | Refactor Native Browser Dialogs | 🟡 | 0/3 | 0% |
 
 ---
 
@@ -350,3 +368,5 @@ updated: 2026-09-30T05:21:00+07:00
 | 15 | 2026-09-28 | 2026-09-30 | — |
 | 16 | 2026-09-30 | 2026-09-30 | 1 day |
 | 17 | 2026-09-30 | 2026-09-30 | 1 day |
+
+
