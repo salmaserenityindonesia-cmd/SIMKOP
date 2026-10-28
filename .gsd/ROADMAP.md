@@ -6,7 +6,7 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 17 — Dashboard Laporan Retail & Inventori POS
+> **Current Phase:** 24 — Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS
 > **Status:** ✅ All phases complete
 
 ## Must-Haves (from SPEC)
@@ -394,6 +394,25 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 24: Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS
+**Status**: ✅ Complete
+**Objective**: Mengimplementasikan siklus shift operasional kasir (Buka Shift dengan modal kas kecil awal dan Tutup Shift dengan rekonsiliasi uang fisik aktual vs penjualan kas), penyekatan operasional kasir sebelum buka shift, pencatatan mutasi mutasi kas ke tabel `cash_flow`, dan integrasi laporan rekonsiliasi di Laporan Retail.
+**Depends on**: Phase 22, Phase 23
+
+**Plans**:
+- [x] Plan 24.1: Skema Database cashier_shifts & Service Layer Mutasi Kasir
+- [x] Plan 24.2: UI Modals Buka & Tutup Kasir serta Route Guard POS
+- [x] Plan 24.3: Integrasi Laporan Retail & Rekonsiliasi, Unit Test & Build Verification
+
+**Verification**:
+- Tabel `cashier_shifts` dan relasi `sales.shift_id` terdefinisi di Supabase migration.
+- `cashierShiftService.ts` mengelola pembukaan, rekonsiliasi, penutupan, dan mutasi `cash_flow` dengan dual-layer fallback.
+- Modal Buka & Tutup Kasir berfungsi di POS, transaksi checkout diblokir sebelum buka shift.
+- Tab 1 Laporan Retail memuat riwayat sesi shift kasir dan rekonsiliasi selisih kas.
+- Seluruh unit tests vitest dan build produksi Vite (`npm run build`) sukses tanpa error.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -413,6 +432,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 13 | Phase 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi |
 | 14 | Phase 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir |
 | 15 | Phase 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori |
+| 16 | Phase 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS |
 
 ---
 
@@ -443,6 +463,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi | ✅ | 1/1 | 100% |
 | 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir | ✅ | 4/4 | 100% |
 | 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori | ✅ | 2/2 | 100% |
+| 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS | ✅ | 3/3 | 100% |
 
 ---
 
@@ -473,5 +494,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 21 | 2026-10-28 | 2026-10-28 | 1 day |
 | 22 | 2026-10-28 | 2026-10-28 | 1 day |
 | 23 | 2026-10-28 | 2026-10-28 | 1 day |
+| 24 | 2026-10-28 | 2026-10-28 | 1 day |
 
 

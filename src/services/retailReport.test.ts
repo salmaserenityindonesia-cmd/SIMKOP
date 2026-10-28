@@ -270,6 +270,144 @@ describe('Retail Report Service', () => {
       expect(stock.items[0].status).toBe('aman');
       expect(stock.items[1].status).toBe('kritis');
       expect(stock.items[2].status).toBe('habis');
+      expect(stock.labaBruto).toBe(55000);
+      expect(stock.totalValuasiHpp).toBe(260000);
+    });
+
+    it('should handle abnormal buy_price (e.g. barcode scan or trillion spike) and clamp safely', async () => {
+      const mockCorruptedProducts = [
+        {
+          id: 'p-corrupted',
+          sku: '8999999123456',
+          name: 'Produk Barcode Nyasar ke Harga',
+          stock: 10,
+          min_stock_alert: 2,
+          buy_price: 45000035978622, // 45 Triliun corrupted price from scanned barcode
+          sell_price: 50000,
+          unit: 'pcs',
+          category_id: 'cat-1',
+        },
+      ];
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            then: (resolve: any) => resolve({ data: mockCorruptedProducts, error: null }),
+          };
+        }
+        if (table === 'product_categories') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const stock = await getStockValuation();
+
+      // Corrupted buy_price (> 100 Juta) with normal sell_price (50,000) should be sanitized to 80% of sell_price = 40,000
+      // 10 * 40,000 = 400,000
+      expect(stock.totalValuasiAset).toBe(400000);
+      expect(stock.potensiPenjualan).toBe(500000);
+      expect(stock.labaBruto).toBe(100000);
+      expect(stock.items[0].buy_price).toBe(40000);
+      expect(stock.totalValuasiAset).toBeLessThan(1000000000);
+    });
+
+    it('should sanitize null, undefined, NaN, and negative values cleanly', async () => {
+      const mockDirtyProducts = [
+        {
+          id: 'p-dirty',
+          sku: 'DIRTY-01',
+          name: 'Produk Dirty Input',
+          stock: 'invalid_number' as any,
+          min_stock_alert: null as any,
+          buy_price: NaN as any,
+          sell_price: -5000 as any,
+          unit: 'pcs',
+          category_id: null,
+        },
+      ];
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            then: (resolve: any) => resolve({ data: mockDirtyProducts, error: null }),
+          };
+        }
+        if (table === 'product_categories') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const stock = await getStockValuation();
+
+      expect(stock.totalValuasiAset).toBe(0);
+      expect(stock.potensiPenjualan).toBe(0);
+      expect(stock.labaBruto).toBe(0);
+      expect(Number.isFinite(stock.totalValuasiAset)).toBe(true);
+      expect(Number.isFinite(stock.potensiPenjualan)).toBe(true);
+      expect(stock.items[0].stock).toBe(0);
+      expect(stock.items[0].buy_price).toBe(0);
+      expect(stock.items[0].sell_price).toBe(0);
+    });
+
+    it('should cap single item valuation to 1 Miliar upper bound limit', async () => {
+      const mockExtremeValuationProduct = [
+        {
+          id: 'p-extreme',
+          sku: 'EXTREME-01',
+          name: 'Produk Valuasi Masif',
+          stock: 50000,
+          min_stock_alert: 10,
+          buy_price: 80000000, // 80 Juta per unit * 50.000 unit = 4 Triliun!
+          sell_price: 90000000, // 90 Juta per unit * 50.000 unit = 4.5 Triliun!
+          unit: 'pcs',
+          category_id: null,
+        },
+      ];
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            then: (resolve: any) => resolve({ data: mockExtremeValuationProduct, error: null }),
+          };
+        }
+        if (table === 'product_categories') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const stock = await getStockValuation();
+
+      // Both valuasi HPP and potensi penjualan should be capped at MAX_SINGLE_ITEM_VALUATION (1,000,000,000)
+      expect(stock.totalValuasiAset).toBe(1000000000);
+      expect(stock.potensiPenjualan).toBe(1000000000);
+      expect(stock.items[0].valuasiAset).toBe(1000000000);
     });
   });
 });

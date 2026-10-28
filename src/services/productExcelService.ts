@@ -145,10 +145,10 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
         name,
         categoryName,
         unit: getVal('satuan') ? String(getVal('satuan')).trim() : 'pcs',
-        buy_price: Number(getVal('harga_beli')) || 0,
-        sell_price: Number(getVal('harga_jual')) || 0,
-        stock: Number(getVal('stok_awal')) || 0,
-        min_stock_alert: Number(getVal('min_stok_alert')) || 5,
+        buy_price: Math.min(Math.max(0, Number(getVal('harga_beli')) || 0), 100000000),
+        sell_price: Math.min(Math.max(0, Number(getVal('harga_jual')) || 0), 100000000),
+        stock: Math.min(Math.max(0, Number(getVal('stok_awal')) || 0), 100000),
+        min_stock_alert: Math.min(Math.max(0, Number(getVal('min_stok_alert')) || 5), 100000),
         is_active: true
       });
     }
