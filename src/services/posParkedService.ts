@@ -89,7 +89,6 @@ export async function holdTransaction(params: {
           paid_deposit: 0,
           paid_credit: 0,
           payment_scheme: 'cash',
-          status: 'parked',
           sale_status: 'parked',
           expires_at: expiresAt
         })
@@ -192,8 +191,8 @@ export async function getParkedSales(): Promise<ParkedSale[]> {
   try {
     const { data: dbSales, error: sErr } = await supabase
       .from('sales')
-      .select('id, sale_number, member_id, subtotal, discount, total_amount, created_at, expires_at, status, sale_status')
-      .or('status.eq.parked,sale_status.eq.parked')
+      .select('id, sale_number, member_id, subtotal, discount, total_amount, created_at, expires_at, sale_status')
+      .eq('sale_status', 'parked')
       .order('created_at', { ascending: false });
 
     if (!sErr && dbSales && dbSales.length > 0) {
@@ -362,7 +361,7 @@ export async function cancelAndRestockParkedSale(
     try {
       await supabase
         .from('sales')
-        .update({ status: 'cancelled', sale_status: 'cancelled' })
+        .update({ sale_status: 'cancelled' })
         .eq('id', saleId);
     } catch (cancelErr) {
       console.warn('Gagal update status sale cancelled:', cancelErr);
@@ -377,3 +376,4 @@ export async function cancelAndRestockParkedSale(
     return { success: false, restoredCount: 0, error: err?.message || 'Gagal membatalkan transaksi.' };
   }
 }
+

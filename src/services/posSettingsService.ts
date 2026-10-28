@@ -237,8 +237,8 @@ export async function cleanupExpiredParkedSales(): Promise<{ success: boolean; c
     // Query parked transactions that have expired
     const { data: expiredSales, error: salesErr } = await supabase
       .from('sales')
-      .select('id, expires_at, status, sale_status')
-      .or('status.eq.parked,sale_status.eq.parked')
+      .select('id, expires_at, sale_status')
+      .eq('sale_status', 'parked')
       .lt('expires_at', nowIso);
 
     if (salesErr || !expiredSales || expiredSales.length === 0) {
@@ -279,7 +279,7 @@ export async function cleanupExpiredParkedSales(): Promise<{ success: boolean; c
       // Mark sale cancelled
       await supabase
         .from('sales')
-        .update({ status: 'cancelled', sale_status: 'cancelled' })
+        .update({ sale_status: 'cancelled' })
         .eq('id', sale.id);
 
       cleaned++;
@@ -291,3 +291,4 @@ export async function cleanupExpiredParkedSales(): Promise<{ success: boolean; c
     return { success: false, cleanedCount: 0, error: fallbackErr?.message };
   }
 }
+

@@ -1,6 +1,10 @@
 -- Migration 018: POS Settings, Parked Sales Expiration & Auto-Restock RPC
 
--- 1. Create pos_settings table
+-- 1. Ensure 'parked' and 'cancelled' values exist in sale_status enum
+ALTER TYPE public.sale_status ADD VALUE IF NOT EXISTS 'parked';
+ALTER TYPE public.sale_status ADD VALUE IF NOT EXISTS 'cancelled';
+
+-- 2. Create pos_settings table
 CREATE TABLE IF NOT EXISTS public.pos_settings (
     id integer PRIMARY KEY DEFAULT 1,
     max_hold_duration_minutes integer NOT NULL DEFAULT 120,
@@ -28,22 +32,10 @@ INSERT INTO public.pos_settings (id, max_hold_duration_minutes, allow_negative_s
 VALUES (1, 120, false)
 ON CONFLICT (id) DO NOTHING;
 
--- 2. Add columns to sales and sale_items to ensure cross-compatibility
+-- 3. Add expires_at column to sales table
 ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS expires_at timestamp with time zone;
-ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS status text DEFAULT 'completed';
-ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS sale_status text DEFAULT 'completed';
 
--- Synchronize status & sale_status if any
-UPDATE public.sales SET status = sale_status WHERE status IS NULL AND sale_status IS NOT NULL;
-UPDATE public.sales SET sale_status = status WHERE sale_status IS NULL AND status IS NOT NULL;
-
--- Ensure quantity and qty are both present in sale_items
-ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS quantity integer;
-ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS qty integer;
-UPDATE public.sale_items SET quantity = qty WHERE quantity IS NULL AND qty IS NOT NULL;
-UPDATE public.sale_items SET qty = quantity WHERE qty IS NULL AND quantity IS NOT NULL;
-
--- 3. Stored Procedure / RPC for Auto-Restock of Expired Parked Sales
+-- 4. Stored Procedure / RPC for Auto-Restock of Expired Parked Sales
 CREATE OR REPLACE FUNCTION public.cleanup_expired_parked_sales()
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -56,7 +48,7 @@ DECLARE
 BEGIN
     FOR v_sale IN 
         SELECT id FROM public.sales
-        WHERE (COALESCE(status, '') = 'parked' OR COALESCE(sale_status, '') = 'parked')
+        WHERE sale_status::text = 'parked'
           AND expires_at IS NOT NULL
           AND expires_at < now()
     LOOP
@@ -73,8 +65,7 @@ BEGIN
 
         -- Update sales status to cancelled
         UPDATE public.sales
-        SET status = 'cancelled',
-            sale_status = 'cancelled'
+        SET sale_status = 'cancelled'::public.sale_status
         WHERE id = v_sale.id;
 
         v_count := v_count + 1;

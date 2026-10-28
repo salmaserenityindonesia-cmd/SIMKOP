@@ -165,7 +165,7 @@ describe('posSettingsService', () => {
       if (table === 'sales') {
         return {
           select: vi.fn().mockReturnValue({
-            or: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
               lt: vi.fn().mockResolvedValue({
                 data: [{ id: 'sale-expired-1', expires_at: '2026-01-01T00:00:00Z' }],
                 error: null
@@ -207,3 +207,4 @@ describe('posSettingsService', () => {
     expect(result.cleanedCount).toBe(1);
   });
 });
+
