@@ -14,7 +14,7 @@ export interface CheckoutPayload {
   paymentScheme: string; // 'cash' | 'split' | 'store_credit'
 }
 
-export const processCheckout = async (payload: CheckoutPayload): Promise<{ success: boolean; error?: string; saleId?: string }> => {
+export const processCheckout = async (payload: CheckoutPayload): Promise<{ success: boolean; error?: string; saleId?: string; saleNumber?: string }> => {
   try {
     // 1. Validation for credit scheme
     if (payload.paidCredit > 0) {
@@ -115,7 +115,7 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
        if (cfError) console.error('cash_flow insert error:', cfError);
     }
 
-    return { success: true, saleId };
+    return { success: true, saleId, saleNumber };
   } catch (error: any) {
     console.error('Checkout error:', error);
     return { success: false, error: error.message };

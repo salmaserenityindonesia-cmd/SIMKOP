@@ -22,6 +22,7 @@ import { LoanMatrix } from './pages/admin/LoanMatrix';
 import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
+import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
 import { FeedbackProvider } from './context/FeedbackContext';
 
 export default function App() {
@@ -218,6 +219,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <LaporanRetail />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/pengaturan" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <PengaturanKoperasi />
             </ProtectedRoute>
           } 
         />

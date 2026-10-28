@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   FileSpreadsheet,
   TrendingUp,
+  Settings,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -77,6 +78,7 @@ export const navigationGroups: NavigationGroup[] = [
     items: [
       { label: 'Manajemen Anggota', icon: Users, href: '/admin/anggota' },
       { label: 'Manajemen User', icon: ShieldCheck, href: '/admin/users', adminOnly: true },
+      { label: 'Pengaturan Koperasi', icon: Settings, href: '/admin/pengaturan', adminOnly: true },
     ],
   },
   {

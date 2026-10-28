@@ -305,6 +305,55 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 19: Implementasi Fitur Download PDF Struk Transaksi POS
+**Status**: ✅ Complete
+**Objective**: Mengaktifkan fungsi download PDF struk kasir client-side dengan format ukuran struk thermal POS (80mm) menggunakan jsPDF, menggantikan pesan toast placeholder di ReceiptModal dan mengintegrasikan nomor transaksi serta detail pembayaran.
+**Depends on**: Phase 18
+
+**Plans**:
+- [x] Plan 19.1: Implementasi Engine Generator PDF Struk POS & Integrasi Modal Kasir
+
+**Verification**:
+- Tombol "Download PDF" pada modal struk memicu download file PDF struk thermal (80mm).
+- Struk PDF memuat data transaksi lengkap: identitas koperasi, no invoice, kasir/anggota, rincian barang, total, metode split payment, dan kembalian.
+- Build TypeScript dan unit test lulus tanpa error.
+
+---
+
+### Phase 20: Manajemen Profil Koperasi & Konfigurasi Header Struk POS
+**Status**: ✅ Complete
+**Objective**: Membangun modul manajemen profil koperasi di dashboard admin dan mengintegrasikan profil dinamis ke seluruh output struk POS (modal tampilan thermal, download PDF, dan WhatsApp). Memperbaiki layout bug penumpukan teks pada header PDF dan tampilan struk kasir saat alamat panjang.
+**Depends on**: Phase 19
+
+**Plans**:
+- [x] Plan 20.1: Manajemen Profil Koperasi & Konfigurasi Header Struk POS
+
+**Verification**:
+- Tersedia migrasi SQL `017_create_app_settings.sql` dengan constraint single row dan RLS.
+- Admin dapat mengubah nama, alamat, telp, terminal, dan footer di `/admin/pengaturan`.
+- Live preview mini struk merespons ketikan form pengaturan secara real-time.
+- Tampilan struk kasir, PDF download, dan WhatsApp sharing menggunakan data profil koperasi yang disimpan di database.
+- Bug teks menabrak/tumpang tindih pada alamat & telepon struk thermal/PDF teratasi sepenuhnya.
+- Build TypeScript dan unit test lulus tanpa error.
+
+---
+
+### Phase 21: Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi
+**Status**: ✅ Complete
+**Objective**: Mengatasi galat PostgREST "Could not find the table 'public.koperasi_profile' in the schema cache" dengan menyediakan skrip DDL SQL `017_create_koperasi_profile.sql`, serta mengimplementasikan graceful offline fallback (localStorage) pada service layer dan user feedback banner di admin panel.
+**Depends on**: Phase 20
+
+**Plans**:
+- [x] Plan 21.1: Pembuatan DDL migrasi SQL, service layer resilient dengan offline fallback, dan visual notification banner
+
+**Verification**:
+- Berkas migrasi `supabase/migrations/017_create_koperasi_profile.sql` siap dijalankan di Supabase SQL Editor dengan constraint single row (`id = 1`) dan RLS policy lengkap.
+- `settingsService.ts` memiliki fallback offline ganda (`localStorage` & default), mencegah uncaught error saat tabel Supabase belum termigrasi.
+- Halaman admin `PengaturanKoperasi.tsx` menampilkan banner informatif mode lokal dan notifikasi toast yang jelas ketika tabel belum ada di database.
+- 20 unit tests lulus dan build Vite sukses.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -319,6 +368,9 @@ updated: 2026-09-30T05:21:00+07:00
 | 8 | Phase 15 | Export/Import Katalog Produk |
 | 9 | Phase 16 | Dashboard Laporan Keuangan Terpadu (Arus Kas + Estimasi SHU) |
 | 10 | Phase 17 | Dashboard Laporan Retail & Inventori POS |
+| 11 | Phase 19 | POS Receipt PDF Generator Engine & Modal Integration |
+| 12 | Phase 20 | Koperasi Profile Management & Dynamic Receipt Header Configuration |
+| 13 | Phase 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi |
 
 ---
 
@@ -344,6 +396,9 @@ updated: 2026-09-30T05:21:00+07:00
 | 16 | Dashboard Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
 | 17 | Dashboard Laporan Retail & Inventori POS | ✅ | 3/3 | 100% |
 | 18 | Refactor Native Browser Dialogs | ✅ | 3/3 | 100% |
+| 19 | Download PDF Struk Transaksi POS | ✅ | 1/1 | 100% |
+| 20 | Manajemen Profil Koperasi & Header Struk POS | ✅ | 1/1 | 100% |
+| 21 | Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi | ✅ | 1/1 | 100% |
 
 ---
 
@@ -369,5 +424,8 @@ updated: 2026-09-30T05:21:00+07:00
 | 16 | 2026-09-30 | 2026-09-30 | 1 day |
 | 17 | 2026-09-30 | 2026-09-30 | 1 day |
 | 18 | 2026-10-28 | 2026-10-28 | 1 day |
+| 19 | 2026-10-28 | 2026-10-28 | 1 day |
+| 20 | 2026-10-28 | 2026-10-28 | 1 day |
+| 21 | 2026-10-28 | 2026-10-28 | 1 day |
 
 

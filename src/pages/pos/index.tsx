@@ -11,6 +11,7 @@ import { processCheckout } from '../../services/posCheckoutService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
+import { getKoperasiProfile, KoperasiProfile } from '../../services/settingsService';
 
 export interface CartItem {
   id: string;
@@ -30,8 +31,11 @@ export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeItemForQty, setActiveItemForQty] = useState<Omit<CartItem, 'qty'> | null>(null);
   const [lastPayment, setLastPayment] = useState<any>(null);
+  const [lastSaleNumber, setLastSaleNumber] = useState<string | null>(null);
+  const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
   
   useEffect(() => {
+    getKoperasiProfile().then(setKoperasiProfile);
     import('../../services/koperasiService').then(s => {
       s.getProduk().then(data => setProducts(data.filter(p => p.is_active && p.stock > 0)));
     });
@@ -117,6 +121,7 @@ export default function POSPage() {
 
     if (res.success) {
        setLastPayment(payload);
+       setLastSaleNumber(res.saleNumber || null);
        setModals(m => ({ ...m, splitPayment: false, receipt: true }));
     } else {
        showToast(res.error || 'Checkout gagal', 'error');
@@ -216,10 +221,14 @@ export default function POSPage() {
         discount={discount}
         total={total}
         payment={lastPayment}
+        saleNumber={lastSaleNumber}
+        memberName={selectedMember ? `${selectedMember.nama} (${selectedMember.nrp})` : undefined}
+        profile={koperasiProfile}
         onClose={() => {
           setModals(m => ({...m, receipt: false}));
           setCart([]);
           setLastPayment(null);
+          setLastSaleNumber(null);
           setTimeout(() => searchInputRef.current?.focus(), 100);
         }}
       />

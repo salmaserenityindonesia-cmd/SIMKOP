@@ -1,20 +1,18 @@
 ## Current Position
-- **Phase**: 18 (completed)
+- **Phase**: 21 (completed)
 - **Task**: All tasks complete
-- **Status**: Verified (PASS - 6/6 must-haves)
+- **Status**: Verified (PASS - 3/3 tasks)
 
 ## Last Session Summary
-Phase 18 (Refactor Native Browser Dialogs to React Modal & Toast System) executed and verified successfully.
-- 3 plans executed (18.1, 18.2, 18.3) across 2 waves.
-- 6 commits landed (`a783bce6`, `95d70d00`, `fe819863`, `ef6dc698`, `e1645392`, `46227a6a`).
-- Infrastructure `FeedbackContext`, `FeedbackModal`, dan `ToastContainer` terpasang di `src/App.tsx`.
-- 18 file modul Admin, POS, dan utilitas telah direfaktor penuh menggunakan `useFeedback()` (`showToast`, `showAlert`, `showConfirm`).
-- 0 instance native browser alert/confirm/prompt tersisa di `src/`.
-- Verifier independen memvalidasi seluruh must-haves (TypeScript build PASS, Vitest test suite 4/4 test files PASS, 23/23 tests PASS).
+Phase 21 (Resolusi Error Schema Cache koperasi_profile & Migrasi Tabel Profil Koperasi) has been executed and verified.
+- Berkas migrasi DDL `supabase/migrations/017_create_koperasi_profile.sql` dibuat dengan schema `koperasi_profile`, single-row constraint (`id = 1`), RLS policy terpadu, dan initial seed default KOPERASI PRIMKOPPOL Ngawi.
+- Resilient Service Layer di `src/services/settingsService.ts` ditingkatkan dengan pembacaan dan penyimpanan berlapis: in-memory cache, Supabase PostgREST, offline fallback `localStorage` (`simkop_koperasi_profile`), dan default fallback.
+- Penanganan galat schema cache PostgREST (`PGRST205` / `42P01`) diimplementasikan secara elegan pada `updateKoperasiProfile()` sehingga aplikasi tidak mengalami unhandled exception dan tetap dapat menyimpan konfigurasi kasir secara lokal.
+- Halaman admin `src/pages/admin/PengaturanKoperasi.tsx` ditambahkan deteksi `isTableMigratedInSupabase()`, banner peringatan ramah admin saat mode penyimpanan lokal aktif, dan notifikasi toast yang informatif.
+- Unit tests komprehensif di `src/services/settingsService.test.ts` (6 tests) lulus 100%, total 20 tests di 5 files lulus, dan `npm run build` sukses (exit code 0).
 
 ## Next Steps
-All currently planned phases (1-18) in ROADMAP.md are completed and verified!
-Run `/audit-milestone` to review milestone completeness or `/add-phase` to plan future extensions.
+- Jalankan skrip DDL SQL `supabase/migrations/017_create_koperasi_profile.sql` di Supabase SQL Editor pada database aktif untuk mengaktifkan sinkronisasi cloud multi-perangkat.
 
 ## Blockers
 - None.
@@ -22,5 +20,5 @@ Run `/audit-milestone` to review milestone completeness or `/add-phase` to plan 
 ## Context Dump
 
 ### Decisions Made
-- **Zero External Overhead**: Tidak menambahkan library baru; manfaatkan standard React Context API, Lucide React icons, dan Tailwind CSS v4 yang sudah terpasang.
-- **Promise-Based Confirmation**: Modal konfirmasi diekspos sebagai Promise (const confirmed = await showConfirm(...)) agar kode consumer tetap bersih tanpa callback spaghetti.
+- **Resilient Layered Storage**: Menggunakan strategi in-memory cache -> Supabase -> localStorage -> default profile. Ini menjamin kasir POS dan cetak struk tidak terhenti meski database belum dimigrasi atau offline.
+- **Graceful Error Catching**: Mencegah crash UI ketika PostgREST melempar galat schema cache dengan mengenali kode error atau pesan "schema cache", lalu mengembalikan flag `isLocalFallback: true` bersama data yang tersimpan di localStorage.
