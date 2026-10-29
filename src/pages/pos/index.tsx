@@ -13,7 +13,7 @@ import BukaKasirModal from '../../components/pos/BukaKasirModal';
 import TutupKasirModal from '../../components/pos/TutupKasirModal';
 import { processCheckout } from '../../services/posCheckoutService';
 import { holdTransaction, getParkedSales } from '../../services/posParkedService';
-import { cleanupExpiredParkedSales } from '../../services/posSettingsService';
+import { cleanupExpiredParkedSales, getPosSettings } from '../../services/posSettingsService';
 import { getActiveShift, CashierShift } from '../../services/cashierShiftService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
@@ -42,6 +42,7 @@ export default function POSPage() {
   const [lastSaleNumber, setLastSaleNumber] = useState<string | null>(null);
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
   const [parkedCount, setParkedCount] = useState<number>(0);
+  const [memberDiscountPercentage, setMemberDiscountPercentage] = useState<number>(5.0);
 
   // Shift & Cashier State
   const [activeShift, setActiveShift] = useState<CashierShift | null>(null);
@@ -117,6 +118,13 @@ export default function POSPage() {
 
     initSession();
     getKoperasiProfile().then(setKoperasiProfile);
+    getPosSettings().then(s => {
+      if (s && typeof s.member_discount_percentage === 'number') {
+        setMemberDiscountPercentage(s.member_discount_percentage);
+      }
+    }).catch(err => {
+      console.warn('Gagal memuat pengaturan POS:', err);
+    });
     loadProductCatalog();
     refreshParkedCount();
 
@@ -144,7 +152,7 @@ export default function POSPage() {
   }, [searchParams]);
 
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-  const discount = selectedMember ? subtotal * 0.05 : 0; 
+  const discount = selectedMember ? subtotal * (memberDiscountPercentage / 100) : 0; 
   const total = subtotal - discount;
 
   const handleHoldTransaction = useCallback(async () => {
@@ -402,6 +410,7 @@ export default function POSPage() {
             cart={cart}
             members={members}
             selectedMember={selectedMember}
+            memberDiscountPercentage={memberDiscountPercentage}
             onSelectMember={(member: any) => {
               setSelectedMember(member);
               if (!member) {
@@ -477,6 +486,7 @@ export default function POSPage() {
         memberName={selectedMember ? `${selectedMember.nama} (${selectedMember.nrp})` : undefined}
         cashierName={activeShift?.cashier_name || currentCashier?.nama || 'Kasir POS'}
         profile={koperasiProfile}
+        {...({ discountPercentage: memberDiscountPercentage } as any)}
         onClose={() => {
           setModals(m => ({...m, receipt: false}));
           setCart([]);

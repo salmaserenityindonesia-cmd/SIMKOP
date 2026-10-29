@@ -11,6 +11,7 @@ export default function SummaryPanel({
   parkedCount = 0,
   onOpenParked,
   isShiftActive = true,
+  memberDiscountPercentage = 5,
 }: any) {
   const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null);
   const [paymentType, setPaymentType] = useState('Tunai');
@@ -32,7 +33,7 @@ export default function SummaryPanel({
   }, [isNonMember, paymentType]);
 
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
-  const discount = (isMemberMode && selectedMember) ? subtotal * 0.05 : 0;
+  const discount = (isMemberMode && selectedMember) ? subtotal * (memberDiscountPercentage / 100) : 0;
   const total = subtotal - discount;
 
   // Sync selectedMember when switching modes
@@ -92,7 +93,11 @@ export default function SummaryPanel({
             <span className="font-mono text-headline-sm text-secondary-fixed">Rp</span>
             <span className="font-mono text-[42px] leading-tight font-extrabold tracking-tight text-surface-container-lowest">{total.toLocaleString('id-ID')}</span>
           </div>
-          {isMemberMode && <div className="text-[12px] text-on-primary-container mt-1 font-mono">Hemat Rp {discount.toLocaleString('id-ID')} via Diskon Anggota (5%)</div>}
+          {isMemberMode && selectedMember && memberDiscountPercentage > 0 && discount > 0 && (
+            <div className="text-[12px] text-on-primary-container mt-1 font-mono">
+              Hemat Rp {discount.toLocaleString('id-ID')} via Diskon Anggota ({memberDiscountPercentage}%)
+            </div>
+          )}
         </div>
         <div className="space-y-1.5 pt-3 border-t border-surface-container-lowest/15 text-body-sm font-mono text-surface-container-lowest/90">
           <div className="flex justify-between">
@@ -100,7 +105,7 @@ export default function SummaryPanel({
             <span>Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
           <div className="flex justify-between text-secondary-fixed">
-            <span>Diskon Member:</span>
+            <span>Diskon Member{memberDiscountPercentage > 0 && discount > 0 ? ` (${memberDiscountPercentage}%)` : ''}:</span>
             <span>- Rp {discount.toLocaleString('id-ID')}</span>
           </div>
         </div>

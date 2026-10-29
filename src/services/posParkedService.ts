@@ -68,7 +68,8 @@ export async function holdTransaction(params: {
     const saleNumber = `HOLD-${Date.now().toString().slice(-8)}`;
 
     const subtotal = params.cart.reduce((sum, i) => sum + i.price * i.qty, 0);
-    const discount = params.member ? subtotal * 0.05 : 0;
+    const discountPercentage = settings.member_discount_percentage ?? 5.0;
+    const discount = params.member ? subtotal * (discountPercentage / 100) : 0;
     const totalAmount = subtotal - discount;
 
     let saleId = `local-${Date.now()}`;
