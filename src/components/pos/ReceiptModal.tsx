@@ -9,6 +9,7 @@ interface ReceiptModalProps {
   onClose: () => void;
   subtotal: number;
   discount: number;
+  discountPercentage?: number;
   total: number;
   payment?: ReceiptPaymentInfo | null;
   saleNumber?: string | null;
@@ -23,6 +24,7 @@ export default function ReceiptModal({
   onClose,
   subtotal,
   discount,
+  discountPercentage,
   total,
   payment,
   saleNumber,
@@ -44,11 +46,16 @@ export default function ReceiptModal({
   if (!isOpen) return null;
 
   const currentSaleNumber = saleNumber || `INV-${Date.now()}`;
+  const effectiveDiscountPct = discountPercentage ?? (subtotal > 0 && discount > 0 ? Math.round((discount / subtotal) * 100) : 5);
 
   const handleWA = () => {
     let text = `${koperasiProfile.nama_koperasi}\n`;
     text += `No. Trx: ${currentSaleNumber}\n\n`;
     cart.forEach(c => text += `- ${c.name} (x${c.qty}): Rp ${(c.qty * c.price).toLocaleString('id-ID')}\n`);
+    if (discount > 0) {
+      text += `\nSubtotal: Rp ${subtotal.toLocaleString('id-ID')}\n`;
+      text += `Diskon Anggota (${effectiveDiscountPct}%): - Rp ${discount.toLocaleString('id-ID')}\n`;
+    }
     text += `\nTotal: Rp ${total.toLocaleString('id-ID')}\n`;
     if (koperasiProfile.telepon) {
       text += `Kontak: ${koperasiProfile.telepon}\n`;
@@ -70,6 +77,7 @@ export default function ReceiptModal({
         cart,
         subtotal,
         discount,
+        discountPercentage: effectiveDiscountPct,
         total,
         payment: payment || undefined,
         profile: koperasiProfile
@@ -154,10 +162,12 @@ export default function ReceiptModal({
                 <span>Subtotal Kotor:</span>
                 <span>Rp {subtotal.toLocaleString('id-ID')}</span>
               </div>
-              <div className="flex justify-between text-secondary">
-                <span>Diskon Anggota (5%):</span>
-                <span>- Rp {discount.toLocaleString('id-ID')}</span>
-              </div>
+              {discount > 0 && (
+                <div className="flex justify-between text-secondary">
+                  <span>Diskon Anggota ({effectiveDiscountPct}%):</span>
+                  <span>- Rp {discount.toLocaleString('id-ID')}</span>
+                </div>
+              )}
               <div className="flex justify-between font-extrabold text-[13px] pt-1 border-t border-outline-variant/40 text-primary">
                 <span>TOTAL AKHIR:</span>
                 <span>Rp {total.toLocaleString('id-ID')}</span>

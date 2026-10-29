@@ -24,6 +24,7 @@ export interface ReceiptTransactionData {
   cart: ReceiptItem[];
   subtotal: number;
   discount: number;
+  discountPercentage?: number;
   total: number;
   payment?: ReceiptPaymentInfo;
   profile?: Partial<KoperasiProfile>;
@@ -194,8 +195,9 @@ export function generateReceiptPdf(
   doc.text(formatRp(data.subtotal), right, y, { align: 'right' });
 
   if (data.discount > 0) {
+    const pct = data.discountPercentage ?? (data.subtotal > 0 ? Math.round((data.discount / data.subtotal) * 100) : 5);
     y += 3.5;
-    doc.text('Diskon Anggota (5%)', left, y);
+    doc.text(`Diskon Anggota (${pct}%)`, left, y);
     doc.text('- ' + formatRp(data.discount), right, y, { align: 'right' });
   }
 

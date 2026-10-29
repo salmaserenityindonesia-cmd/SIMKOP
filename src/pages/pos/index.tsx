@@ -486,7 +486,7 @@ export default function POSPage() {
         memberName={selectedMember ? `${selectedMember.nama} (${selectedMember.nrp})` : undefined}
         cashierName={activeShift?.cashier_name || currentCashier?.nama || 'Kasir POS'}
         profile={koperasiProfile}
-        {...({ discountPercentage: memberDiscountPercentage } as any)}
+        discountPercentage={memberDiscountPercentage}
         onClose={() => {
           setModals(m => ({...m, receipt: false}));
           setCart([]);

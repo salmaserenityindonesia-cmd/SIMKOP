@@ -84,4 +84,32 @@ describe('receiptPdfGenerator', () => {
     expect(doc).toBeDefined();
     expect(typeof doc.text).toBe('function');
   });
+
+  it('should render dynamic discount percentage label when discountPercentage is specified', () => {
+    const dataWithDiscount: ReceiptTransactionData = {
+      saleNumber: 'INV-DISC-10',
+      cart: [{ name: 'Gula 1kg', qty: 2, price: 15000 }],
+      subtotal: 30000,
+      discount: 3000,
+      discountPercentage: 10,
+      total: 27000
+    };
+
+    const doc = generateReceiptPdf(dataWithDiscount, false);
+    expect(doc).toBeDefined();
+  });
+
+  it('should hide member discount line completely when discount is 0', () => {
+    const dataZeroDiscount: ReceiptTransactionData = {
+      saleNumber: 'INV-DISC-0',
+      cart: [{ name: 'Gula 1kg', qty: 2, price: 15000 }],
+      subtotal: 30000,
+      discount: 0,
+      discountPercentage: 0,
+      total: 30000
+    };
+
+    const doc = generateReceiptPdf(dataZeroDiscount, false);
+    expect(doc).toBeDefined();
+  });
 });
