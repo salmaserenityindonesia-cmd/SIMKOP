@@ -1,19 +1,41 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { UserCheck, User } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import MemberCreditBadge from './MemberCreditBadge';
+
+export interface MemberInfo {
+  id: string;
+  nama?: string;
+  name?: string;
+  nrp?: string;
+  member_number?: string;
+}
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   cart: any[];
   total: number;
-  memberId: string | null;
+  memberId?: string | null;
+  selectedMember?: MemberInfo | null;
+  isNonMember?: boolean;
   initialMethod?: string;
   onConfirm: (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => void;
 }
 
-export default function SplitPaymentModal({ isOpen, onClose, cart, total, memberId, initialMethod = 'Tunai', onConfirm }: Props) {
-  const isNonMember = !memberId;
+export default function SplitPaymentModal({
+  isOpen,
+  onClose,
+  cart,
+  total,
+  memberId,
+  selectedMember,
+  isNonMember: propIsNonMember,
+  initialMethod = 'Tunai',
+  onConfirm
+}: Props) {
+  const effectiveMemberId = selectedMember?.id || memberId || null;
+  const isNonMember = propIsNonMember ?? !effectiveMemberId;
   const [paidCash, setPaidCash] = useState<string>('');
   const [paidDeposit, setPaidDeposit] = useState<string>('');
   const [paidCredit, setPaidCredit] = useState<string>('');
@@ -42,9 +64,9 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
         setPaidCredit('');
       }
 
-      if (memberId) {
+      if (effectiveMemberId) {
         import('../../services/posCreditService').then(s => {
-          s.getMemberFinancials(memberId).then(setFinancials);
+          s.getMemberFinancials(effectiveMemberId).then(setFinancials);
         });
       } else {
         setFinancials(null);
@@ -59,7 +81,7 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, memberId, isNonMember, total, initialMethod]);
+  }, [isOpen, effectiveMemberId, isNonMember, total, initialMethod]);
 
   if (!isOpen) return null;
 
@@ -83,7 +105,7 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
     } else if (creditAmount > financials.remainingCreditLimit) {
       error = 'Nominal Bon Toko melebihi Sisa Limit Bon Aman (THP).';
     }
-  } else if (!memberId && (depositAmount > 0 || creditAmount > 0)) {
+  } else if (!effectiveMemberId && (depositAmount > 0 || creditAmount > 0)) {
     error = 'Pilih anggota terlebih dahulu untuk menggunakan Simpanan / Bon.';
   }
 
@@ -149,8 +171,51 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
             </p>
           </div>
 
-          {memberId ? (
-            <MemberCreditBadge memberId={memberId} onFinancialsLoaded={setFinancials} />
+          {!isNonMember && (selectedMember || effectiveMemberId) ? (
+            <div className="bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 text-blue-950 dark:text-blue-100 rounded-xl p-3.5 mb-4 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/60 flex items-center justify-center shrink-0 text-blue-600 dark:text-blue-400">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                    Transaksi Atas Nama Anggota:
+                  </div>
+                  <div className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
+                    {selectedMember?.nama || selectedMember?.name || 'Anggota Koperasi'}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    NRP / ID: {selectedMember?.nrp || selectedMember?.member_number || selectedMember?.id || effectiveMemberId}
+                  </div>
+                </div>
+              </div>
+              <span className="shrink-0 ml-2 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                Anggota Koperasi
+              </span>
+            </div>
+          ) : isNonMember ? (
+            <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-xl p-3.5 mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500 dark:text-slate-400">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Identitas Pembeli:
+                  </div>
+                  <div className="text-base font-bold text-slate-800 dark:text-slate-200">
+                    Transaksi Non-Anggota (Pelanggan Umum)
+                  </div>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+                Umum
+              </span>
+            </div>
+          ) : null}
+
+          {effectiveMemberId ? (
+            <MemberCreditBadge memberId={effectiveMemberId} onFinancialsLoaded={setFinancials} />
           ) : (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 flex items-start gap-3 mt-2">
               <span className="material-symbols-outlined text-amber-500 text-[22px] shrink-0 mt-0.5">info</span>

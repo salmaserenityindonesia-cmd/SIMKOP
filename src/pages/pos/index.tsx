@@ -471,6 +471,7 @@ export default function POSPage() {
         cart={cart}
         total={total}
         memberId={selectedMember?.id || null}
+        selectedMember={selectedMember}
         initialMethod={!selectedMember ? 'Tunai' : initialPaymentMethod}
         onConfirm={handleCheckoutConfirm}
       />
