@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import jsPDF from 'jspdf';
 import { generateReceiptPdf, ReceiptTransactionData } from './receiptPdfGenerator';
 
 describe('receiptPdfGenerator', () => {
@@ -97,6 +98,10 @@ describe('receiptPdfGenerator', () => {
 
     const doc = generateReceiptPdf(dataWithDiscount, false);
     expect(doc).toBeDefined();
+    expect(typeof doc.save).toBe('function');
+    expect(typeof doc.text).toBe('function');
+    const pdfData = doc.output('datauristring');
+    expect(pdfData).toContain('data:application/pdf');
   });
 
   it('should hide member discount line completely when discount is 0', () => {
@@ -111,5 +116,9 @@ describe('receiptPdfGenerator', () => {
 
     const doc = generateReceiptPdf(dataZeroDiscount, false);
     expect(doc).toBeDefined();
+    expect(typeof doc.save).toBe('function');
+    expect(typeof doc.text).toBe('function');
+    const pdfData = doc.output('datauristring');
+    expect(pdfData).toContain('data:application/pdf');
   });
 });

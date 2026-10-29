@@ -46,6 +46,10 @@ describe('posSettingsService', () => {
     clearSettingsCache();
   });
 
+  it('should have DEFAULT_POS_SETTINGS with 5.0% member discount', () => {
+    expect(DEFAULT_POS_SETTINGS.member_discount_percentage).toBe(5.0);
+  });
+
   it('should return default POS settings when database query fails and localStorage is empty', async () => {
     (supabase.from as any).mockReturnValue({
       select: vi.fn().mockReturnValue({
@@ -58,13 +62,16 @@ describe('posSettingsService', () => {
     const settings = await getPosSettings(true);
     expect(settings.max_hold_duration_minutes).toBe(DEFAULT_POS_SETTINGS.max_hold_duration_minutes);
     expect(settings.allow_negative_stock).toBe(DEFAULT_POS_SETTINGS.allow_negative_stock);
+    expect(settings.member_discount_percentage).toBe(DEFAULT_POS_SETTINGS.member_discount_percentage);
+    expect(settings.member_discount_percentage).toBe(5.0);
   });
 
   it('should return stored localStorage settings when database fails but localStorage has data', async () => {
     mockStorage[POS_SETTINGS_STORAGE_KEY] = JSON.stringify({
       id: 1,
       max_hold_duration_minutes: 60,
-      allow_negative_stock: true
+      allow_negative_stock: true,
+      member_discount_percentage: 7.5
     });
 
     (supabase.from as any).mockReturnValue({
@@ -81,6 +88,7 @@ describe('posSettingsService', () => {
     const settings = await getPosSettings(true);
     expect(settings.max_hold_duration_minutes).toBe(60);
     expect(settings.allow_negative_stock).toBe(true);
+    expect(settings.member_discount_percentage).toBe(7.5);
   });
 
   it('should return database settings and sync to localStorage when Supabase succeeds', async () => {
@@ -88,6 +96,7 @@ describe('posSettingsService', () => {
       id: 1,
       max_hold_duration_minutes: 240,
       allow_negative_stock: false,
+      member_discount_percentage: 8.0,
       updated_at: '2026-10-28T00:00:00Z'
     };
 
@@ -102,7 +111,38 @@ describe('posSettingsService', () => {
     const settings = await getPosSettings(true);
     expect(settings.max_hold_duration_minutes).toBe(240);
     expect(settings.allow_negative_stock).toBe(false);
+    expect(settings.member_discount_percentage).toBe(8.0);
     expect(mockStorage[POS_SETTINGS_STORAGE_KEY]).toBeDefined();
+    const stored = JSON.parse(mockStorage[POS_SETTINGS_STORAGE_KEY]);
+    expect(stored.member_discount_percentage).toBe(8.0);
+  });
+
+  it('should send member_discount_percentage to Supabase upsert payload when updating settings', async () => {
+    // getPosSettings returns defaults
+    (supabase.from as any).mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+        })
+      })
+    });
+
+    const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+    (supabase.from as any).mockReturnValueOnce({
+      upsert: mockUpsert
+    });
+
+    const result = await updatePosSettings({ member_discount_percentage: 10.0 });
+    expect(result.success).toBe(true);
+    expect(result.data.member_discount_percentage).toBe(10.0);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 1,
+        member_discount_percentage: 10.0
+      })
+    );
+    const saved = JSON.parse(mockStorage[POS_SETTINGS_STORAGE_KEY]);
+    expect(saved.member_discount_percentage).toBe(10.0);
   });
 
   it('should handle schema cache error gracefully when saving settings, saving to localStorage as fallback', async () => {
