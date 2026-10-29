@@ -113,3 +113,4 @@ Load these files for context:
 - [ ] Parked sales menyimpan nominal diskon berdasarkan pengaturan persentase dinamis.
 - [ ] Modal struk transaksi (`ReceiptModal`) menampilkan label persentase dinamis dan menyembunyikannya jika Rp 0.
 - [ ] PDF struk (`receiptPdfGenerator`) mencetak label persentase dinamis sesuai nominal diskon.
+

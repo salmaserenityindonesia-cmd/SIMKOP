@@ -69,3 +69,4 @@ Load these files for context:
 - [ ] Unit test `receiptPdfGenerator.test.ts` mencakup custom `discountPercentage`.
 - [ ] Seluruh unit test Vitest lulus (100% pass).
 - [ ] `npm run build` berhasil tanpa error (exit code 0).
+

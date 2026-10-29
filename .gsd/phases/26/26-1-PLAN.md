@@ -76,3 +76,4 @@ Load these files for context:
 - [ ] Interface `POSSettings` memiliki field `member_discount_percentage: number`.
 - [ ] `DEFAULT_POS_SETTINGS` memiliki default 5.0%.
 - [ ] `getPosSettings` dan `updatePosSettings` memproses `member_discount_percentage` secara utuh.
+

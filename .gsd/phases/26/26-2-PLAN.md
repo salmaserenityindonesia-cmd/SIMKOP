@@ -62,3 +62,4 @@ Load these files for context:
 - [ ] Tersedia tombol preset diskon cepat (0%, 2.5%, 5%, 7.5%, 10%).
 - [ ] Validasi nilai 0 - 100% bekerja dengan feedback toast.
 - [ ] Nilai tersimpan tidak hilang saat halaman direfresh.
+
