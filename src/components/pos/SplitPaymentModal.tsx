@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import MemberCreditBadge from './MemberCreditBadge';
 
@@ -13,15 +13,22 @@ interface Props {
 }
 
 export default function SplitPaymentModal({ isOpen, onClose, cart, total, memberId, initialMethod = 'Tunai', onConfirm }: Props) {
+  const isNonMember = !memberId;
   const [paidCash, setPaidCash] = useState<string>('');
   const [paidDeposit, setPaidDeposit] = useState<string>('');
   const [paidCredit, setPaidCredit] = useState<string>('');
   
   const [financials, setFinancials] = useState<any>(null);
+  const cashInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
-      if (initialMethod === 'Potong Simpanan') {
+      if (isNonMember) {
+        setPaidCash(total.toString());
+        setPaidDeposit('');
+        setPaidCredit('');
+        setFinancials(null);
+      } else if (initialMethod === 'Potong Simpanan') {
         setPaidDeposit(total.toString());
         setPaidCash('');
         setPaidCredit('');
@@ -34,21 +41,31 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
         setPaidDeposit('');
         setPaidCredit('');
       }
-      import('../../services/posCreditService').then(s => {
-        if (memberId) {
+
+      if (memberId) {
+        import('../../services/posCreditService').then(s => {
           s.getMemberFinancials(memberId).then(setFinancials);
-        } else {
-          setFinancials(null);
+        });
+      } else {
+        setFinancials(null);
+      }
+
+      // Auto-focus and select cash input
+      const timer = setTimeout(() => {
+        if (cashInputRef.current) {
+          cashInputRef.current.focus();
+          cashInputRef.current.select();
         }
-      });
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [isOpen, memberId, total, initialMethod]);
+  }, [isOpen, memberId, isNonMember, total, initialMethod]);
 
   if (!isOpen) return null;
 
   const cashAmount = Number(paidCash) || 0;
-  const depositAmount = Number(paidDeposit) || 0;
-  const creditAmount = Number(paidCredit) || 0;
+  const depositAmount = isNonMember ? 0 : (Number(paidDeposit) || 0);
+  const creditAmount = isNonMember ? 0 : (Number(paidCredit) || 0);
 
   const totalPaid = cashAmount + depositAmount + creditAmount;
   const remaining = Math.max(0, total - totalPaid);
@@ -56,7 +73,9 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
 
   // Validations
   let error = '';
-  if (totalPaid < total) {
+  if (isNonMember && (depositAmount > 0 || creditAmount > 0 || Number(paidDeposit) > 0 || Number(paidCredit) > 0)) {
+    error = 'Pembeli Non-Anggota hanya diperbolehkan menggunakan metode Tunai.';
+  } else if (totalPaid < total) {
     error = 'Total pembayaran belum mencukupi.';
   } else if (financials) {
     if (depositAmount > financials.belanjaBalance) {
@@ -73,10 +92,15 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
   };
 
   const handleConfirm = () => {
-    if (error) return;
+    if (isNonMember && (depositAmount > 0 || creditAmount > 0 || Number(paidDeposit) > 0 || Number(paidCredit) > 0)) {
+      return;
+    }
+    if (error || remaining > 0) return;
     
     let scheme = 'cash';
-    if (creditAmount > 0 && (cashAmount > 0 || depositAmount > 0)) {
+    if (isNonMember) {
+      scheme = 'cash';
+    } else if (creditAmount > 0 && (cashAmount > 0 || depositAmount > 0)) {
       scheme = 'split';
     } else if (creditAmount > 0) {
       scheme = 'store_credit';
@@ -90,10 +114,18 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
 
     onConfirm({
       paidCash: cashAmount,
-      paidDeposit: depositAmount,
-      paidCredit: creditAmount,
+      paidDeposit: isNonMember ? 0 : depositAmount,
+      paidCredit: isNonMember ? 0 : creditAmount,
       scheme
     });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      if (!error && remaining === 0) {
+        handleConfirm();
+      }
+    }
   };
 
   return (
@@ -109,7 +141,7 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
           </button>
         </div>
         
-        <div className="p-5 flex-1 overflow-y-auto">
+        <div className="p-5 flex-1 overflow-y-auto" onKeyDown={handleKeyDown}>
           <div className="text-center mb-6">
             <p className="text-label-lg text-on-surface-variant">Total Tagihan</p>
             <p className="text-[32px] font-black text-primary tracking-tight leading-none mt-1">
@@ -118,74 +150,131 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
           </div>
 
           {memberId ? (
-             <MemberCreditBadge memberId={memberId} onFinancialsLoaded={setFinancials} />
+            <MemberCreditBadge memberId={memberId} onFinancialsLoaded={setFinancials} />
           ) : (
-             <div className="bg-surface-variant/30 p-3 rounded-lg text-sm text-on-surface-variant mb-4 text-center italic">
-               Pembeli Umum (Hanya Pembayaran Tunai)
-             </div>
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 flex items-start gap-3 mt-2">
+              <span className="material-symbols-outlined text-amber-500 text-[22px] shrink-0 mt-0.5">info</span>
+              <div className="text-left">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-bold text-on-surface text-sm">Pembeli Non-Anggota / Umum</span>
+                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                    Khusus Tunai
+                  </span>
+                </div>
+                <p className="text-xs text-on-surface-variant leading-relaxed">
+                  Non-anggota tidak memiliki saldo simpanan belanja atau fasilitas bon toko koperasi. Semua transaksi diselesaikan secara tunai.
+                </p>
+              </div>
+            </div>
           )}
 
           <div className="space-y-4 mt-6">
             {/* Input Simpanan */}
-            {memberId && (
-              <div>
-                <label className="flex justify-between text-sm font-semibold text-on-surface mb-1.5">
+            <div className={isNonMember ? "opacity-60" : ""}>
+              <div className="flex justify-between items-center text-sm font-semibold text-on-surface mb-1.5">
+                <div className="flex items-center gap-1.5">
                   <span>Potong Simpanan Belanja</span>
-                  {financials && (
-                    <button 
-                      onClick={() => setPaidDeposit(Math.min(total, financials.belanjaBalance).toString())}
-                      className="text-primary hover:underline text-xs"
-                    >
-                      Gunakan Maksimal
-                    </button>
+                  {isNonMember && (
+                    <span className="text-[10px] bg-surface-variant text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/40">
+                      Khusus Anggota
+                    </span>
                   )}
-                </label>
-                <input 
-                  type="number" 
-                  value={paidDeposit}
-                  onChange={e => setPaidDeposit(e.target.value)}
-                  placeholder="Rp 0"
-                  className="w-full border border-outline-variant rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary"
-                />
+                </div>
+                {!isNonMember && financials && (
+                  <button 
+                    type="button"
+                    onClick={() => setPaidDeposit(Math.min(total, financials.belanjaBalance).toString())}
+                    className="text-primary hover:underline text-xs"
+                  >
+                    Gunakan Maksimal
+                  </button>
+                )}
               </div>
-            )}
+              <input 
+                type="number" 
+                disabled={isNonMember}
+                readOnly={isNonMember}
+                value={isNonMember ? 0 : paidDeposit}
+                onChange={e => !isNonMember && setPaidDeposit(e.target.value)}
+                placeholder="Rp 0"
+                className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
+                  isNonMember 
+                    ? 'bg-surface-container-high/50 border-outline-variant/40 text-on-surface-variant/60 cursor-not-allowed select-none' 
+                    : 'border-outline-variant bg-surface'
+                }`}
+              />
+              {isNonMember && (
+                <p className="text-[11px] text-on-surface-variant/70 mt-1 italic">
+                  * Tidak tersedia untuk Non-Anggota
+                </p>
+              )}
+            </div>
 
             {/* Input Bon */}
-            {memberId && (
-              <div>
-                <label className="flex justify-between text-sm font-semibold text-on-surface mb-1.5">
+            <div className={isNonMember ? "opacity-60" : ""}>
+              <div className="flex justify-between items-center text-sm font-semibold text-on-surface mb-1.5">
+                <div className="flex items-center gap-1.5">
                   <span>Catat Bon Toko (Potong Gaji)</span>
-                </label>
-                <input 
-                  type="number" 
-                  value={paidCredit}
-                  onChange={e => setPaidCredit(e.target.value)}
-                  placeholder="Rp 0"
-                  className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
-                    financials && creditAmount > financials.remainingCreditLimit ? 'border-error text-error bg-error/10' : 'border-outline-variant'
-                  }`}
-                />
+                  {isNonMember && (
+                    <span className="text-[10px] bg-surface-variant text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/40">
+                      Khusus Anggota
+                    </span>
+                  )}
+                </div>
               </div>
-            )}
+              <input 
+                type="number" 
+                disabled={isNonMember}
+                readOnly={isNonMember}
+                value={isNonMember ? 0 : paidCredit}
+                onChange={e => !isNonMember && setPaidCredit(e.target.value)}
+                placeholder="Rp 0"
+                className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
+                  isNonMember 
+                    ? 'bg-surface-container-high/50 border-outline-variant/40 text-on-surface-variant/60 cursor-not-allowed select-none' 
+                    : financials && creditAmount > financials.remainingCreditLimit 
+                      ? 'border-error text-error bg-error/10' 
+                      : 'border-outline-variant bg-surface'
+                }`}
+              />
+              {isNonMember && (
+                <p className="text-[11px] text-on-surface-variant/70 mt-1 italic">
+                  * Tidak tersedia untuk Non-Anggota
+                </p>
+              )}
+            </div>
 
             {/* Input Tunai */}
             <div>
-              <label className="block text-sm font-semibold text-on-surface mb-1.5">Tunai Diterima</label>
+              <div className="flex justify-between items-center text-sm font-semibold text-on-surface mb-1.5">
+                <span>Tunai Diterima</span>
+                {isNonMember && (
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded font-bold border border-emerald-500/20">
+                    Wajib Tunai
+                  </span>
+                )}
+              </div>
               <input 
+                ref={cashInputRef}
                 type="number" 
                 value={paidCash}
                 onChange={e => setPaidCash(e.target.value)}
                 placeholder="Rp 0"
-                className="w-full border border-outline-variant rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary"
+                className="w-full border border-outline-variant rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary bg-surface"
               />
               <div className="flex gap-2 mt-2 overflow-x-auto pb-1 custom-scrollbar">
-                {[50000, 100000, total].map((amt, idx) => (
+                {[total, 50000, 100000, 200000].filter((amt, idx, arr) => arr.indexOf(amt) === idx).map((amt, idx) => (
                   <button
                     key={idx}
+                    type="button"
                     onClick={() => handleQuickCash(amt)}
-                    className="whitespace-nowrap px-3 py-1.5 rounded bg-surface-container border border-outline-variant/30 text-sm font-medium hover:bg-surface-container-high transition-colors"
+                    className={`whitespace-nowrap px-3 py-1.5 rounded text-sm font-medium transition-colors border ${
+                      amt === total
+                        ? 'bg-primary/10 text-primary border-primary/30 font-bold hover:bg-primary/20'
+                        : 'bg-surface-container border-outline-variant/30 text-on-surface hover:bg-surface-container-high'
+                    }`}
                   >
-                    {amt === total ? 'Uang Pas' : formatCurrency(amt)}
+                    {amt === total ? `Uang Pas (${formatCurrency(amt)})` : formatCurrency(amt)}
                   </button>
                 ))}
               </div>
@@ -220,12 +309,14 @@ export default function SplitPaymentModal({ isOpen, onClose, cart, total, member
 
         <div className="p-4 bg-surface border-t border-outline-variant/30 flex gap-3 shrink-0">
           <button 
+            type="button"
             className="flex-1 py-3 bg-surface-container hover:bg-surface-container-high text-on-surface rounded-xl font-label-lg transition-colors border border-outline-variant/50" 
             onClick={onClose}
           >
             Batal
           </button>
           <button 
+            type="button"
             disabled={!!error || remaining > 0}
             className="flex-[2] py-3 bg-primary text-on-primary rounded-xl font-label-lg flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 shadow-sm" 
             onClick={handleConfirm}
