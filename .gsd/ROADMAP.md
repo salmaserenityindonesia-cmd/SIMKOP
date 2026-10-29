@@ -6,8 +6,8 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 24 — Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS
-> **Status:** ✅ All phases complete
+> **Current Phase:** 25 — Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir
+> **Status:** 🟡 Ready to execute
 
 ## Must-Haves (from SPEC)
 
@@ -413,6 +413,24 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 25: Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir
+**Status**: ✅ Complete
+**Objective**: Membatasi metode pembayaran pada kasir POS agar pembeli Non-Anggota (pembeli umum) hanya diperbolehkan menggunakan metode Tunai.
+**Depends on**: Phase 13, Phase 24
+
+**Plans**:
+- [x] Plan 25.1: Wave 1 - Quick Payment Buttons Guard & Non-Member Mode Sync
+- [x] Plan 25.2: Wave 2 - Split Payment Modal Restriction for Non-Members
+- [x] Plan 25.3: Wave 3 - Service Validation & Regression Tests
+
+**Verification**:
+- Pada tab Non-Anggota, tombol Potong Simpanan dan Bon Toko terkunci dan disabled.
+- Modal Split Payment F9 mengunci input Simpanan & Bon Toko di angka 0 dan auto-focus pada Tunai.
+- posCheckoutService menolak transaksi non-anggota jika terdapat komponen pembayaran non-tunai.
+- Vitest tests lulus dan build Vite (npm run build) sukses tanpa error.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -433,6 +451,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 14 | Phase 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir |
 | 15 | Phase 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori |
 | 16 | Phase 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS |
+| 17 | Phase 25 | Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir |
 
 ---
 
@@ -464,6 +483,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 22 | Tahan Transaksi POS (F8), Auto-Expire Restock & Pengaturan Kasir | ✅ | 4/4 | 100% |
 | 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori | ✅ | 2/2 | 100% |
 | 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS | ✅ | 3/3 | 100% |
+| 25 | Batasi Pembayaran Non-Anggota di POS Kasir | ✅ | 3/3 | 100% |
 
 ---
 
@@ -495,5 +515,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 22 | 2026-10-28 | 2026-10-28 | 1 day |
 | 23 | 2026-10-28 | 2026-10-28 | 1 day |
 | 24 | 2026-10-28 | 2026-10-28 | 1 day |
+| 25 | 2026-10-29 | 2026-10-29 | 1 day |
 
 
