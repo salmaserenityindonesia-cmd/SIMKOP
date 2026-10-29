@@ -30,8 +30,9 @@ import {
   type StockValuation,
   type CashierShift
 } from '../../../services/retail-report.service';
-import { exportRetailToExcel, printRetailPDF } from '../../../utils/retailExporter';
+import { exportRetailToExcel, exportRetailReportToPdf } from '../../../utils/retailExporter';
 import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../../services/settingsService';
+import { useFeedback } from '../../../context/FeedbackContext';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const getLocalDateString = (d = new Date()) => {
@@ -145,6 +146,7 @@ function ShiftStatusBadge({ status }: { status: 'open' | 'closed' }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function LaporanRetail() {
+  const { showToast } = useFeedback();
   const [activeTab, setActiveTab] = useState<TabKey>('tutup-kasir');
 
   // Filters
@@ -218,8 +220,20 @@ export default function LaporanRetail() {
 
   const handleExportExcel = () =>
     exportRetailToExcel({ startDate, endDate }, eodData, fastMoving, stockData, shiftHistory);
-  const handlePrintPDF = () =>
-    printRetailPDF(`Laporan Retail SIMKOP – ${startDate} s/d ${endDate}`);
+  const handlePrintPDF = async () => {
+    if (!eodData || !eodData.transactions || eodData.transactions.length === 0) {
+      showToast('Tidak ada transaksi pada periode yang dipilih.', 'info');
+      return;
+    }
+
+    try {
+      await exportRetailReportToPdf(eodData, { startDate, endDate }, koperasiProfile);
+      showToast('Laporan penjualan retail berhasil diunduh dalam format PDF.', 'success');
+    } catch (err: any) {
+      console.error('Error generating retail PDF:', err);
+      showToast(err?.message || 'Gagal membuat file PDF laporan retail.', 'error');
+    }
+  };
 
   return (
     <AdminLayout>
