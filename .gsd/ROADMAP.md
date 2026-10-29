@@ -472,6 +472,23 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 28: Tampilkan Identitas & Nama Anggota Aktif pada Modal Pembayaran Kasir (F9)
+**Status**: ✅ Complete
+**Objective**: Menampilkan kartu banner identitas pembeli secara tegas di bagian atas modal penerimaan pembayaran kasir (Split Payment F9) di `SplitPaymentModal.tsx`, menampilkan nama lengkap anggota, nomor anggota / NRP, dan badge status keanggotaan (atau badge Non-Anggota jika pelanggan umum), serta meneruskan prop `selectedMember` dari halaman kasir utama di `src/pages/pos/index.tsx`.
+**Depends on**: Phase 13, Phase 25
+
+**Plans**:
+- [x] Plan 28.1: Wave 1 - Pass Member Data & Render Header Info in Payment Modal
+- [x] Plan 28.2: Wave 2 - Build, Unit Testing & Static Validation
+
+**Verification**:
+- Buka modal F9 saat anggota dipilih: modal menampilkan nama lengkap anggota, nomor NRP/ID, dan badge "Anggota Koperasi".
+- Buka modal F9 saat non-anggota (pelanggan umum) dipilih: modal menampilkan keterangan "Transaksi Non-Anggota (Pelanggan Umum)" dan badge "Umum".
+- State `selectedMember` diteruskan secara tepat dari `src/pages/pos/index.tsx`.
+- Unit tests di `SplitPaymentModal.test.tsx` lulus dan Vite build `npm run build` sukses 0 error.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -495,6 +512,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 17 | Phase 25 | Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir |
 | 18 | Phase 26 | Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS |
 | 19 | Phase 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko |
+| 20 | Phase 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) |
 
 ---
 
@@ -529,6 +547,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 25 | Batasi Pembayaran Non-Anggota di POS Kasir | ✅ | 3/3 | 100% |
 | 26 | Konfigurasi Dinamis Persentase Diskon Anggota di POS | ✅ | 5/5 | 100% |
 | 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko | ✅ | 3/3 | 100% |
+| 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) | ✅ | 2/2 | 100% |
 
 ---
 
@@ -563,5 +582,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 25 | 2026-10-29 | 2026-10-29 | 1 day |
 | 26 | 2026-10-29 | 2026-10-29 | 1 day |
 | 27 | 2026-10-29 | 2026-10-29 | 1 day |
+| 28 | 2026-10-30 | 2026-10-30 | 1 day |
 
 
