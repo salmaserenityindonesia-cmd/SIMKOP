@@ -40,7 +40,7 @@ export default function AdminDashboard() {
     if (!confirmed) {
       return;
     }
-    
+
     setIsBackingUp(true);
     try {
       const url = await generateDatabaseBackup();
@@ -71,11 +71,11 @@ export default function AdminDashboard() {
           <h1 className="text-headline-md font-headline-md text-primary tracking-tight">Dashboard Operasional</h1>
           <p className="text-body-md font-body-md text-on-surface-variant">Ringkasan aktivitas unit Simpan Pinjam dan unit Retail (POS)</p>
         </div>
-        
+
         {/* ACTION BUTTONS */}
         <div className="flex items-center gap-3">
-          <button 
-            onClick={handleBackup} 
+          <button
+            onClick={handleBackup}
             disabled={isBackingUp}
             className="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
           >
@@ -110,8 +110,8 @@ export default function AdminDashboard() {
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Penjualan retail berjalan</div>
             </div>
             <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-label-sm">
-              <Link to="/kasir" className="text-primary hover:underline flex items-center gap-1 font-medium">
-                Buka Kasir <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+              <Link to="/admin/laporan-retail" className="text-primary hover:underline flex items-center gap-1 font-medium">
+                Lihat Laporan <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
               </Link>
             </div>
           </div>
@@ -132,7 +132,7 @@ export default function AdminDashboard() {
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Berkas pinjaman berjalan</div>
             </div>
             <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-label-sm">
-               <Link to="/admin/approval" className="text-primary hover:underline flex items-center gap-1 font-medium">
+              <Link to="/admin/approval" className="text-primary hover:underline flex items-center gap-1 font-medium">
                 Kelola Pinjaman <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
               </Link>
             </div>
@@ -154,7 +154,7 @@ export default function AdminDashboard() {
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Produk butuh restock</div>
             </div>
             <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-label-sm">
-               <Link to="/admin/produk" className="text-primary hover:underline flex items-center gap-1 font-medium">
+              <Link to="/admin/produk" className="text-primary hover:underline flex items-center gap-1 font-medium">
                 Cek Inventori <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
               </Link>
             </div>
@@ -176,8 +176,8 @@ export default function AdminDashboard() {
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Catatan kasir diparkir</div>
             </div>
             <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-label-sm">
-               <Link to="/kasir" className="text-primary hover:underline flex items-center gap-1 font-medium">
-                Buka Kasir <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+              <Link to="/admin/kasir?view=parked" className="text-primary hover:underline flex items-center gap-1 font-medium">
+                Lihat Belanja Ditahan <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
               </Link>
             </div>
           </div>

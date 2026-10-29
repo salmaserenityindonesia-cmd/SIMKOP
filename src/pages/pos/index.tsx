@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import POSHeader from '../../components/pos/POSHeader';
 import ProductSearchInput from '../../components/pos/ProductSearchInput';
 import CartTable from '../../components/pos/CartTable';
@@ -30,6 +31,7 @@ export interface CartItem {
 }
 
 export default function POSPage() {
+  const [searchParams] = useSearchParams();
   const { showToast } = useFeedback();
   const [products, setProducts] = useState<Produk[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -134,6 +136,12 @@ export default function POSPage() {
       }
     });
   }, [loadProductCatalog, refreshParkedCount, showToast]);
+
+  useEffect(() => {
+    if (searchParams.get('view') === 'parked') {
+      setModals(m => ({ ...m, parked: true }));
+    }
+  }, [searchParams]);
 
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
   const discount = selectedMember ? subtotal * 0.05 : 0; 

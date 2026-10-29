@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import LoginPage from './pages/login';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -26,6 +26,11 @@ import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
 import PengaturanKasir from './pages/admin/PengaturanKasir';
 import { FeedbackProvider } from './context/FeedbackContext';
 
+function RedirectToKasir() {
+  const location = useLocation();
+  return <Navigate to={`/admin/kasir${location.search}`} replace />;
+}
+
 export default function App() {
   return (
     <Router>
@@ -33,6 +38,8 @@ export default function App() {
         <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/dashboard" element={<Navigate to="/admin" replace />} />
+        <Route path="/pos" element={<RedirectToKasir />} />
+        <Route path="/kasir" element={<RedirectToKasir />} />
         
         {/* Admin Route */}
         <Route 
