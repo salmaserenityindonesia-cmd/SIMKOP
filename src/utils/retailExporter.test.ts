@@ -191,5 +191,43 @@ describe('retailExporter', () => {
     expect(doc).toBeDefined();
     expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
   });
+
+  it('should handle transactions with missing dates and null members/cashier', async () => {
+    const mockEod = {
+      totalOmzet: 100000,
+      totalDiscount: 0,
+      totalSubtotal: 100000,
+      paidCash: 100000,
+      paidDeposit: 0,
+      paidCredit: 0,
+      transactions: [
+        {
+          id: 'tx-1',
+          sale_number: 'POS-002',
+          total_amount: 100000,
+          paid_cash: 100000,
+          paid_deposit: 0,
+          paid_credit: 0,
+          completed_at: 'invalid-date-string',
+          pengelola: null,
+          anggota: null,
+          sale_status: 'completed',
+        },
+      ],
+    };
+
+    const doc = await exportRetailReportToPdf(
+      mockEod,
+      { startDate: '2026-10-01', endDate: '2026-10-29' },
+      undefined,
+      false
+    );
+
+    expect(doc).toBeDefined();
+    expect(typeof doc.save).toBe('function');
+    const saveSpy = vi.spyOn(doc, 'save').mockImplementation(() => doc);
+    doc.save('laporan-retail-2026-10-01-sd-2026-10-29.pdf');
+    expect(saveSpy).toHaveBeenCalledWith('laporan-retail-2026-10-01-sd-2026-10-29.pdf');
+  });
 });
 
