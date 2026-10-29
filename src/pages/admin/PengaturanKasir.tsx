@@ -21,7 +21,8 @@ import {
   RefreshCw,
   Keyboard,
   ShieldAlert,
-  Info
+  Info,
+  Percent
 } from 'lucide-react';
 
 export default function PengaturanKasir() {
@@ -58,6 +59,10 @@ export default function PengaturanKasir() {
     setForm(prev => ({ ...prev, max_hold_duration_minutes: minutes }));
   };
 
+  const handleDiscountPreset = (pct: number) => {
+    setForm(prev => ({ ...prev, member_discount_percentage: pct }));
+  };
+
   const handleReset = () => {
     setForm(initialData);
     showToast('Form dikembalikan ke data tersimpan', 'info');
@@ -72,6 +77,16 @@ export default function PengaturanKasir() {
     }
     if (form.max_hold_duration_minutes > 10080) { // 7 hari
       showToast('Batas waktu penahanan maksimal adalah 7 hari (10080 menit)', 'warning');
+      return;
+    }
+    if (
+      form.member_discount_percentage === undefined ||
+      form.member_discount_percentage === null ||
+      isNaN(form.member_discount_percentage) ||
+      form.member_discount_percentage < 0 ||
+      form.member_discount_percentage > 100
+    ) {
+      showToast('Persentase diskon harus berada di antara 0% dan 100%', 'warning');
       return;
     }
 
@@ -190,7 +205,7 @@ export default function PengaturanKasir() {
               <div className="px-6 py-4 border-b border-outline-variant/20 bg-surface-container-low/40 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-primary" />
-                  <h2 className="text-sm font-bold text-on-surface">Parameter Tahan Transaksi & Inventori</h2>
+                  <h2 className="text-sm font-bold text-on-surface">Parameter Transaksi, Diskon & Inventori</h2>
                 </div>
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
                   Hotkeys & Rules
@@ -242,6 +257,64 @@ export default function PengaturanKasir() {
                         onClick={() => handleDurationPreset(preset.val)}
                         className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                           form.max_hold_duration_minutes === preset.val
+                            ? 'bg-primary text-surface-container-lowest border-primary shadow-sm'
+                            : 'bg-surface-container-low border-outline-variant/30 text-on-surface-variant hover:bg-surface-container'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <hr className="border-outline-variant/20" />
+
+                {/* Member Discount Percentage Input */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                    <Percent className="w-3.5 h-3.5 text-primary" />
+                    <span>Persentase Diskon Khusus Anggota (%)</span>
+                    <span className="text-error">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      name="member_discount_percentage"
+                      min={0}
+                      max={100}
+                      step={0.1}
+                      value={form.member_discount_percentage ?? ''}
+                      onChange={e => {
+                        const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                        setForm(prev => ({ ...prev, member_discount_percentage: isNaN(val) ? 0 : val }));
+                      }}
+                      disabled={isLoading || isSaving}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all pr-12"
+                      required
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-on-surface-variant font-medium">
+                      %
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant">
+                    Diskon otomatis yang diterapkan pada subtotal belanja kasir POS jika pembeli teridentifikasi sebagai anggota koperasi.
+                  </p>
+
+                  {/* Preset Pills */}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {[
+                      { label: '0% (Nonaktif)', val: 0 },
+                      { label: '2.5%', val: 2.5 },
+                      { label: '5% (Standar)', val: 5 },
+                      { label: '7.5%', val: 7.5 },
+                      { label: '10%', val: 10 },
+                    ].map(preset => (
+                      <button
+                        key={preset.val}
+                        type="button"
+                        onClick={() => handleDiscountPreset(preset.val)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                          form.member_discount_percentage === preset.val
                             ? 'bg-primary text-surface-container-lowest border-primary shadow-sm'
                             : 'bg-surface-container-low border-outline-variant/30 text-on-surface-variant hover:bg-surface-container'
                         }`}
@@ -354,6 +427,24 @@ export default function PengaturanKasir() {
                 <li className="flex items-start gap-2">
                   <span className="text-primary font-bold">•</span>
                   <span><strong>Auto-Restock:</strong> Jika transaksi tidak dilanjutkan hingga melewati batas waktu, sistem otomatis membatalkan transaksi dan mengembalikan stok ke katalog.</span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Member Discount Rules */}
+            <div className="bg-surface-container-lowest rounded-2xl border border-outline-variant/30 shadow-sm p-5 space-y-3">
+              <div className="flex items-center gap-2 pb-2 border-b border-outline-variant/20 text-on-surface">
+                <Percent className="w-4 h-4 text-primary" />
+                <h3 className="text-xs font-bold uppercase tracking-wider">Diskon Belanja Anggota</h3>
+              </div>
+              <ul className="text-xs text-on-surface-variant space-y-2 leading-relaxed">
+                <li className="flex items-start gap-2">
+                  <span className="text-primary font-bold">•</span>
+                  <span><strong>Kalkulasi Otomatis:</strong> Potongan langsung diterapkan pada subtotal saat kasir memilih data anggota koperasi.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-primary font-bold">•</span>
+                  <span><strong>Kustomisasi Struk:</strong> Baris diskon akan otomatis disembunyikan jika persentase bernilai 0% atau transaksi adalah Non-Anggota.</span>
                 </li>
               </ul>
             </div>
