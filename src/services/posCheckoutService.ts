@@ -18,6 +18,14 @@ export interface CheckoutPayload {
 
 export const processCheckout = async (payload: CheckoutPayload): Promise<{ success: boolean; error?: string; saleId?: string; saleNumber?: string }> => {
   try {
+    // Non-member cash-only validation
+    if (!payload.memberId && (payload.paidDeposit > 0 || payload.paidCredit > 0)) {
+      return {
+        success: false,
+        error: 'Non-anggota hanya diperbolehkan menggunakan metode pembayaran tunai.'
+      };
+    }
+
     // 1. Validation for credit scheme
     if (payload.paidCredit > 0) {
       if (!payload.memberId) {
