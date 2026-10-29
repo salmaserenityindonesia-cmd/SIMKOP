@@ -1,17 +1,18 @@
 ## Current Position
-- **Phase**: 25 (Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 26 (Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS)
+- **Task**: Ready to execute Plan 26.1
+- **Status**: Planned
 
 ## Last Session Summary
-Phase 25 executed successfully. 3 plans, 5 tasks completed and verified with 5/5 must-haves passing.
-- Plan 25.1: Quick Payment Buttons Guard & Non-Member Mode Sync in POS SummaryPanel and POS page (commits: `38096149`, `19893016`).
-- Plan 25.2: Split Payment Modal Restriction for Non-Members in SplitPaymentModal (commit: `aa6a471e`).
-- Plan 25.3: Backend Service Validation in posCheckoutService & comprehensive unit tests (commits: `5f62390e`, `43c71d31`).
-- Verification: Independent audit verified all 5 must-haves, unit tests passed (38/38 in posCheckoutService.test.ts), and production build succeeded.
+Phase 25 completed and verified.
+Phase 26 planned into 4 atomic plans across 4 waves:
+- Plan 26.1 (Wave 1): Database Migration 022 & POS Settings Service Layer (`posSettingsService.ts`).
+- Plan 26.2 (Wave 2): Admin POS Settings UI (`PengaturanKasir.tsx`) with dynamic discount input & presets.
+- Plan 26.3 (Wave 3): Dynamic Discount Integration in POS Cart, SummaryPanel, Parked Sales, Receipt Modal & Receipt PDF.
+- Plan 26.4 (Wave 4): Unit Tests Expansion (`posSettingsService.test.ts`, `receiptPdfGenerator.test.ts`) & Production Build Verification.
 
 ## Next Steps
-All phases in current roadmap completed. Ready for next milestone or phase planning.
+Execute Plan 26.1 (Wave 1: Database Migration & POS Settings Service Layer) or run `/execute`.
 
 ## Blockers
 - None.
@@ -19,5 +20,7 @@ All phases in current roadmap completed. Ready for next milestone or phase plann
 ## Context Dump
 
 ### Decisions Made
-- **Restriksi Ketat Non-Anggota**: Non-anggota tidak diperbolehkan memanfaatkan saldo simpanan belanja atau fasilitas limit bon toko (potong gaji) baik dari tombol cepat POS, modal split payment F9, maupun request langsung ke `posCheckoutService.ts`.
-- **Default ke Tunai**: Saat beralih ke mode Non-Anggota, sistem secara proaktif menetapkan metode pembayaran ke Tunai dan mengunci opsi non-tunai dengan indikator visual "Khusus Anggota".
+- **Nilai Default 5.0%**: Menjaga backward-compatibility dengan logika statis 5% yang sudah berjalan sebelumnya.
+- **Batasan 0 - 100%**: Validasi di level skema SQL (CHECK constraint) dan di level input form antarmuka admin.
+- **Reaktivitas Kasir**: Halaman POS dan penahanan transaksi (`holdTransaction`) membaca persentase dari `pos_settings` dan mencetak label dinamis (`Diskon Anggota (${pct}%):`) pada struk kasir dan PDF.
+- **Visibilitas Kondisional**: Jika diskon bernilai 0% atau transaksi adalah Non-Anggota, baris pemotongan diskon disembunyikan dari struk.

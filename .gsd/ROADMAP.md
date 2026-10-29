@@ -6,7 +6,7 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 25 — Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir
+> **Current Phase:** 26 — Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS
 > **Status:** 🟡 Ready to execute
 
 ## Must-Haves (from SPEC)
@@ -428,6 +428,27 @@ updated: 2026-09-30T05:21:00+07:00
 - Modal Split Payment F9 mengunci input Simpanan & Bon Toko di angka 0 dan auto-focus pada Tunai.
 - posCheckoutService menolak transaksi non-anggota jika terdapat komponen pembayaran non-tunai.
 - Vitest tests lulus dan build Vite (npm run build) sukses tanpa error.
+
+---
+
+### Phase 26: Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS
+**Status**: 🟡 Ready to execute
+**Objective**: Menambahkan pengaturan persentase diskon anggota ke tabel `pos_settings`, menyediakan input persentase di menu admin `Pengaturan Kasir`, serta menghubungkannya secara reaktif ke modul POS kasir (keranjang, parked sales, modal struk kasir, cetak thermal, dan struk PDF).
+**Depends on**: Phase 22, Phase 25
+
+**Plans**:
+- [ ] Plan 26.1: Wave 1 - Database Migration & POS Settings Service Layer
+- [ ] Plan 26.2: Wave 2 - Admin POS Settings UI (Input Persentase Diskon Anggota)
+- [ ] Plan 26.3: Wave 3 - POS Dynamic Discount Integration (Cart, Parked Sales, Summary Panel & Receipts)
+- [ ] Plan 26.4: Wave 4 - Unit Tests & Build Verification
+
+**Verification**:
+- Kolom member_discount_percentage ada di pos_settings dengan default 5.0.
+- Input persentase diskon anggota di halaman Pengaturan Kasir dapat diedit dan disimpan (ke DB & localStorage).
+- POS kasir dan kalkulasi keranjang menggunakan persentase diskon dinamis dari pos_settings (bukan hardcoded 5%).
+- Ringkasan POS, Struk Transaksi Selesai, dan Struk PDF mencetak persentase diskon sesuai nilai pengaturan (misal: "Diskon Anggota (10%):").
+- Jika persentase 0% atau transaksi Non-Anggota, baris diskon anggota disembunyikan.
+- Semua unit test Vitest lulus dan `npm run build` sukses 0 error.
 
 ---
 
