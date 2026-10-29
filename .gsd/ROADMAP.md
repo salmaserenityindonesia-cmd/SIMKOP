@@ -453,6 +453,25 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 27: Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko
+**Status**: ✅ Complete
+**Objective**: Mengganti implementasi cetak PDF berbasis window.print() di menu Laporan Retail (/admin/laporan-retail) dengan rendering tabel dokumen PDF mandiri menggunakan jspdf dan jspdf-autotable, merender header koperasi, kartu ringkasan omzet, dan tabel log transaksi lengkap beserta total agregasi footer.
+**Depends on**: Phase 17, Phase 20
+
+**Plans**:
+- [x] Plan 27.1: Wave 1 - Implement Tabular Retail Report PDF Generator with jsPDF-AutoTable
+- [x] Plan 27.2: Wave 2 - Connect Button Handler & Toast Feedback in Laporan Retail Page
+- [x] Plan 27.3: Wave 3 - Build, Static Validation & Regression Tests
+
+**Verification**:
+- Tombol "Cetak PDF" pada /admin/laporan-retail mengunduh berkas PDF lanskap tanpa memicu dialog cetak browser (window.print()).
+- Berkas PDF memuat nama koperasi, judul periode, ringkasan rekonsiliasi, serta tabel log transaksi penjualan.
+- Kolom nominal terformat rapi dan baris footer memuat total agregasi rekonsiliasi.
+- Notifikasi toast sukses muncul saat PDF berhasil digenerate.
+- Unit test vitest lulus dan build produksi Vite (npm run build) exit code 0.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -474,6 +493,8 @@ updated: 2026-09-30T05:21:00+07:00
 | 15 | Phase 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori |
 | 16 | Phase 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS |
 | 17 | Phase 25 | Batasi Metode Pembayaran Khusus Tunai untuk Non-Anggota di POS Kasir |
+| 18 | Phase 26 | Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS |
+| 19 | Phase 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko |
 
 ---
 
@@ -506,6 +527,8 @@ updated: 2026-09-30T05:21:00+07:00
 | 23 | Relokasi Menu Laporan Retail & Stok ke Kelompok Toko Retail & Inventori | ✅ | 2/2 | 100% |
 | 24 | Shift Buka & Tutup Kasir dengan Rekonsiliasi Kas Kecil POS | ✅ | 3/3 | 100% |
 | 25 | Batasi Pembayaran Non-Anggota di POS Kasir | ✅ | 3/3 | 100% |
+| 26 | Konfigurasi Dinamis Persentase Diskon Anggota di POS | ✅ | 5/5 | 100% |
+| 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko | ✅ | 3/3 | 100% |
 
 ---
 
@@ -538,5 +561,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 23 | 2026-10-28 | 2026-10-28 | 1 day |
 | 24 | 2026-10-28 | 2026-10-28 | 1 day |
 | 25 | 2026-10-29 | 2026-10-29 | 1 day |
+| 26 | 2026-10-29 | 2026-10-29 | 1 day |
+| 27 | 2026-10-29 | 2026-10-29 | 1 day |
 
 
