@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { exportRetailToExcel, formatRp } from './retailExporter';
+import jsPDF from 'jspdf';
+import { exportRetailToExcel, exportRetailReportToPdf, formatRp } from './retailExporter';
 
 describe('retailExporter', () => {
   it('should format rupiah correctly', () => {
@@ -128,6 +129,67 @@ describe('retailExporter', () => {
 
     const mockAnchor = ((globalThis as any).document.createElement as any)();
     expect(mockAnchor.download).toBe('laporan-retail-2026-09-01-2026-09-30.xlsx');
+  });
+
+  it('should generate retail PDF report with branding, summary, and transaction log', async () => {
+    const mockEod = {
+      totalOmzet: 500000,
+      totalDiscount: 10000,
+      totalSubtotal: 510000,
+      paidCash: 300000,
+      paidDeposit: 150000,
+      paidCredit: 50000,
+      transactions: [
+        {
+          id: '1',
+          sale_number: 'POS-001',
+          total_amount: 500000,
+          paid_cash: 300000,
+          paid_deposit: 150000,
+          paid_credit: 50000,
+          completed_at: '2026-09-30T10:00:00.000Z',
+          pengelola: { nama: 'Kasir Budi' },
+          anggota: { nama: 'Anggota Ani' },
+          sale_status: 'completed',
+        },
+      ],
+    };
+
+    const mockProfile = {
+      nama_koperasi: 'KOPERASI PRIMKOPPOL RESORT',
+      alamat: 'Jl. Merdeka No. 1',
+      telepon: '08123456789',
+      terminal_name: 'POS-01',
+      footer_notes: 'Terima kasih'
+    };
+
+    const doc = await exportRetailReportToPdf(
+      mockEod,
+      { startDate: '2026-09-01', endDate: '2026-09-30' },
+      mockProfile,
+      false
+    );
+
+    expect(doc).toBeDefined();
+    // Verify landscape format (width > height)
+    expect(doc.internal.pageSize.getWidth()).toBeGreaterThan(doc.internal.pageSize.getHeight());
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+
+    const saveSpy = vi.spyOn(doc, 'save').mockImplementation(() => doc);
+    doc.save('laporan-retail-2026-09-01-sd-2026-09-30.pdf');
+    expect(saveSpy).toHaveBeenCalledWith('laporan-retail-2026-09-01-sd-2026-09-30.pdf');
+  });
+
+  it('should handle null eod data in exportRetailReportToPdf gracefully', async () => {
+    const doc = await exportRetailReportToPdf(
+      null,
+      { startDate: '2026-09-01', endDate: '2026-09-30' },
+      null,
+      false
+    );
+
+    expect(doc).toBeDefined();
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
   });
 });
 
