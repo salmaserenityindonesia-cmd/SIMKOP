@@ -4,13 +4,15 @@ export interface POSSettings {
   id?: number;
   max_hold_duration_minutes: number;
   allow_negative_stock: boolean;
+  member_discount_percentage: number;
   updated_at?: string;
 }
 
 export const DEFAULT_POS_SETTINGS: POSSettings = {
   id: 1,
   max_hold_duration_minutes: 120, // 2 jam default
-  allow_negative_stock: false
+  allow_negative_stock: false,
+  member_discount_percentage: 5.0
 };
 
 export const POS_SETTINGS_STORAGE_KEY = 'simkop_pos_settings';
@@ -41,7 +43,16 @@ export function getStoredLocalSettings(): POSSettings | null {
     if (storage) {
       const stored = storage.getItem(POS_SETTINGS_STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored) as POSSettings;
+        const parsed = JSON.parse(stored) as Partial<POSSettings>;
+        return {
+          id: parsed.id ?? DEFAULT_POS_SETTINGS.id,
+          max_hold_duration_minutes: Number(parsed.max_hold_duration_minutes) || DEFAULT_POS_SETTINGS.max_hold_duration_minutes,
+          allow_negative_stock: Boolean(parsed.allow_negative_stock),
+          member_discount_percentage: typeof parsed.member_discount_percentage !== 'undefined' && parsed.member_discount_percentage !== null
+            ? Number(parsed.member_discount_percentage)
+            : DEFAULT_POS_SETTINGS.member_discount_percentage,
+          updated_at: parsed.updated_at
+        };
       }
     }
   } catch (err) {
@@ -131,6 +142,9 @@ export async function getPosSettings(forceRefresh: boolean = false): Promise<POS
         id: data.id,
         max_hold_duration_minutes: Number(data.max_hold_duration_minutes) || DEFAULT_POS_SETTINGS.max_hold_duration_minutes,
         allow_negative_stock: Boolean(data.allow_negative_stock),
+        member_discount_percentage: typeof data.member_discount_percentage !== 'undefined' && data.member_discount_percentage !== null
+          ? Number(data.member_discount_percentage)
+          : DEFAULT_POS_SETTINGS.member_discount_percentage,
         updated_at: data.updated_at
       };
       saveStoredLocalSettings(cachedSettings);
@@ -156,6 +170,9 @@ export async function updatePosSettings(
     ...current,
     ...settings,
     id: 1,
+    member_discount_percentage: typeof settings.member_discount_percentage !== 'undefined' && settings.member_discount_percentage !== null
+      ? Number(settings.member_discount_percentage)
+      : current.member_discount_percentage,
     updated_at: new Date().toISOString()
   };
 
@@ -170,6 +187,7 @@ export async function updatePosSettings(
         id: 1,
         max_hold_duration_minutes: merged.max_hold_duration_minutes,
         allow_negative_stock: merged.allow_negative_stock,
+        member_discount_percentage: merged.member_discount_percentage,
         updated_at: merged.updated_at
       });
 
