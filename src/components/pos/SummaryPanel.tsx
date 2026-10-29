@@ -104,10 +104,12 @@ export default function SummaryPanel({
             <span className="text-on-primary-container">Subtotal Kotor ({cart.length} Item):</span>
             <span>Rp {subtotal.toLocaleString('id-ID')}</span>
           </div>
-          <div className="flex justify-between text-secondary-fixed">
-            <span>Diskon Member{memberDiscountPercentage > 0 && discount > 0 ? ` (${memberDiscountPercentage}%)` : ''}:</span>
-            <span>- Rp {discount.toLocaleString('id-ID')}</span>
-          </div>
+          {discount > 0 && (
+            <div className="flex justify-between text-secondary-fixed">
+              <span>Diskon Member{memberDiscountPercentage > 0 ? ` (${memberDiscountPercentage}%)` : ''}:</span>
+              <span>- Rp {discount.toLocaleString('id-ID')}</span>
+            </div>
+          )}
         </div>
       </div>
 
