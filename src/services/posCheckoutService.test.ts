@@ -168,5 +168,47 @@ describe('posCheckoutService', () => {
       })
     );
   });
+
+  it('should reject checkout if non-member attempts to pay with deposit', async () => {
+    const payload = {
+      memberId: null,
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Minyak Goreng', qty: 1, price: 20000 }],
+      subtotal: 20000,
+      discount: 0,
+      totalAmount: 20000,
+      paidCash: 0,
+      paidDeposit: 20000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('Non-anggota hanya diperbolehkan menggunakan metode pembayaran tunai.');
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it('should reject checkout if non-member attempts to pay with credit/bon', async () => {
+    const payload = {
+      memberId: null,
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Beras 5kg', qty: 1, price: 65000 }],
+      subtotal: 65000,
+      discount: 0,
+      totalAmount: 65000,
+      paidCash: 0,
+      paidDeposit: 0,
+      paidCredit: 65000,
+      paymentScheme: 'store_credit'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('Non-anggota hanya diperbolehkan menggunakan metode pembayaran tunai.');
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
 });
 
