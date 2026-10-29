@@ -233,13 +233,16 @@ export default function POSPage() {
         }
         if (cart.length > 0) {
           e.preventDefault();
+          if (!selectedMember) {
+            setInitialPaymentMethod('Tunai');
+          }
           setModals(m => ({ ...m, splitPayment: true }));
         }
       }
     };
     window.addEventListener('keydown', handleGlobalKeydown);
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
-  }, [modals, cart, activeShift, handleHoldTransaction, showToast]);
+  }, [modals, cart, activeShift, handleHoldTransaction, showToast, selectedMember]);
 
   const handleSelectProduct = (product: Omit<CartItem, 'qty'>) => {
     if (!activeShift) {
@@ -305,7 +308,15 @@ export default function POSPage() {
     setCart(items);
     if (memberId && members.length > 0) {
       const found = members.find(m => m.id === memberId);
-      if (found) setSelectedMember(found);
+      if (found) {
+        setSelectedMember(found);
+      } else {
+        setSelectedMember(null);
+        setInitialPaymentMethod('Tunai');
+      }
+    } else {
+      setSelectedMember(null);
+      setInitialPaymentMethod('Tunai');
     }
     refreshParkedCount();
     loadProductCatalog();
@@ -329,7 +340,12 @@ export default function POSPage() {
             setModals(m => ({ ...m, bukaKasir: true }));
             return;
           }
-          if(cart.length>0) setModals(m => ({...m, splitPayment: true}));
+          if(cart.length>0) {
+            if (!selectedMember) {
+              setInitialPaymentMethod('Tunai');
+            }
+            setModals(m => ({...m, splitPayment: true}));
+          }
         }}
         onOpenCamera={() => {
           if (!activeShift) {
@@ -386,7 +402,12 @@ export default function POSPage() {
             cart={cart}
             members={members}
             selectedMember={selectedMember}
-            onSelectMember={setSelectedMember}
+            onSelectMember={(member: any) => {
+              setSelectedMember(member);
+              if (!member) {
+                setInitialPaymentMethod('Tunai');
+              }
+            }}
             isShiftActive={!!activeShift}
             onPay={(method: string) => { 
               if (!activeShift) {
@@ -395,12 +416,16 @@ export default function POSPage() {
                 return;
               }
               if(cart.length>0) {
-                setInitialPaymentMethod(method);
+                const effectiveMethod = !selectedMember ? 'Tunai' : method;
+                setInitialPaymentMethod(effectiveMethod);
                 setModals(m => ({...m, splitPayment: true}));
               } 
             }}
             onHold={handleHoldTransaction}
-            onReset={() => setCart([])}
+            onReset={() => {
+              setCart([]);
+              setInitialPaymentMethod('Tunai');
+            }}
             parkedCount={parkedCount}
             onOpenParked={() => setModals(m => ({...m, parked: true}))}
           />
@@ -437,7 +462,7 @@ export default function POSPage() {
         cart={cart}
         total={total}
         memberId={selectedMember?.id || null}
-        initialMethod={initialPaymentMethod}
+        initialMethod={!selectedMember ? 'Tunai' : initialPaymentMethod}
         onConfirm={handleCheckoutConfirm}
       />
       
