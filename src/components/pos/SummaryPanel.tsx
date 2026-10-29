@@ -134,11 +134,17 @@ export default function SummaryPanel({
         {parkedCount > 0 && onOpenParked && (
           <button
             type="button"
-            className="w-full py-2 px-3 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-900 dark:text-amber-200 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+            className="w-full py-2.5 px-3 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900/80 text-amber-950 dark:text-amber-100 font-semibold border border-amber-300 dark:border-amber-700/60 rounded-lg text-xs flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer"
             onClick={onOpenParked}
           >
-            <span className="material-symbols-outlined text-[16px] text-amber-600">inventory_2</span>
-            <span>Ada {parkedCount} Belanja Ditahan (Klik untuk Muat)</span>
+            <span className="material-symbols-outlined text-[18px] text-amber-800 dark:text-amber-300">inventory_2</span>
+            <span className="flex items-center gap-1.5">
+              <span>Ada</span>
+              <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-amber-800 text-white dark:bg-amber-400 dark:text-amber-950 font-bold text-[11px]">
+                {parkedCount}
+              </span>
+              <span>Belanja Ditahan (Klik untuk Muat)</span>
+            </span>
           </button>
         )}
       </div>
