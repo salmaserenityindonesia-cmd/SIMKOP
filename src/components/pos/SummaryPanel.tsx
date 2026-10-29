@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function SummaryPanel({
   cart,
@@ -12,11 +12,27 @@ export default function SummaryPanel({
   onOpenParked,
   isShiftActive = true,
 }: any) {
-  const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null || true);
+  const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null);
   const [paymentType, setPaymentType] = useState('Tunai');
 
+  // Synchronize isMemberMode when selectedMember changes from parent
+  useEffect(() => {
+    if (selectedMember) {
+      setIsMemberMode(true);
+    }
+  }, [selectedMember]);
+
+  const isNonMember = !isMemberMode || !selectedMember;
+
+  // Auto-reset paymentType to Tunai if non-member
+  useEffect(() => {
+    if (isNonMember && paymentType !== 'Tunai') {
+      setPaymentType('Tunai');
+    }
+  }, [isNonMember, paymentType]);
+
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
-  const discount = isMemberMode ? subtotal * 0.05 : 0;
+  const discount = (isMemberMode && selectedMember) ? subtotal * 0.05 : 0;
   const total = subtotal - discount;
 
   // Sync selectedMember when switching modes
@@ -26,6 +42,7 @@ export default function SummaryPanel({
       onSelectMember(members[0]);
     } else if (!mode) {
       onSelectMember(null);
+      setPaymentType('Tunai');
     }
   };
 
@@ -92,15 +109,48 @@ export default function SummaryPanel({
       <div className="bg-surface-container-lowest border border-outline-variant/50 rounded-xl p-3.5 shadow-sm">
         <div className="text-title-sm font-title-sm text-primary mb-2">Metode Pembayaran Cepat</div>
         <div className="grid grid-cols-2 gap-2">
-          {['Tunai', 'Potong Simpanan', 'Bon Toko'].map(type => (
-            <button
-              key={type}
-              className={`p-2.5 rounded-lg border flex items-center gap-2 font-title-sm text-left transition-all ${paymentType === type ? 'border-2 border-secondary bg-surface-container-low text-primary' : 'border-outline-variant/60 bg-surface-container-lowest text-primary hover:border-secondary'}`}
-              onClick={() => setPaymentType(type)}>
-              <span className="material-symbols-outlined text-secondary text-[22px]">{type === 'Tunai' ? 'payments' : type === 'Potong Simpanan' ? 'account_balance_wallet' : 'receipt_long'}</span>
-              <div className="font-bold leading-tight">{type}</div>
-            </button>
-          ))}
+          {['Tunai', 'Potong Simpanan', 'Bon Toko'].map(type => {
+            const isNonCash = type !== 'Tunai';
+            const isDisabled = isNonCash && isNonMember;
+
+            return (
+              <button
+                key={type}
+                type="button"
+                disabled={isDisabled}
+                aria-disabled={isDisabled}
+                title={isDisabled ? 'Metode pembayaran ini khusus anggota koperasi' : undefined}
+                className={`p-2.5 rounded-lg border flex items-center gap-2 font-title-sm text-left transition-all ${
+                  isDisabled
+                    ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 pointer-events-none'
+                    : paymentType === type
+                    ? 'border-2 border-secondary bg-surface-container-low text-primary'
+                    : 'border-outline-variant/60 bg-surface-container-lowest text-primary hover:border-secondary'
+                }`}
+                onClick={() => {
+                  if (!isDisabled) {
+                    setPaymentType(type);
+                  }
+                }}
+              >
+                <span className={`material-symbols-outlined text-[22px] ${isDisabled ? 'text-slate-400 dark:text-slate-500' : 'text-secondary'}`}>
+                  {type === 'Tunai' ? 'payments' : type === 'Potong Simpanan' ? 'account_balance_wallet' : 'receipt_long'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold leading-tight truncate">{type}</div>
+                  {isNonCash && (
+                    <div className={`text-[10px] leading-tight mt-0.5 font-medium ${
+                      isDisabled 
+                        ? 'text-slate-400 dark:text-slate-500 font-normal' 
+                        : 'text-secondary font-semibold'
+                    }`}>
+                      Khusus Anggota
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -115,7 +165,10 @@ export default function SummaryPanel({
               : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-md active:scale-[0.98]'
           }`} 
           onClick={() => {
-            if (isShiftActive && cart.length > 0) onPay(paymentType);
+            if (isShiftActive && cart.length > 0) {
+              const effectivePaymentType = isNonMember ? 'Tunai' : paymentType;
+              onPay(effectivePaymentType);
+            }
           }}
         >
           <span className="material-symbols-outlined text-[26px]">point_of_sale</span>
