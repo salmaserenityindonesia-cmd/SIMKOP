@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
+import ProductSearchAutocomplete, { type ProductAutocompleteItem } from '../../components/common/ProductSearchAutocomplete';
 import {
   FileSpreadsheet,
   Printer,
@@ -134,6 +135,11 @@ export default function LaporanMutasiBarang() {
 
   // Data States
   const [productsList, setProductsList] = useState<ProductOption[]>([]);
+
+  const autocompleteProducts = useMemo<ProductAutocompleteItem[]>(
+    () => productsList.map((p) => ({ id: p.id, name: p.name, sku: p.sku || '-', stock: p.stock, unit: p.unit })),
+    [productsList]
+  );
   const [mutations, setMutations] = useState<InventoryMutation[]>([]);
   const [kpi, setKpi] = useState<MutationKPISummary>({
     totalMasuk: 0,
@@ -673,18 +679,15 @@ export default function LaporanMutasiBarang() {
               <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1.5">
                 Mode Kartu Stok (Produk)
               </label>
-              <select
-                value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-500 focus:bg-white transition"
-              >
-                <option value="all">Semua Produk (Semua Mutasi Gudang)</option>
-                {productsList.map((prod) => (
-                  <option key={prod.id} value={prod.id}>
-                    {prod.name} ({prod.sku || '-'})
-                  </option>
-                ))}
-              </select>
+              <ProductSearchAutocomplete
+                products={autocompleteProducts}
+                selectedProductId={selectedProductId === 'all' ? '' : selectedProductId}
+                onSelect={(p) => setSelectedProductId(p.id)}
+                onClear={() => setSelectedProductId('all')}
+                allOptionLabel="Semua Produk (Semua Mutasi Gudang)"
+                placeholder="Ketik Nama Produk atau Barcode / SKU..."
+                inputClassName="text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder:text-slate-400 focus:border-teal-500 focus:bg-white"
+              />
             </div>
           </div>
 
