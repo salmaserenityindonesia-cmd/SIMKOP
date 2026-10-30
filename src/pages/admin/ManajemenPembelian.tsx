@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { Edit3, Loader2 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
+import { updatePurchaseInvoice, getPurchaseAuditLogs, PurchaseAuditLog } from '../../services/purchaseService';
+import { supabase } from '../../lib/supabaseClient';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 
@@ -10,7 +13,10 @@ export default function ManajemenPembelian() {
   const [products, setProducts] = useState<Produk[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form Mode
+  // User state for role check
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; role: string } | null>(null);
+
+  // Form Mode (New Invoice)
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [noFaktur, setNoFaktur] = useState('');
   const [tanggal, setTanggal] = useState(new Date().toISOString().split('T')[0]);
@@ -26,13 +32,58 @@ export default function ManajemenPembelian() {
 
   // View Detail Modal
   const [selectedFaktur, setSelectedFaktur] = useState<FakturPembelian | null>(null);
+  const [auditLogs, setAuditLogs] = useState<PurchaseAuditLog[]>([]);
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
+
+  // Edit Invoice Modal
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingFaktur, setEditingFaktur] = useState<FakturPembelian | null>(null);
+  const [editNoFaktur, setEditNoFaktur] = useState('');
+  const [editTanggal, setEditTanggal] = useState('');
+  const [editItems, setEditItems] = useState<{ id?: string; produkId: string; qty: number; hargaBeli: number }[]>([]);
+  const [changeReason, setChangeReason] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
   useEffect(() => {
     fetchData();
+    fetchCurrentUser();
   }, []);
+
+  const fetchCurrentUser = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('pengelola')
+          .select('nama, role')
+          .eq('id', user.id)
+          .single();
+        
+        setCurrentUser({
+          id: user.id,
+          name: profile?.nama || user.user_metadata?.nama || user.email || 'Pengelola',
+          role: profile?.role || 'admin'
+        });
+      } else {
+        // Fallback for development / demo mode
+        setCurrentUser({
+          id: 'dev-admin-id',
+          name: 'Admin SIMKOP',
+          role: 'admin'
+        });
+      }
+    } catch (e) {
+      console.warn('Gagal memuat pengguna aktif:', e);
+      setCurrentUser({
+        id: 'dev-admin-id',
+        name: 'Admin SIMKOP',
+        role: 'admin'
+      });
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -127,6 +178,113 @@ export default function ManajemenPembelian() {
   };
 
   const cartTotal = items.reduce((sum, item) => sum + (item.qty * item.hargaBeli), 0);
+
+  const handleOpenDetailModal = async (faktur: FakturPembelian) => {
+    setSelectedFaktur(faktur);
+    setIsLoadingAudit(true);
+    try {
+      const logs = await getPurchaseAuditLogs(faktur.id);
+      setAuditLogs(logs);
+    } catch (e) {
+      console.error('Failed to load audit logs:', e);
+      setAuditLogs([]);
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
+
+  const handleOpenEditModal = (faktur: FakturPembelian) => {
+    if (currentUser && currentUser.role !== 'admin') {
+      showToast('Hanya admin yang dapat mengedit faktur pembelian', 'warning');
+      return;
+    }
+    setEditingFaktur(faktur);
+    setEditNoFaktur(faktur.noFaktur);
+    setEditTanggal(faktur.tanggal);
+    setEditItems(faktur.items.map(it => ({
+      id: it.id,
+      produkId: it.produkId,
+      qty: it.qty,
+      hargaBeli: it.hargaBeli
+    })));
+    setChangeReason('');
+    setIsEditModalOpen(true);
+  };
+
+  const handleEditItemQtyChange = (index: number, val: number) => {
+    setEditItems(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], qty: val };
+      return copy;
+    });
+  };
+
+  const handleEditItemPriceChange = (index: number, val: number) => {
+    setEditItems(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], hargaBeli: val };
+      return copy;
+    });
+  };
+
+  const handleSubmitEditFaktur = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFaktur) return;
+
+    if (!editNoFaktur.trim()) {
+      showToast('Nomor Faktur harus diisi', 'warning');
+      return;
+    }
+
+    if (editItems.length === 0) {
+      showToast('Faktur harus memiliki minimal satu item produk', 'warning');
+      return;
+    }
+
+    if (changeReason.trim().length < 10) {
+      showToast('Alasan perubahan wajib diisi minimal 10 karakter', 'warning');
+      return;
+    }
+
+    for (const item of editItems) {
+      if (!item.qty || item.qty <= 0) {
+        showToast('Kuantitas setiap item harus lebih besar dari 0', 'warning');
+        return;
+      }
+      if (item.hargaBeli === undefined || item.hargaBeli < 0) {
+        showToast('Harga beli tidak boleh negatif', 'warning');
+        return;
+      }
+    }
+
+    setIsSavingEdit(true);
+    try {
+      await updatePurchaseInvoice(
+        editingFaktur.id,
+        {
+          noFaktur: editNoFaktur.trim(),
+          tanggal: editTanggal,
+          items: editItems
+        },
+        changeReason.trim(),
+        {
+          id: currentUser?.id || 'admin-id',
+          name: currentUser?.name || 'Administrator'
+        }
+      );
+
+      showToast('Faktur pembelian dan stok berhasil diperbarui', 'success');
+      setIsEditModalOpen(false);
+      setEditingFaktur(null);
+      await fetchData();
+    } catch (error: any) {
+      showToast(error.message || 'Gagal memperbarui faktur pembelian', 'error');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const editCartTotal = editItems.reduce((sum, item) => sum + ((item.qty || 0) * (item.hargaBeli || 0)), 0);
 
   const handleExportExcel = () => {
     const data = fakturList.map(f => ({
@@ -401,12 +559,29 @@ export default function ManajemenPembelian() {
                       </td>
                       <td className="p-4 flex items-center justify-center gap-2">
                         <button 
-                          onClick={() => setSelectedFaktur(faktur)}
+                          onClick={() => handleOpenDetailModal(faktur)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-tertiary hover:bg-tertiary/10 transition-colors"
                           title="Lihat Detail Faktur"
                         >
                           <span className="material-symbols-outlined text-[18px]">visibility</span>
                         </button>
+                        {currentUser?.role === 'admin' ? (
+                          <button 
+                            onClick={() => handleOpenEditModal(faktur)}
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
+                            title="Edit Faktur"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button 
+                            disabled
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/40 cursor-not-allowed opacity-50"
+                            title="Hanya admin yang dapat mengedit faktur"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -460,6 +635,7 @@ export default function ManajemenPembelian() {
         </div>
       </div>
 
+      {/* Modal Detail Faktur & Audit Trail */}
       {selectedFaktur && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-surface rounded-2xl w-full max-w-2xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
@@ -468,46 +644,262 @@ export default function ManajemenPembelian() {
                 <h2 className="text-title-lg font-title-lg text-on-surface">Detail Faktur</h2>
                 <p className="text-body-md text-on-surface-variant mt-1 font-mono">{selectedFaktur.noFaktur} - {selectedFaktur.tanggal}</p>
               </div>
-              <button onClick={() => setSelectedFaktur(null)} className="text-on-surface-variant hover:text-on-surface">
+              <button onClick={() => { setSelectedFaktur(null); setAuditLogs([]); }} className="text-on-surface-variant hover:text-on-surface">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             
-            <div className="p-6 overflow-y-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-outline-variant text-label-md text-on-surface-variant">
-                    <th className="py-2 font-medium">Produk</th>
-                    <th className="py-2 font-medium text-right">Qty</th>
-                    <th className="py-2 font-medium text-right">Harga Beli</th>
-                    <th className="py-2 font-medium text-right">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedFaktur.items.map((item, idx) => (
-                    <tr key={idx} className="border-b border-outline-variant/30">
-                      <td className="py-3 text-body-md text-on-surface">{getProductName(item.produkId)}</td>
-                      <td className="py-3 text-body-md text-on-surface text-right">{item.qty}</td>
-                      <td className="py-3 text-body-md text-on-surface text-right">Rp {item.hargaBeli.toLocaleString('id-ID')}</td>
-                      <td className="py-3 text-body-md font-medium text-on-surface text-right">
-                        Rp {(item.qty * item.hargaBeli).toLocaleString('id-ID')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={3} className="py-4 text-right font-medium text-on-surface">Total:</td>
-                    <td className="py-4 text-right font-bold text-primary text-title-md">
-                      Rp {selectedFaktur.totalNilai.toLocaleString('id-ID')}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
+            <div className="p-6 overflow-y-auto flex flex-col gap-6">
+              {/* Daftar Barang */}
+              <div>
+                <h3 className="text-title-sm font-medium text-on-surface mb-2">Daftar Barang</h3>
+                <div className="border border-outline-variant/30 rounded-xl overflow-hidden">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-surface-container-lowest border-b border-outline-variant text-label-md text-on-surface-variant">
+                        <th className="py-2.5 px-4 font-medium">Produk</th>
+                        <th className="py-2.5 px-3 font-medium text-right">Qty</th>
+                        <th className="py-2.5 px-3 font-medium text-right">Harga Beli</th>
+                        <th className="py-2.5 px-4 font-medium text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedFaktur.items.map((item, idx) => (
+                        <tr key={idx} className="border-b border-outline-variant/30">
+                          <td className="py-3 px-4 text-body-md text-on-surface">{getProductName(item.produkId)}</td>
+                          <td className="py-3 px-3 text-body-md text-on-surface text-right">{item.qty}</td>
+                          <td className="py-3 px-3 text-body-md text-on-surface text-right">Rp {item.hargaBeli.toLocaleString('id-ID')}</td>
+                          <td className="py-3 px-4 text-body-md font-medium text-on-surface text-right">
+                            Rp {(item.qty * item.hargaBeli).toLocaleString('id-ID')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-surface-container-lowest/50">
+                        <td colSpan={3} className="py-3 px-4 text-right font-medium text-on-surface">Total:</td>
+                        <td className="py-3 px-4 text-right font-bold text-primary text-title-md">
+                          Rp {selectedFaktur.totalNilai.toLocaleString('id-ID')}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* Riwayat Perubahan (Audit Trail) */}
+              <div className="flex flex-col gap-3 pt-4 border-t border-outline-variant/30">
+                <h3 className="text-title-sm font-medium text-on-surface flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[20px] text-primary">history</span>
+                  Riwayat Perubahan (Audit Trail)
+                </h3>
+
+                {isLoadingAudit ? (
+                  <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/30 text-center text-on-surface-variant text-body-sm flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    Memuat riwayat perubahan...
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/30 text-center text-on-surface-variant text-body-sm">
+                    Belum ada riwayat koreksi pada faktur ini.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {auditLogs.map((log) => (
+                      <div key={log.id} className="p-3.5 bg-surface-container-lowest rounded-xl border border-outline-variant/40 flex flex-col gap-2">
+                        <div className="flex items-center justify-between text-label-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-primary">{log.performer_name || 'Pengelola'}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-secondary/10 text-secondary font-medium">
+                              {log.action === 'UPDATE_PURCHASE' ? 'Koreksi Faktur' : log.action}
+                            </span>
+                          </div>
+                          <span className="text-on-surface-variant text-xs font-mono">
+                            {new Date(log.created_at).toLocaleString('id-ID', {
+                              dateStyle: 'medium',
+                              timeStyle: 'short'
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-body-sm text-on-surface bg-surface p-2.5 rounded-lg border border-outline-variant/20">
+                          <span className="font-medium text-on-surface-variant mr-1">Alasan:</span>
+                          "{log.notes}"
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Modal Edit Faktur */}
+      {isEditModalOpen && editingFaktur && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-surface rounded-2xl w-full max-w-3xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b border-outline-variant/30 flex justify-between items-center bg-surface-container-lowest">
+              <div>
+                <h2 className="text-title-lg font-title-lg text-on-surface">Edit Faktur Pembelian: {editingFaktur.noFaktur}</h2>
+                <p className="text-body-md text-on-surface-variant mt-0.5">
+                  Sesuaikan nomor faktur, tanggal, kuantitas, atau harga beli barang
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  if (!isSavingEdit) {
+                    setIsEditModalOpen(false);
+                    setEditingFaktur(null);
+                  }
+                }} 
+                className="text-on-surface-variant hover:text-on-surface"
+                disabled={isSavingEdit}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitEditFaktur} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-6 overflow-y-auto flex flex-col gap-5">
+                {/* Header Inputs: No. Faktur & Tanggal */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/30">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur</label>
+                    <input 
+                      type="text" 
+                      value={editNoFaktur}
+                      onChange={(e) => setEditNoFaktur(e.target.value)}
+                      className="px-3.5 py-2 bg-surface border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                      placeholder="INV/2026/..."
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-label-md font-label-md text-on-surface-variant">Tanggal</label>
+                    <input 
+                      type="date" 
+                      value={editTanggal}
+                      onChange={(e) => setEditTanggal(e.target.value)}
+                      className="px-3.5 py-2 bg-surface border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Items Table */}
+                <div className="flex flex-col gap-2">
+                  <h3 className="text-title-sm font-medium text-on-surface">Rincian Barang & Penyesuaian</h3>
+                  <div className="border border-outline-variant/40 rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-surface-container-lowest border-b border-outline-variant/40 text-label-sm text-on-surface-variant">
+                          <th className="py-2.5 px-4 font-medium">Produk</th>
+                          <th className="py-2.5 px-3 font-medium text-right w-28">Qty</th>
+                          <th className="py-2.5 px-3 font-medium text-right w-36">Harga Beli (Rp)</th>
+                          <th className="py-2.5 px-4 font-medium text-right w-36">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editItems.map((item, idx) => (
+                          <tr key={item.id || idx} className="border-b border-outline-variant/20 hover:bg-surface-container-lowest/30">
+                            <td className="py-2.5 px-4 text-body-sm text-on-surface font-medium">
+                              {getProductName(item.produkId)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input 
+                                type="number" 
+                                min="1"
+                                value={item.qty}
+                                onChange={(e) => handleEditItemQtyChange(idx, parseInt(e.target.value) || 0)}
+                                className="w-20 px-2 py-1 text-right bg-surface border border-outline rounded text-body-sm focus:border-primary outline-none"
+                                required
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              <input 
+                                type="number" 
+                                min="0"
+                                value={item.hargaBeli}
+                                onChange={(e) => handleEditItemPriceChange(idx, parseInt(e.target.value) || 0)}
+                                className="w-28 px-2 py-1 text-right bg-surface border border-outline rounded text-body-sm focus:border-primary outline-none"
+                                required
+                              />
+                            </td>
+                            <td className="py-2.5 px-4 text-right text-body-sm font-medium text-on-surface">
+                              Rp {((item.qty || 0) * (item.hargaBeli || 0)).toLocaleString('id-ID')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-surface-container-lowest/50">
+                          <td colSpan={3} className="py-3 px-4 text-right font-medium text-on-surface text-body-sm">
+                            Total Faktur Baru:
+                          </td>
+                          <td className="py-3 px-4 text-right font-bold text-primary text-title-sm">
+                            Rp {editCartTotal.toLocaleString('id-ID')}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Reason Textarea (Required, >= 10 chars) */}
+                <div className="flex flex-col gap-1.5 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/30">
+                  <div className="flex items-center justify-between">
+                    <label className="text-label-md font-label-md text-on-surface">
+                      Alasan Perubahan / Koreksi <span className="text-error font-bold">*</span>
+                    </label>
+                    <span className="text-xs text-on-surface-variant">Wajib diisi</span>
+                  </div>
+                  <textarea 
+                    value={changeReason}
+                    onChange={(e) => setChangeReason(e.target.value)}
+                    rows={3}
+                    className="px-3.5 py-2.5 bg-surface border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all resize-none"
+                    placeholder="Jelaskan alasan perubahan faktur (misal: koreksi salah input kuantitas barang dari supplier)..."
+                    required
+                  />
+                  <div className="flex justify-between items-center text-xs mt-1">
+                    <span className={changeReason.trim().length >= 10 ? 'text-primary font-medium' : 'text-error font-medium'}>
+                      {changeReason.trim().length >= 10 
+                        ? '✓ Alasan memenuhi syarat minimal' 
+                        : `Minimal 10 karakter - saat ini: ${changeReason.trim().length} karakter`}
+                    </span>
+                    <span className="text-on-surface-variant font-mono">{changeReason.trim().length} karakter</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="p-4 border-t border-outline-variant/30 bg-surface-container-lowest flex justify-end gap-3 items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setEditingFaktur(null);
+                  }}
+                  disabled={isSavingEdit}
+                  className="px-4 py-2 text-on-surface-variant font-label-lg hover:bg-surface-container rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={changeReason.trim().length < 10 || isSavingEdit || editItems.length === 0 || !editNoFaktur.trim()}
+                  className="flex items-center gap-2 bg-primary text-on-primary px-6 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSavingEdit && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isSavingEdit ? 'Menyimpan...' : 'Simpan Perubahan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </AdminLayout>
   );
 }
