@@ -636,7 +636,7 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 37: Implementasi Kontrol Pagination pada Tabel Retur Pembelian
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Menambahkan kontrol pagination yang lengkap pada tabel riwayat retur di `src/pages/admin/ManajemenReturPembelian.tsx` dengan pilihan ukuran halaman (10, 25, 50, dan 100 baris), informasi rentang aktif ("Menampilkan X-Y dari Z faktur retur"), tombol navigasi halaman (Prev, Next, Current/Total Page), serta auto-reset ke halaman 1 saat query pencarian atau filter status/jenis berubah, selaras dengan antarmuka Manajemen Pembelian.
 **Depends on:** Phase 32
 
@@ -648,6 +648,24 @@ updated: 2026-10-30T20:50:00+07:00
 - State dinamis `pageSize` (10, 25, 50, 100) dan kalkulasi `paginatedReturns`
 - Footer pagination responsif di bawah tabel retur pembelian
 - Typecheck dan seluruh suite Vitest & Vite build 100% passing
+
+---
+
+### Phase 38: Konfigurasi Ukuran Kertas Printer Thermal Struk (58mm vs 80mm) di Pengaturan Kasir
+**Status:** 📋 Planned
+**Objective:** Menambahkan opsi konfigurasi ukuran kertas printer thermal kasir (58mm vs 80mm) di menu `/admin/pengaturan-kasir`, tersimpan di tabel `pos_settings` dan `localStorage`, serta menyesuaikan secara reaktif layout preview modal struk kasir (`ReceiptModal.tsx`), susunan baris barang, label tombol cetak thermal, dan aturan CSS `@media print`.
+**Depends on:** Phase 20, Phase 26
+
+**Plans:**
+- [ ] Plan 38.1: Wave 1 - Skema Database & Service Layer Ukuran Kertas Thermal (58mm vs 80mm)
+- [ ] Plan 38.2: Wave 2 - UI Switcher Ukuran Kertas di PengaturanKasir.tsx & Responsive Layout di ReceiptModal.tsx
+- [ ] Plan 38.3: Wave 3 - Static Verification, Full Test Suite & Production Build
+
+**Deliverables:**
+- File migrasi `028_add_receipt_paper_size_to_pos_settings.sql` dan update `posSettingsService.ts`
+- Komponen radio card selector ukuran kertas 58mm vs 80mm di `PengaturanKasir.tsx`
+- Layout preview struk dinamis dan styling print `@page` di `ReceiptModal.tsx`
+- Pengujian unit otomatis dan build produksi Vite exit code 0
 
 ---
 
@@ -684,6 +702,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 27 | Phase 35 | Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang |
 | 28 | Phase 36 | Searchable Autocomplete Produk pada Mode Kartu Stok Laporan Mutasi |
 | 29 | Phase 37 | Implementasi Kontrol Pagination pada Tabel Retur Pembelian |
+| 30 | Phase 38 | Konfigurasi Ukuran Kertas Thermal Struk (58mm vs 80mm) |
 
 ---
 
@@ -727,7 +746,8 @@ updated: 2026-10-30T20:50:00+07:00
 | 34 | Laporan Mutasi Barang Gudang | ✅ | 5/5 | 100% |
 | 35 | Penyelarasan Tombol Header Laporan Mutasi | ✅ | 2/2 | 100% |
 | 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | ✅ | 2/2 | 100% |
-| 37 | Kontrol Pagination Tabel Retur Pembelian | 📋 | 0/2 | 0% |
+| 37 | Kontrol Pagination Tabel Retur Pembelian | ✅ | 2/2 | 100% |
+| 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | 📋 | 0/3 | 0% |
 
 ---
 
