@@ -1302,3 +1302,22 @@ export async function getCommitmentStats(month: number, year: number): Promise<C
 
   return stats;
 }
+
+// Phase 30: Purchase Service & Audit Trail Re-exports
+export {
+  updatePurchaseInvoice,
+  getPurchaseAuditLogs,
+  type PurchaseAuditLog,
+  type PurchaseItemPayload,
+  type UpdatePurchasePayload,
+  type UpdatePurchaseResult,
+  type MockProductStock,
+  type MockPurchaseRecord,
+  setMockProducts,
+  getMockProducts,
+  setMockPurchases,
+  getMockPurchases,
+  setMockAuditLogs,
+  getMockAuditLogs,
+  resetPurchaseServiceMockState
+} from './purchaseService';
