@@ -46,6 +46,18 @@ export const navigationGroups: NavigationGroup[] = [
     ],
   },
   {
+    groupName: 'TOKO RETAIL & INVENTORI',
+    items: [
+      { label: 'Kasir (POS)', icon: ShoppingCart, href: '/admin/kasir' },
+      { label: 'Inventori Produk', icon: Package, href: '/admin/produk' },
+      { label: 'Kategori Produk', icon: Tags, href: '/admin/kategori' },
+      { label: 'Manajemen Pembelian', icon: Truck, href: '/admin/pembelian' },
+      { label: 'Retur Pembelian', icon: RotateCcw, href: '/admin/retur-pembelian' },
+      { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
+      { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
+    ],
+  },
+  {
     groupName: 'SIMPAN PINJAM (KSP / USP)',
     items: [
       { label: 'Master Produk Koperasi', icon: Boxes, href: '/admin/master-simpan-pinjam', adminOnly: true },
@@ -64,18 +76,6 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Import Gaji & Rekening', icon: Upload, href: '/admin/import-gaji', adminOnly: true },
       { label: 'Update Massal Bulanan', icon: RefreshCw, href: '/admin/batch-update', adminOnly: true },
       { label: 'Kliring & Clearance Anggota', icon: UserCheck, href: '/admin/clearance', adminOnly: true },
-    ],
-  },
-  {
-    groupName: 'TOKO RETAIL & INVENTORI',
-    items: [
-      { label: 'Kasir (POS)', icon: ShoppingCart, href: '/admin/kasir' },
-      { label: 'Inventori Produk', icon: Package, href: '/admin/produk' },
-      { label: 'Kategori Produk', icon: Tags, href: '/admin/kategori' },
-      { label: 'Manajemen Pembelian', icon: Truck, href: '/admin/pembelian' },
-      { label: 'Retur Pembelian', icon: RotateCcw, href: '/admin/retur-pembelian' },
-      { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
-      { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
     ],
   },
   {
