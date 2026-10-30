@@ -23,6 +23,7 @@ import {
   TrendingUp,
   Settings,
   SlidersHorizontal,
+  RotateCcw,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -72,6 +73,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Inventori Produk', icon: Package, href: '/admin/produk' },
       { label: 'Kategori Produk', icon: Tags, href: '/admin/kategori' },
       { label: 'Manajemen Pembelian', icon: Truck, href: '/admin/pembelian' },
+      { label: 'Retur Pembelian', icon: RotateCcw, href: '/admin/retur-pembelian' },
       { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
       { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
     ],

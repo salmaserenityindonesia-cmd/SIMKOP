@@ -10,6 +10,8 @@ import PengajuanPinjaman from './pages/admin/PengajuanPinjaman';
 import DetailPinjaman from './pages/admin/DetailPinjaman';
 import ManajemenProduk from './pages/admin/ManajemenProduk';
 import ManajemenPembelian from './pages/admin/ManajemenPembelian';
+import ManajemenReturPembelian from './pages/admin/ManajemenReturPembelian';
+import InputReturPembelian from './pages/admin/InputReturPembelian';
 import ManajemenKategori from './pages/admin/ManajemenKategori';
 import ManajemenAnggota from './pages/admin/ManajemenAnggota';
 import ManajemenProdukSimpanPinjam from './pages/admin/ManajemenProdukSimpanPinjam';
@@ -155,6 +157,23 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ManajemenPembelian />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/retur-pembelian" 
+          element={
+            <ProtectedRoute>
+              <ManajemenReturPembelian />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/admin/retur-pembelian/input" 
+          element={
+            <ProtectedRoute>
+              <InputReturPembelian />
             </ProtectedRoute>
           } 
         />
