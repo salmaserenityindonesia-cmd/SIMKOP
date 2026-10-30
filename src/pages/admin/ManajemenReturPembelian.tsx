@@ -576,37 +576,52 @@ export default function ManajemenReturPembelian() {
           )}
 
           {/* Pagination Controls */}
-          {filteredReturns.length > pageSize && (
-            <div className="p-4 border-t border-outline-variant/30 flex items-center justify-between text-xs text-on-surface-variant">
-              <div>
-                Menampilkan {(currentPage - 1) * pageSize + 1} -{' '}
-                {Math.min(currentPage * pageSize, filteredReturns.length)} dari {filteredReturns.length} faktur retur
+          {!loading && (
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant/30 bg-surface">
+              {/* Info & Rows Per Page Selector */}
+              <div className="flex items-center gap-2 text-on-surface-variant text-xs sm:text-sm">
+                <span>
+                  Menampilkan{' '}
+                  <strong className="font-semibold text-on-surface">
+                    {totalItems === 0 ? 0 : startIndex + 1}-{endIndex}
+                  </strong>{' '}
+                  dari <strong className="font-semibold text-on-surface">{totalItems}</strong> faktur retur
+                </span>
+                <div className="flex items-center gap-1 ml-2">
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="px-2 py-1 bg-surface-container-lowest border border-outline rounded-lg text-xs font-medium text-on-surface focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none cursor-pointer"
+                  >
+                    <option value={10}>10 / halaman</option>
+                    <option value={25}>25 / halaman</option>
+                    <option value={50}>50 / halaman</option>
+                    <option value={100}>100 / halaman</option>
+                  </select>
+                </div>
               </div>
-              <div className="flex items-center gap-1">
+
+              {/* Navigation Buttons */}
+              <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  className="px-2.5 py-1.5 border border-outline rounded hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 text-xs font-medium bg-surface-container hover:bg-surface-container-high text-on-surface rounded-lg border border-outline-variant/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   Sebelumnya
                 </button>
-                {Array.from({ length: totalPages }).map((_, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setCurrentPage(idx + 1)}
-                    className={`w-7 h-7 rounded text-xs font-medium ${
-                      currentPage === idx + 1
-                        ? 'bg-primary text-on-primary'
-                        : 'hover:bg-surface-container text-on-surface'
-                    }`}
-                  >
-                    {idx + 1}
-                  </button>
-                ))}
+                
+                <span className="text-xs font-semibold px-2 text-on-surface">
+                  {currentPage} / {totalPages}
+                </span>
+
                 <button
-                  onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="px-2.5 py-1.5 border border-outline rounded hover:bg-surface-container disabled:opacity-40 disabled:cursor-not-allowed"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages || totalPages === 0}
+                  className="px-3 py-1.5 text-xs font-medium bg-surface-container hover:bg-surface-container-high text-on-surface rounded-lg border border-outline-variant/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   Selanjutnya
                 </button>
