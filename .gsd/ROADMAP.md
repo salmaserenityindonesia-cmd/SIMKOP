@@ -657,9 +657,9 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 20, Phase 26
 
 **Plans:**
-- [ ] Plan 38.1: Wave 1 - Skema Database & Service Layer Ukuran Kertas Thermal (58mm vs 80mm)
-- [ ] Plan 38.2: Wave 2 - UI Switcher Ukuran Kertas di PengaturanKasir.tsx & Responsive Layout di ReceiptModal.tsx
-- [ ] Plan 38.3: Wave 3 - Static Verification, Full Test Suite & Production Build
+- [x] Plan 38.1: Wave 1 - Skema Database & Service Layer Ukuran Kertas Thermal (58mm vs 80mm)
+- [x] Plan 38.2: Wave 2 - UI Switcher Ukuran Kertas di PengaturanKasir.tsx & Responsive Layout di ReceiptModal.tsx
+- [x] Plan 38.3: Wave 3 - Static Verification, Full Test Suite & Production Build
 
 **Deliverables:**
 - File migrasi `028_add_receipt_paper_size_to_pos_settings.sql` dan update `posSettingsService.ts`
