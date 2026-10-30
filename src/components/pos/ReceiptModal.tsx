@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useFeedback } from '../../context/FeedbackContext';
 import { generateReceiptPdf, ReceiptItem, ReceiptPaymentInfo } from '../../utils/receiptPdfGenerator';
 import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../services/settingsService';
+import { getPosSettings } from '../../services/posSettingsService';
 
 interface ReceiptModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ interface ReceiptModalProps {
   memberName?: string | null;
   cashierName?: string | null;
   profile?: KoperasiProfile | null;
+  paperSize?: '58mm' | '80mm';
 }
 
 export default function ReceiptModal({
@@ -30,10 +32,26 @@ export default function ReceiptModal({
   saleNumber,
   memberName,
   cashierName = 'Kasir Utama',
-  profile
+  profile,
+  paperSize: initialPaperSize
 }: ReceiptModalProps) {
   const { showToast } = useFeedback();
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile>(profile || DEFAULT_KOPERASI_PROFILE);
+  const [paperSize, setPaperSize] = useState<'58mm' | '80mm'>(initialPaperSize || '80mm');
+
+  useEffect(() => {
+    if (initialPaperSize) {
+      setPaperSize(initialPaperSize);
+    } else if (isOpen) {
+      getPosSettings().then(settings => {
+        if (settings?.receipt_paper_size) {
+          setPaperSize(settings.receipt_paper_size);
+        }
+      }).catch(err => {
+        console.warn('Gagal memuat setting kertas thermal:', err);
+      });
+    }
+  }, [isOpen, initialPaperSize]);
 
   useEffect(() => {
     if (profile) {
@@ -102,18 +120,22 @@ export default function ReceiptModal({
           </button>
         </div>
         
-        <div id="printable-receipt" className="p-4 bg-surface-container-low/50 overflow-y-auto custom-scrollbar flex-1 print:bg-white print:p-0">
-          <div className="bg-surface-container-lowest p-5 rounded-lg border border-outline-variant/40 shadow-xs font-mono text-[12px] text-primary print:shadow-none print:border-none">
+        <div id="printable-receipt" className="p-4 bg-surface-container-low/50 overflow-y-auto custom-scrollbar flex-1 print:bg-white print:p-0 flex justify-center">
+          <div className={`bg-surface-container-lowest rounded-lg border border-outline-variant/40 shadow-xs font-mono text-primary print:shadow-none print:border-none w-full transition-all ${
+            paperSize === '58mm'
+              ? 'max-w-[260px] p-3 text-[10px]'
+              : 'max-w-[340px] p-5 text-[12px]'
+          }`}>
             {/* Header Koperasi */}
             <div className="text-center pb-3 border-b border-dashed border-outline-variant/80 space-y-1">
-              <div className="font-bold text-[14px] leading-tight break-words">
+              <div className={`font-bold leading-tight break-words ${paperSize === '58mm' ? 'text-[12px]' : 'text-[14px]'}`}>
                 {koperasiProfile.nama_koperasi}
               </div>
-              <div className="text-[11px] text-outline leading-normal break-words whitespace-pre-line">
+              <div className={`${paperSize === '58mm' ? 'text-[9.5px]' : 'text-[11px]'} text-outline leading-normal break-words whitespace-pre-line`}>
                 {koperasiProfile.alamat}
               </div>
               {(koperasiProfile.telepon || koperasiProfile.terminal_name) && (
-                <div className="text-[10px] text-outline/80 pt-0.5 flex flex-wrap items-center justify-center gap-x-2">
+                <div className={`${paperSize === '58mm' ? 'text-[9px]' : 'text-[10px]'} text-outline/80 pt-0.5 flex flex-wrap items-center justify-center gap-x-2`}>
                   {koperasiProfile.telepon && <span>Telp: {koperasiProfile.telepon}</span>}
                   {koperasiProfile.telepon && koperasiProfile.terminal_name && <span>|</span>}
                   {koperasiProfile.terminal_name && <span>{koperasiProfile.terminal_name}</span>}
@@ -122,7 +144,7 @@ export default function ReceiptModal({
             </div>
 
             {/* Metadata Transaksi */}
-            <div className="py-2 border-b border-dashed border-outline-variant/80 text-[11px] text-outline space-y-1">
+            <div className={`py-2 border-b border-dashed border-outline-variant/80 ${paperSize === '58mm' ? 'text-[9.5px]' : 'text-[11px]'} text-outline space-y-1`}>
               <div className="flex justify-between">
                 <span>No. Trx:</span>
                 <span className="font-mono text-primary font-bold">{currentSaleNumber}</span>
@@ -144,20 +166,30 @@ export default function ReceiptModal({
             </div>
             
             {/* Cart Items */}
-            <div className="py-3 border-b border-dashed border-outline-variant/80 space-y-2">
+            <div className="py-2.5 border-b border-dashed border-outline-variant/80 space-y-2">
               {cart.map((item, idx) => (
-                <div key={idx}>
-                  <div className="font-bold">{item.name}</div>
-                  <div className="flex justify-between text-[11px] text-outline">
-                    <span>{item.qty} {item.unit || ''} x Rp {item.price.toLocaleString('id-ID')}</span>
-                    <span className="font-bold text-primary">Rp {(item.qty * item.price).toLocaleString('id-ID')}</span>
+                paperSize === '58mm' ? (
+                  <div key={idx} className="space-y-0.5">
+                    <div className="font-bold text-[10px] leading-tight break-words">{item.name}</div>
+                    <div className="flex justify-between items-center text-[9.5px] text-outline">
+                      <span>{item.qty} {item.unit || ''} x Rp {item.price.toLocaleString('id-ID')}</span>
+                      <span className="font-bold text-primary">Rp {(item.qty * item.price).toLocaleString('id-ID')}</span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div key={idx} className="space-y-0.5">
+                    <div className="font-bold text-[12px]">{item.name}</div>
+                    <div className="flex justify-between text-[11px] text-outline">
+                      <span>{item.qty} {item.unit || ''} x Rp {item.price.toLocaleString('id-ID')}</span>
+                      <span className="font-bold text-primary">Rp {(item.qty * item.price).toLocaleString('id-ID')}</span>
+                    </div>
+                  </div>
+                )
               ))}
             </div>
             
             {/* Totals */}
-            <div className="py-2.5 space-y-1 text-[11px]">
+            <div className={`py-2.5 space-y-1 ${paperSize === '58mm' ? 'text-[10px]' : 'text-[11px]'}`}>
               <div className="flex justify-between">
                 <span>Subtotal Kotor:</span>
                 <span>Rp {subtotal.toLocaleString('id-ID')}</span>
@@ -168,7 +200,7 @@ export default function ReceiptModal({
                   <span>- Rp {discount.toLocaleString('id-ID')}</span>
                 </div>
               )}
-              <div className="flex justify-between font-extrabold text-[13px] pt-1 border-t border-outline-variant/40 text-primary">
+              <div className={`flex justify-between font-extrabold ${paperSize === '58mm' ? 'text-[11.5px]' : 'text-[13px]'} pt-1 border-t border-outline-variant/40 text-primary`}>
                 <span>TOTAL AKHIR:</span>
                 <span>Rp {total.toLocaleString('id-ID')}</span>
               </div>
@@ -176,7 +208,7 @@ export default function ReceiptModal({
 
             {/* Payment Details */}
             {payment && (
-              <div className="py-2.5 space-y-1 text-[11px] border-t border-dashed border-outline-variant/80">
+              <div className={`py-2.5 space-y-1 ${paperSize === '58mm' ? 'text-[9.5px]' : 'text-[11px]'} border-t border-dashed border-outline-variant/80`}>
                 <div className="font-bold mb-1">Metode Pembayaran</div>
                 {payment.paidCash !== undefined && payment.paidCash > 0 && (
                   <div className="flex justify-between">
@@ -210,7 +242,7 @@ export default function ReceiptModal({
 
             {/* Footer Notes */}
             {koperasiProfile.footer_notes && (
-              <div className="text-center pt-2.5 border-t border-dashed border-outline-variant/80 text-[10px] text-outline italic break-words whitespace-pre-line">
+              <div className={`text-center pt-2.5 border-t border-dashed border-outline-variant/80 ${paperSize === '58mm' ? 'text-[9px]' : 'text-[10px]'} text-outline italic break-words whitespace-pre-line`}>
                 {koperasiProfile.footer_notes}
               </div>
             )}
@@ -220,7 +252,7 @@ export default function ReceiptModal({
         <div className="p-4 bg-surface border-t border-outline-variant/30 flex flex-col gap-2 shrink-0 print:hidden">
           <button className="w-full py-2.5 bg-primary text-surface-container-lowest rounded-lg font-title-sm flex items-center justify-center gap-2 hover:bg-primary-container transition-colors shadow-sm" onClick={handlePrint}>
             <span className="material-symbols-outlined text-[18px]">print</span>
-            <span>Direct Thermal Print (58/80mm)</span>
+            <span>Direct Thermal Print (${paperSize})</span>
           </button>
           <div className="grid grid-cols-2 gap-2">
             <button className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-title-sm text-[13px] flex items-center justify-center gap-1.5 transition-colors" onClick={handleWA}>
@@ -239,9 +271,32 @@ export default function ReceiptModal({
       </div>
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
-          body * { visibility: hidden; }
-          #receiptModal { position: absolute; left: 0; top: 0; background: white; }
-          #printable-receipt, #printable-receipt * { visibility: visible; }
+          @page {
+            size: ${paperSize} auto;
+            margin: 0;
+          }
+          body * {
+            visibility: hidden;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+          }
+          #printable-receipt {
+            visibility: visible !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: ${paperSize} !important;
+            max-width: ${paperSize} !important;
+            margin: 0 auto !important;
+            padding: ${paperSize === '58mm' ? '2mm 3mm' : '3mm 4mm'} !important;
+            background: #fff !important;
+          }
+          #printable-receipt * {
+            visibility: visible !important;
+          }
         }
       `}} />
     </div>
