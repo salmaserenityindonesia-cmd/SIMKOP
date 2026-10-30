@@ -35,6 +35,8 @@ import {
 } from '../../services/inventoryMutationService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { useFeedback } from '../../context/FeedbackContext';
+import { exportMutationToExcel, exportMutationToPdf } from '../../utils/mutationExporter';
+import { getKoperasiProfile } from '../../services/settingsService';
 
 // ─── Date Helpers ────────────────────────────────────────────────────────────
 
@@ -295,27 +297,63 @@ export default function LaporanMutasiBarang() {
     showToast('Laporan mutasi berhasil diekspor (CSV)', 'success');
   };
 
-  // Export Excel Action Handler
+  // Export Excel Action Handler (.xlsx via ExcelJS)
   const handleExportExcel = async () => {
+    if (mutations.length === 0) {
+      showToast('Tidak ada data mutasi untuk diekspor', 'warning');
+      return;
+    }
     setExporting(true);
     try {
-      handleDownloadCsv();
+      const profile = await getKoperasiProfile();
+      await exportMutationToExcel({
+        records: mutations,
+        kpi,
+        filters: {
+          startDate,
+          endDate,
+          productId: selectedProductId !== 'all' ? selectedProductId : undefined,
+          mutationType: mutationType !== 'all' ? mutationType : undefined,
+          search: searchQuery.trim() || undefined,
+        },
+        profile,
+        productLedger: selectedProductId !== 'all' ? productLedger : null,
+      });
+      showToast('Laporan mutasi berhasil diekspor ke Excel (.xlsx)', 'success');
     } catch (err: any) {
-      console.warn('Excel export error:', err);
-      showToast('Gagal mengekspor laporan', 'error');
+      console.error('Excel export error:', err);
+      showToast('Gagal mengekspor laporan ke Excel: ' + (err?.message || 'Terjadi kesalahan'), 'error');
     } finally {
       setExporting(false);
     }
   };
 
-  // Print PDF Action Handler
+  // Print PDF Action Handler (Landscape A4 via jsPDF)
   const handlePrintPdf = async () => {
+    if (mutations.length === 0) {
+      showToast('Tidak ada data mutasi untuk dicetak', 'warning');
+      return;
+    }
     setExporting(true);
     try {
-      window.print();
+      const profile = await getKoperasiProfile();
+      await exportMutationToPdf({
+        records: mutations,
+        kpi,
+        filters: {
+          startDate,
+          endDate,
+          productId: selectedProductId !== 'all' ? selectedProductId : undefined,
+          mutationType: mutationType !== 'all' ? mutationType : undefined,
+          search: searchQuery.trim() || undefined,
+        },
+        profile,
+        productLedger: selectedProductId !== 'all' ? productLedger : null,
+      });
+      showToast('Laporan mutasi berhasil diunduh dalam format PDF', 'success');
     } catch (err: any) {
-      console.warn('PDF print error:', err);
-      showToast('Gagal memproses cetak PDF', 'error');
+      console.error('PDF export error:', err);
+      showToast('Gagal memproses ekspor PDF: ' + (err?.message || 'Terjadi kesalahan'), 'error');
     } finally {
       setExporting(false);
     }
@@ -357,7 +395,11 @@ export default function LaporanMutasiBarang() {
               disabled={loading || exporting || mutations.length === 0}
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition duration-150 disabled:opacity-50 disabled:pointer-events-none"
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              {exporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4" />
+              )}
               <span>Export Excel</span>
             </button>
 
@@ -366,7 +408,11 @@ export default function LaporanMutasiBarang() {
               disabled={loading || exporting || mutations.length === 0}
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition duration-150 disabled:opacity-50 disabled:pointer-events-none"
             >
-              <Printer className="w-4 h-4" />
+              {exporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
               <span>Cetak PDF</span>
             </button>
           </div>
