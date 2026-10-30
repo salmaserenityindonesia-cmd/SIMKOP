@@ -126,3 +126,4 @@ describe('QuantityModal - Component Rendering & Logic', () => {
     expect(afterAdd[0].qty).toBe(8);
   });
 });
+

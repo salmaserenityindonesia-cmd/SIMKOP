@@ -114,6 +114,40 @@ Pada halaman kasir POS (`/admin/kasir` atau `/pos`), saat menekan hotkey F4 (ata
   * Full test suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
   * Production build (`npm run build`): sukses (exit code 0).
 
+---
+
+# Debug Session: DEBUG-20261031-MANAJEMEN-ANGGOTA-HOVER
+
+## Status: FIXED
+
+## Symptom
+Pada halaman Manajemen Anggota (`src/pages/admin/ManajemenAnggota.tsx`), tombol "+ Tambah Anggota" pada toolbar atas berubah menjadi putih/transparan saat di-hover oleh kursor mouse, sehingga teks putih dan ikon menyatu dengan latar belakang kartu putih dan seakan menghilang.
+
+**When:** Saat mengarahkan kursor mouse ke tombol "+ Tambah Anggota" di toolbar atas.
+**Expected:** Tombol tetap berwarna gelap kontras dengan transisi warna halus (`hover:bg-slate-800 active:bg-slate-950 text-white`) dan teks tetap terbaca jelas.
+**Actual:** Tombol memutih/transparan dan teks putihnya menyatu dengan latar belakang kartu.
+
+## Root Cause
+1. Tombol "+ Tambah Anggota" (dan tombol submit form modal) menggunakan kelas CSS `hover:bg-[var(--color-primary-hover)]`.
+2. Variabel CSS `--color-primary-hover` tidak didefinisikan dalam `src/index.css` (hanya `--color-primary` yang didefinisikan sebagai `#001428`).
+3. Akibatnya, pada saat state `:hover` aktif, browser menganggap variabel CSS tersebut tidak valid (evaluates to transparent / initial), menghilangkan warna latar belakang hitam/navy dan menyisakan teks putih di atas latar kontainer putih.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Button Styling & Global CSS Fallback
+- File: `src/pages/admin/ManajemenAnggota.tsx`
+  * Mengganti kelas tombol toolbar "+ Tambah Anggota" dengan kelas solid Tailwind modern ber-kontras tinggi:
+    `inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-medium text-sm shadow-xs transition-colors cursor-pointer shrink-0`
+  * Menyelaraskan tombol submit modal simpan anggota ke `bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-950`.
+- File: `src/index.css`
+  * Menambahkan deklarasi `--color-primary-hover: #0f2942;` sebagai proteksi fallback global.
+
+### Wave 2: Verification & Production Build
+- TypeScript Type Check (`tsc --noEmit`): Lulus tanpa error (exit code 0).
+- Vitest Suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
+- Vite Production Bundler (`npm run build`): Lulus sukses (exit code 0).
+
+
 
 ---
 
@@ -411,5 +445,39 @@ Pada halaman kasir POS (`/admin/kasir` atau `/pos`), saat menekan hotkey F4 (ata
   * Typecheck (`tsc --noEmit`): exit code 0.
   * Full test suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
   * Production build (`npm run build`): sukses (exit code 0).
+
+---
+
+# Debug Session: DEBUG-20261031-MANAJEMEN-ANGGOTA-HOVER
+
+## Status: FIXED
+
+## Symptom
+Pada halaman Manajemen Anggota (`src/pages/admin/ManajemenAnggota.tsx`), tombol "+ Tambah Anggota" pada toolbar atas berubah menjadi putih/transparan saat di-hover oleh kursor mouse, sehingga teks putih dan ikon menyatu dengan latar belakang kartu putih dan seakan menghilang.
+
+**When:** Saat mengarahkan kursor mouse ke tombol "+ Tambah Anggota" di toolbar atas.
+**Expected:** Tombol tetap berwarna gelap kontras dengan transisi warna halus (`hover:bg-slate-800 active:bg-slate-950 text-white`) dan teks tetap terbaca jelas.
+**Actual:** Tombol memutih/transparan dan teks putihnya menyatu dengan latar belakang kartu.
+
+## Root Cause
+1. Tombol "+ Tambah Anggota" (dan tombol submit form modal) menggunakan kelas CSS `hover:bg-[var(--color-primary-hover)]`.
+2. Variabel CSS `--color-primary-hover` tidak didefinisikan dalam `src/index.css` (hanya `--color-primary` yang didefinisikan sebagai `#001428`).
+3. Akibatnya, pada saat state `:hover` aktif, browser menganggap variabel CSS tersebut tidak valid (evaluates to transparent / initial), menghilangkan warna latar belakang hitam/navy dan menyisakan teks putih di atas latar kontainer putih.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Button Styling & Global CSS Fallback
+- File: `src/pages/admin/ManajemenAnggota.tsx`
+  * Mengganti kelas tombol toolbar "+ Tambah Anggota" dengan kelas solid Tailwind modern ber-kontras tinggi:
+    `inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-medium text-sm shadow-xs transition-colors cursor-pointer shrink-0`
+  * Menyelaraskan tombol submit modal simpan anggota ke `bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-950`.
+- File: `src/index.css`
+  * Menambahkan deklarasi `--color-primary-hover: #0f2942;` sebagai proteksi fallback global.
+
+### Wave 2: Verification & Production Build
+- TypeScript Type Check (`tsc --noEmit`): Lulus tanpa error (exit code 0).
+- Vitest Suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
+- Vite Production Bundler (`npm run build`): Lulus sukses (exit code 0).
+
 
 

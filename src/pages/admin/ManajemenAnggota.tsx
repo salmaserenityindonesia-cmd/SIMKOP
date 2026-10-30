@@ -240,10 +240,10 @@ export default function ManajemenAnggota() {
             </button>
             <button
               onClick={handleOpenAddModal}
-              className="flex items-center px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium"
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-medium text-sm shadow-xs transition-colors cursor-pointer shrink-0"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              Tambah Anggota
+              <Plus className="w-4 h-4 text-white" />
+              <span>Tambah Anggota</span>
             </button>
           </div>
         </div>
@@ -458,7 +458,7 @@ export default function ManajemenAnggota() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:bg-[var(--color-primary-hover)] transition-colors text-sm font-medium flex items-center"
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 active:bg-slate-950 transition-colors text-sm font-medium flex items-center cursor-pointer disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
