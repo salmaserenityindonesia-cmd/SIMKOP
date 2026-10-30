@@ -38,6 +38,7 @@ export default function POSPage() {
   const [selectedMember, setSelectedMember] = useState<any | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeItemForQty, setActiveItemForQty] = useState<Omit<CartItem, 'qty'> | null>(null);
+  const [qtyModalMode, setQtyModalMode] = useState<'add' | 'edit'>('add');
   const [lastPayment, setLastPayment] = useState<any>(null);
   const [lastSaleNumber, setLastSaleNumber] = useState<string | null>(null);
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
@@ -227,6 +228,7 @@ export default function POSPage() {
         if (cart.length > 0) {
           e.preventDefault();
           setActiveItemForQty(cart[cart.length - 1]);
+          setQtyModalMode('edit');
           setModals(m => ({ ...m, qty: true }));
         }
       } else if (e.key === 'F8') {
@@ -259,6 +261,7 @@ export default function POSPage() {
       return;
     }
     setActiveItemForQty(product);
+    setQtyModalMode('add');
     setModals(m => ({ ...m, qty: true }));
   };
 
@@ -266,14 +269,22 @@ export default function POSPage() {
     setModals(m => ({ ...m, qty: false }));
     if (!activeItemForQty) return;
     
+    const parsedQty = Math.max(1, parseInt(String(qty), 10) || 1);
+
     setCart(prev => {
       const existing = prev.findIndex(p => p.barcode === activeItemForQty.barcode || p.id === activeItemForQty.id);
       if (existing >= 0) {
         const next = [...prev];
-        next[existing].qty += qty;
+        if (qtyModalMode === 'edit') {
+          // Exact replacement when editing via F4
+          next[existing].qty = parsedQty;
+        } else {
+          // Additive when scanning or selecting a product
+          next[existing].qty += parsedQty;
+        }
         return next;
       }
-      return [...prev, { ...activeItemForQty, qty }];
+      return [...prev, { ...activeItemForQty, qty: parsedQty }];
     });
     
     // focus back to search after small delay
@@ -340,7 +351,11 @@ export default function POSPage() {
             setModals(m => ({ ...m, bukaKasir: true }));
             return;
           }
-          if(cart.length>0) setModals(m => ({...m, qty: true}));
+          if (cart.length > 0) {
+            setActiveItemForQty(cart[cart.length - 1]);
+            setQtyModalMode('edit');
+            setModals(m => ({ ...m, qty: true }));
+          }
         }}
         onOpenReceipt={() => { 
           if (!activeShift) {
@@ -444,6 +459,7 @@ export default function POSPage() {
       <QuantityModal 
         isOpen={modals.qty}
         item={activeItemForQty}
+        mode={qtyModalMode}
         onClose={() => {
           setModals(m => ({...m, qty: false}));
           setTimeout(() => searchInputRef.current?.focus(), 100);

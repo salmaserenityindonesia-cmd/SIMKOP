@@ -49,6 +49,8 @@ export function useCart() {
     );
   };
 
+  const setQuantity = (id: string, qty: number) => updateQty(id, qty);
+
   const clearCart = () => setItems([]);
 
   const parkCurrentTransaction = (note: string) => {
@@ -82,6 +84,7 @@ export function useCart() {
     addItem,
     removeItem,
     updateQty,
+    setQuantity,
     clearCart,
     parkCurrentTransaction,
     resumeTransaction,

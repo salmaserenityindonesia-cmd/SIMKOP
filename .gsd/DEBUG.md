@@ -67,6 +67,56 @@ Akibatnya, kalkulasi sub-teks Laba bruto: Rp -44.999.992.853.902 mengalami defis
 
 ---
 
+# Debug Session: DEBUG-20261031-POS-QTY-F4
+
+## Status: FIXED
+
+## Symptom
+Pada halaman kasir POS (`/admin/kasir` atau `/pos`), saat menekan hotkey F4 (atau klik tombol "F4 Qty" di header POS):
+- Dialog modal "Kuantitas (Qty)" muncul untuk mengubah kuantitas item terakhir di keranjang.
+- Bug: Nilai yang diinputkan di modal tidak langsung menjadi kuantitas item, melainkan mengalami perhitungan salah (misal: Qty awal 1, diinput angka 5, hasil akhir menjadi 11).
+
+**When:** Saat menekan F4 pada item yang sudah ada di keranjang kasir, menginputkan angka baru, dan menekan Enter atau klik Simpan.
+**Expected:** Kuantitas item di keranjang belanja langsung tergantikan (*exact replacement*) menjadi nilai yang diinputkan (misal: 5).
+**Actual:** Kuantitas terhitung secara keliru menjadi 11 (`1 + 5 + 5`).
+
+## Root Cause
+1. **Additive Mutation on Edit Mode**: Handler `handleConfirmQty` di `src/pages/pos/index.tsx` selalu menjalankan mutasi penambahan `next[existing].qty += qty` tanpa membedakan apakah modal dibuka untuk menambah produk baru dari katalog/scan (`mode: 'add'`) atau memodifikasi item keranjang via F4 (`mode: 'edit'`). Akibatnya, angka baru ditambahkan ke kuantitas awal alih-alih menggantikannya (`1 + 5 = 6`).
+2. **Double Triggering on Enter Key**: Pada `src/components/pos/QuantityModal.tsx`, listener `onKeyDown` pada input menangani `Enter` dengan memanggil `onConfirm(qty)`, namun tidak memanggil `e.stopPropagation()` dan tombol Simpan tidak memiliki `type="button"`. Hal ini memicu event ganda saat Enter ditekan (input keydown + default button click), sehingga `onConfirm(5)` terpanggil dua kali: `1 + 5 + 5 = 11`.
+3. **Missing Current Quantity Pre-fill**: `QuantityModal` menginisialisasi state kuantitas selalu dengan hardcoded `1` (`setQty(1)`) daripada membaca `item.qty` yang sedang aktif di keranjang.
+4. **Header F4 Button Stale Target**: Tombol "F4 Qty" di `POSHeader` tidak memanggil `setActiveItemForQty(cart[cart.length - 1])`, menyebabkan target item berpotensi null atau item lama jika dibuka via klik tombol.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Fix Quantity Modal & Cart Mutation Logic
+- File: `src/components/pos/QuantityModal.tsx`
+  * Menambahkan prop `mode?: 'add' | 'edit'` (judul modal dinamis: "Ubah Kuantitas (Qty)" saat edit).
+  * Mengisi nilai default kuantitas dari `item.qty` jika tersedia (`'qty' in item && typeof item.qty === 'number' && item.qty > 0 ? item.qty : 1`) dan auto-select teks saat modal terbuka.
+  * Membungkus konten ke dalam `<form onSubmit={handleConfirm}>`.
+  * Memastikan fungsi konfirmasi memanggil `e.preventDefault()` dan `e.stopPropagation()`.
+  * Menetapkan atribut `type="button"` pada seluruh tombol (Close, Minus, Plus, Batalkan, Simpan) untuk mencegah eksekusi ganda pada event Enter.
+- File: `src/pages/pos/index.tsx`
+  * Menambahkan state `qtyModalMode` (`'add' | 'edit'`).
+  * Pada shortcut F4 dan tombol "F4 Qty" di `POSHeader`: menetapkan `qtyModalMode = 'edit'` dan `setActiveItemForQty(cart[cart.length - 1])`.
+  * Pada seleksi produk dari katalog/search (`handleSelectProduct`): menetapkan `qtyModalMode = 'add'`.
+  * Memperbarui `handleConfirmQty`:
+    - Jika `qtyModalMode === 'edit'`: melakukan *exact replacement* `next[existing].qty = parsedQty`.
+    - Jika `qtyModalMode === 'add'`: melakukan akumulasi `next[existing].qty += parsedQty`.
+- File: `src/lib/cartStore.ts`
+  * Menambahkan alias eksplisit `setQuantity(id, qty)` yang memanggil `updateQty(id, qty)`.
+
+### Wave 2: Verification, Test Suite & Build
+- File: `src/components/pos/QuantityModal.test.tsx`
+  * Menambahkan unit test suite untuk menguji rendering saat `isOpen` false (null), rendering mode 'add' vs 'edit', keberadaan atribut `type="button"` pada semua tombol, serta simulasi logika penggantian kuantitas F4 (`applyQtyChange` menghasilkan tepat 5 dari nilai awal 1, dan idempoten pada pemanggilan ganda).
+- Hasil pengujian:
+  * `QuantityModal.test.tsx`: 6 tests passed (100%).
+  * Typecheck (`tsc --noEmit`): exit code 0.
+  * Full test suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
+  * Production build (`npm run build`): sukses (exit code 0).
+
+
+---
+
 # Debug Session: DEBUG-20261029-CASHIER-ZREPORT-ZERO-CASH
 
 ## Status: FIXED
@@ -312,4 +362,54 @@ Saat menekan tombol "Simpan Perubahan" pada Edit Faktur Pembelian di Manajemen P
   * `src/services/purchaseService.test.ts`: 22 tests passed (100%).
   * Full test suite: 13 test files, 95 tests passed (100%).
   * Build produksi (`npm run build`): sukses (exit code 0).
+
+---
+
+# Debug Session: DEBUG-20261031-POS-QTY-F4
+
+## Status: FIXED
+
+## Symptom
+Pada halaman kasir POS (`/admin/kasir` atau `/pos`), saat menekan hotkey F4 (atau klik tombol "F4 Qty" di header POS):
+- Dialog modal "Kuantitas (Qty)" muncul untuk mengubah kuantitas item terakhir di keranjang.
+- Bug: Nilai yang diinputkan di modal tidak langsung menjadi kuantitas item, melainkan mengalami perhitungan salah (misal: Qty awal 1, diinput angka 5, hasil akhir menjadi 11).
+
+**When:** Saat menekan F4 pada item yang sudah ada di keranjang kasir, menginputkan angka baru, dan menekan Enter atau klik Simpan.
+**Expected:** Kuantitas item di keranjang belanja langsung tergantikan (*exact replacement*) menjadi nilai yang diinputkan (misal: 5).
+**Actual:** Kuantitas terhitung secara keliru menjadi 11 (`1 + 5 + 5`).
+
+## Root Cause
+1. **Additive Mutation on Edit Mode**: Handler `handleConfirmQty` di `src/pages/pos/index.tsx` selalu menjalankan mutasi penambahan `next[existing].qty += qty` tanpa membedakan apakah modal dibuka untuk menambah produk baru dari katalog/scan (`mode: 'add'`) atau memodifikasi item keranjang via F4 (`mode: 'edit'`). Akibatnya, angka baru ditambahkan ke kuantitas awal alih-alih menggantikannya (`1 + 5 = 6`).
+2. **Double Triggering on Enter Key**: Pada `src/components/pos/QuantityModal.tsx`, listener `onKeyDown` pada input menangani `Enter` dengan memanggil `onConfirm(qty)`, namun tidak memanggil `e.stopPropagation()` dan tombol Simpan tidak memiliki `type="button"`. Hal ini memicu event ganda saat Enter ditekan (input keydown + default button click), sehingga `onConfirm(5)` terpanggil dua kali: `1 + 5 + 5 = 11`.
+3. **Missing Current Quantity Pre-fill**: `QuantityModal` menginisialisasi state kuantitas selalu dengan hardcoded `1` (`setQty(1)`) daripada membaca `item.qty` yang sedang aktif di keranjang.
+4. **Header F4 Button Stale Target**: Tombol "F4 Qty" di `POSHeader` tidak memanggil `setActiveItemForQty(cart[cart.length - 1])`, menyebabkan target item berpotensi null atau item lama jika dibuka via klik tombol.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Fix Quantity Modal & Cart Mutation Logic
+- File: `src/components/pos/QuantityModal.tsx`
+  * Menambahkan prop `mode?: 'add' | 'edit'` (judul modal dinamis: "Ubah Kuantitas (Qty)" saat edit).
+  * Mengisi nilai default kuantitas dari `item.qty` jika tersedia (`'qty' in item && typeof item.qty === 'number' && item.qty > 0 ? item.qty : 1`) dan auto-select teks saat modal terbuka.
+  * Membungkus konten ke dalam `<form onSubmit={handleConfirm}>`.
+  * Memastikan fungsi konfirmasi memanggil `e.preventDefault()` dan `e.stopPropagation()`.
+  * Menetapkan atribut `type="button"` pada seluruh tombol (Close, Minus, Plus, Batalkan, Simpan) untuk mencegah eksekusi ganda pada event Enter.
+- File: `src/pages/pos/index.tsx`
+  * Menambahkan state `qtyModalMode` (`'add' | 'edit'`).
+  * Pada shortcut F4 dan tombol "F4 Qty" di `POSHeader`: menetapkan `qtyModalMode = 'edit'` dan `setActiveItemForQty(cart[cart.length - 1])`.
+  * Pada seleksi produk dari katalog/search (`handleSelectProduct`): menetapkan `qtyModalMode = 'add'`.
+  * Memperbarui `handleConfirmQty`:
+    - Jika `qtyModalMode === 'edit'`: melakukan *exact replacement* `next[existing].qty = parsedQty`.
+    - Jika `qtyModalMode === 'add'`: melakukan akumulasi `next[existing].qty += parsedQty`.
+- File: `src/lib/cartStore.ts`
+  * Menambahkan alias eksplisit `setQuantity(id, qty)` yang memanggil `updateQty(id, qty)`.
+
+### Wave 2: Verification, Test Suite & Build
+- File: `src/components/pos/QuantityModal.test.tsx`
+  * Menambahkan unit test suite untuk menguji rendering saat `isOpen` false (null), rendering mode 'add' vs 'edit', keberadaan atribut `type="button"` pada semua tombol, serta simulasi logika penggantian kuantitas F4 (`applyQtyChange` menghasilkan tepat 5 dari nilai awal 1, dan idempoten pada pemanggilan ganda).
+- Hasil pengujian:
+  * `QuantityModal.test.tsx`: 6 tests passed (100%).
+  * Typecheck (`tsc --noEmit`): exit code 0.
+  * Full test suite (`npx vitest run`): 19 test files, 199/199 tests passed (100%).
+  * Production build (`npm run build`): sukses (exit code 0).
+
 
