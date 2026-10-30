@@ -461,6 +461,23 @@ describe('purchaseReturnService', () => {
       ).rejects.toThrow('Alasan perubahan minimal 10 karakter.');
     });
 
+    it('should allow update with exactly 10 characters change reason', async () => {
+      const ret = await createPurchaseReturn({
+        return_date: '2026-10-30',
+        supplier_name: 'Supplier A',
+        return_type: 'PIUTANG_PENGGANTIAN',
+        items: [{ product_id: 'prod-1', qty: 1, cost_per_unit: 70000 }]
+      });
+
+      const updated = await updatePurchaseReturn(
+        ret.id,
+        { notes: 'Updated notes' },
+        'user-1',
+        '1234567890'
+      );
+      expect(updated.notes).toBe('Updated notes');
+    });
+
     it('should reject update if claim is already SELESAI_DIGANTI', async () => {
       const ret = await createPurchaseReturn({
         return_date: '2026-10-30',
