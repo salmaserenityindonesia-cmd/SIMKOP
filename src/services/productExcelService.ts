@@ -12,7 +12,6 @@ export async function exportProductTemplate() {
   sheet.columns = [
     { header: 'sku', key: 'sku', width: 20 },
     { header: 'nama_produk', key: 'nama_produk', width: 40 },
-    { header: 'kategori', key: 'kategori', width: 25 },
     { header: 'satuan', key: 'satuan', width: 15 },
     { header: 'harga_beli', key: 'harga_beli', width: 20 },
     { header: 'harga_jual', key: 'harga_jual', width: 20 },
@@ -24,7 +23,6 @@ export async function exportProductTemplate() {
   sheet.addRow({ 
     sku: '1234567890123', 
     nama_produk: 'Minyak Cengkeh 50ml', 
-    kategori: 'Herbal', 
     satuan: 'botol', 
     harga_beli: 15000, 
     harga_jual: 20000, 
@@ -34,7 +32,6 @@ export async function exportProductTemplate() {
   sheet.addRow({ 
     sku: '0987654321098', 
     nama_produk: 'Minyak Seree 100ml', 
-    kategori: 'Herbal', 
     satuan: 'botol', 
     harga_beli: 25000, 
     harga_jual: 35000, 
