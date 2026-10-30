@@ -546,15 +546,15 @@ updated: 2026-09-30T05:21:00+07:00
 ---
 
 ### Phase 32: Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Objective**: Membangun modul Manajemen Retur Pembelian ke Supplier di `/admin/retur-pembelian` (tabel riwayat faktur retur, detail faktur, modal edit, export Excel/PDF, dan formulir input dengan ProductSearchAutocomplete). Khusus untuk retur bertipe 'PIUTANG_PENGGANTIAN', menyediakan aksi atomik "Tandai Selesai / Terima Barang Pengganti" yang memperbarui status klaim menjadi 'SELESAI_DIGANTI' dan merestock kuantitas barang ke inventori tabel `products`.
 **Depends on**: Phase 5, Phase 30, Phase 31
 
 **Plans**:
-- [ ] Plan 32.1: Wave 1 - Skema Database Retur Pembelian & Atomic Restock Claim RPC
-- [ ] Plan 32.2: Wave 2 - Service Layer Retur Pembelian & Logika Mutasi Klaim
-- [ ] Plan 32.3: Wave 3 - UI Halaman Manajemen Retur & Formulir Input Retur Pembelian
-- [ ] Plan 32.4: Wave 4 - Static Verification, Unit Testing & Production Build
+- [x] Plan 32.1: Wave 1 - Skema Database Retur Pembelian & Atomic Restock Claim RPC
+- [x] Plan 32.2: Wave 2 - Service Layer Retur Pembelian & Logika Mutasi Klaim
+- [x] Plan 32.3: Wave 3 - UI Halaman Manajemen Retur & Formulir Input Retur Pembelian
+- [x] Plan 32.4: Wave 4 - Static Verification, Unit Testing & Production Build
 
 **Verification**:
 - Tabel `purchase_returns`, `purchase_return_items`, dan RPC `complete_return_claim` terdefinisi di Supabase migration.
@@ -631,7 +631,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 29 | Refactor Template & Import Produk Tanpa Kategori | ✅ | 3/3 | 100% |
 | 30 | Edit Faktur Pembelian, Audit Log & Stok | ✅ | 4/4 | 100% |
 | 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ✅ | 3/3 | 100% |
-| 32 | Retur Pembelian ke Supplier & Restock Klaim | ⬜ | 0/4 | 0% |
+| 32 | Retur Pembelian ke Supplier & Restock Klaim | ✅ | 4/4 | 100% |
 
 ---
 
@@ -670,6 +670,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 29 | 2026-10-30 | 2026-10-30 | 1 day |
 | 30 | 2026-10-30 | 2026-10-30 | 1 day |
 | 31 | 2026-10-30 | 2026-10-30 | 1 day |
-| 32 | 2026-10-30 | — | — |
+| 32 | 2026-10-30 | 2026-10-30 | 1 day |
 
 
