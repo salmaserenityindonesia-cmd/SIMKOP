@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, X, Layers, Check } from 'lucide-react';
 
 export interface ProductAutocompleteItem {
   id: string;
@@ -19,7 +19,14 @@ export interface ProductSearchAutocompleteProps {
   disabled?: boolean;
   className?: string;
   defaultOpen?: boolean;
+  allOptionLabel?: string;
+  onClear?: () => void;
+  inputClassName?: string;
 }
+
+export type AutocompleteOption =
+  | { kind: 'all'; label: string }
+  | { kind: 'product'; item: ProductAutocompleteItem };
 
 /**
  * Pure helper function to filter products by name or SKU
@@ -67,6 +74,30 @@ export function calculateNextHighlightedIndex(
   return currentIndex;
 }
 
+/**
+ * Pure helper function to build autocomplete options including optional 'all' option
+ */
+export function buildAutocompleteOptions(
+  products: ProductAutocompleteItem[],
+  searchTerm: string,
+  selectedProductName: string | undefined,
+  allOptionLabel?: string,
+  limit: number = 20
+): AutocompleteOption[] {
+  const filtered = filterProducts(products, searchTerm, limit);
+  const productOptions: AutocompleteOption[] = filtered.map((item) => ({
+    kind: 'product',
+    item,
+  }));
+
+  const isSearching = searchTerm.trim().length > 0 && searchTerm !== selectedProductName;
+  if (allOptionLabel && !isSearching) {
+    return [{ kind: 'all', label: allOptionLabel }, ...productOptions];
+  }
+
+  return productOptions;
+}
+
 export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps> = ({
   products,
   selectedProductId,
@@ -76,6 +107,9 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
   disabled = false,
   className = '',
   defaultOpen = false,
+  allOptionLabel,
+  onClear,
+  inputClassName,
 }) => {
   const selectedProduct = products.find((p) => p.id === selectedProductId);
   const [searchTerm, setSearchTerm] = useState<string>(selectedProduct?.name || '');
@@ -87,6 +121,12 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const prevSelectedIdRef = useRef<string>(selectedProductId);
 
+  // Keep a ref of selected product name to restore text on Escape / click outside without stale closures
+  const selectedProductNameRef = useRef<string>(selectedProduct?.name || '');
+  useEffect(() => {
+    selectedProductNameRef.current = selectedProduct?.name || '';
+  }, [selectedProduct]);
+
   // Sync searchTerm when selectedProductId changes externally
   useEffect(() => {
     if (selectedProductId !== prevSelectedIdRef.current) {
@@ -96,11 +136,13 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
     }
   }, [selectedProductId, products]);
 
-  // Click / touch outside listener to automatically close dropdown
+  // Click / touch outside listener to automatically close dropdown and restore text
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
         setIsOpen(false);
+        setHighlightedIndex(-1);
+        setSearchTerm(selectedProductNameRef.current);
       }
     };
 
@@ -113,7 +155,14 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
     };
   }, []);
 
-  const filtered = filterProducts(products, searchTerm);
+  const options = buildAutocompleteOptions(
+    products,
+    searchTerm,
+    selectedProduct?.name,
+    allOptionLabel
+  );
+
+  const productCount = options.filter((opt) => opt.kind === 'product').length;
 
   // Scroll highlighted item into view smoothly
   useEffect(() => {
@@ -132,11 +181,25 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
     setHighlightedIndex(-1);
   };
 
-  const handleClear = () => {
+  const commitClear = () => {
+    if (onClear) {
+      onClear();
+    }
     setSearchTerm('');
-    setIsOpen(true);
-    setHighlightedIndex(0);
+    setIsOpen(false);
+    setHighlightedIndex(-1);
     inputRef.current?.focus();
+  };
+
+  const handleClear = () => {
+    if (onClear) {
+      commitClear();
+    } else {
+      setSearchTerm('');
+      setIsOpen(true);
+      setHighlightedIndex(0);
+      inputRef.current?.focus();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -148,30 +211,45 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
         setIsOpen(true);
         setHighlightedIndex(0);
       } else {
-        setHighlightedIndex((prev) => calculateNextHighlightedIndex(prev, filtered.length, 'ArrowDown'));
+        setHighlightedIndex((prev) => calculateNextHighlightedIndex(prev, options.length, 'ArrowDown'));
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (!isOpen) {
         setIsOpen(true);
-        setHighlightedIndex(Math.max(filtered.length - 1, 0));
+        setHighlightedIndex(Math.max(options.length - 1, 0));
       } else {
-        setHighlightedIndex((prev) => calculateNextHighlightedIndex(prev, filtered.length, 'ArrowUp'));
+        setHighlightedIndex((prev) => calculateNextHighlightedIndex(prev, options.length, 'ArrowUp'));
       }
     } else if (e.key === 'Enter') {
-      if (isOpen && highlightedIndex >= 0 && highlightedIndex < filtered.length) {
+      if (isOpen && highlightedIndex >= 0 && highlightedIndex < options.length) {
         e.preventDefault();
-        handleSelect(filtered[highlightedIndex]);
-      } else if (isOpen && filtered.length === 1) {
+        const selectedOpt = options[highlightedIndex];
+        if (selectedOpt.kind === 'all') {
+          commitClear();
+        } else {
+          handleSelect(selectedOpt.item);
+        }
+      } else if (isOpen && options.length === 1) {
         e.preventDefault();
-        handleSelect(filtered[0]);
+        const singleOpt = options[0];
+        if (singleOpt.kind === 'all') {
+          commitClear();
+        } else {
+          handleSelect(singleOpt.item);
+        }
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setIsOpen(false);
       setHighlightedIndex(-1);
+      setSearchTerm(selectedProductNameRef.current);
     }
   };
+
+  const visualInputClass =
+    inputClassName ||
+    'bg-surface-container-lowest border border-outline rounded-lg text-body-md text-on-surface placeholder:text-outline focus:border-primary focus:ring-1 focus:ring-primary/20';
 
   return (
     <div className={`relative w-full ${className}`} ref={containerRef}>
@@ -201,11 +279,11 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className={`w-full pl-9 pr-8 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md text-on-surface placeholder:text-outline focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none transition-all ${
+          className={`w-full pl-9 pr-8 py-2 outline-none transition-all ${visualInputClass} ${
             disabled ? 'opacity-60 bg-slate-100 cursor-not-allowed select-none' : ''
           }`}
         />
-        {searchTerm && !disabled && (
+        {(Boolean(searchTerm) || Boolean(selectedProductId)) && !disabled && (
           <button
             type="button"
             onClick={handleClear}
@@ -224,18 +302,49 @@ export const ProductSearchAutocomplete: React.FC<ProductSearchAutocompleteProps>
           role="listbox"
           className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-xl bg-surface border border-outline-variant/50 shadow-xl divide-y divide-outline-variant/20 animate-in fade-in-50 duration-100"
         >
-          {filtered.length === 0 ? (
+          {options.length === 0 ? (
             <div className="p-4 text-center text-sm text-on-surface-variant">
               Produk tidak ditemukan untuk kata kunci &ldquo;<span className="font-semibold text-on-surface">{searchTerm}</span>&rdquo;
             </div>
           ) : (
             <>
               <div className="px-3 py-1.5 bg-surface-container-low text-[11px] text-on-surface-variant flex justify-between items-center">
-                <span>Menampilkan {filtered.length} produk</span>
+                <span>Menampilkan {productCount} produk</span>
                 <span className="font-mono text-[10px]">Gunakan ↑ ↓ dan Enter</span>
               </div>
-              {filtered.map((item, idx) => {
+              {options.map((opt, idx) => {
                 const isHighlighted = idx === highlightedIndex;
+                if (opt.kind === 'all') {
+                  const isSelected = selectedProductId === '';
+                  return (
+                    <div
+                      key="__all_option__"
+                      ref={(el) => {
+                        itemRefs.current[idx] = el;
+                      }}
+                      role="option"
+                      id={`product-option-${idx}`}
+                      aria-selected={isHighlighted}
+                      onClick={() => commitClear()}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      className={`p-2.5 px-3 cursor-pointer transition-colors flex items-center justify-between gap-2 ${
+                        isHighlighted
+                          ? 'bg-primary/10 text-primary'
+                          : isSelected
+                          ? 'bg-surface-container-high/40 text-primary font-medium'
+                          : 'hover:bg-surface-container-high/60 text-on-surface'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Layers className="w-4 h-4 text-primary shrink-0" />
+                        <span className="font-medium text-sm truncate">{opt.label}</span>
+                      </div>
+                      {isSelected && <Check className="w-4 h-4 text-primary shrink-0" />}
+                    </div>
+                  );
+                }
+
+                const item = opt.item;
                 return (
                   <div
                     key={item.id}

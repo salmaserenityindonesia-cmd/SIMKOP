@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import ProductSearchAutocomplete, {
   filterProducts,
   calculateNextHighlightedIndex,
+  buildAutocompleteOptions,
   ProductAutocompleteItem,
 } from './ProductSearchAutocomplete';
 
@@ -120,6 +121,72 @@ describe('ProductSearchAutocomplete - Component & Filtering Logic', () => {
     });
   });
 
+  describe('buildAutocompleteOptions helper function', () => {
+    it('prepends all option at index 0 when allOptionLabel is provided and searchTerm is empty', () => {
+      const options = buildAutocompleteOptions(
+        sampleProducts,
+        '',
+        undefined,
+        'Semua Produk (Semua Mutasi Gudang)'
+      );
+      expect(options).toHaveLength(sampleProducts.length + 1);
+      expect(options[0].kind).toBe('all');
+      if (options[0].kind === 'all') {
+        expect(options[0].label).toBe('Semua Produk (Semua Mutasi Gudang)');
+      }
+      expect(options[1].kind).toBe('product');
+      if (options[1].kind === 'product') {
+        expect(options[1].item.id).toBe('prod-1');
+      }
+    });
+
+    it('hides all option when user is actively searching with non-empty term (negative case: prevents Enter bug)', () => {
+      const options = buildAutocompleteOptions(
+        sampleProducts,
+        'kopi',
+        undefined,
+        'Semua Produk (Semua Mutasi Gudang)'
+      );
+      expect(options).toHaveLength(1);
+      expect(options[0].kind).toBe('product');
+      if (options[0].kind === 'product') {
+        expect(options[0].item.name).toBe('Kopi Kapal Api Special 165g');
+      }
+      expect(options.some((opt) => opt.kind === 'all')).toBe(false);
+    });
+
+    it('restores all option at index 0 when searchTerm equals selectedProductName', () => {
+      const options = buildAutocompleteOptions(
+        sampleProducts,
+        'Beras Premium Ramos 5kg',
+        'Beras Premium Ramos 5kg',
+        'Semua Produk (Semua Mutasi Gudang)'
+      );
+      expect(options[0].kind).toBe('all');
+      if (options[0].kind === 'all') {
+        expect(options[0].label).toBe('Semua Produk (Semua Mutasi Gudang)');
+      }
+      expect(options.length).toBeGreaterThan(1);
+    });
+
+    it('returns only product options when allOptionLabel is omitted (backward compatibility)', () => {
+      const options = buildAutocompleteOptions(sampleProducts, '', undefined);
+      expect(options).toHaveLength(sampleProducts.length);
+      expect(options.every((opt) => opt.kind === 'product')).toBe(true);
+    });
+
+    it('handles empty product list with allOptionLabel correctly', () => {
+      const options = buildAutocompleteOptions(
+        [],
+        '',
+        undefined,
+        'Semua Produk (Semua Mutasi Gudang)'
+      );
+      expect(options).toHaveLength(1);
+      expect(options[0].kind).toBe('all');
+    });
+  });
+
   describe('Static markup rendering & accessibility attributes', () => {
     it('renders input with default placeholder, combobox role, and search icon', () => {
       const markup = renderToStaticMarkup(
@@ -171,6 +238,42 @@ describe('ProductSearchAutocomplete - Component & Filtering Logic', () => {
       expect(markup).toContain('Gunakan ↑ ↓ dan Enter');
     });
 
+    it('renders all-option with special label, role="option", and layer icon when allOptionLabel is set', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(ProductSearchAutocomplete, {
+          products: sampleProducts,
+          selectedProductId: '',
+          onSelect: () => {},
+          defaultOpen: true,
+          allOptionLabel: 'Semua Produk (Semua Mutasi Gudang)',
+        })
+      );
+
+      expect(markup).toContain('Semua Produk (Semua Mutasi Gudang)');
+      expect(markup).toContain('role="option"');
+      expect(markup).toContain('lucide-layers');
+      // Menampilkan productCount (bukan total opsi + 1)
+      expect(markup).toContain('Menampilkan 4 produk');
+    });
+
+    it('replaces visual styling classes with custom inputClassName while keeping structural classes', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(ProductSearchAutocomplete, {
+          products: sampleProducts,
+          selectedProductId: '',
+          onSelect: () => {},
+          inputClassName: 'text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-800',
+        })
+      );
+
+      expect(markup).toContain('bg-slate-50');
+      expect(markup).toContain('rounded-xl');
+      expect(markup).toContain('text-slate-800');
+      expect(markup).not.toContain('bg-surface-container-lowest');
+      // Structural classes retained
+      expect(markup).toContain('w-full pl-9 pr-8 py-2');
+    });
+
     it('renders empty message when no products match', () => {
       const markup = renderToStaticMarkup(
         React.createElement(ProductSearchAutocomplete, {
@@ -206,6 +309,7 @@ describe('ProductSearchAutocomplete - Component & Filtering Logic', () => {
       expect(ProductSearchAutocomplete).toBeDefined();
       expect(typeof filterProducts).toBe('function');
       expect(typeof calculateNextHighlightedIndex).toBe('function');
+      expect(typeof buildAutocompleteOptions).toBe('function');
     });
 
     it('handles onSelect trigger simulation correctly', () => {
@@ -215,6 +319,12 @@ describe('ProductSearchAutocomplete - Component & Filtering Logic', () => {
       onSelectMock(product);
       expect(onSelectMock).toHaveBeenCalledTimes(1);
       expect(onSelectMock).toHaveBeenCalledWith(product);
+    });
+
+    it('handles onClear trigger simulation correctly', () => {
+      const onClearMock = vi.fn();
+      onClearMock();
+      expect(onClearMock).toHaveBeenCalledTimes(1);
     });
   });
 });
