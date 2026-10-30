@@ -40,15 +40,10 @@ export default function ProductImportModal({ isOpen, parseResult, onClose, onCon
             </div>
           </div>
 
-          {parseResult.newCategoriesToCreate.length > 0 && (
-            <div className="bg-secondary-container/30 border border-secondary/30 rounded-lg p-3 text-label-sm text-secondary">
-              <div className="font-bold flex items-center gap-1.5 mb-1">
-                <span className="material-symbols-outlined text-[16px]">info</span>
-                Kategori Baru Dideteksi
-              </div>
-              Terdapat {parseResult.newCategoriesToCreate.length} kategori baru (seperti: {parseResult.newCategoriesToCreate.slice(0, 3).join(', ')}{parseResult.newCategoriesToCreate.length > 3 ? '...' : ''}) yang akan dibuat secara otomatis.
-            </div>
-          )}
+          <div className="bg-surface-container border border-outline-variant/30 rounded-lg p-3 text-label-sm text-on-surface-variant flex items-start gap-2">
+            <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">info</span>
+            <span>Kategori untuk produk impor akan diset default (tanpa kategori) dan dapat dikelompokkan manual melalui menu edit produk.</span>
+          </div>
 
           {totalValid === 0 && (
             <div className="bg-surface-container border border-outline-variant rounded-lg p-3 text-label-sm text-on-surface-variant text-center">

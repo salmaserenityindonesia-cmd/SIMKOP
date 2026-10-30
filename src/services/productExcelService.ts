@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
-import { getProductCategories, getProduk, addProductCategory } from './koperasiService';
+import { getProduk } from './koperasiService';
 
 /**
  * 1. Generate and download template for Products
@@ -65,7 +65,7 @@ export async function exportProductTemplate() {
 export interface ParsedProduct {
   sku: string;
   name: string;
-  categoryName: string | null;
+  categoryName?: string | null;
   unit: string;
   buy_price: number;
   sell_price: number;
@@ -82,7 +82,7 @@ export interface ProductParseResult {
 }
 
 /**
- * 2. Parse Excel file and check for new/update products and new categories
+ * 2. Parse Excel file and check for new/update products without category dependency
  */
 export async function parseProductUpload(file: File): Promise<ProductParseResult> {
   const buffer = await file.arrayBuffer();
@@ -104,13 +104,12 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
     }
   });
 
-  const reqCols = ['sku', 'nama_produk', 'harga_jual'];
+  const reqCols = ['sku', 'nama_produk', 'satuan', 'harga_beli', 'harga_jual', 'stok_awal', 'min_stok_alert'];
   for (const c of reqCols) {
-    if (!colIdx[c]) throw new Error(`Kolom wajib '${c}' tidak ditemukan.`);
+    if (!colIdx[c]) throw new Error(`Kolom wajib '${c}' tidak ditemukan pada template Excel.`);
   }
 
   const rawProductsMap = new Map<string, ParsedProduct>();
-  const incomingCategoryNames = new Set<string>();
 
   sheet.eachRow((row, rowNumber) => {
     if (rowNumber > 1) { // Skip header
@@ -134,18 +133,15 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
       const name = String(rawName).trim();
       if (!sku || !name) return;
 
-      const categoryName = getVal('kategori') ? String(getVal('kategori')).trim() : null;
-      if (categoryName) incomingCategoryNames.add(categoryName);
-
       rawProductsMap.set(sku, {
         sku,
         name,
-        categoryName,
-        unit: getVal('satuan') ? String(getVal('satuan')).trim() : 'pcs',
+        categoryName: null,
+        unit: String(getVal('satuan') || 'pcs').trim(),
         buy_price: Math.min(Math.max(0, Number(getVal('harga_beli')) || 0), 100000000),
         sell_price: Math.min(Math.max(0, Number(getVal('harga_jual')) || 0), 100000000),
-        stock: Math.min(Math.max(0, Number(getVal('stok_awal')) || 0), 100000),
-        min_stock_alert: Math.min(Math.max(0, Number(getVal('min_stok_alert')) || 5), 100000),
+        stock: Math.min(Math.max(0, parseInt(getVal('stok_awal')) || 0), 100000),
+        min_stock_alert: Math.min(Math.max(0, parseInt(getVal('min_stok_alert')) || 5), 100000),
         is_active: true
       });
     }
@@ -153,18 +149,12 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
 
   const rawProducts = Array.from(rawProductsMap.values());
 
-  // Fetch existing products and categories
-  const [existingProducts, existingCategories] = await Promise.all([
-    getProduk(),
-    getProductCategories()
-  ]);
-
+  // Fetch existing products
+  const existingProducts = await getProduk();
   const existingSkus = new Set(existingProducts.map(p => p.sku));
-  const existingCatNames = new Set(existingCategories.map(c => c.name.toLowerCase()));
 
   const newProducts: ParsedProduct[] = [];
   const updatedProducts: ParsedProduct[] = [];
-  const newCategoriesToCreate: string[] = [];
 
   // Determine new vs update products
   for (const p of rawProducts) {
@@ -175,17 +165,10 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
     }
   }
 
-  // Determine new categories to create
-  for (const cat of Array.from(incomingCategoryNames)) {
-    if (!existingCatNames.has(cat.toLowerCase())) {
-      newCategoriesToCreate.push(cat);
-    }
-  }
-
   return {
     newProducts,
     updatedProducts,
-    newCategoriesToCreate,
+    newCategoriesToCreate: [],
     totalRows: rawProducts.length
   };
 }
@@ -194,51 +177,24 @@ export async function parseProductUpload(file: File): Promise<ProductParseResult
  * 3. Batch upsert products
  */
 export async function batchUpsertProducts(parseResult: ProductParseResult) {
-  const { newProducts, updatedProducts, newCategoriesToCreate } = parseResult;
+  const { newProducts, updatedProducts } = parseResult;
   const allProducts = [...newProducts, ...updatedProducts];
   if (allProducts.length === 0) return;
 
-  // 1. Create new categories if any
-  for (const catName of newCategoriesToCreate) {
-    try {
-      await addProductCategory(catName);
-    } catch (e) {
-      // Ignore if exists, maybe created concurrently
-      console.warn("Category creation might have failed or existed:", e);
-    }
-  }
+  // Prepare payload for upsert with category_id: null
+  const payload = allProducts.map(p => ({
+    sku: p.sku,
+    name: p.name,
+    category_id: null,
+    unit: p.unit || 'pcs',
+    buy_price: p.buy_price,
+    sell_price: p.sell_price,
+    stock: p.stock,
+    min_stock_alert: p.min_stock_alert,
+    is_active: p.is_active
+  }));
 
-  // 2. Fetch fresh categories mapping to get UUIDs
-  const freshCategories = await getProductCategories();
-  const catMap = new Map<string, string>();
-  freshCategories.forEach(c => {
-    catMap.set(c.name.toLowerCase(), c.id);
-  });
-
-  // 3. Prepare payload for upsert
-  const payload = allProducts.map(p => {
-    let category_id = null;
-    if (p.categoryName) {
-      const lowerCat = p.categoryName.toLowerCase();
-      if (catMap.has(lowerCat)) {
-        category_id = catMap.get(lowerCat);
-      }
-    }
-    return {
-      sku: p.sku,
-      name: p.name,
-      category_id,
-      unit: p.unit,
-      buy_price: p.buy_price,
-      sell_price: p.sell_price,
-      stock: p.stock,
-      min_stock_alert: p.min_stock_alert,
-      is_active: p.is_active
-    };
-  });
-
-  // 4. Batch upsert to Supabase
-  // Ensure the table has unique constraint on sku
+  // Batch upsert to Supabase
   const { error } = await supabase
     .from('products')
     .upsert(payload, { onConflict: 'sku' });

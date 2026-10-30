@@ -220,7 +220,7 @@ export default function ManajemenProduk() {
       await batchUpsertProducts(parseResult);
       setIsImportModalOpen(false);
       fetchProducts();
-      showToast('Berhasil mengimpor katalog produk!', 'success');
+      showToast(`Berhasil mengimpor ${parseResult.newProducts.length} produk baru. Kategori produk dapat diatur kemudian melalui menu edit produk.`, 'success');
     } catch (error: any) {
       showToast(error.message || 'Gagal mengimpor produk', 'error');
     } finally {
