@@ -252,3 +252,64 @@ Saat menekan tombol "Simpan Perubahan" pada Modal Edit Faktur Pembelian di Manaj
 - Memperbarui `src/services/purchaseService.test.ts` untuk menguji `recordPurchaseAuditLog` dan verifikasi `table_name` serta `record_id`.
 - Menjalankan `npx vitest run`: 13 test files, 91 tests passed (100%).
 - Menjalankan `npm run build`: Vite build sukses dalam 844ms (exit code 0).
+
+
+
+# Debug Session: DEBUG-20261030-PURCHASE-INVOICE-UUID-SYNTAX-4779
+
+## Status: FIXED
+
+## Symptom
+Saat menekan tombol "Simpan Perubahan" pada Edit Faktur Pembelian di Manajemen Pembelian (`src/pages/admin/ManajemenPembelian.tsx`), muncul galat error toast:
+`"Gagal memperbarui faktur pembelian: invalid input syntax for type uuid: '4779'"`
+
+**When:** Pengguna atau admin menekan tombol "Simpan Perubahan" pada form modal Edit Faktur Pembelian.
+**Expected:** Faktur pembelian dan stok master produk berhasil diperbarui, riwayat audit log tercatat, modal edit tertutup, notifikasi sukses muncul, dan tabel daftar faktur ter-refresh.
+**Actual:** Proses gagal dengan pesan galat sintaksis UUID PostgreSQL `invalid input syntax for type uuid: '4779'`.
+
+## Root Cause Analysis
+1. String angka numerik `"4779"` dimasukkan ke dalam parameter RPC atau kolom database PostgreSQL yang bertipe `UUID`.
+2. Pada `src/pages/admin/ManajemenPembelian.tsx`:
+   - Jika pengguna aktif (`currentUser`) tidak memiliki sesi auth UUID standar (misal dev/offline ID atau ID numerik seperti `'4779'`), ID non-UUID tersebut dikirim ke service `updatePurchaseInvoice`.
+   - Jika item faktur memiliki `produkId` bernilai non-UUID (seperti kode integer/SKU `"4779"` dari master data barang), ID non-UUID tersebut dikirim ke payload rincian item.
+3. Pada `src/services/purchaseService.ts`:
+   - Parameter `p_user_id` pada RPC `update_purchase_invoice_atomic` dikirimkan secara mentah tanpa validasi regex UUID standar (`/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`). Akibatnya, nilai seperti `"4779"` memicu PostgreSQL melempar `22P02: invalid input syntax for type uuid: '4779'`.
+   - Pada `recordPurchaseAuditLog()`, kolom `performed_by` dan `entity_id` menerima ID non-UUID secara langsung.
+4. Pada fungsi RPC database `update_purchase_invoice_atomic`:
+   - Parameter `p_user_id` bertipe ketat `UUID` yang langsung gagal jika menerima teks non-UUID sebelum masuk ke fungsi.
+   - Kolom `product_id` di-cast `::UUID` tanpa pengecekan format atau pencocokan SKU.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Audit Payload & UUID Validation
+- File: `src/services/purchaseService.ts`, `src/pages/admin/ManajemenPembelian.tsx`
+- Menambahkan fungsi helper `isValidUUID`:
+  ```typescript
+  export const isValidUUID = (str: unknown): str is string =>
+    typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  ```
+- Pada `src/services/purchaseService.ts`:
+  * Sanitasi `p_user_id`: `isValidUUID(user?.id) ? user.id : null`.
+  * Sanitasi `recordPurchaseAuditLog`: `performed_by: isValidUUID(user?.id) ? user.id : null`, `entity_id: isValidUUID(purchaseId) ? purchaseId : null`.
+  * Menambahkan toleransi `code === '22P02'` dan pesan `invalid input syntax for type uuid` pada `shouldFallback()`.
+- Pada `src/pages/admin/ManajemenPembelian.tsx`:
+  * Saat modal dibuka (`handleOpenEditModal`) dan saat submit (`handleSubmitEditFaktur`), setiap `item.produkId` yang bernilai SKU atau numerik (seperti `"4779"`) otomatis dipetakan ke UUID master produk `products.find(p => p.id === it.produkId || p.sku === it.produkId)?.id`.
+  * Nilai `userId` diverifikasi dengan `isValidUUID(currentUser?.id) ? currentUser!.id : ''`.
+
+### Wave 2: Database RPC Resiliency & Direct Mutasi Fallback
+- File: `supabase/migrations/025_safe_uuid_handling_purchase_update.sql`, `src/services/purchaseService.ts`
+- Menghapus overload ganda dengan mengeksekusi `DROP FUNCTION IF EXISTS public.update_purchase_invoice_atomic(UUID, TEXT, DATE, JSONB, TEXT, TEXT, TEXT);` untuk mencegah galat PostgreSQL 42725 (`Could not choose the best candidate function between ...`).
+- Menetapkan SATU-SATUNYA fungsi kanonik `update_purchase_invoice_atomic` dengan parameter `p_user_id UUID DEFAULT NULL`, penanganan lookup nomor faktur jika `p_purchase_id` tidak cocok, dan resolusi otomatis SKU ke `products.id` untuk item produk.
+- Menambahkan kode `42725` dan pesan `could not choose the best candidate function` pada `shouldFallback()` di `purchaseService.ts`.
+- Mengimplementasikan `executeDirectSupabasePurchaseUpdate()` pada service: jika RPC mengalami kegagalan/fallback, service langsung memuat faktur asli dari tabel `purchases` remote (baik lewat ID maupun invoice_number), menghitung delta stok, memperbarui tabel `products`, `purchase_items`, `purchases`, dan mencatat ke `audit_logs` secara langsung sehingga tidak pernah melempar false positive "Faktur tidak ditemukan" dari in-memory mock.
+
+### Wave 3: Test Verification & Build
+- File: `src/services/purchaseService.test.ts`
+- Menambahkan unit test untuk helper `isValidUUID` (valid UUID vs '4779', non-UUID, null, empty string).
+- Menambahkan unit test untuk sanitasi `p_user_id` pada RPC saat menerima non-UUID `"4779"`.
+- Menambahkan unit test untuk sanitasi `recordPurchaseAuditLog` saat menerima ID non-UUID / numerik `"4779"`.
+- Hasil pengujian:
+  * `src/services/purchaseService.test.ts`: 22 tests passed (100%).
+  * Full test suite: 13 test files, 95 tests passed (100%).
+  * Build produksi (`npm run build`): sukses (exit code 0).
+

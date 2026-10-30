@@ -3,6 +3,7 @@ import {
   updatePurchaseInvoice,
   getPurchaseAuditLogs,
   recordPurchaseAuditLog,
+  isValidUUID,
   resetPurchaseServiceMockState,
   setMockProducts,
   getMockProducts,
@@ -115,7 +116,7 @@ describe('purchaseService', () => {
   });
 
   describe('updatePurchaseInvoice - Supabase RPC Execution', () => {
-    const validUser = { id: 'admin-uuid-1', name: 'Budi Santoso' };
+    const validUser = { id: 'c56a4180-65aa-42ec-a945-5fd21dec0538', name: 'Budi Santoso' };
     const validPayload: UpdatePurchasePayload = {
       noFaktur: 'INV-2026-001-REV',
       tanggal: '2026-10-26',
@@ -154,13 +155,42 @@ describe('purchaseService', () => {
           { product_id: 'prod-1', qty: 15, buy_price: 75000 }
         ],
         p_change_reason: 'Penyesuaian kuantitas fisik dan harga per unit',
-        p_user_id: 'admin-uuid-1',
+        p_user_id: 'c56a4180-65aa-42ec-a945-5fd21dec0538',
         p_user_name: 'Budi Santoso'
       });
 
       expect(result).toEqual(mockRpcResponse);
       expect(result.success).toBe(true);
       expect(result.total_amount).toBe(1125000);
+    });
+
+    it('should sanitize non-UUID user id (such as numeric "4779") to null when calling RPC', async () => {
+      const numericUser = { id: '4779', name: 'Pengelola 4779' };
+      (supabase.rpc as any).mockResolvedValue({
+        data: {
+          success: true,
+          purchase_id: 'faktur-1',
+          invoice_number: 'INV-2026-001-REV',
+          total_amount: 1125000,
+          updated_at: '2026-10-26T10:00:00Z'
+        },
+        error: null
+      });
+
+      await updatePurchaseInvoice(
+        'faktur-1',
+        validPayload,
+        'Penyesuaian kuantitas fisik dan harga per unit',
+        numericUser
+      );
+
+      expect(supabase.rpc).toHaveBeenCalledWith(
+        'update_purchase_invoice_atomic',
+        expect.objectContaining({
+          p_user_id: null,
+          p_user_name: 'Pengelola 4779'
+        })
+      );
     });
 
     it('should throw immediately without fallback if RPC returns business exception (code P0001)', async () => {
@@ -468,33 +498,79 @@ describe('purchaseService', () => {
     });
   });
 
+  describe('isValidUUID helper', () => {
+    it('should return true for valid standard UUIDs', () => {
+      expect(isValidUUID('c56a4180-65aa-42ec-a945-5fd21dec0538')).toBe(true);
+      expect(isValidUUID('A1B2C3D4-E5F6-7A8B-9C0D-1E2F3A4B5C6D')).toBe(true);
+    });
+
+    it('should return false for numeric string "4779" or non-UUID values', () => {
+      expect(isValidUUID('4779')).toBe(false);
+      expect(isValidUUID('faktur-1')).toBe(false);
+      expect(isValidUUID('admin-uuid-1')).toBe(false);
+      expect(isValidUUID('')).toBe(false);
+      expect(isValidUUID(null)).toBe(false);
+      expect(isValidUUID(undefined)).toBe(false);
+      expect(isValidUUID(1234)).toBe(false);
+    });
+  });
+
   describe('recordPurchaseAuditLog', () => {
-    it('should insert audit log with mandatory table_name = "purchases" and record_id non-null', async () => {
+    const validPurchaseUuid = 'c56a4180-65aa-42ec-a945-5fd21dec0538';
+    const validUserUuid = 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d';
+
+    it('should insert audit log with mandatory table_name = "purchases" and valid UUIDs', async () => {
       const mockInsert = vi.fn().mockResolvedValue({ data: [{ id: 'audit-log-new' }], error: null });
       (supabase.from as any).mockReturnValue({ insert: mockInsert });
 
       const res = await recordPurchaseAuditLog(
-        'faktur-1',
+        validPurchaseUuid,
         { noFaktur: 'INV-001' },
         { noFaktur: 'INV-001-REV' },
         'Koreksi nomor faktur',
-        { id: 'user-1', name: 'Budi' }
+        { id: validUserUuid, name: 'Budi' }
       );
 
       expect(supabase.from).toHaveBeenCalledWith('audit_logs');
       expect(mockInsert).toHaveBeenCalledWith({
         table_name: 'purchases',
         action: 'UPDATE',
-        record_id: 'faktur-1',
+        record_id: validPurchaseUuid,
         old_data: { noFaktur: 'INV-001' },
         new_data: { noFaktur: 'INV-001-REV' },
-        performed_by: 'user-1',
+        performed_by: validUserUuid,
         performer_name: 'Budi',
         notes: 'Koreksi nomor faktur',
         entity_name: 'purchases',
-        entity_id: 'faktur-1'
+        entity_id: validPurchaseUuid
       });
       expect(res).toEqual({ data: [{ id: 'audit-log-new' }], error: null });
+    });
+
+    it('should sanitize non-UUID or numeric "4779" fields to null for entity_id and performed_by', async () => {
+      const mockInsert = vi.fn().mockResolvedValue({ data: [{ id: 'audit-log-new' }], error: null });
+      (supabase.from as any).mockReturnValue({ insert: mockInsert });
+
+      await recordPurchaseAuditLog(
+        '4779',
+        { noFaktur: 'INV-001' },
+        { noFaktur: 'INV-001-REV' },
+        'Koreksi nomor faktur numeric id',
+        { id: '4779', name: 'User 4779' }
+      );
+
+      expect(mockInsert).toHaveBeenCalledWith({
+        table_name: 'purchases',
+        action: 'UPDATE',
+        record_id: '4779',
+        old_data: { noFaktur: 'INV-001' },
+        new_data: { noFaktur: 'INV-001-REV' },
+        performed_by: null,
+        performer_name: 'User 4779',
+        notes: 'Koreksi nomor faktur numeric id',
+        entity_name: 'purchases',
+        entity_id: null
+      });
     });
   });
 });

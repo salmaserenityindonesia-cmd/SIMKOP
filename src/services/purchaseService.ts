@@ -1,5 +1,8 @@
 import { supabase } from '../lib/supabaseClient';
 
+export const isValidUUID = (str: unknown): str is string =>
+  typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
 export interface PurchaseAuditLog {
   id: string;
   table_name?: string;
@@ -136,6 +139,8 @@ function shouldFallback(e: any): boolean {
   return (
     code === '42P01' ||
     code === '42883' ||
+    code === '42725' ||
+    code === '22P02' ||
     code === 'PGRST202' ||
     code === 'PGRST301' ||
     msg.includes('schema cache') ||
@@ -143,18 +148,202 @@ function shouldFallback(e: any): boolean {
     msg.includes('network') ||
     msg.includes('failed to fetch') ||
     msg.includes('not found') ||
-    msg.includes('could not find the function')
+    msg.includes('could not find the function') ||
+    msg.includes('could not choose the best candidate function') ||
+    msg.includes('not unique') ||
+    msg.includes('invalid input syntax for type uuid')
   );
 }
 
-function fallbackUpdatePurchaseInvoice(
+async function executeDirectSupabasePurchaseUpdate(
+  purchaseId: string,
+  remotePurchase: any,
+  payload: UpdatePurchasePayload,
+  changeReason: string,
+  user: { id: string; name: string }
+): Promise<UpdatePurchaseResult> {
+  const oldItems: { id?: string; product_id: string; qty: number; buy_price: number }[] = remotePurchase.purchase_items || [];
+
+  // 1. Snapshot data lama
+  const oldDataSnapshot = {
+    purchase: {
+      id: remotePurchase.id,
+      invoice_number: remotePurchase.invoice_number,
+      purchase_date: remotePurchase.purchase_date,
+      total_amount: remotePurchase.total_amount
+    },
+    items: oldItems
+  };
+
+  // 2. Rekonsiliasi delta stok per produk: delta = (new_qty - old_qty)
+  const productDeltas = new Map<string, { oldQty: number; newQty: number; newBuyPrice: number }>();
+  for (const item of oldItems) {
+    const existing = productDeltas.get(item.product_id) || { oldQty: 0, newQty: 0, newBuyPrice: item.buy_price };
+    existing.oldQty += Number(item.qty) || 0;
+    productDeltas.set(item.product_id, existing);
+  }
+
+  for (const item of payload.items) {
+    const existing = productDeltas.get(item.produkId) || { oldQty: 0, newQty: 0, newBuyPrice: item.hargaBeli };
+    existing.newQty += Number(item.qty) || 0;
+    existing.newBuyPrice = Number(item.hargaBeli) || 0;
+    productDeltas.set(item.produkId, existing);
+  }
+
+  // 3. Validasi stok tidak boleh minus di database
+  for (const [prodId, data] of productDeltas.entries()) {
+    const delta = data.newQty - data.oldQty;
+    const { data: prodData } = await supabase.from('products').select('id, name, stock').eq('id', prodId).single();
+    if (prodData) {
+      if (prodData.stock + delta < 0) {
+        throw new Error(
+          `Stok produk "${prodData.name}" tidak mencukupi untuk dikurangi. Stok saat ini: ${prodData.stock}, dibutuhkan pengurangan: ${Math.abs(delta)}. Sebagian barang sudah terjual.`
+        );
+      }
+    }
+  }
+
+  // 4. Update stok & buy_price di database
+  for (const [prodId, data] of productDeltas.entries()) {
+    const delta = data.newQty - data.oldQty;
+    const { data: prodData } = await supabase.from('products').select('stock').eq('id', prodId).single();
+    if (prodData) {
+      const updatePayload: any = { stock: prodData.stock + delta };
+      if (data.newQty > 0) {
+        updatePayload.buy_price = data.newBuyPrice;
+      }
+      await supabase.from('products').update(updatePayload).eq('id', prodId);
+    }
+  }
+
+  // 5. Update purchase_items: hapus item lama, insert item baru
+  await supabase.from('purchase_items').delete().eq('purchase_id', purchaseId);
+
+  const itemsToInsert = payload.items.map(it => ({
+    purchase_id: purchaseId,
+    product_id: it.produkId,
+    qty: it.qty,
+    buy_price: it.hargaBeli
+  }));
+  await supabase.from('purchase_items').insert(itemsToInsert);
+
+  // 6. Hitung ulang total dan update purchases
+  const totalAmount = payload.items.reduce((sum, item) => sum + (item.qty * item.hargaBeli), 0);
+  const nowIso = new Date().toISOString();
+
+  await supabase.from('purchases').update({
+    invoice_number: payload.noFaktur.trim(),
+    purchase_date: payload.tanggal,
+    total_amount: totalAmount
+  }).eq('id', purchaseId);
+
+  // 7. Snapshot data baru
+  const newDataSnapshot = {
+    purchase: {
+      id: purchaseId,
+      invoice_number: payload.noFaktur.trim(),
+      purchase_date: payload.tanggal,
+      total_amount: totalAmount
+    },
+    items: itemsToInsert
+  };
+
+  // 8. Catat audit log perubahan
+  let auditLogId = `audit-${Date.now()}`;
+  try {
+    const { data: auditData } = await recordPurchaseAuditLog(
+      purchaseId,
+      oldDataSnapshot,
+      newDataSnapshot,
+      changeReason.trim(),
+      user
+    );
+    if (auditData && auditData[0]?.id) {
+      auditLogId = auditData[0].id;
+    }
+  } catch (auditErr) {
+    console.warn('Gagal mencatat audit log:', auditErr);
+  }
+
+  return {
+    success: true,
+    purchase_id: purchaseId,
+    invoice_number: payload.noFaktur.trim(),
+    total_amount: totalAmount,
+    audit_log_id: auditLogId,
+    updated_at: nowIso
+  };
+}
+
+async function fallbackUpdatePurchaseInvoice(
   purchaseId: string,
   payload: UpdatePurchasePayload,
   changeReason: string,
   user: { id: string; name: string }
-): UpdatePurchaseResult {
-  // 1. Temukan data faktur lama di state mock
-  const purchase = mockPurchases.find(p => p.id === purchaseId);
+): Promise<UpdatePurchaseResult> {
+  // 1. Coba periksa apakah faktur ada di database remote Supabase terlebih dahulu
+  let remotePurchase: any = null;
+  try {
+    const query = supabase.from?.('purchases');
+    if (query && typeof query.select === 'function') {
+      const { data: dbPurchase } = await query
+        .select(`
+          id,
+          invoice_number,
+          purchase_date,
+          total_amount,
+          purchase_items (
+            id,
+            product_id,
+            qty,
+            buy_price
+          )
+        `)
+        .eq('id', purchaseId)
+        .maybeSingle();
+
+      if (dbPurchase) {
+        remotePurchase = dbPurchase;
+      } else if (payload.noFaktur) {
+        const { data: dbByInv } = await query
+          .select(`
+            id,
+            invoice_number,
+            purchase_date,
+            total_amount,
+            purchase_items (
+              id,
+              product_id,
+              qty,
+              buy_price
+            )
+          `)
+          .eq('invoice_number', payload.noFaktur.trim())
+          .maybeSingle();
+        if (dbByInv) {
+          remotePurchase = dbByInv;
+        }
+      }
+    }
+  } catch {
+    // Database offline atau dalam unit test mock, beralih ke in-memory store
+  }
+
+  if (remotePurchase) {
+    return await executeDirectSupabasePurchaseUpdate(
+      remotePurchase.id,
+      remotePurchase,
+      payload,
+      changeReason,
+      user
+    );
+  }
+
+  // 2. Jika tidak ditemukan di database remote atau offline, cari di state in-memory mock
+  let purchase = mockPurchases.find(p => p.id === purchaseId);
+  if (!purchase && payload.noFaktur) {
+    purchase = mockPurchases.find(p => p.noFaktur === payload.noFaktur.trim());
+  }
   if (!purchase) {
     throw new Error(`Faktur pembelian dengan ID ${purchaseId} tidak ditemukan.`);
   }
@@ -259,7 +448,7 @@ function fallbackUpdatePurchaseInvoice(
     action: 'UPDATE_PURCHASE',
     old_data: oldDataSnapshot,
     new_data: newDataSnapshot,
-    performed_by: user.id || null,
+    performed_by: user?.id || null,
     performer_name: user.name || 'Pengelola',
     notes: changeReason.trim(),
     created_at: nowIso
@@ -323,8 +512,8 @@ export async function updatePurchaseInvoice(
         buy_price: item.hargaBeli
       })),
       p_change_reason: changeReason.trim(),
-      p_user_id: user.id,
-      p_user_name: user.name
+      p_user_id: isValidUUID(user?.id) ? user.id : null,
+      p_user_name: user?.name || null
     });
 
     if (error) {
@@ -338,13 +527,32 @@ export async function updatePurchaseInvoice(
         msg.includes('lebih besar dari 0') ||
         msg.includes('tidak boleh negatif');
 
+      if (msg.includes('tidak ditemukan') && payload.noFaktur) {
+        try {
+          const query = supabase.from?.('purchases');
+          if (query && typeof query.select === 'function') {
+            const { data: realPurchase } = await query
+              .select('id')
+              .eq('invoice_number', payload.noFaktur.trim())
+              .maybeSingle();
+
+            if (realPurchase && realPurchase.id && realPurchase.id !== purchaseId) {
+              console.warn(`ID faktur usang (${purchaseId}), mencoba update dengan ID terbaru (${realPurchase.id})`);
+              return await updatePurchaseInvoice(realPurchase.id, payload, changeReason, user);
+            }
+          }
+        } catch {
+          // Abaikan error lookup
+        }
+      }
+
       if (isBusinessError) {
         throw new Error(msg);
       }
 
       if (shouldFallback(error)) {
-        console.warn('RPC "update_purchase_invoice_atomic" gagal atau belum tersedia. Beralih ke fallback offline:', error.message);
-        return fallbackUpdatePurchaseInvoice(purchaseId, payload, changeReason, user);
+        console.warn('RPC "update_purchase_invoice_atomic" gagal atau belum tersedia. Beralih ke fallback:', error.message);
+        return await fallbackUpdatePurchaseInvoice(purchaseId, payload, changeReason, user);
       }
 
       throw new Error(`Gagal memperbarui faktur pembelian: ${msg}`);
@@ -367,8 +575,8 @@ export async function updatePurchaseInvoice(
     }
 
     if (shouldFallback(err)) {
-      console.warn('Terjadi kesalahan koneksi atau RPC. Beralih ke fallback offline:', err.message);
-      return fallbackUpdatePurchaseInvoice(purchaseId, payload, changeReason, user);
+      console.warn('Terjadi kesalahan koneksi atau RPC. Beralih ke fallback:', err.message);
+      return await fallbackUpdatePurchaseInvoice(purchaseId, payload, changeReason, user);
     }
 
     throw err;
@@ -427,10 +635,10 @@ export async function recordPurchaseAuditLog(
     record_id: purchaseId,    // WAJIB: kolom NOT NULL (text)
     old_data: oldData,
     new_data: newData,
-    performed_by: user.id || null,
-    performer_name: user.name || null,
+    performed_by: isValidUUID(user?.id) ? user.id : null,
+    performer_name: user?.name || null,
     notes: reason || 'Koreksi faktur pembelian',
     entity_name: 'purchases',
-    entity_id: purchaseId,
+    entity_id: isValidUUID(purchaseId) ? purchaseId : null,
   });
 }

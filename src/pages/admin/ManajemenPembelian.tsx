@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Edit3, Loader2 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
-import { updatePurchaseInvoice, getPurchaseAuditLogs, PurchaseAuditLog } from '../../services/purchaseService';
+import { updatePurchaseInvoice, getPurchaseAuditLogs, PurchaseAuditLog, isValidUUID } from '../../services/purchaseService';
 import { supabase } from '../../lib/supabaseClient';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -20,7 +20,7 @@ export default function ManajemenPembelian() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [noFaktur, setNoFaktur] = useState('');
   const [tanggal, setTanggal] = useState(new Date().toISOString().split('T')[0]);
-  
+
   // Cart items
   const [items, setItems] = useState<{ id: string; produkId: string; qty: number; hargaBeli: number }[]>([]);
 
@@ -61,7 +61,7 @@ export default function ManajemenPembelian() {
           .select('nama, role')
           .eq('id', user.id)
           .single();
-        
+
         setCurrentUser({
           id: user.id,
           name: profile?.nama || user.user_metadata?.nama || user.email || 'Pengelola',
@@ -128,7 +128,7 @@ export default function ManajemenPembelian() {
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProductId) return;
-    
+
     // Cek jika produk sudah ada di cart
     const existingIndex = items.findIndex(i => i.produkId === selectedProductId);
     if (existingIndex > -1) {
@@ -137,12 +137,12 @@ export default function ManajemenPembelian() {
       newItems[existingIndex].hargaBeli = hargaBeli; // update to latest typed price
       setItems(newItems);
     } else {
-      setItems([...items, { 
-      id: `temp-${Date.now()}`,
-      produkId: selectedProductId, 
-      qty, 
-      hargaBeli 
-    }]);
+      setItems([...items, {
+        id: `temp-${Date.now()}`,
+        produkId: selectedProductId,
+        qty,
+        hargaBeli
+      }]);
     }
     setIsItemModalOpen(false);
   };
@@ -201,12 +201,17 @@ export default function ManajemenPembelian() {
     setEditingFaktur(faktur);
     setEditNoFaktur(faktur.noFaktur);
     setEditTanggal(faktur.tanggal);
-    setEditItems(faktur.items.map(it => ({
-      id: it.id,
-      produkId: it.produkId,
-      qty: it.qty,
-      hargaBeli: it.hargaBeli
-    })));
+    setEditItems(faktur.items.map(it => {
+      // Pastikan produkId berupa UUID produk yang valid
+      const matched = products.find(p => p.id === it.produkId || p.sku === it.produkId);
+      const validProductId = (matched && isValidUUID(matched.id)) ? matched.id : it.produkId;
+      return {
+        id: it.id,
+        produkId: validProductId,
+        qty: it.qty,
+        hargaBeli: it.hargaBeli
+      };
+    }));
     setChangeReason('');
     setIsEditModalOpen(true);
   };
@@ -259,16 +264,29 @@ export default function ManajemenPembelian() {
 
     setIsSavingEdit(true);
     try {
+      // Pastikan setiap item yang dikirim memiliki product_id berupa UUID produk yang valid
+      const sanitizedItems = editItems.map(item => {
+        const matched = products.find(p => p.id === item.produkId || p.sku === item.produkId);
+        const validProductId = (matched && isValidUUID(matched.id)) ? matched.id : item.produkId;
+        return {
+          ...item,
+          produkId: validProductId
+        };
+      });
+
+      // Sanitasi userId: hanya gunakan jika merupakan UUID valid, jika tidak kirim empty string agar diproses null
+      const validUserId = isValidUUID(currentUser?.id) ? currentUser!.id : '';
+
       await updatePurchaseInvoice(
         editingFaktur.id,
         {
           noFaktur: editNoFaktur.trim(),
           tanggal: editTanggal,
-          items: editItems
+          items: sanitizedItems
         },
         changeReason.trim(),
         {
-          id: currentUser?.id || 'admin-id',
+          id: validUserId,
           name: currentUser?.name || 'Administrator'
         }
       );
@@ -319,7 +337,7 @@ export default function ManajemenPembelian() {
               <h1 className="text-display-sm font-display-sm text-primary">Input Faktur Pembelian</h1>
               <p className="text-body-lg text-on-surface-variant mt-2">Catat barang masuk dari supplier</p>
             </div>
-            <button 
+            <button
               onClick={() => setIsFormOpen(false)}
               className="px-4 py-2 text-primary font-label-lg hover:bg-primary/5 rounded-lg transition-colors"
             >
@@ -330,11 +348,11 @@ export default function ManajemenPembelian() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-1 flex flex-col gap-4 bg-surface p-6 rounded-2xl shadow-sm border border-outline-variant">
               <h2 className="text-title-md font-medium text-on-surface border-b border-outline-variant/30 pb-3">Informasi Faktur</h2>
-              
+
               <div className="flex flex-col gap-1.5">
                 <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={noFaktur}
                   onChange={(e) => setNoFaktur(e.target.value)}
                   className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -345,8 +363,8 @@ export default function ManajemenPembelian() {
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-label-md font-label-md text-on-surface-variant">Tanggal</label>
-                <input 
-                  type="date" 
+                <input
+                  type="date"
                   value={tanggal}
                   onChange={(e) => setTanggal(e.target.value)}
                   className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -358,7 +376,7 @@ export default function ManajemenPembelian() {
             <div className="md:col-span-2 flex flex-col gap-4 bg-surface p-6 rounded-2xl shadow-sm border border-outline-variant">
               <div className="flex justify-between items-center border-b border-outline-variant/30 pb-3">
                 <h2 className="text-title-md font-medium text-on-surface">Daftar Barang</h2>
-                <button 
+                <button
                   onClick={handleOpenItemModal}
                   className="flex items-center gap-1 bg-secondary/10 text-secondary px-3 py-1.5 rounded text-sm font-medium hover:bg-secondary/20 transition-colors"
                 >
@@ -394,7 +412,7 @@ export default function ManajemenPembelian() {
                             Rp {(item.qty * item.hargaBeli).toLocaleString('id-ID')}
                           </td>
                           <td className="py-3 text-right">
-                            <button 
+                            <button
                               onClick={() => handleRemoveItem(idx)}
                               className="text-error hover:bg-error/10 p-1 rounded transition-colors"
                             >
@@ -418,7 +436,7 @@ export default function ManajemenPembelian() {
               )}
 
               <div className="mt-4 flex justify-end">
-                <button 
+                <button
                   onClick={handleSubmitFaktur}
                   disabled={items.length === 0 || !noFaktur}
                   className="bg-primary text-on-primary px-8 py-2.5 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -442,7 +460,7 @@ export default function ManajemenPembelian() {
               <form onSubmit={handleAddItem} className="p-4 flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-label-md text-on-surface-variant">Produk</label>
-                  <select 
+                  <select
                     value={selectedProductId}
                     onChange={(e) => handleProductChange(e.target.value)}
                     className="px-3 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 outline-none"
@@ -454,12 +472,12 @@ export default function ManajemenPembelian() {
                     ))}
                   </select>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-label-md text-on-surface-variant">Qty</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       value={qty}
                       onChange={(e) => setQty(Number(e.target.value))}
                       className="px-3 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 outline-none"
@@ -469,8 +487,8 @@ export default function ManajemenPembelian() {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-label-md text-on-surface-variant">Harga Beli Satuan</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       value={hargaBeli}
                       onChange={(e) => setHargaBeli(Number(e.target.value))}
                       className="px-3 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 outline-none"
@@ -479,8 +497,8 @@ export default function ManajemenPembelian() {
                     />
                   </div>
                 </div>
-                
-                <button 
+
+                <button
                   type="submit"
                   className="mt-2 bg-secondary text-on-secondary py-2 rounded-lg font-medium hover:bg-secondary/90 transition-colors"
                 >
@@ -503,21 +521,21 @@ export default function ManajemenPembelian() {
             <p className="text-body-lg text-on-surface-variant mt-2">Riwayat faktur pembelian / barang masuk</p>
           </div>
           <div className="flex gap-2">
-            <button 
+            <button
               onClick={handleExportExcel}
               className="flex items-center gap-2 bg-[#217346] text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-[#1e6b41] transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">table_chart</span>
               Export Excel
             </button>
-            <button 
+            <button
               onClick={handleExportPDF}
               className="flex items-center gap-2 bg-[#db4437] text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-[#c53929] transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">picture_as_pdf</span>
               Export PDF
             </button>
-            <button 
+            <button
               onClick={handleOpenForm}
               className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors"
             >
@@ -558,7 +576,7 @@ export default function ManajemenPembelian() {
                         Rp {faktur.totalNilai.toLocaleString('id-ID')}
                       </td>
                       <td className="p-4 flex items-center justify-center gap-2">
-                        <button 
+                        <button
                           onClick={() => handleOpenDetailModal(faktur)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-tertiary hover:bg-tertiary/10 transition-colors"
                           title="Lihat Detail Faktur"
@@ -566,7 +584,7 @@ export default function ManajemenPembelian() {
                           <span className="material-symbols-outlined text-[18px]">visibility</span>
                         </button>
                         {currentUser?.role === 'admin' ? (
-                          <button 
+                          <button
                             onClick={() => handleOpenEditModal(faktur)}
                             className="w-8 h-8 rounded-full flex items-center justify-center text-primary hover:bg-primary/10 transition-colors"
                             title="Edit Faktur"
@@ -574,7 +592,7 @@ export default function ManajemenPembelian() {
                             <Edit3 className="w-4 h-4" />
                           </button>
                         ) : (
-                          <button 
+                          <button
                             disabled
                             className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/40 cursor-not-allowed opacity-50"
                             title="Hanya admin yang dapat mengedit faktur"
@@ -589,7 +607,7 @@ export default function ManajemenPembelian() {
               </tbody>
             </table>
           </div>
-          
+
           {/* Pagination Footer */}
           <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm p-4 border-t border-outline-variant">
             <div className="flex items-center gap-2 text-on-surface-variant">
@@ -597,7 +615,7 @@ export default function ManajemenPembelian() {
                 Menampilkan {fakturList.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
                 {Math.min(currentPage * itemsPerPage, fakturList.length)} dari {fakturList.length} faktur
               </span>
-              <select 
+              <select
                 value={itemsPerPage}
                 onChange={(e) => {
                   setItemsPerPage(Number(e.target.value));
@@ -613,7 +631,7 @@ export default function ManajemenPembelian() {
             </div>
 
             <div className="flex items-center gap-1">
-              <button 
+              <button
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={currentPage === 1}
                 className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -623,7 +641,7 @@ export default function ManajemenPembelian() {
               <span className="text-sm font-medium px-2 text-on-surface">
                 {currentPage} / {totalPages || 1}
               </span>
-              <button 
+              <button
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={currentPage === totalPages || totalPages === 0}
                 className="px-3 py-1 text-sm bg-surface-container hover:bg-surface-container-high text-on-surface rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -648,7 +666,7 @@ export default function ManajemenPembelian() {
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
-            
+
             <div className="p-6 overflow-y-auto flex flex-col gap-6">
               {/* Daftar Barang */}
               <div>
@@ -746,13 +764,13 @@ export default function ManajemenPembelian() {
                   Sesuaikan nomor faktur, tanggal, kuantitas, atau harga beli barang
                 </p>
               </div>
-              <button 
+              <button
                 onClick={() => {
                   if (!isSavingEdit) {
                     setIsEditModalOpen(false);
                     setEditingFaktur(null);
                   }
-                }} 
+                }}
                 className="text-on-surface-variant hover:text-on-surface"
                 disabled={isSavingEdit}
               >
@@ -766,8 +784,8 @@ export default function ManajemenPembelian() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-surface-container-lowest p-4 rounded-xl border border-outline-variant/30">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={editNoFaktur}
                       onChange={(e) => setEditNoFaktur(e.target.value)}
                       className="px-3.5 py-2 bg-surface border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -777,8 +795,8 @@ export default function ManajemenPembelian() {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-label-md font-label-md text-on-surface-variant">Tanggal</label>
-                    <input 
-                      type="date" 
+                    <input
+                      type="date"
                       value={editTanggal}
                       onChange={(e) => setEditTanggal(e.target.value)}
                       className="px-3.5 py-2 bg-surface border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
@@ -807,8 +825,8 @@ export default function ManajemenPembelian() {
                               {getProductName(item.produkId)}
                             </td>
                             <td className="py-2.5 px-3 text-right">
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 min="1"
                                 value={item.qty}
                                 onChange={(e) => handleEditItemQtyChange(idx, parseInt(e.target.value) || 0)}
@@ -817,8 +835,8 @@ export default function ManajemenPembelian() {
                               />
                             </td>
                             <td className="py-2.5 px-3 text-right">
-                              <input 
-                                type="number" 
+                              <input
+                                type="number"
                                 min="0"
                                 value={item.hargaBeli}
                                 onChange={(e) => handleEditItemPriceChange(idx, parseInt(e.target.value) || 0)}
@@ -854,7 +872,7 @@ export default function ManajemenPembelian() {
                     </label>
                     <span className="text-xs text-on-surface-variant">Wajib diisi</span>
                   </div>
-                  <textarea 
+                  <textarea
                     value={changeReason}
                     onChange={(e) => setChangeReason(e.target.value)}
                     rows={3}
@@ -864,8 +882,8 @@ export default function ManajemenPembelian() {
                   />
                   <div className="flex justify-between items-center text-xs mt-1">
                     <span className={changeReason.trim().length >= 10 ? 'text-primary font-medium' : 'text-error font-medium'}>
-                      {changeReason.trim().length >= 10 
-                        ? '✓ Alasan memenuhi syarat minimal' 
+                      {changeReason.trim().length >= 10
+                        ? '✓ Alasan memenuhi syarat minimal'
                         : `Minimal 10 karakter - saat ini: ${changeReason.trim().length} karakter`}
                     </span>
                     <span className="text-on-surface-variant font-mono">{changeReason.trim().length} karakter</span>
