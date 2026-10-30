@@ -1,13 +1,13 @@
 ---
 milestone: SIMKOP v1.0
 version: 1.0.0
-updated: 2026-09-30T05:21:00+07:00
+updated: 2026-10-30T20:50:00+07:00
 ---
 
 # Roadmap
 
-> **Current Phase:** 34 — Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP
-> **Status:** ✅ Complete
+> **Current Phase:** 35 — Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang
+> **Status:** ⏳ In Progress
 
 ## Must-Haves (from SPEC)
 
@@ -604,6 +604,21 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 35: Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang
+**Status:** ⏳ In Progress
+**Objective:** Menyelaraskan seluruh tombol aksi header pada halaman Laporan Mutasi Barang Gudang (`src/pages/admin/LaporanMutasiBarang.tsx`) ke dalam satu baris horizontal (`flex-row`), dengan ukuran tinggi, padding, ikon, dan gap yang simetris dan konsisten sehingga tombol "Cetak PDF" tidak terlipat atau bertingkat ke baris bawah pada layar desktop/laptop.
+**Depends on:** Phase 34
+
+**Plans:**
+- [ ] Plan 35.1: Wave 1 - Refactor Header Action Buttons into Symmetric Flex Row
+- [ ] Plan 35.2: Wave 2 - Static Verification & Build Integrity
+
+**Deliverables:**
+- Tata letak tombol aksi header (Refresh, Export Excel, Cetak PDF) pada `LaporanMutasiBarang.tsx` tersusun horizontal, sejajar, dan simetris (`h-10`, `rounded-lg`).
+- Verifikasi kompilasi TypeScript dan Vitest / Vite build lolos tanpa error (exit code 0).
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -634,6 +649,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 24 | Phase 32 | Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai |
 | 25 | Phase 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam |
 | 26 | Phase 34 | Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP |
+| 27 | Phase 35 | Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang |
 
 ---
 
@@ -675,6 +691,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 32 | Retur Pembelian ke Supplier & Restock Klaim | ✅ | 4/4 | 100% |
 | 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam | ✅ | 2/2 | 100% |
 | 34 | Laporan Mutasi Barang Gudang | ✅ | 5/5 | 100% |
+| 35 | Penyelarasan Tombol Header Laporan Mutasi | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -716,5 +733,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 32 | 2026-10-30 | 2026-10-30 | 1 day |
 | 33 | 2026-10-30 | 2026-10-30 | 1 day |
 | 34 | 2026-10-30 | 2026-10-30 | 1 day |
+| 35 | 2026-10-30 | — | — |
 
 
