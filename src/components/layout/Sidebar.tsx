@@ -24,6 +24,7 @@ import {
   Settings,
   SlidersHorizontal,
   RotateCcw,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -55,6 +56,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Retur Pembelian', icon: RotateCcw, href: '/admin/retur-pembelian' },
       { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
       { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
+      { label: 'Laporan Mutasi Barang', icon: ArrowLeftRight, href: '/admin/laporan-mutasi' },
     ],
   },
   {

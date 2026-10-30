@@ -41,6 +41,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       'Retur Pembelian',
       'Pengaturan Kasir',
       'Laporan Retail & Stok',
+      'Laporan Mutasi Barang',
     ]);
 
     expect(items.map((i) => i.href)).toEqual([
@@ -51,6 +52,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       '/admin/retur-pembelian',
       '/admin/pengaturan-kasir',
       '/admin/laporan-retail',
+      '/admin/laporan-mutasi',
     ]);
   });
 
