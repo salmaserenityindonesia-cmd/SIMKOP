@@ -108,3 +108,4 @@ Load these files for context:
 - [ ] Rute `/admin/laporan-mutasi` terdaftar di `App.tsx`
 - [ ] Submenu "Laporan Mutasi Barang" muncul di bawah kelompok "TOKO RETAIL & INVENTORI" di Sidebar
 - [ ] Tes unit `Sidebar.test.tsx` lulus 100%
+

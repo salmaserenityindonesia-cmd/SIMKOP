@@ -84,3 +84,4 @@ Load these files for context:
 - [ ] Utility `mutationExporter.ts` mampu mengekspor ke PDF Landscape A4 dengan jspdf-autotable
 - [ ] Header koperasi, ringkasan KPI, dan kolom data tersaji akurat
 - [ ] Unit tests di `mutationExporter.test.ts` lulus tanpa kesalahan
+

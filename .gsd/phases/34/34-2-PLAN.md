@@ -138,3 +138,4 @@ Load these files for context:
 - [ ] Perhitungan running balance konsisten secara matematis
 - [ ] Unit tests di `inventoryMutationService.test.ts` lulus tanpa kesalahan
 - [ ] Tipe TypeScript valid tanpa kompilasi error
+

@@ -65,3 +65,4 @@ Load these files for context:
 - [ ] View `public.v_inventory_mutations` memuat 4 sumber mutasi (penjualan, pembelian, retur, klaim pengganti)
 - [ ] Tidak ada referensi ke kolom yang salah pada `sale_items` (menggunakan `qty` dan `price`)
 - [ ] Hak akses SELECT diberikan kepada role authenticated dan anon
+
