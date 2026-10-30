@@ -87,3 +87,4 @@ Load these files for context:
 - [ ] Input pencarian mendukung filtering real-time berdasarkan `name` maupun `sku`.
 - [ ] Dropdown dapat dinavigasi dengan tombol panah (ArrowUp, ArrowDown), Enter untuk memilih, dan Escape untuk menutup.
 - [ ] Pengujian unit di `src/components/common/ProductSearchAutocomplete.test.tsx` lulus 100%.
+

@@ -71,3 +71,4 @@ Load these files for context:
 - [ ] Input pencarian produk otomatis menerima fokus saat modal dibuka (`autoFocus`).
 - [ ] Memilih produk dari dropdown otomatis mengisi `selectedProductId`, `hargaBeli`, dan memindahkan fokus ke input `Qty`.
 - [ ] Alur penambahan barang ke daftar faktur pembelian (`handleAddItem`) berjalan normal tanpa regresi fungsional.
+

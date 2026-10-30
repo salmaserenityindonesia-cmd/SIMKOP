@@ -44,3 +44,4 @@ Load these files for context:
 - [ ] `npm run typecheck` lulus tanpa error tipe.
 - [ ] Seluruh unit tests di Vitest lulus 100% (termasuk tes komponen `ProductSearchAutocomplete`).
 - [ ] Build produksi Vite (`npm run build`) berhasil dengan exit code 0.
+

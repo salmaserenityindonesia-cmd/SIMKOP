@@ -528,14 +528,14 @@ updated: 2026-09-30T05:21:00+07:00
 ---
 
 ### Phase 31: Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk
-**Status**: 📋 Planned
+**Status**: ✅ Complete
 **Objective**: Mengganti elemen dropdown `<select>` produk statis pada modal "Tambah Barang Masuk" di alur Input Faktur Pembelian (`src/pages/admin/ManajemenPembelian.tsx`) dengan komponen reusable `ProductSearchAutocomplete.tsx`. Komponen ini mendukung pencarian instan berbasis nama dan SKU/Barcode, navigasi keyboard lengkap (ArrowUp, ArrowDown, Enter, Escape), floating dropdown, auto-fill harga beli master produk, serta auto-focus langsung ke field kuantitas/harga berikutnya.
 **Depends on**: Phase 5, Phase 30
 
 **Plans**:
-- [ ] Plan 31.1: Wave 1 - Build Keyboard-Accessible Product Autocomplete Component
-- [ ] Plan 31.2: Wave 2 - Integrate Autocomplete into Modal Tambah Barang Masuk in ManajemenPembelian.tsx
-- [ ] Plan 31.3: Wave 3 - Build Verification, Unit Testing & Static Check
+- [x] Plan 31.1: Wave 1 - Build Keyboard-Accessible Product Autocomplete Component
+- [x] Plan 31.2: Wave 2 - Integrate Autocomplete into Modal Tambah Barang Masuk in ManajemenPembelian.tsx
+- [x] Plan 31.3: Wave 3 - Build Verification, Unit Testing & Static Check
 
 **Verification**:
 - Komponen `ProductSearchAutocomplete` merender input pencarian dengan icon Search, badge SKU, dan floating list responsif.
@@ -609,7 +609,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) | ✅ | 2/2 | 100% |
 | 29 | Refactor Template & Import Produk Tanpa Kategori | ✅ | 3/3 | 100% |
 | 30 | Edit Faktur Pembelian, Audit Log & Stok | ✅ | 4/4 | 100% |
-| 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ⏳ | 0/3 | 0% |
+| 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ✅ | 3/3 | 100% |
 
 ---
 
@@ -647,6 +647,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 28 | 2026-10-30 | 2026-10-30 | 1 day |
 | 29 | 2026-10-30 | 2026-10-30 | 1 day |
 | 30 | 2026-10-30 | 2026-10-30 | 1 day |
-| 31 | 2026-10-30 | — | In Progress |
+| 31 | 2026-10-30 | 2026-10-30 | 1 day |
 
 
