@@ -284,12 +284,13 @@ export default function ManajemenReturPembelian() {
 
     exportToPDF(headers, data, `Retur_Pembelian_${new Date().toISOString().split('T')[0]}`, 'Laporan Retur Pembelian Supplier');
   };
+  const handleExportPdf = handleExportPDF;
 
   return (
     <AdminLayout>
       <div className="flex flex-col gap-6">
         {/* Header Title & Actions */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-3">
               <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
@@ -303,27 +304,32 @@ export default function ManajemenReturPembelian() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
+            {/* Tombol Export Excel */}
             <button
               onClick={handleExportExcel}
-              className="flex items-center gap-2 bg-[#217346] text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow hover:bg-[#1e6b41] transition-colors"
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm transition-colors shadow-xs"
             >
               <FileSpreadsheet className="w-4 h-4" />
-              Export Excel
+              <span>Export Excel</span>
             </button>
+
+            {/* Tombol Export PDF */}
             <button
-              onClick={handleExportPDF}
-              className="flex items-center gap-2 bg-[#db4437] text-white px-3.5 py-2 rounded-lg text-sm font-medium shadow hover:bg-[#c53929] transition-colors"
+              onClick={handleExportPdf}
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium text-sm transition-colors shadow-xs"
             >
               <FileText className="w-4 h-4" />
-              Export PDF
+              <span>Export PDF</span>
             </button>
+
+            {/* Tombol Buat Retur Baru */}
             <button
               onClick={() => navigate('/admin/retur-pembelian/input')}
-              className="flex items-center gap-2 bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-medium shadow hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm transition-colors shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              Buat Retur Baru
+              <span>Buat Retur Baru</span>
             </button>
           </div>
         </div>
