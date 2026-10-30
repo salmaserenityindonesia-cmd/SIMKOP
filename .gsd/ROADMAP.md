@@ -6,8 +6,8 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 26 — Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS
-> **Status:** ✅ Complete
+> **Current Phase:** 33 — Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam
+> **Status:** ⏳ Planned
 
 ## Must-Haves (from SPEC)
 
@@ -565,6 +565,23 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 33: Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam
+**Status**: ⏳ Planned
+**Objective**: Memindahkan posisi seluruh grup navigasi "TOKO RETAIL & INVENTORI" beserta 7 submenunya (Kasir POS, Inventori Produk, Kategori Produk, Manajemen Pembelian, Retur Pembelian, Pengaturan Kasir, Laporan Retail & Stok) ke atas kelompok "SIMPAN PINJAM (KSP / USP)", tepat di bawah item/grup "Dashboard Operasional" pada sidebar navigasi admin (`src/components/layout/Sidebar.tsx` / `AdminSidebar.tsx`).
+**Depends on**: Phase 32
+
+**Plans**:
+- [ ] Plan 33.1: Wave 1 - Move TOKO RETAIL & INVENTORI Menu Group to Top Position in Sidebar
+- [ ] Plan 33.2: Wave 2 - Static Verification, Unit Testing & Vite Build
+
+**Verification**:
+- Array `navigationGroups` pada `src/components/layout/Sidebar.tsx` menempatkan "TOKO RETAIL & INVENTORI" tepat di bawah "OPERASIONAL" dan sebelum "SIMPAN PINJAM (KSP / USP)".
+- Seluruh 7 submenu toko retail & inventori tetap utuh dengan rute, ikon Lucide, dan filter hak akses role yang sesuai.
+- Re-export `AdminSidebar.tsx` dan `src/components/Sidebar.tsx` tetap valid.
+- `npx vitest run` lulus 100% dan build produksi Vite (`npm run build`) exit code 0.
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -593,6 +610,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 22 | Phase 30 | Edit Faktur Pembelian dengan Audit Log & Rekonsiliasi Stok |
 | 23 | Phase 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk |
 | 24 | Phase 32 | Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai |
+| 25 | Phase 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam |
 
 ---
 
@@ -632,6 +650,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 30 | Edit Faktur Pembelian, Audit Log & Stok | ✅ | 4/4 | 100% |
 | 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ✅ | 3/3 | 100% |
 | 32 | Retur Pembelian ke Supplier & Restock Klaim | ✅ | 4/4 | 100% |
+| 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -671,5 +690,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 30 | 2026-10-30 | 2026-10-30 | 1 day |
 | 31 | 2026-10-30 | 2026-10-30 | 1 day |
 | 32 | 2026-10-30 | 2026-10-30 | 1 day |
+| 33 | 2026-10-30 | — | — |
 
 
