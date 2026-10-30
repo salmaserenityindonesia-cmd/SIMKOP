@@ -100,4 +100,21 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
     // Kasir (POS) is visible
     expect(html).toContain('/admin/kasir');
   });
+
+  it('renders Laporan Mutasi Barang route for admin and staff users', () => {
+    const adminHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin']}>
+        <Sidebar userRole="admin" />
+      </MemoryRouter>
+    );
+    expect(adminHtml).toContain('/admin/laporan-mutasi');
+    expect(adminHtml).toContain('Laporan Mutasi Barang');
+
+    const staffHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin']}>
+        <Sidebar userRole="staff" />
+      </MemoryRouter>
+    );
+    expect(staffHtml).toContain('/admin/laporan-mutasi');
+  });
 });
