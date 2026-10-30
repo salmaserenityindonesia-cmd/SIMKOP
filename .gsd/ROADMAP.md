@@ -545,6 +545,26 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 32: Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai
+**Status**: ⬜ Not Started
+**Objective**: Membangun modul Manajemen Retur Pembelian ke Supplier di `/admin/retur-pembelian` (tabel riwayat faktur retur, detail faktur, modal edit, export Excel/PDF, dan formulir input dengan ProductSearchAutocomplete). Khusus untuk retur bertipe 'PIUTANG_PENGGANTIAN', menyediakan aksi atomik "Tandai Selesai / Terima Barang Pengganti" yang memperbarui status klaim menjadi 'SELESAI_DIGANTI' dan merestock kuantitas barang ke inventori tabel `products`.
+**Depends on**: Phase 5, Phase 30, Phase 31
+
+**Plans**:
+- [ ] Plan 32.1: Wave 1 - Skema Database Retur Pembelian & Atomic Restock Claim RPC
+- [ ] Plan 32.2: Wave 2 - Service Layer Retur Pembelian & Logika Mutasi Klaim
+- [ ] Plan 32.3: Wave 3 - UI Halaman Manajemen Retur & Formulir Input Retur Pembelian
+- [ ] Plan 32.4: Wave 4 - Static Verification, Unit Testing & Production Build
+
+**Verification**:
+- Tabel `purchase_returns`, `purchase_return_items`, dan RPC `complete_return_claim` terdefinisi di Supabase migration.
+- `purchaseReturnService.ts` mengelola query daftar retur, pembuatan retur dengan validasi stok, update retur, penyelesaian klaim, dan fallback mock yang andal.
+- Halaman `/admin/retur-pembelian` dan `/admin/retur-pembelian/input` terdaftar di router `App.tsx` dan link menu di `Sidebar.tsx`.
+- Tombol "Terima Pengganti" hanya tampil untuk status 'MENUNGGU_PENGGANTIAN' dan tipe 'PIUTANG_PENGGANTIAN', serta saat diklik otomatis menambah stok kembali dan mencatat audit log.
+- Seluruh unit tests Vitest dan build produksi Vite (`npm run build`) sukses tanpa error (exit code 0).
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -572,6 +592,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 21 | Phase 29 | Refactor Template & Parser Import Produk Tanpa Kolom Kategori |
 | 22 | Phase 30 | Edit Faktur Pembelian dengan Audit Log & Rekonsiliasi Stok |
 | 23 | Phase 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk |
+| 24 | Phase 32 | Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai |
 
 ---
 
@@ -610,6 +631,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 29 | Refactor Template & Import Produk Tanpa Kategori | ✅ | 3/3 | 100% |
 | 30 | Edit Faktur Pembelian, Audit Log & Stok | ✅ | 4/4 | 100% |
 | 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ✅ | 3/3 | 100% |
+| 32 | Retur Pembelian ke Supplier & Restock Klaim | ⬜ | 0/4 | 0% |
 
 ---
 
@@ -648,5 +670,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 29 | 2026-10-30 | 2026-10-30 | 1 day |
 | 30 | 2026-10-30 | 2026-10-30 | 1 day |
 | 31 | 2026-10-30 | 2026-10-30 | 1 day |
+| 32 | 2026-10-30 | — | — |
 
 

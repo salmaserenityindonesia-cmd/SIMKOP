@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 31 (Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 32 (Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai)
+- **Task**: Planning complete (4 plans across 4 waves)
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 31 executed and verified successfully. 3 plans, 3 tasks completed and verified with 4/4 must-haves passing.
-- Plan 31.1: Build Keyboard-Accessible Product Autocomplete Component in `src/components/common/ProductSearchAutocomplete.tsx` and unit tests in `src/components/common/ProductSearchAutocomplete.test.tsx` (commit: `d27ab6dd`).
-- Plan 31.2: Integrate Autocomplete into Modal Tambah Barang Masuk in `src/pages/admin/ManajemenPembelian.tsx` with price auto-fill and auto-focus Qty (commit: `4f5693f7`).
-- Plan 31.3: Build Verification, Unit Testing & Static Check in Vitest suite and Vite production build (commit: `9920eaa9`).
-- Verification: Independent audit verified all 4 must-haves (4/4 PASS), 114/114 unit tests across 14 test suites passed, TypeScript typecheck passed cleanly, and Vite production build succeeded with exit code 0.
+Phase 32 planned successfully. 4 plans created across 4 waves for end-to-end Purchase Return Module implementation.
+- Plan 32.1: Wave 1 - Skema Database Retur Pembelian & Atomic Restock Claim RPC (`supabase/migrations/026_create_purchase_returns_tables.sql`).
+- Plan 32.2: Wave 2 - Service Layer Retur Pembelian & Logika Mutasi Klaim (`src/services/purchaseReturnService.ts` & `src/services/purchaseReturnService.test.ts`).
+- Plan 32.3: Wave 3 - UI Halaman Manajemen Retur & Formulir Input Retur Pembelian (`src/pages/admin/ManajemenReturPembelian.tsx`, `src/pages/admin/InputReturPembelian.tsx`, `src/App.tsx`, `src/components/layout/Sidebar.tsx`).
+- Plan 32.4: Wave 4 - Static Verification, Unit Testing & Production Build (`npm run typecheck`, `npm test`, `npm run build`).
 
 ## Next Steps
-All phases in current roadmap completed. Ready for next milestone or phase planning.
+1. /execute 32 — run all plans
 
 ## Blockers
 - None.
@@ -19,8 +19,7 @@ All phases in current roadmap completed. Ready for next milestone or phase plann
 ## Context Dump
 
 ### Decisions Made
-- **Audit Logging Terpusat**: Perubahan faktur dicatat ke tabel `audit_logs` menyimpan snapshot `old_data`, `new_data`, `performed_by`, `performer_name`, dan alasan koreksi `notes`.
-- **Wajib Alasan Perubahan (Min. 10 Karakter)**: Mencegah manipulasi faktur tanpa justifikasi yang jelas.
-- **Proteksi Stok Minus Atomik**: Jika `current_stock + delta < 0`, transaksi pembaruan faktur ditolak dengan exception deskriptif bahwa barang telah terlanjur terjual dan stok tidak mencukupi untuk dikurangi.
-- **Role Guard Admin**: Opsi edit faktur hanya diizinkan untuk pengguna dengan role admin.
-- **ProductSearchAutocomplete UX**: Dropdown mengapung dengan limit item, auto-fill harga beli, auto-focus Qty setelah seleksi produk untuk kelancaran entri data.
+- **Nomor Migrasi 026**: File migrasi diberi nomor urut 026 (`026_create_purchase_returns_tables.sql`) karena nomor 024 dan 025 telah digunakan sebelumnya pada Phase 30 (`024_fix_audit_logs_table_name_constraint.sql` dan `025_safe_uuid_handling_purchase_update.sql`).
+- **Penyediaan Tabel Suppliers**: Tabel `public.suppliers` dibuat jika belum ada, dilengkapi kolom denormalisasi `supplier_name` pada tabel `purchase_returns` untuk kompatibilitas data dan fallback.
+- **Otomatisasi Restock Klaim Selesai (Atomic RPC)**: Aksi penerimaan barang pengganti ('SELESAI_DIGANTI') untuk tipe 'PIUTANG_PENGGANTIAN' mengeksekusi penambahan stok kembali (`stock = stock + item.qty`) dan mencatat mutasi audit ke `audit_logs` melalui RPC `complete_return_claim` dengan fallback in-memory/client-side yang aman.
+- **ProductSearchAutocomplete pada Input Retur**: Menggunakan komponen `ProductSearchAutocomplete` pada form input barang retur untuk pencarian SKU/nama cepat, disertai validasi stok agar kuantitas retur tidak melampaui persediaan gudang.
