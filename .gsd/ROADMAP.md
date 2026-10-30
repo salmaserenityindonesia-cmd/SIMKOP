@@ -620,7 +620,7 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 36: Searchable Autocomplete Produk Berbasis Keyboard pada Mode Kartu Stok Laporan Mutasi
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Mengganti `<select>` "Mode Kartu Stok (Produk)" pada `src/pages/admin/LaporanMutasiBarang.tsx` dengan `ProductSearchAutocomplete` yang mendukung pencarian real-time Nama/SKU/Barcode, navigasi keyboard (ArrowUp, ArrowDown, Enter, Escape), opsi "Semua Produk (Semua Mutasi Gudang)", dan tombol reset `X` satu klik.
 **Depends on:** Phase 31, Phase 34
 
@@ -632,6 +632,22 @@ updated: 2026-10-30T20:50:00+07:00
 - Prop opsional baru `allOptionLabel`, `onClear`, `inputClassName` + helper murni `buildAutocompleteOptions` (backward-compatible)
 - Filter Mode Kartu Stok berbasis autocomplete dengan sentinel `'all'` tetap dipertahankan
 - Tes unit komponen baru dan build Vite exit code 0
+
+---
+
+### Phase 37: Implementasi Kontrol Pagination pada Tabel Retur Pembelian
+**Status:** 📋 Planned
+**Objective:** Menambahkan kontrol pagination yang lengkap pada tabel riwayat retur di `src/pages/admin/ManajemenReturPembelian.tsx` dengan pilihan ukuran halaman (10, 25, 50, dan 100 baris), informasi rentang aktif ("Menampilkan X-Y dari Z faktur retur"), tombol navigasi halaman (Prev, Next, Current/Total Page), serta auto-reset ke halaman 1 saat query pencarian atau filter status/jenis berubah, selaras dengan antarmuka Manajemen Pembelian.
+**Depends on:** Phase 32
+
+**Plans:**
+- [ ] Plan 37.1: Wave 1 - Implement Pagination State, Slicing & Footer UI in ManajemenReturPembelian
+- [ ] Plan 37.2: Wave 2 - Static Verification, Test Suite & Production Build
+
+**Deliverables:**
+- State dinamis `pageSize` (10, 25, 50, 100) dan kalkulasi `paginatedReturns`
+- Footer pagination responsif di bawah tabel retur pembelian
+- Typecheck dan seluruh suite Vitest & Vite build 100% passing
 
 ---
 
@@ -667,6 +683,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 26 | Phase 34 | Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP |
 | 27 | Phase 35 | Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang |
 | 28 | Phase 36 | Searchable Autocomplete Produk pada Mode Kartu Stok Laporan Mutasi |
+| 29 | Phase 37 | Implementasi Kontrol Pagination pada Tabel Retur Pembelian |
 
 ---
 
@@ -709,7 +726,8 @@ updated: 2026-10-30T20:50:00+07:00
 | 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam | ✅ | 2/2 | 100% |
 | 34 | Laporan Mutasi Barang Gudang | ✅ | 5/5 | 100% |
 | 35 | Penyelarasan Tombol Header Laporan Mutasi | ✅ | 2/2 | 100% |
-| 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | 📋 | 0/2 | 0% |
+| 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | ✅ | 2/2 | 100% |
+| 37 | Kontrol Pagination Tabel Retur Pembelian | 📋 | 0/2 | 0% |
 
 ---
 
