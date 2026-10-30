@@ -5,6 +5,7 @@ export interface POSSettings {
   max_hold_duration_minutes: number;
   allow_negative_stock: boolean;
   member_discount_percentage: number;
+  receipt_paper_size?: '58mm' | '80mm';
   updated_at?: string;
 }
 
@@ -12,7 +13,8 @@ export const DEFAULT_POS_SETTINGS: POSSettings = {
   id: 1,
   max_hold_duration_minutes: 120, // 2 jam default
   allow_negative_stock: false,
-  member_discount_percentage: 5.0
+  member_discount_percentage: 5.0,
+  receipt_paper_size: '80mm'
 };
 
 export const POS_SETTINGS_STORAGE_KEY = 'simkop_pos_settings';
@@ -51,6 +53,9 @@ export function getStoredLocalSettings(): POSSettings | null {
           member_discount_percentage: typeof parsed.member_discount_percentage !== 'undefined' && parsed.member_discount_percentage !== null
             ? Number(parsed.member_discount_percentage)
             : DEFAULT_POS_SETTINGS.member_discount_percentage,
+          receipt_paper_size: (parsed.receipt_paper_size === '58mm' || parsed.receipt_paper_size === '80mm')
+            ? parsed.receipt_paper_size
+            : DEFAULT_POS_SETTINGS.receipt_paper_size,
           updated_at: parsed.updated_at
         };
       }
@@ -145,6 +150,9 @@ export async function getPosSettings(forceRefresh: boolean = false): Promise<POS
         member_discount_percentage: typeof data.member_discount_percentage !== 'undefined' && data.member_discount_percentage !== null
           ? Number(data.member_discount_percentage)
           : DEFAULT_POS_SETTINGS.member_discount_percentage,
+        receipt_paper_size: (data.receipt_paper_size === '58mm' || data.receipt_paper_size === '80mm')
+          ? data.receipt_paper_size
+          : (DEFAULT_POS_SETTINGS.receipt_paper_size || '80mm'),
         updated_at: data.updated_at
       };
       saveStoredLocalSettings(cachedSettings);
@@ -173,6 +181,9 @@ export async function updatePosSettings(
     member_discount_percentage: typeof settings.member_discount_percentage !== 'undefined' && settings.member_discount_percentage !== null
       ? Number(settings.member_discount_percentage)
       : current.member_discount_percentage,
+    receipt_paper_size: (settings.receipt_paper_size === '58mm' || settings.receipt_paper_size === '80mm')
+      ? settings.receipt_paper_size
+      : current.receipt_paper_size,
     updated_at: new Date().toISOString()
   };
 
@@ -188,6 +199,7 @@ export async function updatePosSettings(
         max_hold_duration_minutes: merged.max_hold_duration_minutes,
         allow_negative_stock: merged.allow_negative_stock,
         member_discount_percentage: merged.member_discount_percentage,
+        receipt_paper_size: merged.receipt_paper_size,
         updated_at: merged.updated_at
       });
 
