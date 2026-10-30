@@ -22,7 +22,8 @@ import {
   Keyboard,
   ShieldAlert,
   Info,
-  Percent
+  Percent,
+  Printer
 } from 'lucide-react';
 
 export default function PengaturanKasir() {
@@ -46,8 +47,12 @@ export default function PengaturanKasir() {
       setIsLocalOnly(!isMigrated);
 
       const data = await getPosSettings(true);
-      setForm(data);
-      setInitialData(data);
+      const normalizedData: POSSettings = {
+        ...data,
+        receipt_paper_size: data.receipt_paper_size || '80mm'
+      };
+      setForm(normalizedData);
+      setInitialData(normalizedData);
     } catch (err: any) {
       showToast('Gagal memuat pengaturan kasir', 'error');
     } finally {
@@ -64,7 +69,10 @@ export default function PengaturanKasir() {
   };
 
   const handleReset = () => {
-    setForm(initialData);
+    setForm({
+      ...initialData,
+      receipt_paper_size: initialData.receipt_paper_size || '80mm'
+    });
     showToast('Form dikembalikan ke data tersimpan', 'info');
   };
 
@@ -322,6 +330,119 @@ export default function PengaturanKasir() {
                         {preset.label}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                <hr className="border-outline-variant/20" />
+
+                {/* Thermal Printer Paper Size Switcher */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                      <Printer className="w-3.5 h-3.5 text-primary" />
+                      <span>Format Ukuran Kertas Printer Thermal Kasir</span>
+                      <span className="text-error">*</span>
+                    </label>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                      {(form.receipt_paper_size || '80mm') === '58mm' ? '58 mm (Kompak)' : '80 mm (Standar)'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant">
+                    Pilih standar lebar kertas printer kasir POS untuk menyesuaikan layout struk, kepadatan font, dan pemotongan baris produk secara presisi.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {/* Option 58mm */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => !isLoading && !isSaving && setForm(prev => ({ ...prev, receipt_paper_size: '58mm' }))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          !isLoading && !isSaving && setForm(prev => ({ ...prev, receipt_paper_size: '58mm' }));
+                        }
+                      }}
+                      className={`relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                        (form.receipt_paper_size || '80mm') === '58mm'
+                          ? 'border-primary bg-primary/5 shadow-xs'
+                          : 'border-outline-variant/30 bg-surface-container-low hover:bg-surface-container hover:border-outline-variant/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Printer className={`w-4 h-4 ${(form.receipt_paper_size || '80mm') === '58mm' ? 'text-primary' : 'text-on-surface-variant'}`} />
+                          <span className="text-xs font-bold text-on-surface">Kertas 58 mm</span>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                          (form.receipt_paper_size || '80mm') === '58mm'
+                            ? 'bg-primary text-surface-container-lowest'
+                            : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                          Kompak / Mini
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed mb-2">
+                        Printer thermal portable/Bluetooth atau mini USB (~32 karakter per baris). Format hemat kertas dengan nama produk dan harga bersusun rapi.
+                      </p>
+                      <div className="mt-auto pt-2 border-t border-outline-variant/20 flex items-center justify-between text-[10px] text-on-surface-variant">
+                        <span>Kapasitas: ~32 Karakter</span>
+                        <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                          (form.receipt_paper_size || '80mm') === '58mm'
+                            ? 'border-primary bg-primary'
+                            : 'border-outline-variant'
+                        }`}>
+                          {(form.receipt_paper_size || '80mm') === '58mm' && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Option 80mm */}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => !isLoading && !isSaving && setForm(prev => ({ ...prev, receipt_paper_size: '80mm' }))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          !isLoading && !isSaving && setForm(prev => ({ ...prev, receipt_paper_size: '80mm' }));
+                        }
+                      }}
+                      className={`relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                        (form.receipt_paper_size || '80mm') === '80mm'
+                          ? 'border-primary bg-primary/5 shadow-xs'
+                          : 'border-outline-variant/30 bg-surface-container-low hover:bg-surface-container hover:border-outline-variant/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Printer className={`w-4 h-4 ${(form.receipt_paper_size || '80mm') === '80mm' ? 'text-primary' : 'text-on-surface-variant'}`} />
+                          <span className="text-xs font-bold text-on-surface">Kertas 80 mm</span>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                          (form.receipt_paper_size || '80mm') === '80mm'
+                            ? 'bg-primary text-surface-container-lowest'
+                            : 'bg-surface-container-high text-on-surface-variant'
+                        }`}>
+                          Standar Desktop
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant leading-relaxed mb-2">
+                        Printer thermal kasir desktop standar (~48 karakter per baris). Tampilan lega, tata letak kuantitas dan harga sejajar komprehensif.
+                      </p>
+                      <div className="mt-auto pt-2 border-t border-outline-variant/20 flex items-center justify-between text-[10px] text-on-surface-variant">
+                        <span>Kapasitas: ~48 Karakter</span>
+                        <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                          (form.receipt_paper_size || '80mm') === '80mm'
+                            ? 'border-primary bg-primary'
+                            : 'border-outline-variant'
+                        }`}>
+                          {(form.receipt_paper_size || '80mm') === '80mm' && (
+                            <div className="w-1.5 h-1.5 rounded-full bg-white" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
