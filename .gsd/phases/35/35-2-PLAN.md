@@ -37,9 +37,10 @@ Load these files for context:
 
 ## Must-Haves
 After all tasks complete, verify:
-- [ ] TypeScript check and production build (`npm run build`) exit code 0.
-- [ ] All unit tests pass (`npx vitest run`).
+- [x] TypeScript check and production build (`npm run build`) exit code 0.
+- [x] All unit tests pass (`npx vitest run`).
 
 ## Success Criteria
-- [ ] All tasks verified passing
-- [ ] Zero build warnings / errors
+- [x] All tasks verified passing
+- [x] Zero build warnings / errors
+
