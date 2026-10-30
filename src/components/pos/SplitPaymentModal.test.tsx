@@ -33,6 +33,15 @@ describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
     expect(markup).toContain('Anggota Koperasi');
     expect(markup).toContain('Transaksi Atas Nama Anggota:');
     expect(markup).not.toContain('Transaksi Non-Anggota (Pelanggan Umum)');
+
+    // Verify high-contrast Tailwind classes for member card
+    expect(markup).toContain('bg-blue-50/80');
+    expect(markup).toContain('border-blue-200');
+    expect(markup).toContain('bg-blue-600');
+    expect(markup).toContain('text-blue-700');
+    expect(markup).toContain('text-slate-900');
+    expect(markup).toContain('text-slate-600');
+    expect(markup).toContain('border-emerald-300');
   });
 
   it('renders non-member banner and cash-only restriction when selectedMember is null', () => {
@@ -54,6 +63,15 @@ describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
     expect(markup).toContain('Khusus Tunai');
     expect(markup).toContain('Pembeli Non-Anggota / Umum');
     expect(markup).not.toContain('Anggota Koperasi');
+
+    // Verify high-contrast Tailwind classes for non-member card
+    expect(markup).toContain('bg-slate-100');
+    expect(markup).toContain('border-slate-300');
+    expect(markup).toContain('bg-slate-500');
+    expect(markup).toContain('text-slate-600');
+    expect(markup).toContain('text-slate-900');
+    expect(markup).toContain('bg-slate-200');
+    expect(markup).toContain('text-slate-700');
   });
 
   it('returns empty string when isOpen is false', () => {

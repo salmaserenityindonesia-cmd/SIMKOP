@@ -163,3 +163,38 @@ Saat kasir membuka shift (misal modal awal Rp 100.000) dan melakukan transaksi p
 - Menjalankan `npm run build`: Vite build sukses (exit code 0).
 
 
+
+# Debug Session: DEBUG-20261030-POS-MEMBER-CARD-CONTRAST
+
+## Status: FIXED
+
+## Symptom
+Banner identitas pembeli ("TRANSAKSI ATAS NAMA ANGGOTA:") dan teks informasi anggota pada Modal Pembayaran (F9 / SplitPaymentModal) menggunakan warna font biru muda, putih pudar, dan abu-abu tipis di atas kontainer berlatar abu-abu netral.
+Rendahnya rasio kontras membuat nama anggota ("Ahmad Hidayat") dan nomor identitas ("NRP / ID: 95118296") buram dan sulit dibaca oleh kasir.
+
+## Root Cause
+Styling Tailwind pada komponen `SplitPaymentModal.tsx` menggunakan kelas kontras rendah (`text-[11px] text-blue-600 dark:text-blue-400`, `text-slate-500 dark:text-slate-400`, border/background pudar) serta avatar berlatar belakang pastel lembut (`bg-blue-100`, `bg-slate-100`) yang menyebabkan keterbacaan teks dan hierarki visual info anggota melemah di layar kasir.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: High Contrast Styling pada Member & Non-Member Card
+- File: `src/components/pos/SplitPaymentModal.tsx`
+- Memperbarui styling container info anggota koperasi:
+  * Container Kartu: `bg-blue-50/80 border-2 border-blue-200 rounded-xl p-3.5 mb-4 flex items-center justify-between shadow-xs`
+  * Avatar / Icon Lingkaran User: `w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs`
+  * Label Seksi: `text-xs font-bold uppercase tracking-wider text-blue-700` ("Transaksi Atas Nama Anggota:")
+  * Nama Anggota: `text-base sm:text-lg font-bold text-slate-900 leading-tight truncate`
+  * NRP / ID Anggota: `text-xs font-medium text-slate-600 font-mono`
+  * Badge Status: `shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs` ("Anggota Koperasi")
+- Memperbarui styling kartu mode Non-Anggota:
+  * Container: `bg-slate-100 border-2 border-slate-300 text-slate-800 rounded-xl p-3.5 mb-4 flex items-center justify-between`
+  * Avatar: `w-10 h-10 rounded-full bg-slate-500 text-white flex items-center justify-center shrink-0 shadow-xs`
+  * Label: `text-xs font-bold uppercase tracking-wider text-slate-600`
+  * Teks: `text-base sm:text-lg font-bold text-slate-900 leading-tight` ("Transaksi Non-Anggota (Pelanggan Umum)")
+  * Badge: `shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 border border-slate-300 shadow-xs` ("Umum")
+
+### Wave 2: Test Verification & Build
+- File: `src/components/pos/SplitPaymentModal.test.tsx`
+- Menambahkan assertion eksplisit untuk kelas Tailwind kontras tinggi pada member info card dan non-member info card.
+- Menjalankan `npx vitest run`: 10 test files, 63 tests passed (100%).
+- Menjalankan `npm run build`: Vite build sukses (exit code 0).

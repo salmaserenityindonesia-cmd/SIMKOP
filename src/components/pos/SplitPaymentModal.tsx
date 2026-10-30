@@ -172,43 +172,43 @@ export default function SplitPaymentModal({
           </div>
 
           {!isNonMember && (selectedMember || effectiveMemberId) ? (
-            <div className="bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 text-blue-950 dark:text-blue-100 rounded-xl p-3.5 mb-4 flex items-center justify-between shadow-sm">
+            <div className="bg-blue-50/80 border-2 border-blue-200 rounded-xl p-3.5 mb-4 flex items-center justify-between shadow-xs">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/60 flex items-center justify-center shrink-0 text-blue-600 dark:text-blue-400">
+                <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                   <UserCheck className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                  <div className="text-xs font-bold uppercase tracking-wider text-blue-700">
                     Transaksi Atas Nama Anggota:
                   </div>
-                  <div className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
+                  <div className="text-base sm:text-lg font-bold text-slate-900 leading-tight truncate">
                     {selectedMember?.nama || selectedMember?.name || 'Anggota Koperasi'}
                   </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                  <div className="text-xs font-medium text-slate-600 font-mono">
                     NRP / ID: {selectedMember?.nrp || selectedMember?.member_number || selectedMember?.id || effectiveMemberId}
                   </div>
                 </div>
               </div>
-              <span className="shrink-0 ml-2 px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+              <span className="shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-xs">
                 Anggota Koperasi
               </span>
             </div>
           ) : isNonMember ? (
-            <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-xl p-3.5 mb-4 flex items-center justify-between">
+            <div className="bg-slate-100 border-2 border-slate-300 text-slate-800 rounded-xl p-3.5 mb-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500 dark:text-slate-400">
+                <div className="w-10 h-10 rounded-full bg-slate-500 text-white flex items-center justify-center shrink-0 shadow-xs">
                   <User className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-600">
                     Identitas Pembeli:
                   </div>
-                  <div className="text-base font-bold text-slate-800 dark:text-slate-200">
+                  <div className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
                     Transaksi Non-Anggota (Pelanggan Umum)
                   </div>
                 </div>
               </div>
-              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-300 dark:border-slate-700">
+              <span className="shrink-0 ml-2 px-3 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 border border-slate-300 shadow-xs">
                 Umum
               </span>
             </div>
