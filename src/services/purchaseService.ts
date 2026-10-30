@@ -251,13 +251,13 @@ async function executeDirectSupabasePurchaseUpdate(
   // 8. Catat audit log perubahan
   let auditLogId = `audit-${Date.now()}`;
   try {
-    const { data: auditData } = await recordPurchaseAuditLog(
+    const { data: auditData } = (await recordPurchaseAuditLog(
       purchaseId,
       oldDataSnapshot,
       newDataSnapshot,
       changeReason.trim(),
       user
-    );
+    )) as { data: any[] | null; error: any };
     if (auditData && auditData[0]?.id) {
       auditLogId = auditData[0].id;
     }
