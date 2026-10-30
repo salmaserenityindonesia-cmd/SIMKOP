@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Edit3, Loader2 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
+import ProductSearchAutocomplete from '../../components/common/ProductSearchAutocomplete';
 import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
 import { updatePurchaseInvoice, getPurchaseAuditLogs, PurchaseAuditLog, isValidUUID } from '../../services/purchaseService';
 import { supabase } from '../../lib/supabaseClient';
@@ -29,6 +30,7 @@ export default function ManajemenPembelian() {
   const [selectedProductId, setSelectedProductId] = useState('');
   const [qty, setQty] = useState(1);
   const [hargaBeli, setHargaBeli] = useState(0);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   // View Detail Modal
   const [selectedFaktur, setSelectedFaktur] = useState<FakturPembelian | null>(null);
@@ -111,19 +113,12 @@ export default function ManajemenPembelian() {
   };
 
   const handleOpenItemModal = () => {
-    setSelectedProductId(products[0]?.id || '');
+    setSelectedProductId('');
     setQty(1);
-    setHargaBeli(products[0]?.buy_price || 0);
+    setHargaBeli(0);
     setIsItemModalOpen(true);
   };
 
-  const handleProductChange = (id: string) => {
-    setSelectedProductId(id);
-    const prod = products.find(p => p.id === id);
-    if (prod) {
-      setHargaBeli(prod.buy_price);
-    }
-  };
 
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
@@ -450,7 +445,7 @@ export default function ManajemenPembelian() {
 
         {isItemModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div className="bg-surface rounded-2xl w-full max-w-sm overflow-hidden shadow-lg border border-outline-variant/30">
+            <div className="bg-surface rounded-2xl w-full max-w-md overflow-visible shadow-lg border border-outline-variant/30">
               <div className="p-4 border-b border-outline-variant/30 flex justify-between items-center">
                 <h3 className="font-medium text-on-surface">Tambah Barang Masuk</h3>
                 <button onClick={() => setIsItemModalOpen(false)} className="text-on-surface-variant">
@@ -460,23 +455,30 @@ export default function ManajemenPembelian() {
               <form onSubmit={handleAddItem} className="p-4 flex flex-col gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-label-md text-on-surface-variant">Produk</label>
-                  <select
-                    value={selectedProductId}
-                    onChange={(e) => handleProductChange(e.target.value)}
-                    className="px-3 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 outline-none"
-                    required
-                  >
-                    <option value="" disabled>Pilih Produk</option>
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <ProductSearchAutocomplete
+                    products={products}
+                    selectedProductId={selectedProductId}
+                    onSelect={(prod) => {
+                      setSelectedProductId(prod.id);
+                      if (prod.buy_price !== undefined) {
+                        setHargaBeli(prod.buy_price);
+                      }
+                      // Auto-focus dan seleksi teks input Qty untuk mempercepat pengisian
+                      setTimeout(() => {
+                        qtyInputRef.current?.focus();
+                        qtyInputRef.current?.select();
+                      }, 50);
+                    }}
+                    placeholder="Cari nama produk atau ketik/scan barcode/SKU..."
+                    autoFocus={true}
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-label-md text-on-surface-variant">Qty</label>
                     <input
+                      ref={qtyInputRef}
                       type="number"
                       value={qty}
                       onChange={(e) => setQty(Number(e.target.value))}
@@ -500,7 +502,8 @@ export default function ManajemenPembelian() {
 
                 <button
                   type="submit"
-                  className="mt-2 bg-secondary text-on-secondary py-2 rounded-lg font-medium hover:bg-secondary/90 transition-colors"
+                  disabled={!selectedProductId}
+                  className="mt-2 bg-secondary text-on-secondary py-2 rounded-lg font-medium hover:bg-secondary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Tambahkan ke Faktur
                 </button>
