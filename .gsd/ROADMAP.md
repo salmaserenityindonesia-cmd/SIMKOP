@@ -6,8 +6,8 @@ updated: 2026-09-30T05:21:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 33 — Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam
-> **Status:** ✅ Complete
+> **Current Phase:** 34 — Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP
+> **Status:** 🔄 Planning Complete / Ready for Execution
 
 ## Must-Haves (from SPEC)
 
@@ -582,6 +582,28 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 34: Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP
+**Status:** 🔄 Ready for Execution
+**Objective:** Membangun modul Laporan Mutasi Barang Gudang (Kartu Stok / Stock Ledger) di `/admin/laporan-mutasi` (di bawah kelompok TOKO RETAIL & INVENTORI) untuk melacak seluruh pergerakan barang keluar-masuk secara kronologis (Penjualan POS, Restock Pembelian, Pengeluaran Retur, dan Penerimaan Klaim Pengganti) menggunakan view database PostgreSQL terpadu, kalkulasi running balance, filter interaktif, serta ekspor Excel dan PDF Landscape.
+**Depends on:** Phase 32, Phase 33
+
+**Plans:**
+- [ ] Plan 34.1: Wave 1 - Skema Database PostgreSQL Unified Inventory Mutation View
+- [ ] Plan 34.2: Wave 2 - Service Layer & Perhitungan Saldo Berjalan (Running Balance)
+- [ ] Plan 34.3: Wave 3 - UI Laporan Mutasi Barang Gudang & Integrasi Navigasi Sidebar
+- [ ] Plan 34.4: Wave 4 - Utility Ekspor Excel & PDF Landscape Kartu Stok
+- [ ] Plan 34.5: Wave 5 - Verifikasi Tipe, Pengujian Otomatis & Vite Production Build
+
+**Deliverables:**
+- File migrasi `027_create_inventory_mutation_view.sql` dengan view `v_inventory_mutations`
+- Service `inventoryMutationService.ts` dengan query mutasi dan kalkulasi saldo berjalan
+- Halaman `LaporanMutasiBarang.tsx` dengan KPI cards, filter controls, dan tabel kartu stok
+- Routing `/admin/laporan-mutasi` di `App.tsx` & menu navigasi di `Sidebar.tsx`
+- Utility `mutationExporter.ts` untuk ekspor Excel (`exceljs`) dan PDF Landscape (`jspdf` + `jspdf-autotable`)
+- Rangkaian unit test (`inventoryMutationService.test.ts`, `mutationExporter.test.ts`, `Sidebar.test.tsx`)
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -611,6 +633,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 23 | Phase 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk |
 | 24 | Phase 32 | Implementasi Modul Retur Pembelian ke Supplier dengan Otomatisasi Restock Klaim Selesai |
 | 25 | Phase 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam |
+| 26 | Phase 34 | Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP |
 
 ---
 
@@ -651,6 +674,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 31 | Searchable Autocomplete Combobox Produk pada Modal Tambah Barang Masuk | ✅ | 3/3 | 100% |
 | 32 | Retur Pembelian ke Supplier & Restock Klaim | ✅ | 4/4 | 100% |
 | 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam | ✅ | 2/2 | 100% |
+| 34 | Laporan Mutasi Barang Gudang | 🔄 | 0/5 | 0% |
 
 ---
 
@@ -691,5 +715,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 31 | 2026-10-30 | 2026-10-30 | 1 day |
 | 32 | 2026-10-30 | 2026-10-30 | 1 day |
 | 33 | 2026-10-30 | 2026-10-30 | 1 day |
+| 34 | 2026-10-30 | — | — |
 
 
