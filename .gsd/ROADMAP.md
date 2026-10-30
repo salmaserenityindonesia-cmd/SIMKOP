@@ -619,6 +619,22 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 36: Searchable Autocomplete Produk Berbasis Keyboard pada Mode Kartu Stok Laporan Mutasi
+**Status:** 📋 Planned
+**Objective:** Mengganti `<select>` "Mode Kartu Stok (Produk)" pada `src/pages/admin/LaporanMutasiBarang.tsx` dengan `ProductSearchAutocomplete` yang mendukung pencarian real-time Nama/SKU/Barcode, navigasi keyboard (ArrowUp, ArrowDown, Enter, Escape), opsi "Semua Produk (Semua Mutasi Gudang)", dan tombol reset `X` satu klik.
+**Depends on:** Phase 31, Phase 34
+
+**Plans:**
+- [ ] Plan 36.1: Wave 1 - Extend ProductSearchAutocomplete (All-Option, onClear, Escape-Restore) & Integrasi di LaporanMutasiBarang
+- [ ] Plan 36.2: Wave 2 - Static Verification, Test Suite & Production Build
+
+**Deliverables:**
+- Prop opsional baru `allOptionLabel`, `onClear`, `inputClassName` + helper murni `buildAutocompleteOptions` (backward-compatible)
+- Filter Mode Kartu Stok berbasis autocomplete dengan sentinel `'all'` tetap dipertahankan
+- Tes unit komponen baru dan build Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -650,6 +666,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 25 | Phase 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam |
 | 26 | Phase 34 | Implementasi Laporan Mutasi Barang Gudang Sesuai Skema Database SIMKOP |
 | 27 | Phase 35 | Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang |
+| 28 | Phase 36 | Searchable Autocomplete Produk pada Mode Kartu Stok Laporan Mutasi |
 
 ---
 
@@ -692,6 +709,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 33 | Pindahkan Kelompok Menu Toko Retail & Inventori ke Atas Simpan Pinjam | ✅ | 2/2 | 100% |
 | 34 | Laporan Mutasi Barang Gudang | ✅ | 5/5 | 100% |
 | 35 | Penyelarasan Tombol Header Laporan Mutasi | ✅ | 2/2 | 100% |
+| 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | 📋 | 0/2 | 0% |
 
 ---
 
