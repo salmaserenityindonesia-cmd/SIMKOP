@@ -179,10 +179,11 @@ export function shouldFallback(e: any): boolean {
   const code = String(e.code || '');
   const msg = String(e.message || '').toLowerCase();
   return (
-    code === '42P01' ||
-    code === '42883' ||
-    code === '42725' ||
-    code === '22P02' ||
+    code === '42P01' || // undefined_table
+    code === '42703' || // undefined_column
+    code === '42883' || // undefined_function
+    code === '42725' || // ambiguous_function
+    code === '22P02' || // invalid_text_representation
     code === 'PGRST202' ||
     code === 'PGRST301' ||
     msg.includes('schema cache') ||
@@ -190,6 +191,7 @@ export function shouldFallback(e: any): boolean {
     msg.includes('network') ||
     msg.includes('failed to fetch') ||
     msg.includes('not found') ||
+    msg.includes('does not exist') ||
     msg.includes('could not find the function') ||
     msg.includes('could not choose the best candidate function') ||
     msg.includes('not unique') ||
@@ -237,7 +239,7 @@ function formatReturnRecord(data: any): PurchaseReturn {
     return_id: it.return_id,
     product_id: it.product_id,
     product_name: it.product?.name || it.product_name,
-    sku: it.product?.barcode || it.sku,
+    sku: it.product?.sku || it.sku,
     qty: Number(it.qty) || 0,
     cost_per_unit: Number(it.cost_per_unit) || 0,
     subtotal: Number(it.subtotal) || 0,
@@ -312,7 +314,7 @@ export async function getPurchaseReturns(): Promise<PurchaseReturn[]> {
         *,
         items:purchase_return_items(
           id, return_id, product_id, qty, cost_per_unit, subtotal, reason, created_at,
-          product:products(id, name, barcode)
+          product:products(id, name, sku)
         )
       `)
       .order('return_date', { ascending: false })
@@ -353,7 +355,7 @@ export async function getPurchaseReturnDetail(returnId: string): Promise<Purchas
         *,
         items:purchase_return_items(
           id, return_id, product_id, qty, cost_per_unit, subtotal, reason, created_at,
-          product:products(id, name, barcode)
+          product:products(id, name, sku)
         )
       `)
       .eq('id', returnId)

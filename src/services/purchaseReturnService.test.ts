@@ -16,7 +16,8 @@ import {
   setMockReturns,
   getMockReturns,
   CreatePurchaseReturnPayload,
-  Supplier
+  Supplier,
+  shouldFallback
 } from './purchaseReturnService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -514,6 +515,15 @@ describe('purchaseReturnService', () => {
 
       expect(updated.notes).toBe('Update keterangan retur klaim garansi supplier');
       expect(updated.original_invoice_number).toBe('INV-001-REV');
+    });
+  });
+
+  describe('shouldFallback & column schema tolerance', () => {
+    it('should identify undefined_column (code 42703) and column does not exist as fallbackable', () => {
+      expect(shouldFallback({ code: '42703', message: 'column products_2.barcode does not exist' })).toBe(true);
+      expect(shouldFallback({ message: 'column products_2.barcode does not exist' })).toBe(true);
+      expect(shouldFallback({ code: '42P01', message: 'relation public.purchase_returns does not exist' })).toBe(true);
+      expect(shouldFallback(null)).toBe(false);
     });
   });
 });
