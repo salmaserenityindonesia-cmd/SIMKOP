@@ -1,13 +1,14 @@
 ## Current Position
-- **Phase**: 28 (Tampilkan Identitas & Nama Anggota Aktif pada Modal Pembayaran Kasir F9)
+- **Phase**: 29 (Refactor Template & Parser Import Produk Tanpa Kolom Kategori)
 - **Task**: All tasks complete
 - **Status**: Verified
 
 ## Last Session Summary
-Phase 28 executed and verified successfully. 2 plans, 2 tasks completed and verified with 5/5 must-haves passing.
-- Plan 28.1: Display Selected Member Info in Payment Modal in `src/components/pos/SplitPaymentModal.tsx` and pass `selectedMember` prop from `src/pages/pos/index.tsx` (commit: `7095cf17`).
-- Plan 28.2: Build, Unit Testing & Static Validation in `src/components/pos/SplitPaymentModal.test.tsx`, vitest suite, and Vite build (commit: `487f2697`).
-- Verification: Independent audit verified all 5 must-haves, 63/63 unit tests across 10 test suites passed, TypeScript typecheck passed cleanly, and Vite production build succeeded with exit code 0.
+Phase 29 executed and verified successfully. 3 plans, 3 tasks completed and verified with 5/5 must-haves passing.
+- Plan 29.1: Remove Category Column from Download Template Generator in `src/services/productExcelService.ts` (commit: `3a298301`).
+- Plan 29.2: Adapt Excel Import Parser, Summary Modal & Insertion Payload in `src/services/productExcelService.ts`, `src/components/products/ProductImportModal.tsx`, and `src/pages/admin/ManajemenProduk.tsx` (commit: `32ea4838`).
+- Plan 29.3: Build Verification, Unit Testing & Static Check in `src/services/productExcelService.test.ts`, full Vitest test suite, and Vite build (commit: `e30478b4`).
+- Verification: Independent audit verified all 5 must-haves, 71/71 unit tests across 11 test suites passed, TypeScript typecheck passed cleanly, and Vite production build succeeded with exit code 0.
 
 ## Next Steps
 All phases in current roadmap completed. Ready for next milestone or phase planning.
@@ -18,5 +19,6 @@ All phases in current roadmap completed. Ready for next milestone or phase plann
 ## Context Dump
 
 ### Decisions Made
-- **Banner Identitas di Atas Modal**: Informasi anggota diletakkan tepat di bawah "Total Tagihan" dan sebelum batas limit simpanan/bon, sehingga kasir langsung melihat dan memastikan identitas pembeli sebelum menekan konfirmasi pembayaran.
-- **Dua Tampilan Kondisional**: Jika anggota aktif, menampilkan container biru bernuansa lembut dengan ikon `UserCheck`, nama jelas, nomor NRP/ID, dan badge hijau "Anggota Koperasi". Jika non-anggota, menampilkan container netral/slate dengan ikon `User`, nama "Transaksi Non-Anggota (Pelanggan Umum)", dan badge "Umum".
+- **7 Kolom Standar Template**: Field template produk dipadatkan menjadi 7 kolom pokok (`sku, nama_produk, satuan, harga_beli, harga_jual, stok_awal, min_stok_alert`), menghapus kolom `kategori` untuk mencegah salah input ID/UUID relasi.
+- **Default Category Null**: Produk impor disimpan dengan `category_id: null` agar admin dapat mengelompokkan kategori produk secara aman dan fleksibel lewat menu edit produk.
+- **Notifikasi Informatif**: Menampilkan feedback toast jumlah produk baru dan pengingat bahwa kategori produk dapat diatur melalui menu edit produk.

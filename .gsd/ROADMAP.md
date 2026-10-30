@@ -489,6 +489,24 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 29: Refactor Template & Parser Import Produk Tanpa Kolom Kategori
+**Status**: ✅ Complete
+**Objective**: Menghapus kolom 'kategori' dari template Excel produk (`template_katalog_produk.xlsx`), menyesuaikan template menjadi 7 kolom standar (`sku, nama_produk, satuan, harga_beli, harga_jual, stok_awal, min_stok_alert`), serta memperbarui service parser import agar memasukkan data produk dengan `category_id = null` tanpa memicu error validasi kategori.
+**Depends on**: Phase 15
+
+**Plans**:
+- [x] Plan 29.1: Wave 1 - Remove Category Column from Download Template Generator
+- [x] Plan 29.2: Wave 2 - Adapt Excel Import Parser, Summary Modal & Insertion Payload
+- [x] Plan 29.3: Wave 3 - Build Verification, Unit Testing & Static Check
+
+**Verification**:
+- Klik tombol "Unduh Template": file Excel yang diunduh hanya memiliki 7 kolom tanpa kolom kategori.
+- Unggah file template hasil pengisian tanpa kolom kategori: seluruh baris produk berhasil masuk ke tabel produk dengan `category_id = null` dan stok tercatat akurat.
+- Toast notifikasi memberitahukan: "Berhasil mengimpor X produk baru. Kategori produk dapat diatur kemudian melalui menu edit produk."
+- Seluruh unit tests Vitest dan build produksi Vite (`npm run build`) sukses tanpa error (exit code 0).
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -513,6 +531,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 18 | Phase 26 | Konfigurasi Dinamis Persentase Diskon Anggota di Pengaturan Kasir POS |
 | 19 | Phase 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko |
 | 20 | Phase 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) |
+| 21 | Phase 29 | Refactor Template & Parser Import Produk Tanpa Kolom Kategori |
 
 ---
 
@@ -548,6 +567,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 26 | Konfigurasi Dinamis Persentase Diskon Anggota di POS | ✅ | 5/5 | 100% |
 | 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko | ✅ | 3/3 | 100% |
 | 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) | ✅ | 2/2 | 100% |
+| 29 | Refactor Template & Import Produk Tanpa Kategori | ✅ | 3/3 | 100% |
 
 ---
 
@@ -583,5 +603,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 26 | 2026-10-29 | 2026-10-29 | 1 day |
 | 27 | 2026-10-29 | 2026-10-29 | 1 day |
 | 28 | 2026-10-30 | 2026-10-30 | 1 day |
+| 29 | 2026-10-30 | 2026-10-30 | 1 day |
 
 
