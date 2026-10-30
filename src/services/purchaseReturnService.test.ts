@@ -526,4 +526,40 @@ describe('purchaseReturnService', () => {
       expect(shouldFallback(null)).toBe(false);
     });
   });
+
+  describe('Pagination Calculation & Slicing Logic', () => {
+    const calculatePagination = (totalItems: number, currentPage: number, pageSize: number) => {
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      const validPage = Math.max(1, Math.min(currentPage, totalPages));
+      const startIndex = (validPage - 1) * pageSize;
+      const endIndex = Math.min(startIndex + pageSize, totalItems);
+      return { totalPages, validPage, startIndex, endIndex };
+    };
+
+    it('should calculate correct pages and bounds for empty items list', () => {
+      const res = calculatePagination(0, 1, 10);
+      expect(res.totalPages).toBe(1);
+      expect(res.startIndex).toBe(0);
+      expect(res.endIndex).toBe(0);
+    });
+
+    it('should calculate correct bounds for 10, 25, 50, and 100 pageSize options', () => {
+      const total = 55;
+      expect(calculatePagination(total, 1, 10)).toEqual({ totalPages: 6, validPage: 1, startIndex: 0, endIndex: 10 });
+      expect(calculatePagination(total, 6, 10)).toEqual({ totalPages: 6, validPage: 6, startIndex: 50, endIndex: 55 });
+      expect(calculatePagination(total, 1, 25)).toEqual({ totalPages: 3, validPage: 1, startIndex: 0, endIndex: 25 });
+      expect(calculatePagination(total, 3, 25)).toEqual({ totalPages: 3, validPage: 3, startIndex: 50, endIndex: 55 });
+      expect(calculatePagination(total, 1, 50)).toEqual({ totalPages: 2, validPage: 1, startIndex: 0, endIndex: 50 });
+      expect(calculatePagination(total, 2, 50)).toEqual({ totalPages: 2, validPage: 2, startIndex: 50, endIndex: 55 });
+      expect(calculatePagination(total, 1, 100)).toEqual({ totalPages: 1, validPage: 1, startIndex: 0, endIndex: 55 });
+    });
+
+    it('should clamp page numbers exceeding totalPages safely', () => {
+      const total = 12;
+      const res = calculatePagination(total, 99, 10);
+      expect(res.validPage).toBe(2);
+      expect(res.startIndex).toBe(10);
+      expect(res.endIndex).toBe(12);
+    });
+  });
 });

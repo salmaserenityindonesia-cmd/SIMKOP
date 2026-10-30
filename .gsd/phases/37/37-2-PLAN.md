@@ -47,6 +47,7 @@ Load these files for context:
 </task>
 
 ## Success Criteria
-- [ ] `tsc --noEmit` exit code 0.
-- [ ] Seluruh unit test Vitest lulus (0 failed).
+- [x] `tsc --noEmit` exit code 0.
+- [x] Seluruh unit test Vitest lulus (0 failed).
 - [ ] `npm run build` selesai dengan exit code 0.
+
