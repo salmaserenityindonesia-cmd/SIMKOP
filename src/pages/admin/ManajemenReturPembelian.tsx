@@ -50,7 +50,7 @@ export default function ManajemenReturPembelian() {
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(10);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Detail Modal state
   const [selectedReturn, setSelectedReturn] = useState<PurchaseReturn | null>(null);
@@ -140,11 +140,11 @@ export default function ManajemenReturPembelian() {
   });
 
   // Pagination
-  const totalPages = Math.ceil(filteredReturns.length / itemsPerPage) || 1;
-  const paginatedReturns = filteredReturns.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+  const totalItems = filteredReturns.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
+  const paginatedReturns = filteredReturns.slice(startIndex, endIndex);
 
   // Detail Modal handler
   const handleOpenDetailModal = async (ret: PurchaseReturn) => {
@@ -397,7 +397,10 @@ export default function ManajemenReturPembelian() {
             />
             {searchTerm && (
               <button
-                onClick={() => setSearchTerm('')}
+                onClick={() => {
+                  setSearchTerm('');
+                  setCurrentPage(1);
+                }}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-on-surface-variant hover:text-on-surface"
               >
                 <X className="w-3.5 h-3.5" />
@@ -573,11 +576,11 @@ export default function ManajemenReturPembelian() {
           )}
 
           {/* Pagination Controls */}
-          {filteredReturns.length > itemsPerPage && (
+          {filteredReturns.length > pageSize && (
             <div className="p-4 border-t border-outline-variant/30 flex items-center justify-between text-xs text-on-surface-variant">
               <div>
-                Menampilkan {(currentPage - 1) * itemsPerPage + 1} -{' '}
-                {Math.min(currentPage * itemsPerPage, filteredReturns.length)} dari {filteredReturns.length} faktur retur
+                Menampilkan {(currentPage - 1) * pageSize + 1} -{' '}
+                {Math.min(currentPage * pageSize, filteredReturns.length)} dari {filteredReturns.length} faktur retur
               </div>
               <div className="flex items-center gap-1">
                 <button
