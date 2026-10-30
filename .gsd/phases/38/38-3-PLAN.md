@@ -50,5 +50,5 @@ Load these files for context:
 ## Success Criteria
 - [x] `tsc --noEmit` exit code 0.
 - [x] Seluruh unit test Vitest lulus (0 failed).
-- [ ] `npm run build` sukses dengan exit code 0.
+- [x] `npm run build` sukses dengan exit code 0.
 
