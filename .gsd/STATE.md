@@ -1,14 +1,15 @@
 ## Current Position
-- **Phase**: 29 (Refactor Template & Parser Import Produk Tanpa Kolom Kategori)
+- **Phase**: 30 (Edit Faktur Pembelian dengan Audit Log Terpantau & Rekonsiliasi Stok)
 - **Task**: All tasks complete
 - **Status**: Verified
 
 ## Last Session Summary
-Phase 29 executed and verified successfully. 3 plans, 3 tasks completed and verified with 5/5 must-haves passing.
-- Plan 29.1: Remove Category Column from Download Template Generator in `src/services/productExcelService.ts` (commit: `3a298301`).
-- Plan 29.2: Adapt Excel Import Parser, Summary Modal & Insertion Payload in `src/services/productExcelService.ts`, `src/components/products/ProductImportModal.tsx`, and `src/pages/admin/ManajemenProduk.tsx` (commit: `32ea4838`).
-- Plan 29.3: Build Verification, Unit Testing & Static Check in `src/services/productExcelService.test.ts`, full Vitest test suite, and Vite build (commit: `e30478b4`).
-- Verification: Independent audit verified all 5 must-haves, 71/71 unit tests across 11 test suites passed, TypeScript typecheck passed cleanly, and Vite production build succeeded with exit code 0.
+Phase 30 executed and verified successfully. 4 plans, 4 tasks completed and verified with 4/4 must-haves passing.
+- Plan 30.1: Database Migration & Atomic Stock Adjustment RPC in `supabase/migrations/023_purchase_audit_and_stock_adjustment.sql` (commit: `f40fedf9`).
+- Plan 30.2: Implement Purchase Service Layer & Audit Methods in `src/services/purchaseService.ts` and `src/services/koperasiService.ts` (commit: `d60edd64`).
+- Plan 30.3: Build Edit Invoice Modal & Audit History Viewer in `src/pages/admin/ManajemenPembelian.tsx` (commit: `5fd7e3e2`).
+- Plan 30.4: Build Verification, Unit Testing & Static Check in `src/services/purchaseService.test.ts`, Vitest suite, and Vite build (commit: `28e5b211`).
+- Verification: Independent audit verified all 4 must-haves, 88/88 unit tests across 12 test suites passed, TypeScript typecheck passed cleanly, and Vite production build succeeded with exit code 0.
 
 ## Next Steps
 All phases in current roadmap completed. Ready for next milestone or phase planning.
@@ -19,6 +20,7 @@ All phases in current roadmap completed. Ready for next milestone or phase plann
 ## Context Dump
 
 ### Decisions Made
-- **7 Kolom Standar Template**: Field template produk dipadatkan menjadi 7 kolom pokok (`sku, nama_produk, satuan, harga_beli, harga_jual, stok_awal, min_stok_alert`), menghapus kolom `kategori` untuk mencegah salah input ID/UUID relasi.
-- **Default Category Null**: Produk impor disimpan dengan `category_id: null` agar admin dapat mengelompokkan kategori produk secara aman dan fleksibel lewat menu edit produk.
-- **Notifikasi Informatif**: Menampilkan feedback toast jumlah produk baru dan pengingat bahwa kategori produk dapat diatur melalui menu edit produk.
+- **Audit Logging Terpusat**: Perubahan faktur dicatat ke tabel `audit_logs` menyimpan snapshot `old_data`, `new_data`, `performed_by`, `performer_name`, dan alasan koreksi `notes`.
+- **Wajib Alasan Perubahan (Min. 10 Karakter)**: Mencegah manipulasi faktur tanpa justifikasi yang jelas.
+- **Proteksi Stok Minus Atomik**: Jika `current_stock + delta < 0`, transaksi pembaruan faktur ditolak dengan exception deskriptif bahwa barang telah terlanjur terjual dan stok tidak mencukupi untuk dikurangi.
+- **Role Guard Admin**: Opsi edit faktur hanya diizinkan untuk pengguna dengan role admin.

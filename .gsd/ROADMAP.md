@@ -507,6 +507,26 @@ updated: 2026-09-30T05:21:00+07:00
 
 ---
 
+### Phase 30: Edit Faktur Pembelian dengan Audit Log & Rekonsiliasi Stok
+**Status**: ✅ Complete
+**Objective**: Mengimplementasikan fitur Edit Faktur Pembelian pada halaman `/admin/pembelian` untuk mengoreksi nomor faktur, tanggal, kuantitas, dan harga beli barang, dengan validasi wajib mengisi alasan perubahan (min. 10 karakter), pencatatan jejak audit (waktu, user, data sebelum & sesudah) ke `audit_logs`, serta rekonsiliasi delta stok master produk secara aman dan atomik.
+**Depends on**: Phase 5, Phase 15
+
+**Plans**:
+- [x] Plan 30.1: Wave 1 - Database Migration & Atomic Stock Adjustment RPC
+- [x] Plan 30.2: Wave 2 - Implement Purchase Service Layer & Audit Methods
+- [x] Plan 30.3: Wave 3 - Build Edit Invoice Modal & Audit History Viewer in ManajemenPembelian.tsx
+- [x] Plan 30.4: Wave 4 - Build Verification, Unit Testing & Static Check
+
+**Verification**:
+- Tombol Edit Faktur hanya muncul/aktif untuk pengguna ber-role admin di tabel riwayat faktur.
+- Modal Edit memvalidasi alasan perubahan (wajib minimal 10 karakter) sebelum memperbolehkan simpan koreksi.
+- Kuantitas dan harga beli item yang diubah berhasil memperbarui total nilai faktur dan menyesuaikan stok master produk secara atomik (dengan proteksi gagal simpan jika stok akhir menjadi minus).
+- Modal Detail Faktur menampilkan riwayat catatan perubahan (waktu, nama pengubah, dan alasan koreksi).
+- Seluruh unit tests Vitest dan build produksi Vite (`npm run build`) sukses tanpa error (exit code 0).
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -532,6 +552,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 19 | Phase 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko |
 | 20 | Phase 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) |
 | 21 | Phase 29 | Refactor Template & Parser Import Produk Tanpa Kolom Kategori |
+| 22 | Phase 30 | Edit Faktur Pembelian dengan Audit Log & Rekonsiliasi Stok |
 
 ---
 
@@ -568,6 +589,7 @@ updated: 2026-09-30T05:21:00+07:00
 | 27 | Perbaiki Fitur Cetak PDF Laporan Retail & Inventori Toko | ✅ | 3/3 | 100% |
 | 28 | Identitas Anggota Aktif pada Modal Pembayaran Kasir (F9) | ✅ | 2/2 | 100% |
 | 29 | Refactor Template & Import Produk Tanpa Kategori | ✅ | 3/3 | 100% |
+| 30 | Edit Faktur Pembelian, Audit Log & Stok | ✅ | 4/4 | 100% |
 
 ---
 
@@ -604,5 +626,6 @@ updated: 2026-09-30T05:21:00+07:00
 | 27 | 2026-10-29 | 2026-10-29 | 1 day |
 | 28 | 2026-10-30 | 2026-10-30 | 1 day |
 | 29 | 2026-10-30 | 2026-10-30 | 1 day |
+| 30 | 2026-10-30 | 2026-10-30 | 1 day |
 
 
