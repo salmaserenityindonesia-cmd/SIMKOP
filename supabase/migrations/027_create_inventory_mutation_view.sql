@@ -11,7 +11,7 @@ CREATE OR REPLACE VIEW public.v_inventory_mutations AS
 -- 1. Barang Keluar: Penjualan Kasir POS
 SELECT 
     si.id::TEXT AS mutation_id,
-    COALESCE(si.created_at, s.created_at) AS mutation_date,
+    s.created_at AS mutation_date,
     si.product_id AS product_id,
     'KELUAR_PENJUALAN'::TEXT AS mutation_type,
     'Penjualan Kasir'::TEXT AS type_label,
@@ -29,7 +29,7 @@ UNION ALL
 -- 2. Barang Masuk: Restock Faktur Pembelian Supplier
 SELECT 
     pi.id::TEXT AS mutation_id,
-    COALESCE(p.purchase_date::TIMESTAMPTZ, p.created_at, pi.created_at) AS mutation_date,
+    COALESCE(p.created_at, p.purchase_date::TIMESTAMPTZ, NOW()) AS mutation_date,
     pi.product_id AS product_id,
     'MASUK_PEMBELIAN'::TEXT AS mutation_type,
     'Restock Pembelian'::TEXT AS type_label,
@@ -46,7 +46,7 @@ UNION ALL
 -- 3. Barang Keluar: Pengeluaran Retur ke Supplier
 SELECT 
     pri.id::TEXT AS mutation_id,
-    COALESCE(pr.return_date::TIMESTAMPTZ, pr.created_at, pri.created_at) AS mutation_date,
+    COALESCE(pr.created_at, pr.return_date::TIMESTAMPTZ, NOW()) AS mutation_date,
     pri.product_id AS product_id,
     'KELUAR_RETUR'::TEXT AS mutation_type,
     'Retur ke Supplier'::TEXT AS type_label,
