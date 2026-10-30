@@ -66,7 +66,8 @@ Load these files for context:
 </task>
 
 ## Success Criteria
-- [ ] Seluruh unit test suite lulus (100% PASS)
-- [ ] Tidak ada regresi pada menu navigasi Sidebar maupun komponen aplikasi lainnya
-- [ ] Pengecekan tipe TypeScript bersih tanpa error
-- [ ] Build produksi Vite (`npm run build`) selesai dengan exit code 0
+- [x] Seluruh unit test suite lulus (100% PASS)
+- [x] Tidak ada regresi pada menu navigasi Sidebar maupun komponen aplikasi lainnya
+- [x] Pengecekan tipe TypeScript bersih tanpa error
+- [x] Build produksi Vite (`npm run build`) selesai dengan exit code 0
+
