@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getPosSettings,
   updatePosSettings,
+  getStoredLocalSettings,
   clearSettingsCache,
   isPosSettingsMigratedInSupabase,
   cleanupExpiredParkedSales,
@@ -48,6 +49,87 @@ describe('posSettingsService', () => {
 
   it('should have DEFAULT_POS_SETTINGS with 5.0% member discount', () => {
     expect(DEFAULT_POS_SETTINGS.member_discount_percentage).toBe(5.0);
+  });
+
+  it('should have DEFAULT_POS_SETTINGS with 80mm receipt paper size', () => {
+    expect(DEFAULT_POS_SETTINGS.receipt_paper_size).toBe('80mm');
+  });
+
+  it('should return default receipt_paper_size 80mm when fallback to default', async () => {
+    (supabase.from as any).mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'Table does not exist' } })
+        })
+      })
+    });
+
+    const settings = await getPosSettings(true);
+    expect(settings.receipt_paper_size).toBe('80mm');
+  });
+
+  it('should read stored receipt_paper_size 58mm from localStorage', async () => {
+    mockStorage[POS_SETTINGS_STORAGE_KEY] = JSON.stringify({
+      id: 1,
+      max_hold_duration_minutes: 60,
+      allow_negative_stock: true,
+      member_discount_percentage: 5.0,
+      receipt_paper_size: '58mm'
+    });
+
+    const localSettings = getStoredLocalSettings();
+    expect(localSettings?.receipt_paper_size).toBe('58mm');
+
+    (supabase.from as any).mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: { message: "Could not find the table 'public.pos_settings' in the schema cache" }
+          })
+        })
+      })
+    });
+
+    const settings = await getPosSettings(true);
+    expect(settings.receipt_paper_size).toBe('58mm');
+  });
+
+  it('should fallback to 80mm if invalid receipt_paper_size is in localStorage', async () => {
+    mockStorage[POS_SETTINGS_STORAGE_KEY] = JSON.stringify({
+      id: 1,
+      receipt_paper_size: 'invalid-size'
+    });
+
+    const localSettings = getStoredLocalSettings();
+    expect(localSettings?.receipt_paper_size).toBe('80mm');
+  });
+
+  it('should update receipt_paper_size to 58mm in localStorage and Supabase upsert payload', async () => {
+    (supabase.from as any).mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+        })
+      })
+    });
+
+    const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+    (supabase.from as any).mockReturnValueOnce({
+      upsert: mockUpsert
+    });
+
+    const result = await updatePosSettings({ receipt_paper_size: '58mm' });
+    expect(result.success).toBe(true);
+    expect(result.data.receipt_paper_size).toBe('58mm');
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 1,
+        receipt_paper_size: '58mm'
+      })
+    );
+    const saved = JSON.parse(mockStorage[POS_SETTINGS_STORAGE_KEY]);
+    expect(saved.receipt_paper_size).toBe('58mm');
   });
 
   it('should return default POS settings when database query fails and localStorage is empty', async () => {
