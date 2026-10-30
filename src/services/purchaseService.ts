@@ -2,7 +2,10 @@ import { supabase } from '../lib/supabaseClient';
 
 export interface PurchaseAuditLog {
   id: string;
+  table_name?: string;
+  record_id?: string;
   entity_id: string;
+  entity_name?: string;
   action: string;
   old_data: any;
   new_data: any;
@@ -249,6 +252,9 @@ function fallbackUpdatePurchaseInvoice(
   const nowIso = new Date().toISOString();
   const auditLog: PurchaseAuditLog = {
     id: auditId,
+    table_name: 'purchases',
+    record_id: purchaseId,
+    entity_name: 'purchases',
     entity_id: purchaseId,
     action: 'UPDATE_PURCHASE',
     old_data: oldDataSnapshot,
@@ -384,7 +390,7 @@ export async function getPurchaseAuditLogs(purchaseId: string): Promise<Purchase
     if (error) {
       if (shouldFallback(error)) {
         console.warn('Tabel "audit_logs" belum tersedia atau offline. Mengambil log dari fallback in-memory.');
-        return mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId);
+        return mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId || log.record_id === purchaseId);
       }
       throw new Error(`Gagal memuat log audit: ${error.message}`);
     }
@@ -394,12 +400,37 @@ export async function getPurchaseAuditLogs(purchaseId: string): Promise<Purchase
     }
 
     // Jika kosong di database remote, periksa apakah ada log lokal in-memory
-    const localLogs = mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId);
+    const localLogs = mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId || log.record_id === purchaseId);
     return localLogs.length > 0 ? localLogs : [];
   } catch (err: any) {
     if (shouldFallback(err)) {
-      return mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId);
+      return mockPurchaseAuditLogs.filter(log => log.entity_id === purchaseId || log.record_id === purchaseId);
     }
     throw err;
   }
+}
+
+/**
+ * Menyimpan log audit mutasi faktur pembelian secara langsung ke public.audit_logs
+ * dengan memastikan table_name ('purchases'), action, dan record_id selalu non-null.
+ */
+export async function recordPurchaseAuditLog(
+  purchaseId: string,
+  oldData: any,
+  newData: any,
+  reason: string,
+  user: { id: string; name?: string }
+) {
+  return await supabase.from('audit_logs').insert({
+    table_name: 'purchases', // WAJIB: kolom NOT NULL
+    action: 'UPDATE',         // WAJIB: kolom NOT NULL
+    record_id: purchaseId,    // WAJIB: kolom NOT NULL (text)
+    old_data: oldData,
+    new_data: newData,
+    performed_by: user.id || null,
+    performer_name: user.name || null,
+    notes: reason || 'Koreksi faktur pembelian',
+    entity_name: 'purchases',
+    entity_id: purchaseId,
+  });
 }

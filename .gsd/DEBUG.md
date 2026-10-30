@@ -198,3 +198,57 @@ Styling Tailwind pada komponen `SplitPaymentModal.tsx` menggunakan kelas kontras
 - Menambahkan assertion eksplisit untuk kelas Tailwind kontras tinggi pada member info card dan non-member info card.
 - Menjalankan `npx vitest run`: 10 test files, 63 tests passed (100%).
 - Menjalankan `npm run build`: Vite build sukses (exit code 0).
+
+
+
+# Debug Session: DEBUG-20261030-PURCHASE-AUDIT-LOG-TABLE-NAME
+
+## Status: FIXED
+
+## Symptom
+Saat menekan tombol "Simpan Perubahan" pada Modal Edit Faktur Pembelian di Manajemen Pembelian (`src/pages/admin/ManajemenPembelian.tsx`), muncul pesan error toast:
+`"Gagal memperbarui faktur pembelian: null value in column "table_name" of relation "audit_logs" violates not-null constraint"`
+
+**When:** Admin mengubah item, kuantitas, harga beli, atau nomor faktur pada modal edit faktur pembelian dan menekan "Simpan Perubahan".
+**Expected:** Faktur dan item tersimpan di database, selisih stok master produk terhitung dan diperbarui secara atomik, audit log tercatat di tabel `public.audit_logs`, modal tertutup, dan notifikasi sukses ditampilkan.
+**Actual:** Muncul error toast penolakan mutasi karena kolom `table_name` pada tabel `audit_logs` bernilai NULL melanggar not-null constraint.
+
+## Root Cause
+1. Tabel `public.audit_logs` pada database PostgreSQL mendefinisikan kolom wajib:
+   - `table_name text NOT NULL`
+   - `action text NOT NULL`
+   - `record_id text NOT NULL`
+   - `entity_name text NULL` (opsional)
+2. Fungsi RPC PostgreSQL `update_purchase_invoice_atomic` pada `supabase/migrations/023_purchase_audit_and_stock_adjustment.sql` melakukan `INSERT INTO public.audit_logs (...)` hanya dengan kolom `entity_name`, `entity_id`, `action`, `old_data`, `new_data`, `performed_by`, `performer_name`, `notes`, `created_at` tanpa menyertakan kolom `table_name` dan `record_id`.
+3. Akibatnya, PostgreSQL mengevaluasi nilai default `table_name` menjadi NULL dan melempar exception:
+   `null value in column "table_name" of relation "audit_logs" violates not-null constraint`.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Database Migration & RPC Alignment
+- File: `supabase/migrations/023_purchase_audit_and_stock_adjustment.sql`, `supabase/migrations/024_fix_audit_logs_table_name_constraint.sql`
+- Memperbarui skema tabel `public.audit_logs`:
+  * Menambahkan kolom `table_name TEXT NOT NULL DEFAULT 'purchases'` dan `action TEXT NOT NULL DEFAULT 'UPDATE'`.
+  * Menambahkan kolom `record_id TEXT`.
+  * Menambahkan `DEFAULT 'purchases'` dan `DEFAULT 'UPDATE'` untuk mencegah null violation jika ada mutasi tanpa kolom tersebut.
+  * Menambahkan index `idx_audit_logs_table_record ON public.audit_logs (table_name, record_id)`.
+- Memperbarui fungsi RPC `update_purchase_invoice_atomic`:
+  * Menyertakan kolom `table_name` ('purchases'), `action` ('UPDATE_PURCHASE'), dan `record_id` (`p_purchase_id::text`) secara eksplisit pada query `INSERT INTO public.audit_logs`.
+- Menyediakan file migrasi mandiri `024_fix_audit_logs_table_name_constraint.sql` yang siap dijalankan langsung di SQL Editor Supabase untuk instance yang sudah berjalan.
+
+### Wave 2: Service Layer & Audit Mutation Hardening
+- File: `src/services/purchaseService.ts`, `src/services/auditService.ts`
+- Membuat modul `src/services/auditService.ts`:
+  * Fungsi `insertAuditLog()` yang memvalidasi dan memastikan `table_name` (default 'purchases'), `action` (default 'UPDATE'), dan `record_id` selalu terisi string non-null.
+- Memperbarui `src/services/purchaseService.ts`:
+  * Menambahkan properti opsional `table_name?: string` dan `record_id?: string` pada `PurchaseAuditLog`.
+  * Menambahkan fungsi `recordPurchaseAuditLog()` yang menyisipkan audit log faktur dengan `table_name: 'purchases'` dan `record_id: purchaseId`.
+  * Memperbarui `fallbackUpdatePurchaseInvoice()` agar audit log in-memory menyertakan `table_name: 'purchases'` dan `record_id: purchaseId`.
+  * Memperbarui `getPurchaseAuditLogs()` agar mendukung pembacaan berbasis `entity_id` maupun `record_id`.
+
+### Wave 3: Static & Build Verification
+- File: `src/services/auditService.test.ts`, `src/services/purchaseService.test.ts`
+- Membuat unit test `src/services/auditService.test.ts` untuk memverifikasi payload audit log mandatory field.
+- Memperbarui `src/services/purchaseService.test.ts` untuk menguji `recordPurchaseAuditLog` dan verifikasi `table_name` serta `record_id`.
+- Menjalankan `npx vitest run`: 13 test files, 91 tests passed (100%).
+- Menjalankan `npm run build`: Vite build sukses dalam 844ms (exit code 0).

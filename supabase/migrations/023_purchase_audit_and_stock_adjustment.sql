@@ -5,9 +5,11 @@
 -- 1. Tabel Audit Logs Terpusat
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    table_name TEXT NOT NULL DEFAULT 'purchases',
+    action TEXT NOT NULL DEFAULT 'UPDATE',
+    record_id TEXT,
     entity_name TEXT,
     entity_id UUID,
-    action TEXT,
     old_data JSONB,
     new_data JSONB,
     performed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -18,9 +20,11 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
 
 -- Pastikan seluruh kolom yang dibutuhkan tersedia jika tabel audit_logs sudah pernah dibuat sebelumnya dengan skema berbeda
 ALTER TABLE public.audit_logs 
+    ADD COLUMN IF NOT EXISTS table_name TEXT DEFAULT 'purchases',
+    ADD COLUMN IF NOT EXISTS action TEXT DEFAULT 'UPDATE',
+    ADD COLUMN IF NOT EXISTS record_id TEXT,
     ADD COLUMN IF NOT EXISTS entity_name TEXT,
     ADD COLUMN IF NOT EXISTS entity_id UUID,
-    ADD COLUMN IF NOT EXISTS action TEXT,
     ADD COLUMN IF NOT EXISTS old_data JSONB,
     ADD COLUMN IF NOT EXISTS new_data JSONB,
     ADD COLUMN IF NOT EXISTS performed_by UUID,
@@ -28,8 +32,26 @@ ALTER TABLE public.audit_logs
     ADD COLUMN IF NOT EXISTS notes TEXT,
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW());
 
+-- Beri default pada table_name dan action jika sudah ada kolom tapi belum ada default untuk mencegah not-null violation
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_logs' AND column_name = 'table_name'
+    ) THEN
+        ALTER TABLE public.audit_logs ALTER COLUMN table_name SET DEFAULT 'purchases';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'audit_logs' AND column_name = 'action'
+    ) THEN
+        ALTER TABLE public.audit_logs ALTER COLUMN action SET DEFAULT 'UPDATE';
+    END IF;
+END $$;
+
 -- Indexing untuk pencarian cepat riwayat audit
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON public.audit_logs (entity_name, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_table_record ON public.audit_logs (table_name, record_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON public.audit_logs (created_at DESC);
 
 -- Aktifkan RLS untuk audit_logs
@@ -303,9 +325,11 @@ BEGIN
 
     -- j. Catat audit log perubahan
     INSERT INTO public.audit_logs (
+        table_name,
+        action,
+        record_id,
         entity_name,
         entity_id,
-        action,
         old_data,
         new_data,
         performed_by,
@@ -314,8 +338,10 @@ BEGIN
         created_at
     ) VALUES (
         'purchases',
-        p_purchase_id,
         'UPDATE_PURCHASE',
+        p_purchase_id::text,
+        'purchases',
+        p_purchase_id,
         v_old_data,
         v_new_data,
         v_actual_user_id,

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   updatePurchaseInvoice,
   getPurchaseAuditLogs,
+  recordPurchaseAuditLog,
   resetPurchaseServiceMockState,
   setMockProducts,
   getMockProducts,
@@ -262,6 +263,8 @@ describe('purchaseService', () => {
       const logs = getMockAuditLogs();
       expect(logs).toHaveLength(1);
       expect(logs[0].entity_id).toBe('faktur-1');
+      expect(logs[0].table_name).toBe('purchases');
+      expect(logs[0].record_id).toBe('faktur-1');
       expect(logs[0].action).toBe('UPDATE_PURCHASE');
       expect(logs[0].performer_name).toBe('Budi Santoso');
       expect(logs[0].notes).toBe('Penambahan stok barang karena ada bonus dari supplier');
@@ -462,6 +465,36 @@ describe('purchaseService', () => {
       expect(logs).toHaveLength(1);
       expect(logs[0].id).toBe('local-audit-1');
       expect(logs[0].entity_id).toBe('faktur-1');
+    });
+  });
+
+  describe('recordPurchaseAuditLog', () => {
+    it('should insert audit log with mandatory table_name = "purchases" and record_id non-null', async () => {
+      const mockInsert = vi.fn().mockResolvedValue({ data: [{ id: 'audit-log-new' }], error: null });
+      (supabase.from as any).mockReturnValue({ insert: mockInsert });
+
+      const res = await recordPurchaseAuditLog(
+        'faktur-1',
+        { noFaktur: 'INV-001' },
+        { noFaktur: 'INV-001-REV' },
+        'Koreksi nomor faktur',
+        { id: 'user-1', name: 'Budi' }
+      );
+
+      expect(supabase.from).toHaveBeenCalledWith('audit_logs');
+      expect(mockInsert).toHaveBeenCalledWith({
+        table_name: 'purchases',
+        action: 'UPDATE',
+        record_id: 'faktur-1',
+        old_data: { noFaktur: 'INV-001' },
+        new_data: { noFaktur: 'INV-001-REV' },
+        performed_by: 'user-1',
+        performer_name: 'Budi',
+        notes: 'Koreksi nomor faktur',
+        entity_name: 'purchases',
+        entity_id: 'faktur-1'
+      });
+      expect(res).toEqual({ data: [{ id: 'audit-log-new' }], error: null });
     });
   });
 });
