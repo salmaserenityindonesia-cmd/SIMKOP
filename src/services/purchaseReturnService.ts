@@ -663,35 +663,38 @@ export async function completeReturnClaim(
   try {
     const rpcFn = supabase.rpc;
     if (typeof rpcFn === 'function') {
-      const { data, error } = await rpcFn('complete_return_claim', {
+      const res = await rpcFn('complete_return_claim', {
         p_return_id: isValidUUID(returnId) ? returnId : null,
         p_user_id: isValidUUID(userId) ? userId : null,
         p_notes: notes?.trim() || null
       });
 
-      if (!error && data) {
-        return data as CompleteReturnClaimResult;
-      }
-
-      if (error) {
-        const msg = error.message || '';
-        // Tangani pesan validasi bisnis yang dilempar oleh RAISE EXCEPTION PostgreSQL
-        if (
-          error.code === 'P0001' ||
-          msg.includes('tidak ditemukan') ||
-          msg.includes('PIUTANG_PENGGANTIAN') ||
-          msg.includes('MENUNGGU_PENGGANTIAN') ||
-          msg.includes('Klaim sudah diproses')
-        ) {
-          throw new Error(msg);
+      if (res) {
+        const { data, error } = res;
+        if (!error && data) {
+          return data as CompleteReturnClaimResult;
         }
 
-        if (shouldFallback(error)) {
-          console.warn('RPC complete_return_claim belum tersedia atau offline. Menjalankan fallback mutasi:', msg);
-          return await executeFallbackCompleteReturnClaim(returnId, userId, notes);
-        }
+        if (error) {
+          const msg = error.message || '';
+          // Tangani pesan validasi bisnis yang dilempar oleh RAISE EXCEPTION PostgreSQL
+          if (
+            error.code === 'P0001' ||
+            msg.includes('tidak ditemukan') ||
+            msg.includes('PIUTANG_PENGGANTIAN') ||
+            msg.includes('MENUNGGU_PENGGANTIAN') ||
+            msg.includes('Klaim sudah diproses')
+          ) {
+            throw new Error(msg);
+          }
 
-        throw new Error(`Gagal menyelesaikan klaim retur: ${msg}`);
+          if (shouldFallback(error)) {
+            console.warn('RPC complete_return_claim belum tersedia atau offline. Menjalankan fallback mutasi:', msg);
+            return await executeFallbackCompleteReturnClaim(returnId, userId, notes);
+          }
+
+          throw new Error(`Gagal menyelesaikan klaim retur: ${msg}`);
+        }
       }
     }
 
