@@ -140,3 +140,4 @@ Load these files for context:
 - [ ] Escape/klik di luar tidak mengubah filter dan mengembalikan teks input.
 - [ ] `ManajemenPembelian.tsx` & `InputReturPembelian.tsx` tidak diubah dan perilakunya tetap.
 - [ ] Tes komponen lulus, termasuk kasus negatif "opsi all tidak muncul saat mencari".
+

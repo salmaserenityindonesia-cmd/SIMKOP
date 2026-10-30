@@ -625,8 +625,8 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 31, Phase 34
 
 **Plans:**
-- [ ] Plan 36.1: Wave 1 - Extend ProductSearchAutocomplete (All-Option, onClear, Escape-Restore) & Integrasi di LaporanMutasiBarang
-- [ ] Plan 36.2: Wave 2 - Static Verification, Test Suite & Production Build
+- [x] Plan 36.1: Wave 1 - Extend ProductSearchAutocomplete (All-Option, onClear, Escape-Restore) & Integrasi di LaporanMutasiBarang
+- [x] Plan 36.2: Wave 2 - Static Verification, Test Suite & Production Build
 
 **Deliverables:**
 - Prop opsional baru `allOptionLabel`, `onClear`, `inputClassName` + helper murni `buildAutocompleteOptions` (backward-compatible)
