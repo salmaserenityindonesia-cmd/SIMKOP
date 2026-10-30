@@ -274,8 +274,12 @@ export async function getAllProductsForFilter(): Promise<ProductOption[]> {
       return getMockProducts();
     }
 
-    const { data, error } = await supabase
-      .from('products')
+    const builder = supabase.from('products');
+    if (!builder?.select) {
+      return getMockProducts();
+    }
+
+    const { data, error } = await builder
       .select('id, name, sku, stock, unit')
       .order('name', { ascending: true });
 
@@ -318,8 +322,12 @@ export async function getInventoryMutations(filters: MutationFilter): Promise<{
       return getMockInventoryMutationsWithFilter(filters, startDate, endDate);
     }
 
-    let query = supabase
-      .from('v_inventory_mutations')
+    const baseQuery = supabase.from('v_inventory_mutations');
+    if (!baseQuery?.select) {
+      return getMockInventoryMutationsWithFilter(filters, startDate, endDate);
+    }
+
+    let query = baseQuery
       .select('*')
       .gte('mutation_date', startDate.toISOString())
       .lte('mutation_date', endDate.toISOString())
@@ -553,9 +561,13 @@ export async function getProductStockLedger(
       return getMockProductStockLedger(productId, startDate, endDate, initialBalanceOverride);
     }
 
+    const prodBuilder = supabase.from('products');
+    if (!prodBuilder?.select) {
+      return getMockProductStockLedger(productId, startDate, endDate, initialBalanceOverride);
+    }
+
     // 1. Ambil detail produk
-    const { data: productData, error: productError } = await supabase
-      .from('products')
+    const { data: productData, error: productError } = await prodBuilder
       .select('id, name, sku, unit, stock')
       .eq('id', productId)
       .single();
