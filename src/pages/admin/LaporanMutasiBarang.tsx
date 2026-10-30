@@ -380,12 +380,12 @@ export default function LaporanMutasiBarang() {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5 self-stretch sm:self-auto">
+          <div className="flex items-center gap-2.5 shrink-0">
             <button
               onClick={fetchData}
               disabled={loading}
               title="Perbarui Data Mutasi"
-              className="p-2.5 text-slate-600 bg-slate-100 hover:bg-slate-200 hover:text-slate-900 rounded-xl transition duration-150 disabled:opacity-50"
+              className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-xs disabled:opacity-50"
             >
               <RefreshCcw className={`w-4 h-4 ${loading ? 'animate-spin text-teal-600' : ''}`} />
             </button>
@@ -393,7 +393,7 @@ export default function LaporanMutasiBarang() {
             <button
               onClick={handleExportExcel}
               disabled={loading || exporting || mutations.length === 0}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition duration-150 disabled:opacity-50 disabled:pointer-events-none"
+              className="h-10 px-4 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm transition-colors shadow-xs disabled:opacity-50 disabled:pointer-events-none"
             >
               {exporting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -406,7 +406,7 @@ export default function LaporanMutasiBarang() {
             <button
               onClick={handlePrintPdf}
               disabled={loading || exporting || mutations.length === 0}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition duration-150 disabled:opacity-50 disabled:pointer-events-none"
+              className="h-10 px-4 inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm transition-colors shadow-xs disabled:opacity-50 disabled:pointer-events-none"
             >
               {exporting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
