@@ -641,8 +641,8 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 32
 
 **Plans:**
-- [ ] Plan 37.1: Wave 1 - Implement Pagination State, Slicing & Footer UI in ManajemenReturPembelian
-- [ ] Plan 37.2: Wave 2 - Static Verification, Test Suite & Production Build
+- [x] Plan 37.1: Wave 1 - Implement Pagination State, Slicing & Footer UI in ManajemenReturPembelian
+- [x] Plan 37.2: Wave 2 - Static Verification, Test Suite & Production Build
 
 **Deliverables:**
 - State dinamis `pageSize` (10, 25, 50, 100) dan kalkulasi `paginatedReturns`
