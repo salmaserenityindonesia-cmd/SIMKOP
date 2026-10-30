@@ -22,7 +22,7 @@ SELECT
     COALESCE('Penjualan Kasir - ' || s.sale_number, 'Penjualan Kasir')::TEXT AS notes
 FROM public.sale_items si
 INNER JOIN public.sales s ON si.sale_id = s.id
-WHERE COALESCE(s.sale_status, s.status, 'completed') = 'completed'
+WHERE COALESCE(s.sale_status, 'completed') = 'completed'
 
 UNION ALL
 
