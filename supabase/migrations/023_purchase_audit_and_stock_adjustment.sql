@@ -5,9 +5,9 @@
 -- 1. Tabel Audit Logs Terpusat
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entity_name TEXT NOT NULL,
-    entity_id UUID NOT NULL,
-    action TEXT NOT NULL,
+    entity_name TEXT,
+    entity_id UUID,
+    action TEXT,
     old_data JSONB,
     new_data JSONB,
     performed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -15,6 +15,18 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+-- Pastikan seluruh kolom yang dibutuhkan tersedia jika tabel audit_logs sudah pernah dibuat sebelumnya dengan skema berbeda
+ALTER TABLE public.audit_logs 
+    ADD COLUMN IF NOT EXISTS entity_name TEXT,
+    ADD COLUMN IF NOT EXISTS entity_id UUID,
+    ADD COLUMN IF NOT EXISTS action TEXT,
+    ADD COLUMN IF NOT EXISTS old_data JSONB,
+    ADD COLUMN IF NOT EXISTS new_data JSONB,
+    ADD COLUMN IF NOT EXISTS performed_by UUID,
+    ADD COLUMN IF NOT EXISTS performer_name TEXT,
+    ADD COLUMN IF NOT EXISTS notes TEXT,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW());
 
 -- Indexing untuk pencarian cepat riwayat audit
 CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON public.audit_logs (entity_name, entity_id);
@@ -40,11 +52,17 @@ WITH CHECK (
 -- 2. Memastikan Tabel purchases dan purchase_items Tersedia
 CREATE TABLE IF NOT EXISTS public.purchases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_number TEXT NOT NULL,
+    invoice_number TEXT,
     purchase_date DATE NOT NULL DEFAULT CURRENT_DATE,
     total_amount NUMERIC NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+ALTER TABLE public.purchases
+    ADD COLUMN IF NOT EXISTS invoice_number TEXT,
+    ADD COLUMN IF NOT EXISTS purchase_date DATE DEFAULT CURRENT_DATE,
+    ADD COLUMN IF NOT EXISTS total_amount NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW());
 
 CREATE TABLE IF NOT EXISTS public.purchase_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -54,6 +72,13 @@ CREATE TABLE IF NOT EXISTS public.purchase_items (
     buy_price NUMERIC NOT NULL CHECK (buy_price >= 0),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
+
+ALTER TABLE public.purchase_items
+    ADD COLUMN IF NOT EXISTS purchase_id UUID,
+    ADD COLUMN IF NOT EXISTS product_id UUID,
+    ADD COLUMN IF NOT EXISTS qty INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS buy_price NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW());
 
 -- Indexing tabel pembelian
 CREATE INDEX IF NOT EXISTS idx_purchases_invoice_number ON public.purchases (invoice_number);
@@ -264,7 +289,7 @@ BEGIN
 
     -- i. Dapatkan nama pengguna jika belum disediakan
     IF v_actual_user_name IS NULL AND v_actual_user_id IS NOT NULL THEN
-        SELECT COALESCE(nama, email, 'Pengelola') INTO v_actual_user_name
+        SELECT COALESCE(nama, 'Pengelola') INTO v_actual_user_name
         FROM public.pengelola
         WHERE id = v_actual_user_id;
     END IF;
