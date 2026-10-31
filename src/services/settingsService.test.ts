@@ -199,4 +199,37 @@ describe('settingsService', () => {
     const isMigratedFalse = await isTableMigratedInSupabase();
     expect(isMigratedFalse).toBe(false);
   });
+
+  it('should preserve and update logo_url correctly in Supabase and local storage', async () => {
+    const updatedRecord = {
+      id: 1,
+      nama_koperasi: 'KOPERASI PRIMKOPPOL RESMI',
+      alamat: 'Jl. Jaksa Agung Suprapto No. 10',
+      telepon: '08123456789',
+      terminal_name: 'POS Kasir #01',
+      footer_notes: 'Struk resmi koperasi',
+      logo_url: 'https://res.cloudinary.com/demo/image/upload/v123456/simkop/branding/logo.png',
+      updated_at: '2026-10-31T10:00:00Z'
+    };
+
+    (supabase.from as any).mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: updatedRecord, error: null })
+        })
+      })
+    });
+
+    const res = await updateKoperasiProfile({
+      nama_koperasi: 'KOPERASI PRIMKOPPOL RESMI',
+      logo_url: 'https://res.cloudinary.com/demo/image/upload/v123456/simkop/branding/logo.png'
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.data?.logo_url).toBe('https://res.cloudinary.com/demo/image/upload/v123456/simkop/branding/logo.png');
+
+    const profile = await getKoperasiProfile(false);
+    expect(profile.logo_url).toBe('https://res.cloudinary.com/demo/image/upload/v123456/simkop/branding/logo.png');
+  });
 });
+

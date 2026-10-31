@@ -7,6 +7,7 @@ export interface KoperasiProfile {
   telepon: string;
   terminal_name: string;
   footer_notes: string;
+  logo_url?: string | null;
   updated_at?: string;
 }
 
@@ -16,7 +17,8 @@ export const DEFAULT_KOPERASI_PROFILE: KoperasiProfile = {
   alamat: 'Jl. Jaksa Agung Suprapto No. 10, Ngawi',
   telepon: '(0354)7654321',
   terminal_name: 'POS Terminal #01',
-  footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan'
+  footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan',
+  logo_url: null
 };
 
 export const KOPERASI_PROFILE_STORAGE_KEY = 'simkop_koperasi_profile';
@@ -50,7 +52,11 @@ export function getStoredLocalProfile(): KoperasiProfile | null {
     if (storage) {
       const stored = storage.getItem(KOPERASI_PROFILE_STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored) as KoperasiProfile;
+        const parsed = JSON.parse(stored) as KoperasiProfile;
+        return {
+          ...parsed,
+          logo_url: parsed.logo_url ?? null
+        };
       }
     }
   } catch (err) {
@@ -118,6 +124,7 @@ export async function getKoperasiProfile(forceRefresh: boolean = false): Promise
         telepon: data.telepon || DEFAULT_KOPERASI_PROFILE.telepon,
         terminal_name: data.terminal_name || DEFAULT_KOPERASI_PROFILE.terminal_name,
         footer_notes: data.footer_notes !== undefined && data.footer_notes !== null ? data.footer_notes : DEFAULT_KOPERASI_PROFILE.footer_notes,
+        logo_url: data.logo_url !== undefined ? data.logo_url : DEFAULT_KOPERASI_PROFILE.logo_url,
         updated_at: data.updated_at
       };
       // Keep localStorage in sync with cloud
@@ -157,6 +164,7 @@ export async function updateKoperasiProfile(
     telepon: payload.telepon !== undefined ? payload.telepon.trim() : DEFAULT_KOPERASI_PROFILE.telepon,
     terminal_name: payload.terminal_name !== undefined ? payload.terminal_name.trim() : DEFAULT_KOPERASI_PROFILE.terminal_name,
     footer_notes: payload.footer_notes !== undefined ? payload.footer_notes.trim() : DEFAULT_KOPERASI_PROFILE.footer_notes,
+    logo_url: payload.logo_url !== undefined ? payload.logo_url : (cachedProfile?.logo_url ?? DEFAULT_KOPERASI_PROFILE.logo_url),
     updated_at: new Date().toISOString()
   };
 
@@ -206,6 +214,7 @@ export async function updateKoperasiProfile(
       telepon: data.telepon || normalizedData.telepon,
       terminal_name: data.terminal_name || normalizedData.terminal_name,
       footer_notes: data.footer_notes !== undefined ? data.footer_notes : normalizedData.footer_notes,
+      logo_url: data.logo_url !== undefined ? data.logo_url : normalizedData.logo_url,
       updated_at: data.updated_at
     };
 
