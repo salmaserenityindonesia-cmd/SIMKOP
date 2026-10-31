@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import { getKoperasiProfile } from '../../services/settingsService';
 
 export default function LoginForm() {
   const [identifier, setIdentifier] = useState('');
@@ -7,6 +8,30 @@ export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [namaKoperasi, setNamaKoperasi] = useState<string>('SIM Koperasi');
+
+  useEffect(() => {
+    let isMounted = true;
+    getKoperasiProfile()
+      .then((profile) => {
+        if (isMounted && profile) {
+          if (profile.logo_url) {
+            setLogoUrl(profile.logo_url);
+          }
+          if (profile.nama_koperasi) {
+            setNamaKoperasi(profile.nama_koperasi);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Gagal memuat profil koperasi di LoginForm:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +68,14 @@ export default function LoginForm() {
         <div className="flex flex-col items-center text-center mt-space-xs">
           <div className="relative mb-space-sm">
             <div className="w-[56px] h-[56px] rounded-xl bg-surface-container flex items-center justify-center p-1.5 shadow-sm">
-              <img alt="Logo Resmi SIMKOP" className="w-full h-full object-contain rounded-lg" src="/simkop_brand_logo/logo.png" />
+              <img
+                alt={namaKoperasi || "Logo Resmi SIMKOP"}
+                className="w-full h-full object-contain rounded-lg"
+                src={logoUrl || "/simkop_brand_logo/logo.png"}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/simkop_brand_logo/logo.png';
+                }}
+              />
             </div>
             <div className="absolute -bottom-1 -right-2 bg-surface-container-lowest px-1.5 py-0.5 rounded-full shadow-sm flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-on-tertiary-container animate-pulse"></span>

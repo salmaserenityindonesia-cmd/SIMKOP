@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
 import {
@@ -8,6 +8,7 @@ import {
   KoperasiProfile,
   DEFAULT_KOPERASI_PROFILE
 } from '../../services/settingsService';
+import { uploadLogoToCloudinary } from '../../services/cloudinaryService';
 import {
   Store,
   MapPin,
@@ -19,7 +20,10 @@ import {
   Sparkles,
   ReceiptText,
   Database,
-  AlertTriangle
+  AlertTriangle,
+  Upload,
+  Trash2,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export default function PengaturanKoperasi() {
@@ -30,6 +34,8 @@ export default function PengaturanKoperasi() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocalOnly, setIsLocalOnly] = useState(false);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadProfile();
@@ -59,6 +65,59 @@ export default function PengaturanKoperasi() {
   const handleReset = () => {
     setForm(initialData);
     showToast('Form dikembalikan ke data tersimpan', 'info');
+  };
+
+  const handleTriggerUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingLogo(true);
+    try {
+      const uploadedUrl = await uploadLogoToCloudinary(file);
+      const updatedForm: KoperasiProfile = { ...form, logo_url: uploadedUrl };
+      setForm(updatedForm);
+
+      const res = await updateKoperasiProfile(updatedForm);
+      if (res.success && res.data) {
+        setInitialData(res.data);
+        showToast('Logo koperasi berhasil diunggah dan disimpan!', 'success');
+      } else {
+        showToast(res.error || 'Gagal menyimpan logo ke database profil', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Gagal mengunggah logo', 'error');
+    } finally {
+      setIsUploadingLogo(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!form.logo_url) return;
+
+    setIsUploadingLogo(true);
+    try {
+      const updatedForm: KoperasiProfile = { ...form, logo_url: null };
+      setForm(updatedForm);
+
+      const res = await updateKoperasiProfile(updatedForm);
+      if (res.success && res.data) {
+        setInitialData(res.data);
+        showToast('Logo koperasi berhasil dihapus', 'info');
+      } else {
+        showToast(res.error || 'Gagal menghapus logo dari profil', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Gagal menghapus logo', 'error');
+    } finally {
+      setIsUploadingLogo(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -145,19 +204,106 @@ export default function PengaturanKoperasi() {
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Form Column */}
-            <div className="lg:col-span-7 bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                  <h2 className="font-semibold text-slate-800">Form Identitas Koperasi</h2>
+            {/* Left Column: Logo & Form Identitas */}
+            <div className="lg:col-span-7 space-y-6">
+              {/* Logo Card */}
+              <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-5 h-5 text-indigo-600" />
+                    <h2 className="font-semibold text-slate-800">Logo Resmi Koperasi</h2>
+                  </div>
+                  <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 font-medium rounded-full border border-indigo-100">
+                    Branding
+                  </span>
                 </div>
-                <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 font-medium rounded-full border border-indigo-100">
-                  Konfigurasi POS
-                </span>
+
+                <div className="p-6">
+                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                    {/* Box Preview Logo */}
+                    <div className="shrink-0">
+                      {form.logo_url ? (
+                        <div className="relative group">
+                          <img
+                            src={form.logo_url}
+                            alt="Logo Koperasi"
+                            className="w-24 h-24 object-contain rounded-xl border border-slate-200 bg-white p-2 shadow-xs"
+                          />
+                        </div>
+                      ) : (
+                        <div className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center p-2 text-center text-slate-400">
+                          <ImageIcon className="w-8 h-8 mb-1 stroke-1" />
+                          <span className="text-[10px] font-medium leading-tight">Belum ada logo</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info & Action Controls */}
+                    <div className="flex-1 space-y-3 text-center sm:text-left">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-800">Identitas Visual & Branding</h3>
+                        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                          Format: PNG, JPG, WEBP, atau SVG (Maksimal 2MB). Logo resmi ini otomatis ditampilkan di portal login dan struk belanja kasir.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 pt-1">
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          onChange={handleLogoFileChange}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleTriggerUpload}
+                          disabled={isUploadingLogo}
+                          className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {isUploadingLogo ? (
+                            <>
+                              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Mengunggah Logo...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>Unggah Logo Baru</span>
+                            </>
+                          )}
+                        </button>
+
+                        {form.logo_url && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveLogo}
+                            disabled={isUploadingLogo}
+                            className="px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 hover:text-rose-700 disabled:opacity-50 rounded-lg transition-colors border border-rose-200/60 flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Hapus Logo</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <form onSubmit={handleSubmit} className="p-6 space-y-5">
+              {/* Form Identitas Koperasi */}
+              <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-indigo-600" />
+                    <h2 className="font-semibold text-slate-800">Form Identitas Koperasi</h2>
+                  </div>
+                  <span className="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 font-medium rounded-full border border-indigo-100">
+                    Konfigurasi POS
+                  </span>
+                </div>
+
+                <form onSubmit={handleSubmit} className="p-6 space-y-5">
                 {/* Nama Koperasi */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -266,6 +412,7 @@ export default function PengaturanKoperasi() {
                 </div>
               </form>
             </div>
+            </div>
 
             {/* Live Preview Column */}
             <div className="lg:col-span-5 space-y-3 sticky top-6">
@@ -278,6 +425,15 @@ export default function PengaturanKoperasi() {
               <div className="bg-white p-5 rounded-2xl border-2 border-dashed border-slate-300 shadow-md font-mono text-[11px] text-slate-800 max-w-sm mx-auto">
                 {/* Header */}
                 <div className="text-center pb-3 border-b border-dashed border-slate-300 space-y-1">
+                  {form.logo_url && (
+                    <div className="flex justify-center mb-1.5">
+                      <img
+                        src={form.logo_url}
+                        alt="Logo Koperasi"
+                        className="w-10 h-10 object-contain"
+                      />
+                    </div>
+                  )}
                   <div className="font-bold text-[13px] leading-tight text-slate-900 break-words">
                     {form.nama_koperasi || 'NAMA KOPERASI'}
                   </div>
