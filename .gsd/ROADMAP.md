@@ -652,7 +652,7 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 38: Konfigurasi Ukuran Kertas Printer Thermal Struk (58mm vs 80mm) di Pengaturan Kasir
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Menambahkan opsi konfigurasi ukuran kertas printer thermal kasir (58mm vs 80mm) di menu `/admin/pengaturan-kasir`, tersimpan di tabel `pos_settings` dan `localStorage`, serta menyesuaikan secara reaktif layout preview modal struk kasir (`ReceiptModal.tsx`), susunan baris barang, label tombol cetak thermal, dan aturan CSS `@media print`.
 **Depends on:** Phase 20, Phase 26
 
@@ -666,6 +666,24 @@ updated: 2026-10-30T20:50:00+07:00
 - Komponen radio card selector ukuran kertas 58mm vs 80mm di `PengaturanKasir.tsx`
 - Layout preview struk dinamis dan styling print `@page` di `ReceiptModal.tsx`
 - Pengujian unit otomatis dan build produksi Vite exit code 0
+
+---
+
+### Phase 39: Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login
+**Status:** 📋 Planned
+**Objective:** Mengintegrasikan modul unggah logo resmi koperasi ke Cloudinary REST API di halaman Pengaturan Koperasi (`/admin/pengaturan`), menyimpan URL publik (`logo_url`) ke database `koperasi_profile` & `localStorage`, serta me-render logo resmi tersebut secara dinamis pada portal login (`/login` / `LoginForm.tsx`).
+**Depends on:** Phase 20, Phase 21
+
+**Plans:**
+- [ ] Plan 39.1: Wave 1 - Skema Database & Cloudinary Upload Service Engine
+- [ ] Plan 39.2: Wave 2 - UI Upload Logo di Pengaturan Koperasi & Render Dinamis di Halaman Login
+- [ ] Plan 39.3: Wave 3 - Unit Testing, Static Typecheck & Build Verification
+
+**Deliverables:**
+- File migrasi `029_add_logo_url_to_koperasi_profile.sql` dan service `cloudinaryService.ts`
+- Komponen uploader logo di `src/pages/admin/PengaturanKoperasi.tsx` lengkap dengan preview, upload progress, dan aksi hapus
+- Rendering logo dinamis di `src/components/auth/LoginForm.tsx` dengan fallback aman
+- Suite test unit Vitest dan build bundler Vite lulus 100%
 
 ---
 
@@ -747,7 +765,8 @@ updated: 2026-10-30T20:50:00+07:00
 | 35 | Penyelarasan Tombol Header Laporan Mutasi | ✅ | 2/2 | 100% |
 | 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | ✅ | 2/2 | 100% |
 | 37 | Kontrol Pagination Tabel Retur Pembelian | ✅ | 2/2 | 100% |
-| 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | 📋 | 0/3 | 0% |
+| 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | ✅ | 3/3 | 100% |
+| 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | 📋 | 0/3 | 0% |
 
 ---
 
