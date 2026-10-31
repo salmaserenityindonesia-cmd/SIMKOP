@@ -670,14 +670,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 39: Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Mengintegrasikan modul unggah logo resmi koperasi ke Cloudinary REST API di halaman Pengaturan Koperasi (`/admin/pengaturan`), menyimpan URL publik (`logo_url`) ke database `koperasi_profile` & `localStorage`, serta me-render logo resmi tersebut secara dinamis pada portal login (`/login` / `LoginForm.tsx`).
 **Depends on:** Phase 20, Phase 21
 
 **Plans:**
-- [ ] Plan 39.1: Wave 1 - Skema Database & Cloudinary Upload Service Engine
-- [ ] Plan 39.2: Wave 2 - UI Upload Logo di Pengaturan Koperasi & Render Dinamis di Halaman Login
-- [ ] Plan 39.3: Wave 3 - Unit Testing, Static Typecheck & Build Verification
+- [x] Plan 39.1: Wave 1 - Skema Database & Cloudinary Upload Service Engine
+- [x] Plan 39.2: Wave 2 - UI Upload Logo di Pengaturan Koperasi & Render Dinamis di Halaman Login
+- [x] Plan 39.3: Wave 3 - Unit Testing, Static Typecheck & Build Verification
 
 **Deliverables:**
 - File migrasi `029_add_logo_url_to_koperasi_profile.sql` dan service `cloudinaryService.ts`
@@ -766,7 +766,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 36 | Autocomplete Mode Kartu Stok Laporan Mutasi | ✅ | 2/2 | 100% |
 | 37 | Kontrol Pagination Tabel Retur Pembelian | ✅ | 2/2 | 100% |
 | 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | ✅ | 3/3 | 100% |
-| 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | 📋 | 0/3 | 0% |
+| 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | ✅ | 3/3 | 100% |
 
 ---
 
