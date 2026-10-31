@@ -231,5 +231,52 @@ describe('settingsService', () => {
     const profile = await getKoperasiProfile(false);
     expect(profile.logo_url).toBe('https://res.cloudinary.com/demo/image/upload/v123456/simkop/branding/logo.png');
   });
+
+  it('should store and retrieve logo_url in localStorage fallback when Supabase fails', async () => {
+    (supabase.from as any).mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: null,
+            error: {
+              code: 'PGRST205',
+              message: "Could not find the table 'public.koperasi_profile' in the schema cache"
+            }
+          })
+        })
+      })
+    });
+
+    const testLogo = 'https://res.cloudinary.com/test/image/upload/v1/logo.png';
+    const res = await updateKoperasiProfile({
+      nama_koperasi: 'KOPERASI TEST LOCAL',
+      logo_url: testLogo
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.isLocalFallback).toBe(true);
+    expect(res.data?.logo_url).toBe(testLogo);
+
+    // Verify localStorage has the logo_url
+    const stored = JSON.parse(mockStorage[KOPERASI_PROFILE_STORAGE_KEY]);
+    expect(stored.logo_url).toBe(testLogo);
+
+    // Verify getKoperasiProfile returns this logo_url from fallback
+    clearProfileCache();
+    (supabase.from as any).mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: { message: 'Table does not exist' }
+          })
+        })
+      })
+    });
+
+    const fetched = await getKoperasiProfile(true);
+    expect(fetched.logo_url).toBe(testLogo);
+  });
 });
+
 

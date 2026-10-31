@@ -50,6 +50,18 @@ describe('cloudinaryService', () => {
     );
   });
 
+  it('should throw an error if upload preset environment variable is missing', async () => {
+    delete (import.meta.env as any).VITE_CLOUDINARY_UPLOAD_PRESET;
+
+    const validFile = new File(['image-bytes'], 'logo.png', {
+      type: 'image/png'
+    });
+
+    await expect(uploadLogoToCloudinary(validFile)).rejects.toThrow(
+      'Konfigurasi Cloudinary (Cloud Name / Upload Preset) belum disetel di environment'
+    );
+  });
+
   it('should upload successfully and return secure_url', async () => {
     const validFile = new File(['image-bytes'], 'logo.webp', {
       type: 'image/webp'
@@ -91,6 +103,38 @@ describe('cloudinaryService', () => {
 
     await expect(uploadLogoToCloudinary(validFile)).rejects.toThrow(
       'Invalid upload preset'
+    );
+  });
+
+  it('should throw fallback error message if response is not ok and has no error details', async () => {
+    const validFile = new File(['image-bytes'], 'logo.png', {
+      type: 'image/png'
+    });
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: vi.fn().mockRejectedValue(new Error('JSON parse error'))
+    });
+
+    await expect(uploadLogoToCloudinary(validFile)).rejects.toThrow(
+      'Gagal mengunggah logo ke Cloudinary (status 500)'
+    );
+  });
+
+  it('should throw an error if response does not contain secure_url', async () => {
+    const validFile = new File(['image-bytes'], 'logo.png', {
+      type: 'image/png'
+    });
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ url: 'http://insecure.url' })
+    });
+
+    await expect(uploadLogoToCloudinary(validFile)).rejects.toThrow(
+      'Respons Cloudinary tidak menyertakan secure_url'
     );
   });
 });
