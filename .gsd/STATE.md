@@ -1,16 +1,16 @@
 ## Current Position
 - **Phase**: 47 (Implementasi Filter Tahun Dinamis Berdasarkan Tunggakan Simpanan & Saldo Simpanan Lebaran Menggantung)
-- **Task**: Planning complete
-- **Status**: Ready for execution
+- **Task**: Phase execution and verification complete
+- **Status**: Complete & Verified (3/3 plans complete, 32/32 test suites passed)
 
 ## Last Session Summary
-Phase 47 planning complete:
-- Plan 47.1: Wave 1 - Dynamic Year Range Resolver Service & Unit Testing (`src/services/complianceService.ts`, `src/services/complianceService.test.ts`)
-- Plan 47.2: Wave 2 - Bind Dynamic Year Selector in ComplianceMatrix.tsx (`src/pages/admin/ComplianceMatrix.tsx`)
-- Plan 47.3: Wave 3 - End-to-End Component Testing, Full Test Suite, Static Verification & Build Check (`src/pages/admin/ComplianceMatrix.test.tsx`)
+Phase 47 executed and verified:
+- Plan 47.1: Built `getSavingsComplianceAvailableYears()` query service in `src/services/complianceService.ts` to evaluate the oldest year with pending obligations (unpaid pokok, active lebaran balance, unpaid monthly wajib) with unit tests in `src/services/complianceService.test.ts` (commits `6cc0c167`, `0bddfe60`).
+- Plan 47.2: Bound dynamic `availableYears` dropdown state in `src/pages/admin/ComplianceMatrix.tsx`, enabling real-time matrix reload upon year selection and auto-reconciliation of selected year (commit `7174cd4d`).
+- Plan 47.3: Built comprehensive component test suite `src/pages/admin/ComplianceMatrix.test.tsx` (10 tests), verified full workspace Vitest suite (32 test files, 327 tests passing 100%), verified TypeScript typecheck (`tsc --noEmit`), and verified production build (`npm run build`) passing with exit code 0 (commits `3029e9ac`, `e8d1f06d`).
 
 ## Next Steps
-1. `/execute 47`
+Phase 47 is complete. Ready for independent verification or next phase definition.
 
 ## Blockers
 - None.
@@ -18,9 +18,9 @@ Phase 47 planning complete:
 ## Context Dump
 
 ### Decisions Made
-- **Kondisi Dinamis Tahun Kepatuhan Simpanan**:
-  1. Simpanan Pokok belum terpenuhi penuh oleh anggota aktif (dihitung sejak tahun registrasi anggota di tabel `anggota`).
-  2. Simpanan Lebaran yang masih memiliki saldo sisa (`totalDeposit - totalWithdrawal > 0`) di mana tahun setoran dimasukkan sebagai kandidat tahun.
-  3. Bulan simpanan wajib yang belum terbayar (menunggak) oleh anggota aktif sejak bulan pendaftaran hingga bulan berjalan.
-- **Graceful Fallback**: Mengembalikan `[currentYear]` (contoh: `[2026]`) jika seluruh kewajiban masa lampau telah terpenuhi atau terjadi gangguan query/koneksi database.
-- **Penyelarasan Kolom Database**: Tabel `anggota` menggunakan `created_at` untuk waktu pendaftaran (bukan `joined_at`). Tipe simpanan dicocokkan berdasarkan `code` ('SP'/'POKOK', 'SW'/'WAJIB', 'SL'/'LEBARAN') dan fallback nama untuk kompatibilitas lintas environment dan pengujian.
+- **Kondisi Evaluasi Kepatuhan Simpanan**:
+  1. Simpanan Pokok: Anggota aktif yang belum mencapai target `default_amount` pokok mencatat tahun registrasi anggota (`created_at`) sebagai kandidat tahun awal.
+  2. Simpanan Lebaran: Anggota aktif dengan saldo net positif (`totalDeposit - totalWithdrawal > 0`) mencatat tahun transaksi setoran bersangkutan.
+  3. Simpanan Wajib: Anggota aktif yang memiliki bulan belum terbayar sejak registrasi hingga bulan berjalan mencatat tahun tunggakan tersebut.
+- **Graceful Fallback**: Mengembalikan `[currentYear]` (contoh: `[2026]`) secara otomatis bila semua kewajiban lunas atau saat terjadi gangguan jaringan/database.
+- **Refactoring Komponen Matriks Kepatuhan**: Mengekspor fungsi independen `loadComplianceAvailableYearsData` dan `fetchComplianceMatrixData` di `ComplianceMatrix.tsx` untuk kemudahan pengujian unit tanpa ketergantungan render DOM kompleks.
