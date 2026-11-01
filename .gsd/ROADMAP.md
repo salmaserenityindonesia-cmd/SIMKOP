@@ -687,6 +687,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 40: Tampilkan dan Simpan Data Migrasi Anggota Murni As-Is Sesuai File Excel Tanpa Rumus
+**Status:** 📋 Planned
+**Objective:** Menyesuaikan parsing dan pratinjau migrasi data anggota (14 kolom) agar menampilkan serta menyimpan data murni as-is dari file Excel: nilai simpanan wajib utuh tanpa komputasi pembagian per bulan, nilai tgl_awal_pinjaman murni teks/angka dari Excel, dan tampilan tabel modal pratinjau diperluas dengan scroll horizontal untuk memuat seluruh 12 kolom data.
+**Depends on:** Phase 6, Phase 10
+
+**Plans:**
+- [ ] Plan 40.1: Wave 1 - Pemetaan Data As-Is Murni Tanpa Rumus Komputasi di Parser Migrasi Anggota
+- [ ] Plan 40.2: Wave 2 - Tampilan Tabel Pratinjau Migrasi Multi-Kolom Lengkap & Scroll Horizontal
+- [ ] Plan 40.3: Wave 3 - Static Verification, Unit Testing & Production Build
+
+**Deliverables:**
+- Parsing data Excel murni as-is tanpa rumus di `memberExcelService.ts`
+- Modal pratinjau migrasi multi-kolom horizontal scroll di `MemberMigrationModal.tsx`
+- Suite test Vitest dan build produksi Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -767,6 +784,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 37 | Kontrol Pagination Tabel Retur Pembelian | ✅ | 2/2 | 100% |
 | 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | ✅ | 3/3 | 100% |
 | 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | ✅ | 3/3 | 100% |
+| 40 | Data Migrasi Anggota Murni As-Is Tanpa Rumus | 📋 | 0/3 | 0% |
 
 ---
 
