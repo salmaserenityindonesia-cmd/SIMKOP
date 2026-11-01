@@ -306,4 +306,129 @@ describe('memberService - getMembersComprehensiveReport', () => {
     expect(report).toHaveLength(1);
     expect(report[0].nrp).toBe('111');
   });
+
+  it('should aggregate multiple active loans for the same member correctly (sum amounts, max tenor, earliest date)', async () => {
+    const mockMembers = [
+      {
+        id: 'member-multi-loans',
+        nrp: '777888',
+        nama: 'Aipda Gunawan',
+        pangkat: 'Aipda',
+        bank_account_number: '998877',
+        membership_status: 'ACTIVE',
+        created_at: '2022-01-01',
+      },
+    ];
+
+    const mockLoans = [
+      {
+        id: 'loan-a',
+        member_id: 'member-multi-loans',
+        amount: 3000000,
+        tenor: 6,
+        disbursed_at: '2024-01-15T00:00:00Z',
+        loan_schedules: [],
+        loan_repayments: [{ amount_paid: 1000000 }], // sisa = 2M
+      },
+      {
+        id: 'loan-b',
+        member_id: 'member-multi-loans',
+        amount: 2000000,
+        tenor: 12,
+        disbursed_at: '2024-02-01T00:00:00Z',
+        loan_schedules: [],
+        loan_repayments: [{ amount_paid: 500000 }], // sisa = 1.5M
+      },
+    ];
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+          }),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const report = await getMembersComprehensiveReport();
+    expect(report).toHaveLength(1);
+
+    const m = report[0];
+    expect(m.jumlah_pinjaman).toBe(5000000); // 3M + 2M
+    expect(m.sisa_pinjaman).toBe(3500000); // 2M + 1.5M
+    expect(m.tenor).toBe(12); // max(6, 12)
+    expect(m.tgl_awal_pinjaman).toBe('2024-01-15'); // earliest disbursed_at
+  });
+
+  it('should handle non-fatal error in loans query gracefully with console.warn', async () => {
+    const mockMembers = [
+      {
+        id: 'm-warn',
+        nrp: '555',
+        nama: 'Briptu Dian',
+        created_at: '2023-05-01',
+      },
+    ];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'Timeout loading loans' },
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const report = await getMembersComprehensiveReport();
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Gagal memuat pinjaman aktif anggota:',
+      'Timeout loading loans'
+    );
+    expect(report).toHaveLength(1);
+    expect(report[0].jumlah_pinjaman).toBe(0);
+    expect(report[0].sisa_pinjaman).toBe(0);
+
+    warnSpy.mockRestore();
+  });
 });

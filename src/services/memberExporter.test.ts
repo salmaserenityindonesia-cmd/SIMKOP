@@ -175,6 +175,23 @@ describe('memberExporter - Unit Tests', () => {
       expect(doc).toBeDefined();
       expect(doc.internal.pageSize.getWidth()).toBeGreaterThan(doc.internal.pageSize.getHeight()); // Landscape: width > height
       expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+
+      // Verifikasi autoTable terpanggil dan menghasilkan tabel dengan 15 kolom (No + 14 data)
+      const lastTable = (doc as any).lastAutoTable;
+      expect(lastTable).toBeDefined();
+      expect(lastTable.columns.length).toBe(15);
+
+      // Verifikasi baris footer akumulasi total (Pokok: 100k+100k=200k, Pinjaman: 5M+2M=7M, Sisa: 800k+1.2M=2M)
+      const footCellTexts = Object.values(lastTable.foot[0].cells).map(
+        (c: any) => c.text?.[0] || c.raw?.content || c.raw
+      );
+      expect(footCellTexts).toContain('TOTAL');
+      expect(footCellTexts).toContain('Rp 200.000');
+      expect(footCellTexts).toContain('Rp 350.000');
+      expect(footCellTexts).toContain('Rp 150.000');
+      expect(footCellTexts).toContain('Rp 200.000');
+      expect(footCellTexts).toContain('Rp 7.000.000');
+      expect(footCellTexts).toContain('Rp 2.000.000');
     });
 
     it('should trigger doc.save when autoSave is true', async () => {

@@ -10,6 +10,43 @@ import MemberMigrationDetailModal from '../../components/members/MemberMigration
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
 
+export async function triggerMemberExportExcel(
+  memberIds: string[],
+  showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void,
+  setIsExporting?: (loading: boolean) => void
+) {
+  setIsExporting?.(true);
+  try {
+    const comprehensiveData = await getMembersComprehensiveReport(memberIds);
+    await exportMembersToExcel(comprehensiveData);
+    showToast('Laporan Excel 14 kolom berhasil diunduh.', 'success');
+  } catch (err: any) {
+    console.error('Export Excel error:', err);
+    showToast(err?.message || 'Gagal mengekspor laporan Excel', 'error');
+  } finally {
+    setIsExporting?.(false);
+  }
+}
+
+export async function triggerMemberExportPdf(
+  memberIds: string[],
+  showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void,
+  setIsExporting?: (loading: boolean) => void
+) {
+  setIsExporting?.(true);
+  try {
+    const comprehensiveData = await getMembersComprehensiveReport(memberIds);
+    const profile = await getKoperasiProfile();
+    await exportMembersToPdf(comprehensiveData, profile);
+    showToast('Laporan PDF Landscape 14 kolom berhasil diunduh.', 'success');
+  } catch (err: any) {
+    console.error('Export PDF error:', err);
+    showToast(err?.message || 'Gagal mengekspor laporan PDF', 'error');
+  } finally {
+    setIsExporting?.(false);
+  }
+}
+
 export default function ManajemenAnggota() {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -127,34 +164,19 @@ export default function ManajemenAnggota() {
   };
 
   const handleExportExcel = async () => {
-    setIsExportingExcel(true);
-    try {
-      const memberIds = filteredList.map(a => a.id);
-      const comprehensiveData = await getMembersComprehensiveReport(memberIds);
-      await exportMembersToExcel(comprehensiveData);
-      showToast('Laporan Excel 14 kolom berhasil diunduh.', 'success');
-    } catch (err: any) {
-      console.error('Export Excel error:', err);
-      showToast(err?.message || 'Gagal mengekspor laporan Excel', 'error');
-    } finally {
-      setIsExportingExcel(false);
-    }
+    await triggerMemberExportExcel(
+      filteredList.map(a => a.id),
+      showToast,
+      setIsExportingExcel
+    );
   };
 
   const handleExportPDF = async () => {
-    setIsExportingPdf(true);
-    try {
-      const memberIds = filteredList.map(a => a.id);
-      const comprehensiveData = await getMembersComprehensiveReport(memberIds);
-      const profile = await getKoperasiProfile();
-      await exportMembersToPdf(comprehensiveData, profile);
-      showToast('Laporan PDF Landscape 14 kolom berhasil diunduh.', 'success');
-    } catch (err: any) {
-      console.error('Export PDF error:', err);
-      showToast(err?.message || 'Gagal mengekspor laporan PDF', 'error');
-    } finally {
-      setIsExportingPdf(false);
-    }
+    await triggerMemberExportPdf(
+      filteredList.map(a => a.id),
+      showToast,
+      setIsExportingPdf
+    );
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
