@@ -214,7 +214,7 @@ export default function MemberMigrationDetailModal({
         let parsedLoan: MigrationLoanDetail | null = null;
         if (loanData && loanData.length > 0) {
           // Cari pinjaman migrasi spesifik (PINJ-MIGRASI, LOAN-MIG atau mengandung catatan migrasi)
-          const migLoan = loanData.find((l: any) => 
+          const migLoan = loanData.find((l: any) =>
             (l.loan_number && (l.loan_number.startsWith('PINJ-MIGRASI') || l.loan_number.startsWith('LOAN-MIG'))) ||
             (l.notes && l.notes.toLowerCase().includes('migrasi'))
           ) || loanData[0]; // fallback ke pinjaman pertama jika anggota hanya punya 1 pinjaman
@@ -295,10 +295,10 @@ export default function MemberMigrationDetailModal({
   // Format tanggal terdaftar
   const tglTerdaftar = member.created_at
     ? new Date(member.created_at).toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
-      })
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
     : '-';
 
   // Badge status keanggotaan
@@ -388,11 +388,10 @@ export default function MemberMigrationDetailModal({
                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
                     <span className="block text-xs font-medium text-slate-500 mb-0.5">Status Keanggotaan</span>
                     <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                        isStatusActive
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${isStatusActive
                           ? 'bg-emerald-100 text-emerald-800'
                           : 'bg-amber-100 text-amber-800'
-                      }`}
+                        }`}
                     >
                       {membershipStatus}
                     </span>
