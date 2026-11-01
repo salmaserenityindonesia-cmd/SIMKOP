@@ -288,5 +288,23 @@ describe('extractMigrationDeposits - Overwritten Single Migration Balances Calcu
     expect(result.lebaran).toBe(0);
     expect(result.total).toBe(0);
   });
+
+  it('strictly discards historical accumulated records and reads only the exact latest single migration transaction', () => {
+    const mockDeposits = [
+      {
+        deposit_types: { name: 'Simpanan Pokok', code: 'SP' },
+        deposit_transactions: [
+          { id: 'tx-old-1', amount: 10000, description: 'Migrasi Saldo Awal', created_at: '2023-01-01T00:00:00Z' },
+          { id: 'tx-old-2', amount: 10000, description: 'Migrasi Saldo Awal', created_at: '2023-02-01T00:00:00Z' },
+          { id: 'tx-old-3', amount: 100000, description: 'Historical Balance Migration', created_at: '2023-03-01T00:00:00Z' },
+          { id: 'tx-latest', amount: 10000, description: 'Saldo Awal Migrasi Sistem', created_at: '2023-11-01T00:00:00Z' }
+        ]
+      }
+    ];
+
+    const result = extractMigrationDeposits(mockDeposits);
+    expect(result.pokok).toBe(10000);
+    expect(result.total).toBe(10000);
+  });
 });
 

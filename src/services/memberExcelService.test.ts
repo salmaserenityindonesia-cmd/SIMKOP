@@ -993,6 +993,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       expect(deletedTxDepositIds[0]).toEqual(['md-pokok-seq', 'md-wajib-seq']);
       expect(deletedTxDescriptions[0]).toEqual(
         expect.arrayContaining([
+          'Saldo Awal Migrasi Sistem',
           'Migrasi Saldo Awal (As-Is)',
           'Migrasi Saldo Awal',
           'One-Time Principal Deposit Migration',
@@ -1000,6 +1001,161 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         ])
       );
       expect(deletedLoanIds[0]).toEqual(['old-loan-to-delete']);
+    });
+
+    it('should call delQuery.or with comprehensive migration patterns when or method is supported by Supabase query builder (Exact Overwrite)', async () => {
+      let orPatternCalled = '';
+      let memberDepositIdPassed: any[] = [];
+      const insertedTransactions: any[] = [];
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok-joko', name: 'Simpanan Pokok' },
+                { id: 'dt-wajib-joko', name: 'Simpanan Wajib' },
+                { id: 'dt-belanja-joko', name: 'Simpanan Belanja' },
+                { id: 'dt-lebaran-joko', name: 'Simpanan Lebaran' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-default-joko', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'member-joko-id' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const sub: any = {
+                  eq: vi.fn().mockImplementation((col2: string, val2: string) => ({
+                    single: vi.fn().mockResolvedValue({ data: { id: `md-${val2}` }, error: null }),
+                  })),
+                  then: (resolve: any) => resolve({
+                    data: [
+                      { id: 'md-dt-pokok-joko' },
+                      { id: 'md-dt-wajib-joko' },
+                      { id: 'md-dt-belanja-joko' },
+                      { id: 'md-dt-lebaran-joko' },
+                    ],
+                    error: null,
+                  }),
+                };
+                return sub;
+              }),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockImplementation(() => ({
+              in: vi.fn().mockImplementation((col: string, values: any[]) => {
+                if (col === 'member_deposit_id') {
+                  memberDepositIdPassed = values;
+                }
+                return {
+                  or: vi.fn().mockImplementation((pattern: string) => {
+                    orPatternCalled = pattern;
+                    return Promise.resolve({ error: null });
+                  }),
+                };
+              }),
+            })),
+            insert: vi.fn().mockImplementation((records) => {
+              insertedTransactions.push(...(Array.isArray(records) ? records : [records]));
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+        };
+      });
+
+      const parseResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '19850101',
+            nama: 'Joko Ramadhan',
+            pangkat: 'Bripda',
+            bank_account_number: '1985010199',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2023-01-01',
+            jumlah_simpanan_pokok: 10000,
+            jumlah_simpanan_wajib: 2000000,
+            jumlah_simpanan_belanja: 500000,
+            jumlah_simpanan_lebaran: 300000,
+            jumlah_pinjaman: 0,
+            tgl_awal_pinjaman: '',
+            tenor: 0,
+            sisa_pinjaman: 0,
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 2000000,
+            belanja_per_bulan: 500000,
+            lebaran_per_bulan: 300000,
+            n_bulan_pinjaman: 0,
+            sudah_diangsur: 0,
+            angsuran_lampau_per_bulan: 0,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(parseResult);
+
+      // Verify that .or() was invoked with the complete ilike filter pattern
+      expect(orPatternCalled).toBe(
+        'description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%migration%,description.ilike.%historical%'
+      );
+      expect(memberDepositIdPassed).toEqual([
+        'md-dt-pokok-joko',
+        'md-dt-wajib-joko',
+        'md-dt-belanja-joko',
+        'md-dt-lebaran-joko',
+      ]);
+
+      // Verify that exact single values are written without accumulation
+      expect(insertedTransactions).toHaveLength(4);
+      const pokokTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-dt-pokok-joko');
+      const wajibTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-dt-wajib-joko');
+      const belanjaTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-dt-belanja-joko');
+      const lebaranTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-dt-lebaran-joko');
+
+      expect(pokokTx?.amount).toBe(10000);
+      expect(pokokTx?.description).toBe('One-Time Principal Deposit Migration');
+
+      expect(wajibTx?.amount).toBe(2000000);
+      expect(wajibTx?.description).toBe('Migrasi Saldo Awal (As-Is)');
+
+      expect(belanjaTx?.amount).toBe(500000);
+      expect(belanjaTx?.description).toBe('Migrasi Saldo Awal (As-Is)');
+
+      expect(lebaranTx?.amount).toBe(300000);
+      expect(lebaranTx?.description).toBe('Migrasi Saldo Awal (As-Is)');
+
+      const totalNominal = [pokokTx, wajibTx, belanjaTx, lebaranTx].reduce((sum, tx) => sum + (tx?.amount || 0), 0);
+      expect(totalNominal).toBe(2810000);
     });
   });
 });
