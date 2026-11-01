@@ -705,14 +705,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 41: Refactor Aksi Manajemen Anggota: Hapus Tombol Delete & Tambahkan Modal Detail Migrasi Awal
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Menghapus tombol delete pada setiap baris anggota untuk melindungi integritas data relasional simpan pinjam, serta menambahkan tombol dan modal dialog "Detail Migrasi Awal" (14 kolom snapshot migrasi: pangkat, rekening, status, tanggal daftar, simpanan pokok/wajib/belanja/lebaran, dan data pinjaman bawaan).
 **Depends on:** Phase 6, Phase 40
 
 **Plans:**
-- [ ] Plan 41.1: Wave 1 - Refactor Kolom Aksi Tabel Anggota (Hapus Delete & Tambah Tombol Detail Migrasi)
-- [ ] Plan 41.2: Wave 2 - Modal Rincian Snapshot Migrasi Awal Anggota (14 Kolom)
-- [ ] Plan 41.3: Wave 3 - Static Verification, Unit Testing & Production Build
+- [x] Plan 41.1: Wave 1 - Refactor Kolom Aksi Tabel Anggota (Hapus Delete & Tambah Tombol Detail Migrasi)
+- [x] Plan 41.2: Wave 2 - Modal Rincian Snapshot Migrasi Awal Anggota (14 Kolom)
+- [x] Plan 41.3: Wave 3 - Static Verification, Unit Testing & Production Build
 
 **Deliverables:**
 - Kolom aksi yang aman dari risiko penghapusan anggota
@@ -802,7 +802,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 38 | Ukuran Kertas Thermal Struk (58mm/80mm) | ✅ | 3/3 | 100% |
 | 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | ✅ | 3/3 | 100% |
 | 40 | Data Migrasi Anggota Murni As-Is Tanpa Rumus | ✅ | 3/3 | 100% |
-| 41 | Refactor Aksi Anggota: Hapus Delete & Detail Migrasi | 📋 | 0/3 | 0% |
+| 41 | Refactor Aksi Anggota: Hapus Delete & Detail Migrasi | ✅ | 3/3 | 100% |
 
 ---
 

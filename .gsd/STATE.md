@@ -1,16 +1,16 @@
 ## Current Position
 - **Phase**: 41 (Refactor Aksi Anggota: Hapus Delete & Detail Migrasi)
-- **Task**: Planning completed, ready for execution
-- **Status**: 📋 Planned (Phase 41 Plans 41.1, 41.2, 41.3 generated)
+- **Task**: All plans executed & verified
+- **Status**: Complete — ready for /verify 41
 
 ## Last Session Summary
-Phase 40 executed and verified:
-- Plan 40.1: Refactor `memberExcelService.ts` to pure as-is mapping (raw `jumlah_simpanan_wajib`, raw `tgl_awal_pinjaman` string/number, one-time lump-sum initial deposit transactions) (commits `962e024a`, `e345c411`).
-- Plan 40.2: Expanded `MemberMigrationModal.tsx` to wide layout (`max-w-6xl`) with 12 columns, horizontal scroll, pure rupiah currency formatting, and raw Excel column displays (commits `b3fc6453`, `c90c84c0`).
-- Plan 40.3: Comprehensive unit testing in `memberExcelService.test.ts` (11 tests), full Vitest suite (23 test files, 227 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `50d67e1d`, `02dada56`).
+Phase 41 executed and verified:
+- Plan 41.1: Removed delete button from `ManajemenAnggota.tsx` and added `Eye` icon button for initial migration detail (commit `aa5183cf`).
+- Plan 41.2: Created `MemberMigrationDetailModal.tsx` displaying 14 migration columns (member info, initial savings breakdown, initial loan details) with graceful fallback and integrated it into `ManajemenAnggota.tsx` (commits `9455203e`, `1a11c5fe`).
+- Plan 41.3: Added unit tests `ManajemenAnggota.test.tsx` and `MemberMigrationDetailModal.test.tsx`, full Vitest suite (25 test files, 236 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `787c2d96`, `f38bf017`).
 
 ## Next Steps
-Execute Phase 41: Refactor Aksi Manajemen Anggota: Hapus Tombol Delete & Tambahkan Modal Detail Migrasi Awal (`/execute 41`).
+Verify Phase 41 using `/verify 41` or proceed to next milestone/phase.
 
 ## Blockers
 - None.
