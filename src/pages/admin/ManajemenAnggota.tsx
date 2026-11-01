@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload } from 'lucide-react';
-import { getMembersComprehensiveReport, createMember } from '../../services/memberService';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw } from 'lucide-react';
+import { getMembersComprehensiveReport, createMember, resetAllMembersData } from '../../services/memberService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
+import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
 
@@ -86,6 +87,10 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [parseResult, setParseResult] = useState<MemberParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+
+  // Reset Data State
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -247,6 +252,21 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
     }
   };
 
+  const handleConfirmReset = async () => {
+    setIsResetting(true);
+    try {
+      const res = await resetAllMembersData();
+      showToast(res.message || 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.', 'success');
+      setIsResetModalOpen(false);
+      await loadData();
+    } catch (err: any) {
+      console.error('Reset members error:', err);
+      showToast(err?.message || 'Gagal mengosongkan data anggota', 'error');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="mb-6">
@@ -312,6 +332,14 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
                 <Download className="w-4 h-4 mr-2" />
               )}
               PDF
+            </button>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              title="Kosongkan seluruh data anggota, simpanan, dan pinjaman"
+              className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm transition-colors shadow-xs cursor-pointer shrink-0"
+            >
+              <RotateCcw className="w-4 h-4 text-rose-600" />
+              <span>Reset Data</span>
             </button>
             <button
               onClick={handleOpenAddModal}
@@ -588,6 +616,21 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
         isOpen={isMigrationDetailOpen}
         member={selectedMigrationMember}
         onClose={() => setIsMigrationDetailOpen(false)}
+      />
+
+      <DangerConfirmModal
+        isOpen={isResetModalOpen}
+        title="Reset Seluruh Data Anggota"
+        message="PERINGATAN: Tindakan ini akan mengosongkan seluruh master data anggota, rekening simpanan, pinjaman, dan riwayat mutasi terkait secara permanen. Transaksi kasir POS akan tetap dipertahankan dengan melepaskan relasi anggota (sales.member_id = NULL) sehingga omzet toko tidak berkurang."
+        confirmationKeyword="HAPUS SEMUA DATA ANGGOTA"
+        confirmButtonLabel="Ya, Kosongkan Sekarang"
+        isLoading={isResetting}
+        onConfirm={handleConfirmReset}
+        onClose={() => {
+          if (!isResetting) {
+            setIsResetModalOpen(false);
+          }
+        }}
       />
     </AdminLayout>
   );

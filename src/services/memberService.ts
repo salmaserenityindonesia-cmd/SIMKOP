@@ -312,3 +312,19 @@ export async function getMembersComprehensiveReport(
 
   return result;
 }
+
+export interface ResetMembersResult {
+  success: boolean;
+  members_deleted: number;
+  loans_deleted: number;
+  deposits_deleted: number;
+  message: string;
+}
+
+export async function resetAllMembersData(): Promise<ResetMembersResult> {
+  const { data, error } = await supabase.rpc('reset_members_and_financial_records');
+  if (error) {
+    throw new Error(`Gagal mereset data anggota dan pembukuan: ${error.message}`);
+  }
+  return data as ResetMembersResult;
+}
