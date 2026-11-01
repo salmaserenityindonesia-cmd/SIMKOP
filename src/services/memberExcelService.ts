@@ -337,16 +337,21 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
 
       if (existingDeposits && existingDeposits.length > 0) {
         const mdIds = existingDeposits.map((d: any) => d.id);
-        const { error: errDelTx } = await supabase
+        const delQuery = supabase
           .from('deposit_transactions')
           .delete()
-          .in('member_deposit_id', mdIds)
-          .in('description', [
-            'Migrasi Saldo Awal (As-Is)',
-            'Migrasi Saldo Awal',
-            'One-Time Principal Deposit Migration',
-            'Historical Balance Migration'
-          ]);
+          .in('member_deposit_id', mdIds);
+
+        // Hapus seluruh mutasi migrasi lama tanpa toleransi sisa (pola komprehensif)
+        const { error: errDelTx } = typeof (delQuery as any).or === 'function'
+          ? await (delQuery as any).or('description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%migration%,description.ilike.%historical%')
+          : await (delQuery as any).in('description', [
+              'Saldo Awal Migrasi Sistem',
+              'Migrasi Saldo Awal (As-Is)',
+              'Migrasi Saldo Awal',
+              'One-Time Principal Deposit Migration',
+              'Historical Balance Migration'
+            ]);
 
         if (errDelTx) {
           console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${row.nrp}:`, errDelTx.message);
