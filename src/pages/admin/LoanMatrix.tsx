@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp, Eye } from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
-import { getLoanMatrix, LoanMatrixSummary } from '../../services/loanMatrixService';
+import { getLoanMatrix, getLoanMatrixAvailableYears, LoanMatrixSummary } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
 import AdminLayout from '../../components/layout/AdminLayout';
@@ -11,6 +11,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', '
 export const LoanMatrix: React.FC = () => {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState<number>(currentYear);
+  const [availableYears, setAvailableYears] = useState<number[]>([currentYear]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
@@ -19,6 +20,21 @@ export const LoanMatrix: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<LoanMatrixSummary | null>(null);
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
+
+  useEffect(() => {
+    const loadAvailableYears = async () => {
+      try {
+        const years = await getLoanMatrixAvailableYears();
+        if (years.length > 0) {
+          setAvailableYears(years);
+          setYear(prev => (years.includes(prev) ? prev : years[0]));
+        }
+      } catch (err) {
+        console.error('Error fetching available years:', err);
+      }
+    };
+    loadAvailableYears();
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -207,7 +223,7 @@ export const LoanMatrix: React.FC = () => {
             onChange={e => setYear(Number(e.target.value))}
             className="border border-slate-300 rounded-lg py-2 px-3 font-semibold focus:ring-2 focus:ring-emerald-500"
           >
-            {[currentYear - 1, currentYear, currentYear + 1].map(y => (
+            {availableYears.map(y => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
