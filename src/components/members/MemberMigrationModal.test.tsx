@@ -85,6 +85,8 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
     expect(markup).toContain('Simpanan Pokok');
     expect(markup).toContain('Total Simpanan Wajib');
     expect(markup).toContain('Total Pinjaman Aktif');
+    expect(markup).toContain('Sisa Hutang / Baki Piutang');
+    expect(markup).toContain('Anggota dg Pinjaman');
     expect(markup).not.toContain('(Dibagi)');
     expect(markup).not.toContain('(One-Time)');
   });

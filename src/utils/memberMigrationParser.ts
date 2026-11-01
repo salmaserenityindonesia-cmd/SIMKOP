@@ -118,15 +118,19 @@ export const sanitizeDateString = (val: unknown): string | null => {
   }
 
   // Excel serial date number (antara 1970 s/d 2099)
-  if (typeof val === 'number' && val >= 25569 && val <= 73050) {
-    const epochMs = (val - 25569) * 86400 * 1000;
-    const d = new Date(epochMs);
-    if (!isNaN(d.getTime())) {
-      const y = d.getUTCFullYear();
-      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const date = String(d.getUTCDate()).padStart(2, '0');
-      return `${y}-${m}-${date}`;
+  if (typeof val === 'number') {
+    if (val >= 25569 && val <= 73050) {
+      const epochMs = (val - 25569) * 86400 * 1000;
+      const d = new Date(epochMs);
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const date = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${date}`;
+      }
     }
+    // Jika angka mentah (seperti 10 atau 42), pertahankan sebagai string angka
+    return String(val);
   }
 
   if (typeof val === 'string') {
@@ -142,7 +146,7 @@ export const sanitizeDateString = (val: unknown): string | null => {
       return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     }
 
-    // Jika string lain (termasuk format angka hari '10'), kembalikan trimmed string
+    // Jika string lain (termasuk format angka hari '10' atau ' 15 '), kembalikan trimmed string
     return trimmed;
   }
 

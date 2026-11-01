@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
+import { sanitizeMigrationLoanRow } from '../utils/memberMigrationParser';
 
 export interface MigrationRowData {
   nrp: string;
@@ -228,15 +229,21 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     const lebaran_per_bulan = jumlah_simpanan_lebaran;
     const n_bulan_simpanan = 1;
 
-    const jumlah_pinjaman = parseAmount(getVal('jumlah_pinjaman'));
-    const rawTglPinj = getVal('tgl_awal_pinjaman');
-    let tgl_awal_pinjaman: string | null = null;
-    if (rawTglPinj !== null && rawTglPinj !== undefined) {
-      const str = rawTglPinj instanceof Date ? rawTglPinj.toISOString().split('T')[0] : String(rawTglPinj).trim();
-      tgl_awal_pinjaman = str.length > 0 ? str : null;
-    }
-    const tenor = Math.max(0, Math.floor(parseAmount(getVal('tenor'))));
-    const sisa_pinjaman = parseAmount(getVal('sisa_pinjaman'));
+    const sanitizedLoan = sanitizeMigrationLoanRow({
+      bank_account_number: getVal('bank_account_number'),
+      jumlah_pinjaman: getVal('jumlah_pinjaman'),
+      tgl_awal_pinjaman: getVal('tgl_awal_pinjaman'),
+      tenor: getVal('tenor'),
+      sisa_pinjaman: getVal('sisa_pinjaman'),
+    });
+
+    const {
+      bank_account_number,
+      jumlah_pinjaman,
+      tgl_awal_pinjaman,
+      tenor,
+      sisa_pinjaman,
+    } = sanitizedLoan;
 
     let n_bulan_pinjaman = 1;
     let sudah_diangsur = 0;
@@ -258,7 +265,7 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
       nrp,
       nama,
       pangkat: getVal('pangkat')?.toString().trim() || null,
-      bank_account_number: getVal('bank_account_number')?.toString().trim() || null,
+      bank_account_number,
       membership_status,
       tgl_awal_anggota,
       jumlah_simpanan_pokok,

@@ -17,6 +17,8 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
   const totalPokok = rows.reduce((sum, r) => sum + r.jumlah_simpanan_pokok, 0);
   const totalWajib = rows.reduce((sum, r) => sum + r.jumlah_simpanan_wajib, 0);
   const totalPinjaman = rows.reduce((sum, r) => sum + r.jumlah_pinjaman, 0);
+  const totalSisaPinjaman = rows.reduce((sum, r) => sum + r.sisa_pinjaman, 0);
+  const totalAnggotaPinjaman = rows.filter(r => r.jumlah_pinjaman > 0 || r.sisa_pinjaman > 0).length;
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -62,28 +64,38 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-              <p className="text-sm text-blue-600 font-medium">Total Anggota</p>
-              <p className="text-2xl font-bold text-blue-900">{rows.length}</p>
+              <p className="text-xs text-blue-600 font-medium">Total Anggota</p>
+              <p className="text-xl font-bold text-blue-900">{rows.length}</p>
             </div>
             <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-              <p className="text-sm text-green-600 font-medium">Simpanan Pokok</p>
-              <p className="text-xl font-bold text-green-900">
+              <p className="text-xs text-green-600 font-medium">Simpanan Pokok</p>
+              <p className="text-base font-bold text-green-900">
                 {formatCurrency(totalPokok)}
               </p>
             </div>
             <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
-              <p className="text-sm text-purple-600 font-medium">Total Simpanan Wajib</p>
-              <p className="text-xl font-bold text-purple-900">
+              <p className="text-xs text-purple-600 font-medium">Total Simpanan Wajib</p>
+              <p className="text-base font-bold text-purple-900">
                 {formatCurrency(totalWajib)}
               </p>
             </div>
             <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
-              <p className="text-sm text-orange-600 font-medium">Total Pinjaman Aktif</p>
-              <p className="text-xl font-bold text-orange-900">
+              <p className="text-xs text-orange-600 font-medium">Total Pinjaman Aktif</p>
+              <p className="text-base font-bold text-orange-900">
                 {formatCurrency(totalPinjaman)}
               </p>
+            </div>
+            <div className="bg-rose-50 p-4 rounded-lg border border-rose-100">
+              <p className="text-xs text-rose-600 font-medium">Sisa Hutang / Baki Piutang</p>
+              <p className="text-base font-bold text-rose-900">
+                {formatCurrency(totalSisaPinjaman)}
+              </p>
+            </div>
+            <div className="bg-amber-50 p-4 rounded-lg border border-amber-100">
+              <p className="text-xs text-amber-600 font-medium">Anggota dg Pinjaman</p>
+              <p className="text-xl font-bold text-amber-900">{totalAnggotaPinjaman}</p>
             </div>
           </div>
 
