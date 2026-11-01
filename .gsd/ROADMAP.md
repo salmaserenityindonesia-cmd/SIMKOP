@@ -846,13 +846,13 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 49: Implementasi Tombol Reset Data Anggota, Riwayat Simpanan, dan Pinjaman (Clean Slate Verification)
-**Status:** In Progress
+**Status:** ✅ Complete
 **Objective:** Mengimplementasikan fungsi PostgreSQL RPC atomik `reset_members_and_financial_records()` untuk membersihkan seluruh data anggota dan buku besar turunannya (simpanan, pinjaman, log audit rekening, dan clearance) sesuai urutan foreign keys, melepaskan relasi anggota pada transaksi kasir POS (`sales.member_id = NULL`) agar omzet toko tetap utuh, mengintegrasikan fungsi pemanggil RPC `resetAllMembersData()` pada `src/services/memberService.ts`, serta menambahkan tombol "Reset Data" dan dialog modal konfirmasi keamanan kata kunci (`DangerConfirmModal`) pada toolbar `src/pages/admin/ManajemenAnggota.tsx`.
 **Depends on:** Phase 4, Phase 6, Phase 40, Phase 45
 
 **Plans:**
-- [ ] Plan 49.1: Wave 1 - PostgreSQL RPC `reset_members_and_financial_records` & Member Service & UI Reset Integration
-- [ ] Plan 49.2: Wave 2 - Unit & Component Testing, Full Vitest Suite, Static Typecheck & Production Build Verification
+- [x] Plan 49.1: Wave 1 - PostgreSQL RPC `reset_members_and_financial_records` & Member Service & UI Reset Integration
+- [x] Plan 49.2: Wave 2 - Unit & Component Testing, Full Vitest Suite, Static Typecheck & Production Build Verification
 
 **Deliverables:**
 - Berkas migrasi database Supabase `supabase/migrations/030_create_reset_members_and_finances_rpc.sql`
@@ -958,7 +958,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 46 | Opsi Tahun Dinamis Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung | ✅ | 3/3 | 100% |
 | 48 | Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota | ✅ | 2/2 | 100% |
-| 49 | Clean Slate Verification & Reset Data Anggota | In Progress | 0/2 | 0% |
+| 49 | Clean Slate Verification & Reset Data Anggota | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1014,6 +1014,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 46 | 2026-11-01 | 2026-11-01 | 1 day |
 | 47 | 2026-11-01 | 2026-11-01 | 1 day |
 | 48 | 2026-11-01 | 2026-11-01 | 1 day |
-| 49 | 2026-11-02 | - | - |
+| 49 | 2026-11-02 | 2026-11-02 | 1 day |
 
 

@@ -189,3 +189,4 @@ Mengimplementasikan fungsi PostgreSQL RPC atomik `reset_members_and_financial_re
 - [ ] Method `resetAllMembersData()` di `src/services/memberService.ts` siap memanggil RPC dan mengembalikan rincian jumlah data yang dihapus.
 - [ ] Komponen `DangerConfirmModal` memvalidasi input teks "HAPUS SEMUA DATA ANGGOTA" sebelum mengaktifkan tombol eksekusi.
 - [ ] Tombol "Reset Data" terpasang pada toolbar `ManajemenAnggota.tsx` dan memicu modal konfirmasi keamanan.
+

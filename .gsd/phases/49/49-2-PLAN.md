@@ -83,3 +83,4 @@ Membangun rangkaian pengujian unit pada `src/services/memberService.test.ts` unt
 - [ ] Component tests untuk `DangerConfirmModal` memverifikasi penguncian tombol konfirmasi berdasarkan keyword verifikasi teks.
 - [ ] Component tests untuk `ManajemenAnggota` memverifikasi tombol "Reset Data" dan integrasi modal.
 - [ ] TypeScript typecheck (`tsc --noEmit`) dan build produksi Vite (`npm run build`) lulus tanpa error.
+
