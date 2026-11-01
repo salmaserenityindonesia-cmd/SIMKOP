@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getAnggota, addAnggota, updateAnggota, deleteAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Trash2, X, Download, Upload } from 'lucide-react';
+import { getAnggota, addAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
 
 export default function ManajemenAnggota() {
-  const { showToast, showConfirm } = useFeedback();
+  const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,24 +73,13 @@ export default function ManajemenAnggota() {
     setShowModal(true);
   };
 
-  const handleDelete = async (id: string, nama: string) => {
-    const confirmed = await showConfirm({
-      title: 'Hapus Anggota',
-      message: `Apakah Anda yakin ingin menghapus anggota "${nama}"?`,
-      confirmText: 'Hapus',
-      variant: 'danger',
-    });
-    if (confirmed) {
-      try {
-        setLoading(true);
-        await deleteAnggota(id);
-        showToast(`Anggota "${nama}" berhasil dihapus.`, 'success');
-        await loadData();
-      } catch (err: any) {
-        showToast(err.message || 'Gagal menghapus anggota', 'error');
-        setLoading(false);
-      }
-    }
+  // Detail Migrasi Awal Modal State
+  const [selectedMigrationMember, setSelectedMigrationMember] = useState<Anggota | null>(null);
+  const [isMigrationDetailOpen, setIsMigrationDetailOpen] = useState(false);
+
+  const handleOpenMigrationDetail = (anggota: Anggota) => {
+    setSelectedMigrationMember(anggota);
+    setIsMigrationDetailOpen(true);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -259,26 +248,26 @@ export default function ManajemenAnggota() {
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nomor Rekening</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center">Aksi</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200 text-center w-28">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-gray-500">
+                  <td colSpan={7} className="py-12 text-center text-gray-500">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-[var(--color-primary)]" />
                     <p>Memuat data...</p>
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-red-500">
+                  <td colSpan={7} className="py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-gray-500">
+                  <td colSpan={7} className="py-8 text-center text-gray-500">
                     Tidak ada data anggota.
                   </td>
                 </tr>
@@ -304,20 +293,20 @@ export default function ManajemenAnggota() {
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.created_at ? new Date(anggota.created_at).toLocaleDateString('id-ID') : '-'}</td>
                     <td className="py-3 px-4 text-sm text-center">
-                      <div className="flex justify-center space-x-2">
+                      <div className="flex justify-center items-center space-x-1.5">
                         <button
-                          onClick={() => handleOpenEditModal(anggota)}
-                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                          title="Edit"
+                          onClick={() => handleOpenMigrationDetail(anggota)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Lihat Detail Data Migrasi Awal"
                         >
-                          <Edit2 className="w-4 h-4" />
+                          <Eye className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => handleDelete(anggota.id, anggota.nama)}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-md transition-colors"
-                          title="Hapus"
+                          onClick={() => handleOpenEditModal(anggota)}
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Edit Data Anggota"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Edit2 className="w-4 h-4" />
                         </button>
                       </div>
                     </td>
