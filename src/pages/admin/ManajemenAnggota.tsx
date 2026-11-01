@@ -164,7 +164,12 @@ export default function ManajemenAnggota() {
       await executeMigration(parseResult);
       setIsImportModalOpen(false);
       await loadData();
-      showToast('Berhasil memigrasikan data anggota, simpanan, dan pinjaman!', 'success');
+      const totalAnggota = parseResult.rows.length;
+      const totalPinjaman = parseResult.rows.filter(r => r.jumlah_pinjaman > 0).length;
+      const message = totalPinjaman > 0
+        ? `Berhasil mengimpor ${totalAnggota} anggota dan menyinkronkan ${totalPinjaman} data pinjaman migrasi!`
+        : `Berhasil mengimpor ${totalAnggota} anggota!`;
+      showToast(message, 'success');
     } catch (error: any) {
       showToast(error.message || 'Gagal mengimpor anggota', 'error');
     } finally {
