@@ -4,6 +4,7 @@ import { getAnggota, addAnggota, updateAnggota, Anggota } from '../../services/k
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
+import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
 
@@ -470,6 +471,12 @@ export default function ManajemenAnggota() {
         onClose={() => setIsImportModalOpen(false)}
         onConfirm={handleImportConfirm}
         isImporting={isImporting}
+      />
+
+      <MemberMigrationDetailModal
+        isOpen={isMigrationDetailOpen}
+        member={selectedMigrationMember}
+        onClose={() => setIsMigrationDetailOpen(false)}
       />
     </AdminLayout>
   );
