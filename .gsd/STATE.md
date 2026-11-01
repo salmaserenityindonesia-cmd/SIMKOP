@@ -1,16 +1,16 @@
 ## Current Position
 - **Phase**: 40 (Data Migrasi Anggota Murni As-Is Tanpa Rumus)
-- **Task**: Planning completed, ready for execution
-- **Status**: 📋 Planned (Phase 40 Plans 40.1, 40.2, 40.3 generated)
+- **Task**: All plans executed & verified
+- **Status**: Complete — ready for /verify 40
 
 ## Last Session Summary
-Phase 39 executed and verified:
-- Plan 39.1: Migration 029 `029_add_logo_url_to_koperasi_profile.sql`, `cloudinaryService.ts` engine & update `settingsService.ts` (commits `ff6a7ffd`, `aef570c0`).
-- Plan 39.2: Logo Uploader card di `PengaturanKoperasi.tsx` (preview, loading spinner, remove logo) & dynamic logo rendering di `LoginForm.tsx` (commits `b03f790e`, `accb5685`).
-- Plan 39.3: Unit test suite `cloudinaryService.test.ts` & `settingsService.test.ts`, 21 files, 211 tests passed 100%, TypeScript typecheck passed, production build exit code 0 (commits `8c2160b9`, `0b98d478`).
+Phase 40 executed and verified:
+- Plan 40.1: Refactor `memberExcelService.ts` to pure as-is mapping (raw `jumlah_simpanan_wajib`, raw `tgl_awal_pinjaman` string/number, one-time lump-sum initial deposit transactions) (commits `962e024a`, `e345c411`).
+- Plan 40.2: Expanded `MemberMigrationModal.tsx` to wide layout (`max-w-6xl`) with 12 columns, horizontal scroll, pure rupiah currency formatting, and raw Excel column displays (commits `b3fc6453`, `c90c84c0`).
+- Plan 40.3: Comprehensive unit testing in `memberExcelService.test.ts` (11 tests), full Vitest suite (23 test files, 227 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `50d67e1d`, `02dada56`).
 
 ## Next Steps
-Execute Phase 40: Tampilkan dan Simpan Data Migrasi Anggota Murni As-Is Sesuai File Excel Tanpa Rumus (`/execute 40`).
+Verify Phase 40 using `/verify 40` or proceed to next milestone/phase.
 
 ## Blockers
 - None.
