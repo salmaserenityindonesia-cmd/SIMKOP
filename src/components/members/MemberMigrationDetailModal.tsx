@@ -10,12 +10,91 @@ interface MemberMigrationDetailModalProps {
   member: Anggota | null;
 }
 
-interface SimpananSnapshot {
+export interface SimpananSnapshot {
   pokok: number;
   wajib: number;
   belanja: number;
   lebaran: number;
   total: number;
+}
+
+/**
+ * Ekstraksi saldo mutlak snapshot migrasi simpanan awal anggota:
+ * Memprioritaskan mutasi migrasi terbaru (berdasarkan urutan created_at / id paling baru)
+ * alih-alih menjumlahkannya, agar nilai yang diambil adalah nilai mutasi tunggal terkini
+ * dan tahan terhadap riwayat lama / re-import berulang (misal Pokok Joko Ramadhan tetap Rp 10.000).
+ */
+export function extractMigrationDeposits(memberDepositsData: any[]): SimpananSnapshot {
+  let pokok = 0;
+  let wajib = 0;
+  let belanja = 0;
+  let lebaran = 0;
+
+  if (memberDepositsData && Array.isArray(memberDepositsData)) {
+    for (const md of memberDepositsData) {
+      const typeObj = Array.isArray(md.deposit_types) ? md.deposit_types[0] : md.deposit_types;
+      const typeName = (typeObj?.name || '').toLowerCase();
+      const typeCode = (typeObj?.code || '').toLowerCase();
+      const txs = (md.deposit_transactions as any[]) || [];
+
+      // Filter transaksi yang berhubungan dengan migrasi / saldo awal
+      const migrationTxs = txs.filter((t: any) => {
+        const desc = (t.description || '').toLowerCase();
+        return (
+          desc.includes('migra') ||
+          desc.includes('migration') ||
+          desc.includes('saldo awal') ||
+          desc.includes('historical') ||
+          desc.includes('one-time')
+        );
+      });
+
+      // Tentukan nilai nominal saldo migrasi:
+      // Jika ada beberapa mutasi migrasi lama yang tertinggal di database karena re-import berulang sebelumnya,
+      // prioritaskan mutasi migrasi terbaru (berdasarkan created_at / id terbaru) alih-alih menjumlahkannya,
+      // agar nilai yang diambil adalah nilai mutasi tunggal terkini.
+      let amount = 0;
+      if (migrationTxs.length > 0) {
+        migrationTxs.sort((a: any, b: any) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (!isNaN(timeB) && !isNaN(timeA) && timeB !== timeA) {
+            return timeB - timeA;
+          }
+          return String(b.id || '').localeCompare(String(a.id || ''));
+        });
+        amount = Math.abs(Number(migrationTxs[0].amount || 0));
+      } else if (txs.length > 0) {
+        txs.sort((a: any, b: any) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (!isNaN(timeB) && !isNaN(timeA) && timeB !== timeA) {
+            return timeB - timeA;
+          }
+          return String(b.id || '').localeCompare(String(a.id || ''));
+        });
+        amount = Math.abs(Number(txs[0].amount || 0));
+      }
+
+      if (typeName.includes('pokok') || typeCode.includes('pokok')) {
+        pokok = Math.max(pokok, amount);
+      } else if (typeName.includes('wajib') || typeCode.includes('wajib')) {
+        wajib = Math.max(wajib, amount);
+      } else if (typeName.includes('belanja') || typeCode.includes('belanja')) {
+        belanja = Math.max(belanja, amount);
+      } else if (typeName.includes('lebaran') || typeName.includes('hari raya') || typeCode.includes('lebaran')) {
+        lebaran = Math.max(lebaran, amount);
+      }
+    }
+  }
+
+  return {
+    pokok,
+    wajib,
+    belanja,
+    lebaran,
+    total: pokok + wajib + belanja + lebaran
+  };
 }
 
 interface MigrationLoanDetail {
@@ -96,39 +175,7 @@ export default function MemberMigrationDetailModal({
           console.warn('Gagal memuat deposit_transactions untuk member:', mdErr.message);
         }
 
-        let pokok = 0;
-        let wajib = 0;
-        let belanja = 0;
-        let lebaran = 0;
-
-        if (memberDepositsData && Array.isArray(memberDepositsData)) {
-          for (const md of memberDepositsData) {
-            const typeObj = Array.isArray(md.deposit_types) ? md.deposit_types[0] : md.deposit_types;
-            const typeName = (typeObj?.name || '').toLowerCase();
-            const typeCode = (typeObj?.code || '').toLowerCase();
-            const txs = (md.deposit_transactions as any[]) || [];
-
-            // Prioritaskan transaksi dengan deskripsi migrasi / saldo awal
-            const migrationTxs = txs.filter((t: any) => {
-              const desc = (t.description || '').toLowerCase();
-              return desc.includes('migra') || desc.includes('migration') || desc.includes('saldo awal');
-            });
-
-            // Gunakan transaksi migrasi jika ada, atau akumulasi transaksi awal jika belum ada label spesifik
-            const targetTxs = migrationTxs.length > 0 ? migrationTxs : txs;
-            const amount = targetTxs.reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
-
-            if (typeName.includes('pokok') || typeCode.includes('pokok')) {
-              pokok += amount;
-            } else if (typeName.includes('wajib') || typeCode.includes('wajib')) {
-              wajib += amount;
-            } else if (typeName.includes('belanja') || typeCode.includes('belanja')) {
-              belanja += amount;
-            } else if (typeName.includes('lebaran') || typeName.includes('hari raya') || typeCode.includes('lebaran')) {
-              lebaran += amount;
-            }
-          }
-        }
+        const depositSnapshot = extractMigrationDeposits(memberDepositsData || []);
 
         // 2. Fetch migration loan from loans table
         const { data: loanData, error: loanErr } = await supabase
@@ -226,13 +273,7 @@ export default function MemberMigrationDetailModal({
         }
 
         if (isMounted) {
-          setSimpanan({
-            pokok,
-            wajib,
-            belanja,
-            lebaran,
-            total: pokok + wajib + belanja + lebaran
-          });
+          setSimpanan(depositSnapshot);
           setMigrationLoan(parsedLoan);
         }
       } catch (err) {
