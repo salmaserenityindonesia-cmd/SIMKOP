@@ -1,16 +1,15 @@
 ## Current Position
-- **Phase**: 48 (Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota)
-- **Task**: Phase verification complete
-- **Status**: Complete & Verified (5/5 must-haves verified)
+- **Phase**: 49 (Implementasi Tombol Reset Data Anggota, Riwayat Simpanan, dan Pinjaman - Clean Slate Verification)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 48 executed and independently verified:
-- Plan 48.1: Implemented `createMember()` in `src/services/memberService.ts` to register new member profiles into `public.anggota` (mapping `tgl_awal_anggota` to `created_at`, handling optional `bank_account_number`) and auto-enrolling standard savings accounts (`member_deposits`) for Pokok, Wajib, Belanja, and Lebaran with Rp 0 balance (no dummy transactions) (commit `2905ba70`). Enhanced Add Member Modal in `src/pages/admin/ManajemenAnggota.tsx` with Bank Account and Join Date inputs, resetting form states and hooking `createMember` on save (commit `4aec1de5`).
-- Plan 48.2: Built comprehensive unit tests for `createMember()` in `src/services/memberService.test.ts` (6 tests) and updated component tests in `src/pages/admin/ManajemenAnggota.test.tsx` (7 tests) verifying form inputs and rendering (commit `95ef1a43`). Verified full Vitest workspace suite (32 test files, 334 tests passing 100%), verified TypeScript typecheck (`tsc --noEmit`), and verified production build (`npm run build`) passing with exit code 0 (commit `2ec35069`).
-- Independent verification passed 5/5 must-haves with report at `.gsd/phases/48/VERIFICATION.md`.
+Phase 49 direncanakan secara lengkap:
+- Plan 49.1: Pembuatan migrasi PostgreSQL RPC atomik `reset_members_and_financial_records` (`supabase/migrations/030_create_reset_members_and_finances_rpc.sql`) untuk membersihkan data master anggota, simpanan, dan pinjaman dengan perlindungan integritas referensial (FK) serta melepaskan relasi anggota di transaksi POS (`sales.member_id = NULL`). Integrasi service method `resetAllMembersData()` pada `src/services/memberService.ts` dan implementasi tombol "Reset Data" beserta modal dialog keamanan kata kunci `DangerConfirmModal` pada `src/pages/admin/ManajemenAnggota.tsx`.
+- Plan 49.2: Pengujian unit `resetAllMembersData()` pada `src/services/memberService.test.ts`, pengujian komponen `src/components/common/DangerConfirmModal.test.tsx` dan `src/pages/admin/ManajemenAnggota.test.tsx`, serta verifikasi menyeluruh suite Vitest workspace, TypeScript static typecheck (`tsc --noEmit`), dan Vite production build (`npm run build`).
 
 ## Next Steps
-Phase 48 is complete. Awaiting next user request or phase definition.
+1. `/execute 49` (atau jalankan Plan 49.1)
 
 ## Blockers
 - None.
@@ -18,9 +17,11 @@ Phase 48 is complete. Awaiting next user request or phase definition.
 ## Context Dump
 
 ### Decisions Made
-- **Struktur Form Tambah Anggota Baru**:
-  1. `bank_account_number`: Input teks opsional dengan placeholder `"Contoh: 115738953714"`, label `"Nomor Rekening Bank (Opsional)"`.
-  2. `tgl_awal_anggota`: Input tanggal (`type="date"`), label `"Tanggal Bergabung"`, default ke tanggal hari ini (`new Date().toISOString().slice(0, 10)`), disimpan ke field `created_at` di tabel `anggota`.
-- **Inisialisasi Akun Simpanan Dasar**:
-  - `createMember()` secara otomatis mendaftarkan akun simpanan anggota untuk 4 tipe simpanan: POKOK, WAJIB, BELANJA, dan LEBARAN pada tabel `public.member_deposits` dengan status aktif (`is_terminated: false`) dan saldo Rp 0.
-  - Menghindari pembuatan mutasi dummy pada tabel `deposit_transactions` demi menjaga integritas data tanpa riwayat mutasi fiktif.
+- **Nomor Berkas Migrasi**: Menggunakan indeks `030_create_reset_members_and_finances_rpc.sql` karena berkas `028_add_receipt_paper_size_to_pos_settings.sql` dan `029_add_logo_url_to_koperasi_profile.sql` telah ada di direktori migrasi.
+- **Integritas Referensial & Proteksi Transaksi Retail Toko**:
+  1. Relasi anggota pada transaksi kasir ritel tidak dihapus, melainkan disetel menjadi `NULL` (`UPDATE public.sales SET member_id = NULL WHERE member_id IS NOT NULL`) agar omzet kasir dan riwayat pergeseran stok kasir POS tetap utuh.
+  2. Urutan penghapusan mematuhi rantai foreign key: `loan_repayments` -> `loan_installments` -> `loan_schedules` -> `loans` -> `deposit_transactions` -> `member_deposits` -> `rekening_audit_logs` -> `member_clearance_logs` -> `anggota` -> `members`.
+  3. Menggunakan pengecekan bersyarat (`information_schema.tables`) untuk tabel-tabel opsional/kondisional agar migrasi kebal error saat dijalankan di lingkungan Supabase lokal maupun staging/produksi.
+- **Proteksi Konfirmasi Bahaya (Double Verification)**:
+  - Tombol aksi "Reset Data" tidak mengeksekusi langsung, melainkan memunculkan `DangerConfirmModal` bertema rose/merah.
+  - Admin/Kasir diwajibkan mengetik kata kunci teks persis `"HAPUS SEMUA DATA ANGGOTA"` agar tombol konfirmasi menjadi aktif.
