@@ -739,14 +739,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 43: Pembetulan Logik Migrasi: Laksana Penggantian Baki Penuh (Exact Overwrite) Tanpa Akumulasi
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Memastikan pembersihan mutasi simpanan lama dijalankan secara komprehensif tanpa toleransi sisa (menggunakan filter multi-pattern pada deposit_transactions) dan memastikan modal rincian snapshot migrasi membaca nilai mutlak terkini dari transaksi tunggal, sehingga nilai simpanan pokok, wajib, belanja, dan lebaran tepat sama seperti revisi file Excel tanpa penambahan kumulatif.
 **Depends on:** Phase 6, Phase 40, Phase 41, Phase 42
 
 **Plans:**
-- [ ] Plan 43.1: Wave 1 - Pembersihan Mutasi Simpanan Lama Tanpa Syarat & Penimpaan Saldo Tunggal Mutlak
-- [ ] Plan 43.2: Wave 2 - Penyelarasan Pembacaan Snapshot Simpanan pada Modal Rincian Migrasi
-- [ ] Plan 43.3: Wave 3 - Unit Testing Exact Overwrite, Static Typecheck & Build Verification
+- [x] Plan 43.1: Wave 1 - Pembersihan Mutasi Simpanan Lama Tanpa Syarat & Penimpaan Saldo Tunggal Mutlak
+- [x] Plan 43.2: Wave 2 - Penyelarasan Pembacaan Snapshot Simpanan pada Modal Rincian Migrasi
+- [x] Plan 43.3: Wave 3 - Unit Testing Exact Overwrite, Static Typecheck & Build Verification
 
 **Deliverables:**
 - Pembersihan mutasi deposit migrasi lama tanpa sisa di `executeMigration`
@@ -838,7 +838,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 40 | Data Migrasi Anggota Murni As-Is Tanpa Rumus | ✅ | 3/3 | 100% |
 | 41 | Refactor Aksi Anggota: Hapus Delete & Detail Migrasi | ✅ | 3/3 | 100% |
 | 42 | Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement) | ✅ | 3/3 | 100% |
-| 43 | Penggantian Baki Penuh (Exact Overwrite) Tanpa Akumulasi | 📋 | 0/3 | 0% |
+| 43 | Penggantian Baki Penuh (Exact Overwrite) Tanpa Akumulasi | ✅ | 3/3 | 100% |
 
 ---
 
