@@ -213,9 +213,9 @@ export default function MemberMigrationDetailModal({
 
         let parsedLoan: MigrationLoanDetail | null = null;
         if (loanData && loanData.length > 0) {
-          // Cari pinjaman migrasi spesifik (LOAN-MIG atau mengandung catatan migrasi)
+          // Cari pinjaman migrasi spesifik (PINJ-MIGRASI, LOAN-MIG atau mengandung catatan migrasi)
           const migLoan = loanData.find((l: any) => 
-            (l.loan_number && l.loan_number.startsWith('LOAN-MIG')) ||
+            (l.loan_number && (l.loan_number.startsWith('PINJ-MIGRASI') || l.loan_number.startsWith('LOAN-MIG'))) ||
             (l.notes && l.notes.toLowerCase().includes('migrasi'))
           ) || loanData[0]; // fallback ke pinjaman pertama jika anggota hanya punya 1 pinjaman
 
