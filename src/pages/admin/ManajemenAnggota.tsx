@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, addAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload } from 'lucide-react';
-import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
+import { getMembersComprehensiveReport } from '../../services/memberService';
+import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
+import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
@@ -17,6 +19,8 @@ export default function ManajemenAnggota() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -122,21 +126,35 @@ export default function ManajemenAnggota() {
     }
   };
 
-  const handleExportExcel = () => {
-    exportToExcel(filteredList, 'Data_Anggota');
+  const handleExportExcel = async () => {
+    setIsExportingExcel(true);
+    try {
+      const memberIds = filteredList.map(a => a.id);
+      const comprehensiveData = await getMembersComprehensiveReport(memberIds);
+      await exportMembersToExcel(comprehensiveData);
+      showToast('Laporan Excel 14 kolom berhasil diunduh.', 'success');
+    } catch (err: any) {
+      console.error('Export Excel error:', err);
+      showToast(err?.message || 'Gagal mengekspor laporan Excel', 'error');
+    } finally {
+      setIsExportingExcel(false);
+    }
   };
 
-  const handleExportPDF = () => {
-    const headers = ['NRP', 'Nama', 'Pangkat', 'Gaji Pokok (THP)', 'Status', 'Terdaftar'];
-    const data = filteredList.map(a => [
-      a.nrp || '-',
-      a.nama,
-      a.pangkat || '-',
-      new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(a.master_thp || 0),
-      getStatusText(a.membership_status),
-      a.created_at ? new Date(a.created_at).toLocaleDateString('id-ID') : '-'
-    ]);
-    exportToPDF(headers, data, 'Data_Anggota', 'Laporan Data Anggota Koperasi');
+  const handleExportPDF = async () => {
+    setIsExportingPdf(true);
+    try {
+      const memberIds = filteredList.map(a => a.id);
+      const comprehensiveData = await getMembersComprehensiveReport(memberIds);
+      const profile = await getKoperasiProfile();
+      await exportMembersToPdf(comprehensiveData, profile);
+      showToast('Laporan PDF Landscape 14 kolom berhasil diunduh.', 'success');
+    } catch (err: any) {
+      console.error('Export PDF error:', err);
+      showToast(err?.message || 'Gagal mengekspor laporan PDF', 'error');
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -221,16 +239,26 @@ export default function ManajemenAnggota() {
             </button>
             <button
               onClick={handleExportExcel}
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
+              disabled={isExportingExcel}
+              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4 mr-2" />
+              {isExportingExcel ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+              ) : (
+                <Download className="w-4 h-4 mr-2" />
+              )}
               Excel
             </button>
             <button
               onClick={handleExportPDF}
-              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium"
+              disabled={isExportingPdf}
+              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-4 h-4 mr-2" />
+              {isExportingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+              ) : (
+                <Download className="w-4 h-4 mr-2" />
+              )}
               PDF
             </button>
             <button
