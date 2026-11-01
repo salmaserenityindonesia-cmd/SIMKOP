@@ -6,8 +6,8 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 35 — Penyelarasan Tombol Export Excel & Cetak PDF Laporan Mutasi Barang
-> **Status:** ✅ Complete
+> **Current Phase:** 48 — Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota
+> **Status:** ⏳ Ready for execution
 
 ## Must-Haves (from SPEC)
 
@@ -828,6 +828,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 48: Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota
+**Status:** ⏳ Ready for execution
+**Objective:** Memperkaya form modal "Tambah Anggota Baru" pada `src/pages/admin/ManajemenAnggota.tsx` dengan menambahkan field Nomor Rekening Bank (`bank_account_number`) dan Tanggal Bergabung (`tgl_awal_anggota`), serta mengimplementasikan fungsi service mutasi `createMember()` pada `src/services/memberService.ts` yang menyimpan data anggota baru ke tabel `anggota` dan menginisialisasi 4 akun simpanan dasar (Pokok, Wajib, Belanja, Lebaran) pada `member_deposits` dengan status aktif dan saldo Rp 0 tanpa mutasi dummy.
+**Depends on:** Phase 6, Phase 40, Phase 45
+
+**Plans:**
+- [ ] Plan 48.1: Wave 1 - Add Bank Account & Join Date Fields in Form Modal & createMember Service Integration
+- [ ] Plan 48.2: Wave 2 - Unit & Component Testing, Full Test Suite, Static Verification & Production Build Check
+
+**Deliverables:**
+- Fungsi mutasi `createMember` di `src/services/memberService.ts` dengan insert ke tabel `anggota` dan inisialisasi 4 akun simpanan dasar di `member_deposits`
+- Form modal Tambah Anggota Baru di `src/pages/admin/ManajemenAnggota.tsx` diperkaya dengan input `bank_account_number` dan `tgl_awal_anggota`
+- Suite pengujian unit dan komponen di `src/services/memberService.test.ts` dan `src/pages/admin/ManajemenAnggota.test.tsx`
+- Verifikasi build produksi Vite (`npm run build`) dan TypeScript typecheck (`npm run typecheck`) lolos 100%
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -866,6 +883,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 32 | Phase 45 | Implementasi Ekspor Excel & PDF 14 Kolom Komprehensif pada Manajemen Anggota |
 | 33 | Phase 46 | Implementasi Opsi Tahun Dinamis Berdasarkan Tahun Pinjaman Belum Lunas Terlama pada Matriks Pinjaman |
 | 34 | Phase 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung |
+| 35 | Phase 48 | Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota |
 
 ---
 
@@ -920,6 +938,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 45 | Ekspor Excel & PDF 14 Kolom Komprehensif Anggota | ✅ | 4/4 | 100% |
 | 46 | Opsi Tahun Dinamis Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung | ✅ | 3/3 | 100% |
+| 48 | Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -974,5 +993,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 45 | 2026-11-01 | 2026-11-01 | 1 day |
 | 46 | 2026-11-01 | 2026-11-01 | 1 day |
 | 47 | 2026-11-01 | 2026-11-01 | 1 day |
+| 48 | 2026-11-01 | — | In Progress |
 
 

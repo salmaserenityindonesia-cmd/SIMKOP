@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 47 (Implementasi Filter Tahun Dinamis Berdasarkan Tunggakan Simpanan & Saldo Simpanan Lebaran Menggantung)
-- **Task**: Phase verification complete
-- **Status**: Complete & Verified (5/5 must-haves verified)
+- **Phase**: 48 (Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 47 executed and independently verified:
-- Plan 47.1: Built `getSavingsComplianceAvailableYears()` query service in `src/services/complianceService.ts` to evaluate the oldest year with pending obligations (unpaid pokok, active lebaran balance, unpaid monthly wajib) with unit tests in `src/services/complianceService.test.ts` (commits `6cc0c167`, `0bddfe60`).
-- Plan 47.2: Bound dynamic `availableYears` dropdown state in `src/pages/admin/ComplianceMatrix.tsx`, enabling real-time matrix reload upon year selection and auto-reconciliation of selected year (commit `7174cd4d`).
-- Plan 47.3: Built comprehensive component test suite `src/pages/admin/ComplianceMatrix.test.tsx` (10 tests), verified full workspace Vitest suite (32 test files, 327 tests passing 100%), verified TypeScript typecheck (`tsc --noEmit`), and verified production build (`npm run build`) passing with exit code 0 (commits `3029e9ac`, `e8d1f06d`).
-- Independent verification passed 5/5 must-haves with report at `.gsd/phases/47/VERIFICATION.md` (commit `25dc7e8b`).
+Phase 48 planning complete:
+- Created `.gsd/phases/48/48-1-PLAN.md` (Wave 1: Add Bank Account & Join Date Fields in Form Modal & createMember Service Integration).
+- Created `.gsd/phases/48/48-2-PLAN.md` (Wave 2: Unit & Component Testing, Full Test Suite, Static Verification & Production Build Check).
+- Updated `.gsd/ROADMAP.md` with Phase 48 details, wave plan, progress summary, and timeline.
 
 ## Next Steps
-Phase 47 is complete. Awaiting next user request or phase definition.
+1. Execute Plan 48.1 (`/execute 48 1`): Implement `createMember` in `src/services/memberService.ts` and enhance Add Member Form Modal in `src/pages/admin/ManajemenAnggota.tsx`.
+2. Execute Plan 48.2 (`/execute 48 2`): Unit test `createMember` in `src/services/memberService.test.ts`, update `src/pages/admin/ManajemenAnggota.test.tsx`, and run static verification & production build check.
 
 ## Blockers
 - None.
@@ -19,9 +19,9 @@ Phase 47 is complete. Awaiting next user request or phase definition.
 ## Context Dump
 
 ### Decisions Made
-- **Kondisi Evaluasi Kepatuhan Simpanan**:
-  1. Simpanan Pokok: Anggota aktif yang belum mencapai target `default_amount` pokok mencatat tahun registrasi anggota (`created_at`) sebagai kandidat tahun awal.
-  2. Simpanan Lebaran: Anggota aktif dengan saldo net positif (`totalDeposit - totalWithdrawal > 0`) mencatat tahun transaksi setoran bersangkutan.
-  3. Simpanan Wajib: Anggota aktif yang memiliki bulan belum terbayar sejak registrasi hingga bulan berjalan mencatat tahun tunggakan tersebut.
-- **Graceful Fallback**: Mengembalikan `[currentYear]` (contoh: `[2026]`) secara otomatis bila semua kewajiban lunas atau saat terjadi gangguan jaringan/database.
-- **Refactoring Komponen Matriks Kepatuhan**: Mengekspor fungsi independen `loadComplianceAvailableYearsData` dan `fetchComplianceMatrixData` di `ComplianceMatrix.tsx` untuk kemudahan pengujian unit tanpa ketergantungan render DOM kompleks.
+- **Field Baru Form Tambah Anggota**:
+  1. `bank_account_number`: Input teks opsional untuk nomor rekening bank anggota (placeholder: "Contoh: 115738953714").
+  2. `tgl_awal_anggota`: Input tanggal bergabung (`type="date"`) yang default ke tanggal hari ini (`new Date().toISOString().slice(0, 10)`), disimpan ke field `created_at` di tabel `anggota`.
+- **Inisialisasi Akun Simpanan Dasar**:
+  - `createMember()` secara otomatis mendaftarkan 4 akun simpanan dasar (Pokok, Wajib, Belanja, Lebaran) ke tabel `member_deposits` dengan status aktif (`is_terminated: false`) dan saldo Rp 0.
+  - Tidak membuat transaksi dummy pada tabel `deposit_transactions` untuk menjaga integritas data tanpa riwayat mutasi fiktif.
