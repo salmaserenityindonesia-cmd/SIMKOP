@@ -10,9 +10,83 @@ import { formatCurrency } from '../../utils/formatCurrency';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const CURRENT_MONTH = new Date().getMonth();
 
-export default function ComplianceMatrix() {
-  const [year, setYear] = useState(new Date().getFullYear().toString());
-  const [availableYears, setAvailableYears] = useState<number[]>([new Date().getFullYear()]);
+export interface ComplianceMatrixProps {
+  initialYear?: string | number;
+  initialAvailableYears?: number[];
+  onYearChange?: (year: string) => void;
+}
+
+export const loadComplianceAvailableYearsData = async (
+  setAvailableYears: (years: number[]) => void,
+  setYear: (updater: (prev: string) => string) => void
+): Promise<number[]> => {
+  try {
+    const years = await getSavingsComplianceAvailableYears();
+    if (years && years.length > 0) {
+      setAvailableYears(years);
+      setYear(prev => {
+        const currentNum = parseInt(prev);
+        return years.includes(currentNum) ? prev : years[0].toString();
+      });
+    }
+    return years;
+  } catch (err) {
+    console.error('Error fetching savings compliance available years:', err);
+    return [];
+  }
+};
+
+export const fetchComplianceMatrixData = async (
+  targetYear: number | string,
+  setLoading: (l: boolean) => void,
+  setData: (d: ComplianceMatrixRow[]) => void,
+  setTargets: (t: any) => void,
+  setTotalSetoran: (s: number) => void
+): Promise<{ rows: ComplianceMatrixRow[]; targets?: any; totalSetoran: number } | null> => {
+  setLoading(true);
+  try {
+    const yearNum = typeof targetYear === 'string' ? parseInt(targetYear, 10) : targetYear;
+    const matrixData = await getComplianceMatrixData(yearNum);
+    setData(matrixData.rows || []);
+    if (matrixData.targets) {
+      setTargets(matrixData.targets);
+    }
+    
+    // Fetch total setoran
+    const { data: txs } = await supabase
+      .from('deposit_transactions')
+      .select('amount, transaction_type')
+      .eq('for_year', yearNum);
+      
+    let sum = 0;
+    if (txs) {
+      txs.forEach((tx: any) => {
+        if (tx.transaction_type === 'deposit') sum += Number(tx.amount);
+        else if (tx.transaction_type === 'withdrawal') sum -= Number(tx.amount);
+      });
+    }
+    setTotalSetoran(sum);
+    return { rows: matrixData.rows || [], targets: matrixData.targets, totalSetoran: sum };
+  } catch (err) {
+    console.error('Failed to fetch compliance matrix', err);
+    return null;
+  } finally {
+    setLoading(false);
+  }
+};
+
+export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
+  initialYear,
+  initialAvailableYears,
+  onYearChange,
+}) => {
+  const currentYearStr = new Date().getFullYear().toString();
+  const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
+  const [availableYears, setAvailableYears] = useState<number[]>(
+    initialAvailableYears && initialAvailableYears.length > 0
+      ? initialAvailableYears
+      : [new Date().getFullYear()]
+  );
   const [filterType, setFilterType] = useState('all');
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -25,54 +99,14 @@ export default function ComplianceMatrix() {
   const [totalSetoran, setTotalSetoran] = useState(0);
 
   useEffect(() => {
-    const loadAvailableYears = async () => {
-      try {
-        const years = await getSavingsComplianceAvailableYears();
-        if (years && years.length > 0) {
-          setAvailableYears(years);
-          setYear(prev => {
-            const currentNum = parseInt(prev);
-            return years.includes(currentNum) ? prev : years[0].toString();
-          });
-        }
-      } catch (err) {
-        console.error('Error fetching savings compliance available years:', err);
-      }
-    };
-    loadAvailableYears();
+    loadComplianceAvailableYearsData(setAvailableYears, setYear);
   }, []);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        const matrixData = await getComplianceMatrixData(parseInt(year));
-        setData(matrixData.rows || []);
-        if (matrixData.targets) {
-           setTargets(matrixData.targets);
-        }
-        
-        // Fetch total setoran
-        const { data: txs } = await supabase
-          .from('deposit_transactions')
-          .select('amount, transaction_type')
-          .eq('for_year', parseInt(year));
-          
-        let sum = 0;
-        if (txs) {
-           txs.forEach((tx: any) => {
-              if (tx.transaction_type === 'deposit') sum += Number(tx.amount);
-              else if (tx.transaction_type === 'withdrawal') sum -= Number(tx.amount);
-           });
-        }
-        setTotalSetoran(sum);
-      } catch (err) {
-        console.error('Failed to fetch compliance matrix', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
+    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+    if (onYearChange) {
+      onYearChange(year);
+    }
   }, [year]);
 
   const filteredData = data.filter(row => 
@@ -420,4 +454,6 @@ export default function ComplianceMatrix() {
       )}
     </AdminLayout>
   );
-}
+};
+
+export default ComplianceMatrix;
