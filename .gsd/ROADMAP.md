@@ -722,14 +722,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 42: Kebijakan Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement Overwrite)
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Menerapkan kebijakan sanitasi angka murni as-is dari Excel (kebal titik/koma format Rupiah) dan mekanisme Idempotent Exact Replacement Overwrite saat sinkronisasi migrasi anggota dijalankan ulang, sehingga revisi file Excel menimpa mutasi migrasi lama alih-alih menjumlahkan/menggandakan saldo simpanan dan pinjaman.
 **Depends on:** Phase 6, Phase 40, Phase 41
 
 **Plans:**
-- [ ] Plan 42.1: Wave 1 - Robust As-Is Number Extraction & Sanitization in Excel Migration Parser
-- [ ] Plan 42.2: Wave 2 - Idempotent Exact Replacement (Timpa Penuh) pada Sinkronisasi Simpanan & Pinjaman
-- [ ] Plan 42.3: Wave 3 - Unit Testing Exact Replacement, Static Typecheck & Build Verification
+- [x] Plan 42.1: Wave 1 - Robust As-Is Number Extraction & Sanitization in Excel Migration Parser
+- [x] Plan 42.2: Wave 2 - Idempotent Exact Replacement (Timpa Penuh) pada Sinkronisasi Simpanan & Pinjaman
+- [x] Plan 42.3: Wave 3 - Unit Testing Exact Replacement, Static Typecheck & Build Verification
 
 **Deliverables:**
 - Helper `parseAmount` yang kebal format titik ribuan di `memberExcelService.ts`
@@ -820,7 +820,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 39 | Unggah Logo Koperasi ke Cloudinary & Render Dinamis di Login | ✅ | 3/3 | 100% |
 | 40 | Data Migrasi Anggota Murni As-Is Tanpa Rumus | ✅ | 3/3 | 100% |
 | 41 | Refactor Aksi Anggota: Hapus Delete & Detail Migrasi | ✅ | 3/3 | 100% |
-| 42 | Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement) | 📋 | 0/3 | 0% |
+| 42 | Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement) | ✅ | 3/3 | 100% |
 
 ---
 

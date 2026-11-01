@@ -1,16 +1,16 @@
 ## Current Position
 - **Phase**: 42 (Impor Anggota: Saldo As-Is & Timpa Mutlak)
-- **Task**: Planning completed, ready for execution
-- **Status**: 📋 Planned (Phase 42 Plans 42.1, 42.2, 42.3 generated)
+- **Task**: All plans executed & verified
+- **Status**: Complete — ready for /verify 42
 
 ## Last Session Summary
-Phase 41 executed and verified:
-- Plan 41.1: Removed delete button from `ManajemenAnggota.tsx` and added `Eye` icon button for initial migration detail (commit `aa5183cf`).
-- Plan 41.2: Created `MemberMigrationDetailModal.tsx` displaying 14 migration columns (member info, initial savings breakdown, initial loan details) with graceful fallback and integrated it into `ManajemenAnggota.tsx` (commits `9455203e`, `1a11c5fe`).
-- Plan 41.3: Added unit tests `ManajemenAnggota.test.tsx` and `MemberMigrationDetailModal.test.tsx`, full Vitest suite (25 test files, 236 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `787c2d96`, `f38bf017`).
+Phase 42 executed and verified:
+- Plan 42.1: Robust `parseAmount` sanitization handling raw integers, Rupiah dot separators ("2.000.000"), and raw as-is numeric mapping in `memberExcelService.ts` (commits `298d40e4`, `1a71f636`).
+- Plan 42.2: Idempotent Exact Replacement Overwrite in `executeMigration` ensuring old migration deposit transactions and loans are cleanly deleted before new records are inserted (commits `8919a295`, `1a5c4f76`).
+- Plan 42.3: Comprehensive unit tests in `memberExcelService.test.ts` (21 tests), full Vitest suite (25 test files, 246 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `731a0f71`, `71cc80d5`).
 
 ## Next Steps
-Execute Phase 42: Kebijakan Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement Overwrite) (`/execute 42`).
+Verify Phase 42 using `/verify 42` or proceed to next milestone/phase.
 
 ## Blockers
 - None.
