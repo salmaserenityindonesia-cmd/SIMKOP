@@ -15,12 +15,31 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
   const { rows, errors } = parseResult;
 
   const totalPokok = rows.reduce((sum, r) => sum + r.jumlah_simpanan_pokok, 0);
-  const totalRutin = rows.reduce((sum, r) => sum + r.jumlah_simpanan_wajib + r.jumlah_simpanan_belanja + r.jumlah_simpanan_lebaran, 0);
+  const totalWajib = rows.reduce((sum, r) => sum + r.jumlah_simpanan_wajib, 0);
   const totalPinjaman = rows.reduce((sum, r) => sum + r.jumlah_pinjaman, 0);
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const formatRupiah = (amount: number) => {
+    if (!amount || amount === 0) return '-';
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl max-h-[90vh] flex flex-col">
         <div className="flex justify-between items-center p-6 border-b">
           <h2 className="text-xl font-bold">Pratinjau Migrasi Anggota (14 Kolom)</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600" disabled={isImporting}>
@@ -49,21 +68,21 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
               <p className="text-2xl font-bold text-blue-900">{rows.length}</p>
             </div>
             <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-              <p className="text-sm text-green-600 font-medium">Simpanan Pokok (One-Time)</p>
+              <p className="text-sm text-green-600 font-medium">Simpanan Pokok</p>
               <p className="text-xl font-bold text-green-900">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalPokok)}
+                {formatCurrency(totalPokok)}
               </p>
             </div>
             <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
-              <p className="text-sm text-purple-600 font-medium">Simpanan Rutin (Dibagi)</p>
+              <p className="text-sm text-purple-600 font-medium">Total Simpanan Wajib</p>
               <p className="text-xl font-bold text-purple-900">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalRutin)}
+                {formatCurrency(totalWajib)}
               </p>
             </div>
             <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
               <p className="text-sm text-orange-600 font-medium">Total Pinjaman Aktif</p>
               <p className="text-xl font-bold text-orange-900">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR' }).format(totalPinjaman)}
+                {formatCurrency(totalPinjaman)}
               </p>
             </div>
           </div>
@@ -73,45 +92,69 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
               <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
               Data Siap Migrasi ({rows.length})
             </h3>
-            <div className="overflow-x-auto border rounded-lg">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-gray-50 text-gray-700">
+            <div className="overflow-x-auto border rounded-xl max-h-[55vh] shadow-xs">
+              <table className="w-full text-sm text-left border-collapse">
+                <thead className="bg-gray-50 text-gray-700 sticky top-0 z-20 shadow-xs">
                   <tr>
-                    <th className="px-4 py-3">NRP / Nama</th>
-                    <th className="px-4 py-3">Tgl Daftar</th>
-                    <th className="px-4 py-3 text-right">Pokok</th>
-                    <th className="px-4 py-3 text-right">Rutin (Bulan)</th>
-                    <th className="px-4 py-3 text-right">Pinjaman (Sisa)</th>
+                    <th className="px-4 py-3 sticky left-0 top-0 bg-gray-50 z-30 border-r border-gray-200 whitespace-nowrap">NRP / Nama</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Pangkat</th>
+                    <th className="px-4 py-3 whitespace-nowrap">No. Rekening</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Tgl Awal</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Simp. Pokok</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Simp. Wajib</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Simp. Belanja</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Simp. Lebaran</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Jml Pinjaman</th>
+                    <th className="px-4 py-3 text-center whitespace-nowrap">Tgl Awal Pinj.</th>
+                    <th className="px-4 py-3 text-center whitespace-nowrap">Tenor</th>
+                    <th className="px-4 py-3 text-right whitespace-nowrap">Sisa Pinjaman</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                   {rows.slice(0, 100).map((row, i) => (
-                    <tr key={i} className="border-t hover:bg-gray-50">
-                      <td className="px-4 py-3">
+                    <tr key={i} className="hover:bg-gray-50 group">
+                      <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-gray-50 z-10 border-r border-gray-100 whitespace-nowrap">
                         <div className="font-medium text-gray-900">{row.nama}</div>
                         <div className="text-xs text-gray-500">{row.nrp}</div>
                       </td>
-                      <td className="px-4 py-3">{row.tgl_awal_anggota || '-'}</td>
-                      <td className="px-4 py-3 text-right font-medium text-green-600">
-                        {new Intl.NumberFormat('id-ID').format(row.jumlah_simpanan_pokok)}
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                        {row.pangkat || '-'}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <div>W: {new Intl.NumberFormat('id-ID').format(row.wajib_per_bulan)} /bln</div>
-                        <div className="text-xs text-gray-500">Selama {row.n_bulan_simpanan} bln</div>
+                      <td className="px-4 py-3 text-gray-700 font-mono text-xs whitespace-nowrap">
+                        {row.bank_account_number || '-'}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        {row.jumlah_pinjaman > 0 ? (
-                          <>
-                            <div className="text-orange-600">{new Intl.NumberFormat('id-ID').format(row.sisa_pinjaman)}</div>
-                            <div className="text-xs text-gray-500">{row.tenor} bln ({row.n_bulan_pinjaman} bln lampau)</div>
-                          </>
-                        ) : '-'}
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                        {row.tgl_awal_anggota || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-green-600 whitespace-nowrap">
+                        {formatRupiah(row.jumlah_simpanan_pokok)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-purple-600 whitespace-nowrap">
+                        {formatRupiah(row.jumlah_simpanan_wajib)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700 whitespace-nowrap">
+                        {formatRupiah(row.jumlah_simpanan_belanja)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700 whitespace-nowrap">
+                        {formatRupiah(row.jumlah_simpanan_lebaran)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-orange-600 whitespace-nowrap">
+                        {formatRupiah(row.jumlah_pinjaman)}
+                      </td>
+                      <td className="px-4 py-3 text-center text-gray-700 whitespace-nowrap">
+                        {row.tgl_awal_pinjaman || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-center text-gray-700 whitespace-nowrap">
+                        {(row.jumlah_pinjaman > 0 || row.sisa_pinjaman > 0) && row.tenor > 0 ? `${row.tenor} bln` : '-'}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-red-600 whitespace-nowrap">
+                        {formatRupiah(row.sisa_pinjaman)}
                       </td>
                     </tr>
                   ))}
                   {rows.length > 100 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-3 text-center text-gray-500 bg-gray-50">
+                      <td colSpan={12} className="px-4 py-3 text-center text-gray-500 bg-gray-50">
                         ... dan {rows.length - 100} baris lainnya
                       </td>
                     </tr>
