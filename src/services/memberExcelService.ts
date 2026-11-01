@@ -75,9 +75,29 @@ export const exportMemberTemplate = async () => {
   window.URL.revokeObjectURL(url);
 };
 
-const diffInMonths = (startDate: Date, endDate: Date) => {
-  return (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
+export const calculateExcelDatedifMonths = (
+  startDate: Date | string,
+  endDate: Date | string = new Date()
+): number => {
+  const start = typeof startDate === 'string' ? new Date(startDate) : startDate;
+  const end = typeof endDate === 'string' ? new Date(endDate) : endDate;
+
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    return 1;
+  }
+
+  let months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+
+  // Jika tanggal hari pada end belum mencapai tanggal hari pada start, kurangi 1 bulan (belum genap)
+  if (end.getDate() < start.getDate()) {
+    months--;
+  }
+
+  return Math.max(1, months);
 };
+
+// Backward-compatible alias
+export const diffInMonths = calculateExcelDatedifMonths;
 
 const parseDate = (val: any): string | null => {
   if (!val) return null;
