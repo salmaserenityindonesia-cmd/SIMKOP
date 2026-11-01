@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, Eye } from 'lucide-react';
 import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
+import { getSavingsComplianceAvailableYears } from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -11,6 +12,7 @@ const CURRENT_MONTH = new Date().getMonth();
 
 export default function ComplianceMatrix() {
   const [year, setYear] = useState(new Date().getFullYear().toString());
+  const [availableYears, setAvailableYears] = useState<number[]>([new Date().getFullYear()]);
   const [filterType, setFilterType] = useState('all');
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -21,6 +23,24 @@ export default function ComplianceMatrix() {
   const [loading, setLoading] = useState(true);
   const [selectedMember, setSelectedMember] = useState<{id: string, nrp: string, nama: string} | null>(null);
   const [totalSetoran, setTotalSetoran] = useState(0);
+
+  useEffect(() => {
+    const loadAvailableYears = async () => {
+      try {
+        const years = await getSavingsComplianceAvailableYears();
+        if (years && years.length > 0) {
+          setAvailableYears(years);
+          setYear(prev => {
+            const currentNum = parseInt(prev);
+            return years.includes(currentNum) ? prev : years[0].toString();
+          });
+        }
+      } catch (err) {
+        console.error('Error fetching savings compliance available years:', err);
+      }
+    };
+    loadAvailableYears();
+  }, []);
 
   useEffect(() => {
     const loadData = async () => {
@@ -202,10 +222,13 @@ export default function ComplianceMatrix() {
           <select 
             value={year}
             onChange={(e) => setYear(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+            className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none text-slate-800"
           >
-            <option value="2026">Tahun 2026</option>
-            <option value="2025">Tahun 2025</option>
+            {availableYears.map((yr) => (
+              <option key={yr} value={yr.toString()}>
+                Tahun {yr}
+              </option>
+            ))}
           </select>
 
           <select 
