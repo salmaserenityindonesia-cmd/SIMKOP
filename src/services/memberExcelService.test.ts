@@ -1157,6 +1157,329 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       const totalNominal = [pokokTx, wajibTx, belanjaTx, lebaranTx].reduce((sum, tx) => sum + (tx?.amount || 0), 0);
       expect(totalNominal).toBe(2810000);
     });
+
+    it('should send bank_account_number in member upsert, create loan with PINJ-MIGRASI-{nrp}, active status, and matching schedules and repayments', async () => {
+      let upsertedMemberPayload: any = null;
+      let insertedLoanPayload: any = null;
+      let insertedSchedulesPayload: any[] = [];
+      let insertedRepaymentsPayload: any[] = [];
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', name: 'Simpanan Pokok' },
+                { id: 'dt-wajib', name: 'Simpanan Wajib' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-pinj-reg', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockImplementation((payload) => {
+              upsertedMemberPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'member-full-flow-id' }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation(() => ({
+                single: vi.fn().mockResolvedValue({ data: { id: 'md-id' }, error: null }),
+                then: (resolve: any) => resolve({ data: [], error: null }),
+              })),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue(Promise.resolve({ error: null })),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedLoanPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'new-migrated-loan-id' }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedSchedulesPayload = payload;
+              // Return simulated inserted schedules with generated IDs
+              const returnedData = payload.map((s: any, idx: number) => ({
+                ...s,
+                id: `schedule-uuid-${idx + 1}`,
+              }));
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: returnedData,
+                  error: null,
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedRepaymentsPayload = payload;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+        };
+      });
+
+      const parseResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '12345678',
+            nama: 'Budi Santoso',
+            pangkat: 'Aipda',
+            bank_account_number: '0123456789',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2023-01-01',
+            jumlah_simpanan_pokok: 0,
+            jumlah_simpanan_wajib: 0,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+            jumlah_pinjaman: 12000000,
+            tgl_awal_pinjaman: '2023-06-15',
+            tenor: 12,
+            sisa_pinjaman: 4000000,
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 0,
+            belanja_per_bulan: 0,
+            lebaran_per_bulan: 0,
+            n_bulan_pinjaman: 1,
+            sudah_diangsur: 8000000,
+            angsuran_lampau_per_bulan: 1000000,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(parseResult);
+
+      // 1. Verify bank_account_number in anggota upsert
+      expect(upsertedMemberPayload).toBeDefined();
+      expect(upsertedMemberPayload.nrp).toBe('12345678');
+      expect(upsertedMemberPayload.bank_account_number).toBe('0123456789');
+
+      // 2. Verify loan creation with PINJ-MIGRASI-{nrp} and active status
+      expect(insertedLoanPayload).toBeDefined();
+      expect(insertedLoanPayload.loan_number).toBe('PINJ-MIGRASI-12345678');
+      expect(insertedLoanPayload.member_id).toBe('member-full-flow-id');
+      expect(insertedLoanPayload.loan_type_id).toBe('lt-pinj-reg');
+      expect(insertedLoanPayload.principal_amount).toBe(12000000);
+      expect(insertedLoanPayload.agreed_tenor_months).toBe(12);
+      expect(insertedLoanPayload.status).toBe('active'); // sisa_pinjaman > 0
+
+      // 3. Verify schedules inserted
+      expect(insertedSchedulesPayload).toHaveLength(12);
+      const paidScheds = insertedSchedulesPayload.filter((s) => s.status === 'paid');
+      const unpaidScheds = insertedSchedulesPayload.filter((s) => s.status === 'unpaid');
+      expect(paidScheds).toHaveLength(8); // 8 million paid out of 12 million
+      expect(unpaidScheds).toHaveLength(4); // 4 million remaining
+
+      // 4. Verify loan repayments generated for paid schedules
+      expect(insertedRepaymentsPayload).toHaveLength(8);
+      for (const rep of insertedRepaymentsPayload) {
+        expect(rep.loan_id).toBe('new-migrated-loan-id');
+        expect(rep.payment_method).toBe('migration');
+        expect(rep.notes).toBe('Migrasi Angsuran Lampau');
+        expect(rep.amount_paid).toBe(1000000);
+        expect(rep.schedule_id).toBeDefined();
+      }
+    });
+
+    it('should set loan status to completed when sisa_pinjaman is 0 and generate repayments for all schedules', async () => {
+      let insertedLoanPayload: any = null;
+      let insertedSchedulesPayload: any[] = [];
+      let insertedRepaymentsPayload: any[] = [];
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-pinj-reg', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'member-fully-paid-id' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation(() => ({
+                single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                then: (resolve: any) => resolve({ data: [], error: null }),
+              })),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue(Promise.resolve({ error: null })),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue(Promise.resolve({ error: null })),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedLoanPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'completed-loan-id' }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue(Promise.resolve({ error: null })),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedSchedulesPayload = payload;
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: payload.map((s: any, idx: number) => ({ ...s, id: `sch-comp-${idx}` })),
+                  error: null,
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue(Promise.resolve({ error: null })),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedRepaymentsPayload = payload;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+        };
+      });
+
+      const parseResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '87654321',
+            nama: 'Siti Aminah',
+            pangkat: 'Bripda',
+            bank_account_number: '9876543210',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2023-01-01',
+            jumlah_simpanan_pokok: 0,
+            jumlah_simpanan_wajib: 0,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+            jumlah_pinjaman: 6000000,
+            tgl_awal_pinjaman: '2023-01-10',
+            tenor: 6,
+            sisa_pinjaman: 0, // Fully paid!
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 0,
+            belanja_per_bulan: 0,
+            lebaran_per_bulan: 0,
+            n_bulan_pinjaman: 1,
+            sudah_diangsur: 6000000,
+            angsuran_lampau_per_bulan: 1000000,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(parseResult);
+
+      // Verify status is completed
+      expect(insertedLoanPayload.status).toBe('completed');
+      expect(insertedLoanPayload.loan_number).toBe('PINJ-MIGRASI-87654321');
+
+      // Verify all schedules are paid
+      expect(insertedSchedulesPayload).toHaveLength(6);
+      expect(insertedSchedulesPayload.every((s) => s.status === 'paid')).toBe(true);
+
+      // Verify repayments created for all 6 schedules
+      expect(insertedRepaymentsPayload).toHaveLength(6);
+    });
   });
 });
 

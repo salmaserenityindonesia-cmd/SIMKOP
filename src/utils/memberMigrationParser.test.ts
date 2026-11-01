@@ -86,6 +86,80 @@ describe('memberMigrationParser - generateMigrationLoanSchedules', () => {
     expect(totalRemaining).toBe(6000000);
   });
 
+  it('handles partially paid loan with clean installments (e.g. 12.000.000 tenor 12 sisa 5.000.000)', () => {
+    const principal = 12000000;
+    const tenor = 12;
+    const remainingBalance = 5000000;
+    const schedules = generateMigrationLoanSchedules(principal, tenor, remainingBalance, '2023-01-01');
+
+    expect(schedules).toHaveLength(12);
+
+    // 7 installments paid (7.000.000)
+    for (let i = 0; i < 7; i++) {
+      expect(schedules[i].status).toBe('paid');
+      expect(schedules[i].paid_amount).toBe(1000000);
+      expect(schedules[i].target_amount).toBe(1000000);
+    }
+
+    // 5 installments unpaid (5.000.000)
+    for (let i = 7; i < 12; i++) {
+      expect(schedules[i].status).toBe('unpaid');
+      expect(schedules[i].paid_amount).toBe(0);
+      expect(schedules[i].target_amount).toBe(1000000);
+    }
+
+    const totalUnpaid = schedules.reduce((sum, s) => sum + (s.target_amount - s.paid_amount), 0);
+    expect(totalUnpaid).toBe(5000000);
+
+    const hasPartial = schedules.some(s => s.status === 'partial');
+    expect(hasPartial).toBe(false);
+  });
+
+  it('handles loan with uneven remainder producing exactly one partial schedule', () => {
+    const principal = 10000000;
+    const tenor = 10; // 1.000.000 per month
+    const remainingBalance = 4500000; // paid = 5.500.000 -> 5 paid + 1 partial of 500.000 + 4 unpaid
+    const schedules = generateMigrationLoanSchedules(principal, tenor, remainingBalance, '2023-01-01');
+
+    expect(schedules).toHaveLength(10);
+
+    // First 5 periods: paid in full
+    for (let i = 0; i < 5; i++) {
+      expect(schedules[i].status).toBe('paid');
+      expect(schedules[i].paid_amount).toBe(1000000);
+    }
+
+    // Period 6: partial (paid 500.000, target 1.000.000)
+    expect(schedules[5].period_number).toBe(6);
+    expect(schedules[5].status).toBe('partial');
+    expect(schedules[5].paid_amount).toBe(500000);
+    expect(schedules[5].target_amount).toBe(1000000);
+
+    // Remaining periods 7 to 10: unpaid
+    for (let i = 6; i < 10; i++) {
+      expect(schedules[i].status).toBe('unpaid');
+      expect(schedules[i].paid_amount).toBe(0);
+    }
+
+    const totalUnpaid = schedules.reduce((sum, s) => sum + (s.target_amount - s.paid_amount), 0);
+    expect(totalUnpaid).toBe(4500000);
+  });
+
+  it('absorbs rounding difference on the last period so sum of targets equals principal', () => {
+    const principal = 10000000;
+    const tenor = 3; // 10.000.000 / 3 = 3.333.333 each month, last period gets 3.333.334
+    const remainingBalance = 10000000;
+    const schedules = generateMigrationLoanSchedules(principal, tenor, remainingBalance, '2023-01-01');
+
+    expect(schedules).toHaveLength(3);
+    expect(schedules[0].target_amount).toBe(3333333);
+    expect(schedules[1].target_amount).toBe(3333333);
+    expect(schedules[2].target_amount).toBe(3333334);
+
+    const sumTarget = schedules.reduce((sum, s) => sum + s.target_amount, 0);
+    expect(sumTarget).toBe(principal);
+  });
+
   it('clamps remaining balance when greater than principal or negative', () => {
     // Greater than principal -> clamped to principal (all unpaid)
     const schedulesOver = generateMigrationLoanSchedules(1000000, 4, 1500000);
@@ -137,6 +211,45 @@ describe('memberMigrationParser - sanitizeMigrationLoanRow', () => {
     expect(res.tgl_awal_pinjaman).toBe('2023-05-10');
     expect(res.tenor).toBe(12);
     expect(res.sisa_pinjaman).toBe(5000000); // capped
+  });
+
+  it('handles edge cases: negative values, tenor 0, and formatted string currencies', () => {
+    const resNeg = sanitizeMigrationLoanRow({
+      bank_account_number: '9999',
+      jumlah_pinjaman: -5000000,
+      tgl_awal_pinjaman: '2023-01-01',
+      tenor: -10,
+      sisa_pinjaman: -1000000,
+    });
+
+    expect(resNeg.jumlah_pinjaman).toBe(0);
+    expect(resNeg.tenor).toBe(0);
+    expect(resNeg.sisa_pinjaman).toBe(0);
+
+    const resTenorZero = sanitizeMigrationLoanRow({
+      bank_account_number: '1234',
+      jumlah_pinjaman: 5000000,
+      tgl_awal_pinjaman: '2023-01-01',
+      tenor: 0,
+      sisa_pinjaman: 5000000,
+    });
+
+    expect(resTenorZero.jumlah_pinjaman).toBe(5000000);
+    expect(resTenorZero.tenor).toBe(0);
+    expect(resTenorZero.sisa_pinjaman).toBe(5000000);
+
+    const resFormatted = sanitizeMigrationLoanRow({
+      bank_account_number: '  123-456-789  ',
+      jumlah_pinjaman: 'Rp. 15.000.000,00',
+      tgl_awal_pinjaman: '2023-03-15',
+      tenor: '24 bulan',
+      sisa_pinjaman: 'Rp 7.500.000',
+    });
+
+    expect(resFormatted.bank_account_number).toBe('123-456-789');
+    expect(resFormatted.jumlah_pinjaman).toBe(15000000);
+    expect(resFormatted.tenor).toBe(24);
+    expect(resFormatted.sisa_pinjaman).toBe(7500000);
   });
 
   it('sanitizes bank account number properly', () => {
