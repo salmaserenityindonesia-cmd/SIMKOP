@@ -107,11 +107,48 @@ const parseDate = (val: any): string | null => {
   return null;
 };
 
-const parseNumber = (val: any): number => {
-  if (!val) return 0;
-  const num = Number(val);
-  return isNaN(num) ? 0 : num;
+export const parseAmount = (val: unknown): number => {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : Math.max(0, val);
+  if (typeof val === 'string') {
+    let str = val.trim();
+    if (!str) return 0;
+
+    // Bersihkan karakter pemisah ribuan dan desimal
+    if (str.includes('.') && str.includes(',')) {
+      const lastDot = str.lastIndexOf('.');
+      const lastComma = str.lastIndexOf(',');
+      if (lastDot < lastComma) {
+        // Format Indo: 1.500.000,00 -> titik ribuan, koma desimal
+        str = str.replace(/\./g, '').replace(',', '.');
+      } else {
+        // Format US: 1,500,000.00 -> koma ribuan, titik desimal
+        str = str.replace(/,/g, '');
+      }
+    } else if (str.includes('.')) {
+      // Deteksi format ribuan bertitik seperti "2.000.000" atau "50.000"
+      const parts = str.split('.');
+      if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+        str = str.replace(/\./g, '');
+      }
+    } else if (str.includes(',')) {
+      // Deteksi format ribuan berkoma seperti "2,000,000" atau desimal koma "50000,50"
+      const parts = str.split(',');
+      if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+        str = str.replace(/,/g, '');
+      } else {
+        str = str.replace(',', '.');
+      }
+    }
+
+    const cleaned = str.replace(/[^0-9.-]+/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : Math.max(0, num);
+  }
+  return 0;
 };
+
+export const parseNumber = parseAmount;
 
 export const parseMemberUpload = async (file: File): Promise<MemberParseResult> => {
   let buffer: ArrayBuffer;
@@ -180,10 +217,10 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     }
 
     const tgl_awal_anggota = parseDate(getVal('tgl_awal_anggota'));
-    const jumlah_simpanan_pokok = parseNumber(getVal('jumlah_simpanan_pokok'));
-    const jumlah_simpanan_wajib = parseNumber(getVal('jumlah_simpanan_wajib'));
-    const jumlah_simpanan_belanja = parseNumber(getVal('jumlah_simpanan_belanja'));
-    const jumlah_simpanan_lebaran = parseNumber(getVal('jumlah_simpanan_lebaran'));
+    const jumlah_simpanan_pokok = parseAmount(getVal('jumlah_simpanan_pokok'));
+    const jumlah_simpanan_wajib = parseAmount(getVal('jumlah_simpanan_wajib'));
+    const jumlah_simpanan_belanja = parseAmount(getVal('jumlah_simpanan_belanja'));
+    const jumlah_simpanan_lebaran = parseAmount(getVal('jumlah_simpanan_lebaran'));
 
     // Hilangkan rumus pembagian bulanan simpanan wajib: murni As-Is apa adanya dari Excel
     const wajib_per_bulan = jumlah_simpanan_wajib;
@@ -191,15 +228,15 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     const lebaran_per_bulan = jumlah_simpanan_lebaran;
     const n_bulan_simpanan = 1;
 
-    const jumlah_pinjaman = parseNumber(getVal('jumlah_pinjaman'));
+    const jumlah_pinjaman = parseAmount(getVal('jumlah_pinjaman'));
     const rawTglPinj = getVal('tgl_awal_pinjaman');
     let tgl_awal_pinjaman: string | null = null;
     if (rawTglPinj !== null && rawTglPinj !== undefined) {
       const str = rawTglPinj instanceof Date ? rawTglPinj.toISOString().split('T')[0] : String(rawTglPinj).trim();
       tgl_awal_pinjaman = str.length > 0 ? str : null;
     }
-    const tenor = parseNumber(getVal('tenor'));
-    const sisa_pinjaman = parseNumber(getVal('sisa_pinjaman'));
+    const tenor = Math.max(0, Math.floor(parseAmount(getVal('tenor'))));
+    const sisa_pinjaman = parseAmount(getVal('sisa_pinjaman'));
 
     let n_bulan_pinjaman = 1;
     let sudah_diangsur = 0;

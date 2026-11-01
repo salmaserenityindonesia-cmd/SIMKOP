@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ExcelJS from 'exceljs';
-import { calculateExcelDatedifMonths, parseMemberUpload, executeMigration, MemberParseResult } from './memberExcelService';
+import { calculateExcelDatedifMonths, parseMemberUpload, executeMigration, MemberParseResult, parseAmount, parseNumber } from './memberExcelService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -41,6 +41,46 @@ describe('calculateExcelDatedifMonths (Excel DATEDIF "m")', () => {
 
   it('should return 1 month when difference is 0 months', () => {
     expect(calculateExcelDatedifMonths('2026-11-01', '2026-11-05')).toBe(1);
+  });
+});
+
+describe('parseAmount & parseNumber', () => {
+  it('should handle pure numbers correctly', () => {
+    expect(parseAmount(1000000)).toBe(1000000);
+    expect(parseAmount(0)).toBe(0);
+    expect(parseAmount(-500)).toBe(0); // non-negative
+    expect(parseAmount(NaN)).toBe(0);
+  });
+
+  it('should handle Indonesian thousand dot format', () => {
+    expect(parseAmount('2.000.000')).toBe(2000000);
+    expect(parseAmount('50.000')).toBe(50000);
+    expect(parseAmount('Rp 2.000.000')).toBe(2000000);
+    expect(parseAmount('Rp. 50.000')).toBe(50000);
+  });
+
+  it('should handle Indonesian decimal comma and combined format', () => {
+    expect(parseAmount('2.000.000,00')).toBe(2000000);
+    expect(parseAmount('50000,50')).toBe(50000.5);
+    expect(parseAmount('Rp 1.500.000,75')).toBe(1500000.75);
+  });
+
+  it('should handle US thousand comma format', () => {
+    expect(parseAmount('2,000,000')).toBe(2000000);
+    expect(parseAmount('1,500,000.00')).toBe(1500000);
+  });
+
+  it('should handle null, undefined, empty, and non-numeric strings', () => {
+    expect(parseAmount(null)).toBe(0);
+    expect(parseAmount(undefined)).toBe(0);
+    expect(parseAmount('')).toBe(0);
+    expect(parseAmount('   ')).toBe(0);
+    expect(parseAmount('invalid')).toBe(0);
+  });
+
+  it('parseNumber should behave identically to parseAmount', () => {
+    expect(parseNumber('2.500.000')).toBe(2500000);
+    expect(parseNumber(1200000)).toBe(1200000);
   });
 });
 
@@ -163,6 +203,28 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
     expect(result.rows[1].tgl_awal_pinjaman).toBe('15');
     // Empty string converted to null
     expect(result.rows[2].tgl_awal_pinjaman).toBeNull();
+  });
+
+  it('should parse string formatted currency and tenor in excel cells gracefully', async () => {
+    const dataRows = [
+      ['88888', 'Bambang Format', 'Aipda', '888777', 'ACTIVE', '2023-01-01', 'Rp 100.000', '2.500.000', '1.000.000', '500.000', 'Rp 15.000.000', '2023-05-01', '24 bulan', '5.000.000'],
+    ];
+
+    const file = await createMockExcelFile(standardHeaders, dataRows);
+    const result = await parseMemberUpload(file);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.rows).toHaveLength(1);
+
+    const row = result.rows[0];
+    expect(row.jumlah_simpanan_pokok).toBe(100000);
+    expect(row.jumlah_simpanan_wajib).toBe(2500000);
+    expect(row.wajib_per_bulan).toBe(2500000);
+    expect(row.jumlah_simpanan_belanja).toBe(1000000);
+    expect(row.jumlah_simpanan_lebaran).toBe(500000);
+    expect(row.jumlah_pinjaman).toBe(15000000);
+    expect(row.tenor).toBe(24);
+    expect(row.sisa_pinjaman).toBe(5000000);
   });
 
   describe('executeMigration', () => {
