@@ -810,6 +810,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 47: Implementasi Filter Tahun Dinamis Berdasarkan Tunggakan Simpanan & Saldo Simpanan Lebaran Menggantung
+**Status:** 🔄 In Progress
+**Objective:** Memperbarui dropdown pemilih tahun pada Matriks Tracking Pembayaran Simpanan Tahunan (`src/pages/admin/ComplianceMatrix.tsx`) agar diawali secara dinamis dari tahun paling lampau yang masih memiliki kewajiban simpanan menggantung (simpanan pokok belum lunas, simpanan lebaran belum dicairkan penuh, atau simpanan wajib menunggak oleh anggota aktif) hingga tahun berjalan, dan otomatis bergeser maju saat kewajiban telah terselesaikan.
+**Depends on:** Phase 4, Phase 8, Phase 46
+
+**Plans:**
+- [ ] Plan 47.1: Wave 1 - Dynamic Year Range Resolver Service & Unit Testing
+- [ ] Plan 47.2: Wave 2 - Bind Dynamic Year Selector in ComplianceMatrix.tsx
+- [ ] Plan 47.3: Wave 3 - End-to-End Component Testing, Full Test Suite, Static Verification & Build Check
+
+**Deliverables:**
+- Service query `getSavingsComplianceAvailableYears()` di `src/services/complianceService.ts`
+- State dan dropdown dinamis `availableYears` terhubung di `src/pages/admin/ComplianceMatrix.tsx`
+- Suite unit test `src/services/complianceService.test.ts` dan pengujian komponen `src/pages/admin/ComplianceMatrix.test.tsx`
+- Verifikasi build produksi Vite dan suite pengujian Vitest lolos 100%
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -847,6 +865,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 31 | Phase 44 | Implementasi Impor Pinjaman Migrasi, Jadwal Angsuran & Rekonsiliasi Sisa Hutang |
 | 32 | Phase 45 | Implementasi Ekspor Excel & PDF 14 Kolom Komprehensif pada Manajemen Anggota |
 | 33 | Phase 46 | Implementasi Opsi Tahun Dinamis Berdasarkan Tahun Pinjaman Belum Lunas Terlama pada Matriks Pinjaman |
+| 34 | Phase 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung |
 
 ---
 
@@ -900,6 +919,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 44 | Impor Pinjaman Migrasi, Jadwal & Rekonsiliasi Hutang | ✅ | 3/3 | 100% |
 | 45 | Ekspor Excel & PDF 14 Kolom Komprehensif Anggota | ✅ | 4/4 | 100% |
 | 46 | Opsi Tahun Dinamis Matriks Pinjaman | ✅ | 3/3 | 100% |
+| 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung | 🔄 | 0/3 | 0% |
 
 ---
 
@@ -953,5 +973,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 44 | 2026-11-01 | 2026-11-01 | 1 day |
 | 45 | 2026-11-01 | 2026-11-01 | 1 day |
 | 46 | 2026-11-01 | 2026-11-01 | 1 day |
+| 47 | 2026-11-01 | — | In Progress |
 
 
