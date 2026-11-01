@@ -1,6 +1,9 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
-import { sanitizeMigrationLoanRow } from '../utils/memberMigrationParser';
+import {
+  sanitizeMigrationLoanRow,
+  generateMigrationLoanSchedules,
+} from '../utils/memberMigrationParser';
 
 export interface MigrationRowData {
   nrp: string;
@@ -423,9 +426,9 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
         }
       }
 
-      // C. Setup Loans
+      // C. Setup Loans (Atomic Clean Overwrite & Synchronization)
       if (row.jumlah_pinjaman > 0 && loanTypeId) {
-        // Bersihkan pinjaman migrasi aktif lama (jika ada) sebelum membuat pinjaman migrasi baru
+        // Step 1: Clean Overwrite (Idempotency)
         const { data: existingLoans, error: errFetchLoans } = await supabase
           .from('loans')
           .select('id, loan_number, notes, status')
@@ -436,15 +439,17 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
         }
 
         const migLoanIds = (existingLoans || [])
-          .filter((l: any) =>
-            (l.status === 'active' || !l.status) &&
-            ((l.loan_number && typeof l.loan_number === 'string' && l.loan_number.startsWith('LOAN-MIG-')) ||
-             (l.notes && typeof l.notes === 'string' && l.notes.includes('Migrasi Histori Pinjaman')))
-          )
+          .filter((l: any) => {
+            const loanNum = typeof l.loan_number === 'string' ? l.loan_number.toUpperCase() : '';
+            const notes = typeof l.notes === 'string' ? l.notes.toUpperCase() : '';
+            return loanNum.startsWith('PINJ-MIGRASI-') ||
+                   loanNum.startsWith('LOAN-MIG-') ||
+                   notes.includes('MIGRASI');
+          })
           .map((l: any) => l.id);
 
         if (migLoanIds.length > 0) {
-          // Hapus repayments terlebih dahulu (foreign key ke loan_schedules / loans)
+          // 1. Hapus repayments terlebih dahulu (FK ke loan_schedules & loans)
           const { error: errDelRepay } = await supabase
             .from('loan_repayments')
             .delete()
@@ -453,7 +458,7 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
             console.warn(`Gagal membersihkan repayment pinjaman migrasi lama member ${row.nrp}:`, errDelRepay.message);
           }
 
-          // Hapus schedules (foreign key ke loans)
+          // 2. Hapus schedules (FK ke loans)
           const { error: errDelSched } = await supabase
             .from('loan_schedules')
             .delete()
@@ -462,7 +467,7 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
             console.warn(`Gagal membersihkan jadwal pinjaman migrasi lama member ${row.nrp}:`, errDelSched.message);
           }
 
-          // Hapus pinjaman migrasi lama
+          // 3. Hapus pinjaman migrasi lama
           const { error: errDelLoan } = await supabase
             .from('loans')
             .delete()
@@ -473,99 +478,97 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
         }
 
         let isTglPinjValid = false;
-        let disbursedDate = new Date();
+        let validDisbursedDate = new Date();
 
-        if (row.tgl_awal_pinjaman && !/^\d+$/.test(row.tgl_awal_pinjaman)) {
+        if (row.tgl_awal_pinjaman && !/^\d+$/.test(row.tgl_awal_pinjaman.trim())) {
           const parsed = new Date(row.tgl_awal_pinjaman);
           if (!isNaN(parsed.getTime())) {
             isTglPinjValid = true;
-            disbursedDate = parsed;
+            validDisbursedDate = parsed;
           }
         }
 
-        const disbursedAt = isTglPinjValid
-          ? disbursedDate.toISOString()
-          : new Date().toISOString();
-
         const loanNotes = isTglPinjValid
-          ? 'Migrasi Histori Pinjaman'
-          : `Migrasi Histori Pinjaman (Nilai asli tgl/siklus Excel: "${row.tgl_awal_pinjaman || '-'}")`;
+          ? `Migrasi Pinjaman Awal (Sisa: Rp ${row.sisa_pinjaman})`
+          : `Migrasi Pinjaman Awal (Sisa: Rp ${row.sisa_pinjaman}) (Nilai asli tgl/siklus Excel: "${row.tgl_awal_pinjaman || '-'}")`;
 
         const tenor = row.tenor > 0 ? row.tenor : 1;
-        const plannedInstallment = Math.floor(row.jumlah_pinjaman / tenor);
+        const monthlyInstallment = Math.round(row.jumlah_pinjaman / tenor);
 
+        // Step 2: Generate Schedules
+        const generatedSchedules = generateMigrationLoanSchedules(
+          row.jumlah_pinjaman,
+          tenor,
+          row.sisa_pinjaman,
+          validDisbursedDate
+        );
+
+        // Step 3: Insert Loan Record
         const loanPayload = {
-          loan_number: `LOAN-MIG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          loan_number: `PINJ-MIGRASI-${row.nrp}`,
           member_id: memberId,
           loan_type_id: loanTypeId,
           principal_amount: row.jumlah_pinjaman,
-          agreed_tenor_months: tenor,
-          planned_installment_amount: plannedInstallment,
           amount: row.jumlah_pinjaman,
+          agreed_tenor_months: tenor,
           tenor: tenor,
-          monthly_target: plannedInstallment,
-          status: 'active',
-          disbursed_at: disbursedAt,
+          planned_installment_amount: monthlyInstallment,
+          monthly_target: monthlyInstallment,
+          disbursed_at: validDisbursedDate.toISOString(),
+          status: row.sisa_pinjaman <= 0 ? 'completed' : 'active',
           notes: loanNotes
         };
 
-        const { data: newLoan } = await supabase.from('loans').insert(loanPayload).select('id').single();
-        if (newLoan) {
-          // Generate ALL schedules
-          const scheds = [];
-          let lDate = isTglPinjValid ? disbursedDate : new Date();
-          const targetPerMonth = plannedInstallment;
+        const { data: newLoan, error: errLoan } = await supabase
+          .from('loans')
+          .insert(loanPayload)
+          .select('id')
+          .single();
 
-          let remainingPaidAmt = row.sudah_diangsur;
+        if (errLoan || !newLoan) {
+          console.error(`Gagal membuat data pinjaman migrasi member ${row.nrp}:`, errLoan);
+          continue;
+        }
 
-          for (let i = 0; i < tenor; i++) {
-            const d = new Date(lDate);
-            const sm = d.getMonth();
-            d.setMonth(sm + i + 1);
-            if (d.getMonth() !== (sm + i + 1) % 12) d.setDate(0);
+        // Step 4: Insert Schedules & Repayments
+        if (generatedSchedules.length > 0) {
+          const schedsToInsert = generatedSchedules.map(sched => ({
+            loan_id: newLoan.id,
+            period_number: sched.period_number,
+            due_date: sched.due_date,
+            target_amount: sched.target_amount,
+            paid_amount: sched.paid_amount,
+            status: sched.status
+          }));
 
-            let paidAmt = 0;
-            let status = 'unpaid';
+          const { data: insertedScheds, error: errSched } = await supabase
+            .from('loan_schedules')
+            .insert(schedsToInsert)
+            .select('*');
 
-            if (remainingPaidAmt >= targetPerMonth) {
-              paidAmt = targetPerMonth;
-              status = 'paid';
-              remainingPaidAmt -= targetPerMonth;
-            } else if (remainingPaidAmt > 0) {
-              paidAmt = remainingPaidAmt;
-              status = 'partial';
-              remainingPaidAmt = 0;
-            }
-
-            scheds.push({
-              loan_id: newLoan.id,
-              period_number: i + 1,
-              due_date: d.toISOString().split('T')[0],
-              target_amount: targetPerMonth,
-              paid_amount: paidAmt,
-              status: status
-            });
+          if (errSched) {
+            console.warn(`Gagal menyimpan jadwal pinjaman member ${row.nrp}:`, errSched.message);
           }
 
-          if (scheds.length > 0) {
-            const { data: insertedScheds } = await supabase.from('loan_schedules').insert(scheds).select('*');
-
-            // Insert Repayments untuk yang sudah diangsur
-            if (row.sudah_diangsur > 0 && insertedScheds) {
-              const repays = [];
-              for (const sched of insertedScheds) {
-                if (sched.paid_amount > 0) {
-                  repays.push({
-                    loan_id: newLoan.id,
-                    schedule_id: sched.id,
-                    amount_paid: sched.paid_amount,
-                    payment_method: 'migration',
-                    payment_date: sched.due_date,
-                    notes: 'Migrasi Angsuran Lampau'
-                  });
-                }
+          if (insertedScheds && insertedScheds.length > 0) {
+            const repays = [];
+            for (const sched of insertedScheds) {
+              if (sched.paid_amount > 0) {
+                repays.push({
+                  loan_id: newLoan.id,
+                  schedule_id: sched.id,
+                  amount_paid: sched.paid_amount,
+                  payment_method: 'migration',
+                  payment_date: sched.due_date,
+                  notes: 'Migrasi Angsuran Lampau'
+                });
               }
-              if (repays.length > 0) await supabase.from('loan_repayments').insert(repays);
+            }
+            if (repays.length > 0) {
+              const { error: errRepay } = await supabase.from('loan_repayments').insert(repays);
+              if (errRepay) {
+                console.warn(`Gagal menyimpan mutasi cicilan migrasi member ${row.nrp}:`, errRepay.message);
+              }
             }
           }
         }

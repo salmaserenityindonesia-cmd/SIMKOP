@@ -580,7 +580,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
 
       // Verify loan notes for valid date format
       expect(insertedLoanMap).toHaveLength(1);
-      expect(insertedLoanMap[0].notes).toBe('Migrasi Histori Pinjaman');
+      expect(insertedLoanMap[0].notes).toBe('Migrasi Pinjaman Awal (Sisa: Rp 6000000)');
     });
 
     it('should execute idempotent overwrite: cleaning old migration transactions and loans before inserting new records', async () => {
