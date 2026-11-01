@@ -8,10 +8,55 @@ import AdminLayout from '../../components/layout/AdminLayout';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 
-export const LoanMatrix: React.FC = () => {
+export interface LoanMatrixProps {
+  initialYear?: number;
+  initialAvailableYears?: number[];
+  onYearChange?: (year: number) => void;
+}
+
+export const loadAvailableYearsData = async (
+  setAvailableYears: (years: number[]) => void,
+  setYear: (updater: (prev: number) => number) => void
+): Promise<number[]> => {
+  try {
+    const years = await getLoanMatrixAvailableYears();
+    if (years.length > 0) {
+      setAvailableYears(years);
+      setYear(prev => (years.includes(prev) ? prev : years[0]));
+    }
+    return years;
+  } catch (err) {
+    console.error('Error fetching available years:', err);
+    return [];
+  }
+};
+
+export const fetchLoanMatrixData = async (
+  targetYear: number,
+  setLoading: (l: boolean) => void,
+  setData: (d: LoanMatrixSummary | null) => void
+): Promise<LoanMatrixSummary | null> => {
+  setLoading(true);
+  try {
+    const result = await getLoanMatrix(targetYear);
+    setData(result);
+    return result;
+  } catch (error) {
+    console.error('Error fetching loan matrix', error);
+    return null;
+  } finally {
+    setLoading(false);
+  }
+};
+
+export const LoanMatrix: React.FC<LoanMatrixProps> = ({
+  initialYear,
+  initialAvailableYears,
+  onYearChange,
+}) => {
   const currentYear = new Date().getFullYear();
-  const [year, setYear] = useState<number>(currentYear);
-  const [availableYears, setAvailableYears] = useState<number[]>([currentYear]);
+  const [year, setYear] = useState<number>(initialYear ?? currentYear);
+  const [availableYears, setAvailableYears] = useState<number[]>(initialAvailableYears ?? [currentYear]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
@@ -22,34 +67,16 @@ export const LoanMatrix: React.FC = () => {
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
 
   useEffect(() => {
-    const loadAvailableYears = async () => {
-      try {
-        const years = await getLoanMatrixAvailableYears();
-        if (years.length > 0) {
-          setAvailableYears(years);
-          setYear(prev => (years.includes(prev) ? prev : years[0]));
-        }
-      } catch (err) {
-        console.error('Error fetching available years:', err);
-      }
-    };
-    loadAvailableYears();
+    loadAvailableYearsData(setAvailableYears, setYear);
   }, []);
 
   useEffect(() => {
-    fetchData();
+    fetchLoanMatrixData(year, setLoading, setData);
   }, [year]);
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const result = await getLoanMatrix(year);
-      setData(result);
-    } catch (error) {
-      console.error('Error fetching loan matrix', error);
-    } finally {
-      setLoading(false);
-    }
+  const handleYearChange = (newYear: number) => {
+    setYear(newYear);
+    onYearChange?.(newYear);
   };
 
   const filteredMembers = useMemo(() => {
@@ -220,7 +247,7 @@ export const LoanMatrix: React.FC = () => {
           <span className="text-sm text-slate-600">Tahun:</span>
           <select 
             value={year}
-            onChange={e => setYear(Number(e.target.value))}
+            onChange={e => handleYearChange(Number(e.target.value))}
             className="border border-slate-300 rounded-lg py-2 px-3 font-semibold focus:ring-2 focus:ring-emerald-500"
           >
             {availableYears.map(y => (
