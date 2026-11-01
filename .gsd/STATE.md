@@ -1,7 +1,7 @@
 ## Current Position
-- **Phase**: 41 (Refactor Aksi Anggota: Hapus Delete & Detail Migrasi)
-- **Task**: All plans executed & verified
-- **Status**: Complete — ready for /verify 41
+- **Phase**: 42 (Impor Anggota: Saldo As-Is & Timpa Mutlak)
+- **Task**: Planning completed, ready for execution
+- **Status**: 📋 Planned (Phase 42 Plans 42.1, 42.2, 42.3 generated)
 
 ## Last Session Summary
 Phase 41 executed and verified:
@@ -10,7 +10,7 @@ Phase 41 executed and verified:
 - Plan 41.3: Added unit tests `ManajemenAnggota.test.tsx` and `MemberMigrationDetailModal.test.tsx`, full Vitest suite (25 test files, 236 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `787c2d96`, `f38bf017`).
 
 ## Next Steps
-Verify Phase 41 using `/verify 41` or proceed to next milestone/phase.
+Execute Phase 42: Kebijakan Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement Overwrite) (`/execute 42`).
 
 ## Blockers
 - None.
