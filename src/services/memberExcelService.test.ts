@@ -274,17 +274,26 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'member_deposits') {
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  single: vi.fn().mockResolvedValue({ data: { id: 'md-wajib-id' }, error: null }),
-                }),
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const sub: any = {
+                  eq: vi.fn().mockImplementation((col2: string, val2: string) => ({
+                    single: vi.fn().mockResolvedValue({ data: { id: 'md-wajib-id' }, error: null }),
+                  })),
+                  then: (resolve: any) => resolve({ data: [{ id: 'md-wajib-id' }], error: null }),
+                };
+                return sub;
               }),
-            }),
+            })),
           };
         }
         if (table === 'deposit_transactions') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockImplementation((payload) => {
               insertedTxMap.push(...(Array.isArray(payload) ? payload : [payload]));
               return Promise.resolve({ error: null });
@@ -293,6 +302,12 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loans') {
           return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
             insert: vi.fn().mockImplementation((payload) => {
               insertedLoanMap.push(payload);
               return {
@@ -305,6 +320,11 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loan_schedules') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockReturnValue({
               select: vi.fn().mockResolvedValue({
                 data: [{ id: 'sch-1', paid_amount: 1000000, due_date: '2026-11-01' }],
@@ -315,6 +335,11 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loan_repayments') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockResolvedValue({ error: null }),
           };
         }
@@ -413,17 +438,26 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'member_deposits') {
           return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockImplementation((col, val) => ({
-                eq: vi.fn().mockImplementation((col2, val2) => ({
-                  single: vi.fn().mockResolvedValue({ data: { id: `md-${val2}` }, error: null }),
-                })),
-              })),
-            }),
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const sub: any = {
+                  eq: vi.fn().mockImplementation((col2: string, val2: string) => ({
+                    single: vi.fn().mockResolvedValue({ data: { id: `md-${val2}` }, error: null }),
+                  })),
+                  then: (resolve: any) => resolve({ data: [{ id: 'md-dt-pokok' }, { id: 'md-dt-wajib' }, { id: 'md-dt-belanja' }, { id: 'md-dt-lebaran' }], error: null }),
+                };
+                return sub;
+              }),
+            })),
           };
         }
         if (table === 'deposit_transactions') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockImplementation((payload) => {
               insertedTxMap.push(...(Array.isArray(payload) ? payload : [payload]));
               return Promise.resolve({ error: null });
@@ -432,6 +466,12 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loans') {
           return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
             insert: vi.fn().mockImplementation((payload) => {
               insertedLoanMap.push(payload);
               return {
@@ -444,6 +484,11 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loan_schedules') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockReturnValue({
               select: vi.fn().mockResolvedValue({
                 data: [{ id: 'sch-1', paid_amount: 500000, due_date: '2023-07-01' }],
@@ -454,6 +499,11 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
         }
         if (table === 'loan_repayments') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockResolvedValue({ error: null }),
           };
         }
@@ -503,6 +553,214 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       // Verify loan notes for valid date format
       expect(insertedLoanMap).toHaveLength(1);
       expect(insertedLoanMap[0].notes).toBe('Migrasi Histori Pinjaman');
+    });
+
+    it('should execute idempotent overwrite: cleaning old migration transactions and loans before inserting new records', async () => {
+      const deletedTxsFilter: any[] = [];
+      const deletedLoansFilter: any[] = [];
+      const deletedSchedsFilter: any[] = [];
+      const deletedRepaysFilter: any[] = [];
+      const newlyInsertedTxs: any[] = [];
+      const newlyInsertedLoans: any[] = [];
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', name: 'Simpanan Pokok' },
+                { id: 'dt-wajib', name: 'Simpanan Wajib' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-default', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'member-reimport-id' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const sub: any = {
+                  eq: vi.fn().mockImplementation((col2: string, val2: string) => ({
+                    single: vi.fn().mockResolvedValue({ data: { id: `md-${val2}` }, error: null }),
+                  })),
+                  // When queried for all existing deposits for member
+                  then: (resolve: any) => resolve({
+                    data: [{ id: 'md-pokok-old' }, { id: 'md-wajib-old' }],
+                    error: null,
+                  }),
+                };
+                return sub;
+              }),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                deletedTxsFilter.push({ field, values });
+                return {
+                  in: vi.fn().mockImplementation((descField: string, descValues: any[]) => {
+                    deletedTxsFilter.push({ field: descField, values: descValues });
+                    return Promise.resolve({ error: null });
+                  }),
+                };
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              newlyInsertedTxs.push(...(Array.isArray(payload) ? payload : [payload]));
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'old-mig-loan-99',
+                    loan_number: 'LOAN-MIG-12345',
+                    notes: 'Migrasi Histori Pinjaman',
+                    status: 'active',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                deletedLoansFilter.push({ field, values });
+                return Promise.resolve({ error: null });
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload) => {
+              newlyInsertedLoans.push(payload);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'loan-reimport-id' }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                deletedSchedsFilter.push({ field, values });
+                return Promise.resolve({ error: null });
+              }),
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({
+                data: [{ id: 'sch-new', paid_amount: 1000000, due_date: '2026-12-01' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                deletedRepaysFilter.push({ field, values });
+                return Promise.resolve({ error: null });
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+        };
+      });
+
+      const reimportResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '99999',
+            nama: 'Re-import Member',
+            pangkat: 'Bripka',
+            bank_account_number: '999111',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2023-01-01',
+            jumlah_simpanan_pokok: 100000,
+            jumlah_simpanan_wajib: 3500000, // Nilai baru revisi
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+            jumlah_pinjaman: 8000000, // Nilai pinjaman baru
+            tgl_awal_pinjaman: '2023-05-01',
+            tenor: 10,
+            sisa_pinjaman: 4000000,
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 3500000,
+            belanja_per_bulan: 0,
+            lebaran_per_bulan: 0,
+            n_bulan_pinjaman: 1,
+            sudah_diangsur: 4000000,
+            angsuran_lampau_per_bulan: 4000000,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(reimportResult);
+
+      // Verify that old migration transactions were cleared first
+      expect(deletedTxsFilter).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'member_deposit_id',
+            values: ['md-pokok-old', 'md-wajib-old'],
+          }),
+          expect.objectContaining({
+            field: 'description',
+            values: expect.arrayContaining([
+              'Migrasi Saldo Awal (As-Is)',
+              'Migrasi Saldo Awal',
+              'One-Time Principal Deposit Migration',
+              'Historical Balance Migration',
+            ]),
+          }),
+        ])
+      );
+
+      // Verify that old migration loan, schedules, and repayments were cleared first
+      expect(deletedRepaysFilter).toEqual([{ field: 'loan_id', values: ['old-mig-loan-99'] }]);
+      expect(deletedSchedsFilter).toEqual([{ field: 'loan_id', values: ['old-mig-loan-99'] }]);
+      expect(deletedLoansFilter).toEqual([{ field: 'id', values: ['old-mig-loan-99'] }]);
+
+      // Verify new transactions inserted with pure revised excel amounts
+      expect(newlyInsertedTxs).toHaveLength(2); // pokok & wajib
+      expect(newlyInsertedTxs.find((tx) => tx.description === 'One-Time Principal Deposit Migration')?.amount).toBe(100000);
+      expect(newlyInsertedTxs.find((tx) => tx.description === 'Migrasi Saldo Awal (As-Is)')?.amount).toBe(3500000);
+
+      // Verify new loan was created with revised amount
+      expect(newlyInsertedLoans).toHaveLength(1);
+      expect(newlyInsertedLoans[0].principal_amount).toBe(8000000);
     });
   });
 });
