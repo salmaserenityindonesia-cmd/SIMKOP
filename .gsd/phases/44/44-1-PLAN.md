@@ -93,3 +93,4 @@ Membangun modul ekstraksi, sanitasi, dan generator jadwal amortisasi pinjaman mi
 - [ ] `generateMigrationLoanSchedules` menghasilkan jadwal amortisasi yang sisa hutangnya tepat sama dengan `remainingBalance`
 - [ ] Sanitasi kolom `bank_account_number`, `jumlah_pinjaman`, `tgl_awal_pinjaman`, `tenor`, dan `sisa_pinjaman` bekerja konsisten
 - [ ] Modal pratinjau migrasi menampilkan ringkasan data pinjaman dan baki sisa hutang
+

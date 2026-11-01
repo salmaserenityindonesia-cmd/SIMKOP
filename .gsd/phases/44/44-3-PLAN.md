@@ -78,3 +78,4 @@ Menulis unit test komprehensif untuk pengujian logika generator jadwal pinjaman 
 - [ ] Test suite `memberExcelService.test.ts` lulus 100% memvalidasi clean overwrite dan pembuatan jadwal
 - [ ] `npx vitest run` seluruh suite lulus 100%
 - [ ] `npm run build` menghasilkan exit code 0
+

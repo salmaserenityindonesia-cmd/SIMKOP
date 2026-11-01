@@ -108,3 +108,4 @@ Mengimplementasikan penyimpanan data pinjaman migrasi ke Supabase secara atomik 
 - [ ] Pinjaman migrasi tersimpan di `public.loans` dengan nomor format `PINJ-MIGRASI-${nrp}`
 - [ ] Rekonsiliasi jadwal tenor di `public.loan_schedules` mencerminkan angsuran yang lunas (`paid`), sebagian (`partial`), dan belum dibayar (`unpaid`)
 - [ ] Clean Overwrite menjamin re-import tidak menduplikasi baki hutang atau jadwal pinjaman
+
