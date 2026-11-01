@@ -70,3 +70,4 @@ Menulis pengujian komponen untuk `LoanMatrix.tsx` guna memverifikasi integrasi d
 - [ ] Seluruh unit test terkait lulus tanpa kegagalan
 - [ ] `npx tsc --noEmit` bersih tanpa kesalahan tipe
 - [ ] `npm run build` sukses dengan exit code 0
+

@@ -76,3 +76,4 @@ Menghubungkan fungsi `getLoanMatrixAvailableYears()` ke komponen halaman Matriks
 - [ ] Dropdown `<select>` me-render seluruh tahun dari `availableYears`
 - [ ] State `year` secara otomatis menyesuaikan jika nilai tahun saat ini di luar rentang `availableYears`
 - [ ] Pengubahan tahun pada dropdown memicu pembaruan data matriks secara reaktif
+

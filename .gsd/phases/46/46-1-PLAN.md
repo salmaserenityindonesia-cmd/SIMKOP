@@ -97,3 +97,4 @@ Membangun fungsi query pembantu `getLoanMatrixAvailableYears()` di `src/services
 - [ ] `getLoanMatrixAvailableYears()` mengembalikan rentang tahun dinamis dari pinjaman belum lunas tertua hingga jadwal terjauh
 - [ ] Fallback yang aman (`[currentYear]`) ketika tidak ada pinjaman aktif atau terjadi error query
 - [ ] Suite unit test Vitest mencakup semua skenario (tanpa pinjaman aktif, jadwal multi-tahun masa depan, fallback created_at, error network)
+
