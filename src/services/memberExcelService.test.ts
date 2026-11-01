@@ -78,9 +78,37 @@ describe('parseAmount & parseNumber', () => {
     expect(parseAmount('invalid')).toBe(0);
   });
 
+  it('should handle varied inputs including pure numbers, dots, Rp prefix "Rp 6.600.000", commas, and empty/null/undefined/spaces', () => {
+    // Pure numbers
+    expect(parseAmount(2000000)).toBe(2000000);
+    expect(parseAmount(6600000)).toBe(6600000);
+    expect(parseAmount(0)).toBe(0);
+
+    // String with Indonesian dot thousands
+    expect(parseAmount('2.000.000')).toBe(2000000);
+    expect(parseAmount('6.600.000')).toBe(6600000);
+
+    // String with Rp prefix
+    expect(parseAmount('Rp 6.600.000')).toBe(6600000);
+    expect(parseAmount('Rp 2.000.000')).toBe(2000000);
+    expect(parseAmount('Rp. 6.600.000')).toBe(6600000);
+
+    // String with comma
+    expect(parseAmount('6.600.000,00')).toBe(6600000);
+    expect(parseAmount('2,000,000')).toBe(2000000);
+    expect(parseAmount('50000,50')).toBe(50000.5);
+
+    // Null, undefined, spaces, empty string
+    expect(parseAmount(null)).toBe(0);
+    expect(parseAmount(undefined)).toBe(0);
+    expect(parseAmount('')).toBe(0);
+    expect(parseAmount('   ')).toBe(0);
+  });
+
   it('parseNumber should behave identically to parseAmount', () => {
     expect(parseNumber('2.500.000')).toBe(2500000);
     expect(parseNumber(1200000)).toBe(1200000);
+    expect(parseNumber('Rp 6.600.000')).toBe(6600000);
   });
 });
 
@@ -761,6 +789,217 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       // Verify new loan was created with revised amount
       expect(newlyInsertedLoans).toHaveLength(1);
       expect(newlyInsertedLoans[0].principal_amount).toBe(8000000);
+    });
+
+    it('should guarantee chronological sequence where old deposit mutations and loans are deleted before any new records are inserted', async () => {
+      const callTimeline: string[] = [];
+      const deletedTxDescriptions: string[][] = [];
+      const deletedTxDepositIds: string[][] = [];
+      const deletedLoanIds: string[][] = [];
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', name: 'Simpanan Pokok' },
+                { id: 'dt-wajib', name: 'Simpanan Wajib' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-default', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'member-seq-check' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                const sub: any = {
+                  eq: vi.fn().mockImplementation((col2: string, val2: string) => ({
+                    single: vi.fn().mockResolvedValue({ data: { id: `md-${val2}-seq` }, error: null }),
+                  })),
+                  then: (resolve: any) => resolve({
+                    data: [{ id: 'md-pokok-seq' }, { id: 'md-wajib-seq' }],
+                    error: null,
+                  }),
+                };
+                return sub;
+              }),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockImplementation(() => {
+              callTimeline.push('deposit_transactions.delete');
+              return {
+                in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                  if (field === 'member_deposit_id') deletedTxDepositIds.push(values);
+                  return {
+                    in: vi.fn().mockImplementation((descField: string, descValues: any[]) => {
+                      if (descField === 'description') deletedTxDescriptions.push(descValues);
+                      return Promise.resolve({ error: null });
+                    }),
+                  };
+                }),
+              };
+            }),
+            insert: vi.fn().mockImplementation(() => {
+              callTimeline.push('deposit_transactions.insert');
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'old-loan-to-delete',
+                    loan_number: 'LOAN-MIG-OLD',
+                    notes: 'Migrasi Histori Pinjaman',
+                    status: 'active',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+            delete: vi.fn().mockImplementation(() => {
+              callTimeline.push('loans.delete');
+              return {
+                in: vi.fn().mockImplementation((field: string, values: any[]) => {
+                  if (field === 'id') deletedLoanIds.push(values);
+                  return Promise.resolve({ error: null });
+                }),
+              };
+            }),
+            insert: vi.fn().mockImplementation(() => {
+              callTimeline.push('loans.insert');
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'new-loan-id' }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            delete: vi.fn().mockImplementation(() => {
+              callTimeline.push('loan_schedules.delete');
+              return {
+                in: vi.fn().mockResolvedValue({ error: null }),
+              };
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({
+                data: [{ id: 'sch-seq', paid_amount: 500000, due_date: '2026-12-01' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockImplementation(() => {
+              callTimeline.push('loan_repayments.delete');
+              return {
+                in: vi.fn().mockResolvedValue({ error: null }),
+              };
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+        };
+      });
+
+      const parseResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '12345',
+            nama: 'Sequence Test Member',
+            pangkat: 'Brigadir',
+            bank_account_number: '123999',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2024-01-01',
+            jumlah_simpanan_pokok: 100000,
+            jumlah_simpanan_wajib: 2000000,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+            jumlah_pinjaman: 5000000,
+            tgl_awal_pinjaman: '2024-02-01',
+            tenor: 10,
+            sisa_pinjaman: 2500000,
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 2000000,
+            belanja_per_bulan: 0,
+            lebaran_per_bulan: 0,
+            n_bulan_pinjaman: 1,
+            sudah_diangsur: 2500000,
+            angsuran_lampau_per_bulan: 2500000,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(parseResult);
+
+      // Verify deletion occurred BEFORE insertion
+      const delTxIdx = callTimeline.indexOf('deposit_transactions.delete');
+      const insTxIdx = callTimeline.indexOf('deposit_transactions.insert');
+      expect(delTxIdx).toBeGreaterThanOrEqual(0);
+      expect(insTxIdx).toBeGreaterThanOrEqual(0);
+      expect(delTxIdx).toBeLessThan(insTxIdx);
+
+      const delRepayIdx = callTimeline.indexOf('loan_repayments.delete');
+      const delSchedIdx = callTimeline.indexOf('loan_schedules.delete');
+      const delLoanIdx = callTimeline.indexOf('loans.delete');
+      const insLoanIdx = callTimeline.indexOf('loans.insert');
+      expect(delRepayIdx).toBeGreaterThanOrEqual(0);
+      expect(delSchedIdx).toBeGreaterThanOrEqual(0);
+      expect(delLoanIdx).toBeGreaterThanOrEqual(0);
+      expect(insLoanIdx).toBeGreaterThanOrEqual(0);
+
+      // Deletions happen in FK safety order: repayments -> schedules -> loans, then new loan insert
+      expect(delRepayIdx).toBeLessThan(delSchedIdx);
+      expect(delSchedIdx).toBeLessThan(delLoanIdx);
+      expect(delLoanIdx).toBeLessThan(insLoanIdx);
+
+      // Verify target filters for deletions
+      expect(deletedTxDepositIds[0]).toEqual(['md-pokok-seq', 'md-wajib-seq']);
+      expect(deletedTxDescriptions[0]).toEqual(
+        expect.arrayContaining([
+          'Migrasi Saldo Awal (As-Is)',
+          'Migrasi Saldo Awal',
+          'One-Time Principal Deposit Migration',
+          'Historical Balance Migration',
+        ])
+      );
+      expect(deletedLoanIds[0]).toEqual(['old-loan-to-delete']);
     });
   });
 });
