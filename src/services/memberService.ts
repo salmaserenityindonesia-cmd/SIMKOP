@@ -1,4 +1,83 @@
 import { supabase } from '../lib/supabaseClient';
+import type { Anggota } from './koperasiService';
+
+export interface CreateMemberInput {
+  nrp: string;
+  nama: string;
+  pangkat?: string;
+  master_thp?: number;
+  bank_account_number?: string;
+  tgl_awal_anggota?: string;
+  status?: string;
+  membership_status?: 'ACTIVE' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
+}
+
+export async function createMember(input: CreateMemberInput): Promise<Anggota> {
+  let createdAt: string;
+  if (input.tgl_awal_anggota && input.tgl_awal_anggota.trim()) {
+    const d = new Date(input.tgl_awal_anggota);
+    createdAt = !isNaN(d.getTime()) ? d.toISOString() : new Date().toISOString();
+  } else {
+    createdAt = new Date().toISOString();
+  }
+
+  const anggotaPayload = {
+    nrp: input.nrp.trim(),
+    nama: input.nama.trim(),
+    pangkat: input.pangkat?.trim() || null,
+    master_thp: Number(input.master_thp) || 0,
+    bank_account_number: input.bank_account_number?.trim() || null,
+    status: input.status || 'aktif',
+    membership_status: input.membership_status || 'ACTIVE',
+    created_at: createdAt,
+  };
+
+  const { data: member, error: memberErr } = await supabase
+    .from('anggota')
+    .insert([anggotaPayload])
+    .select()
+    .single();
+
+  if (memberErr) {
+    throw new Error(`Gagal mendaftarkan anggota baru: ${memberErr.message}`);
+  }
+
+  let { data: dTypes, error: dtErr } = await supabase.from('deposit_types').select('*');
+  if (dtErr) {
+    console.warn('Gagal memuat deposit_types:', dtErr.message);
+  }
+
+  if (!dTypes || dTypes.length === 0) {
+    const seeds = [
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true }
+    ];
+    const { error: seedErr } = await supabase.from('deposit_types').insert(seeds);
+    if (seedErr) {
+      console.warn('Gagal membuat data awal deposit_types:', seedErr.message);
+    } else {
+      const { data: refreshed } = await supabase.from('deposit_types').select('*');
+      dTypes = refreshed;
+    }
+  }
+
+  const toEnroll = (dTypes || []).filter((dt: any) => dt.is_active !== false);
+  if (toEnroll.length > 0) {
+    const inserts = toEnroll.map((dt: any) => ({
+      member_id: member.id,
+      deposit_type_id: dt.id,
+      is_terminated: false,
+    }));
+    const { error: insErr } = await supabase.from('member_deposits').insert(inserts);
+    if (insErr) {
+      console.warn('Gagal menginisialisasi akun simpanan anggota:', insErr.message);
+    }
+  }
+
+  return member as Anggota;
+}
 
 export interface MemberComprehensiveExportRow {
   nrp: string;
