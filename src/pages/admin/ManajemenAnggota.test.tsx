@@ -48,6 +48,15 @@ vi.mock('../../services/memberExcelService', () => ({
 }));
 
 vi.mock('../../services/memberService', () => ({
+  createMember: vi.fn().mockResolvedValue({
+    id: 'member-created-1',
+    nrp: '12345678',
+    nama: 'Budi Santoso',
+    pangkat: 'Bripka',
+    status: 'aktif',
+    master_thp: 5000000,
+    bank_account_number: '1234567890',
+  }),
   getMembersComprehensiveReport: vi.fn().mockResolvedValue([
     {
       nrp: '12345678',
@@ -122,6 +131,29 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('bg-green-600');
       expect(html).toContain('bg-red-600');
       expect(html).toContain('lucide-download');
+    });
+  });
+
+  describe('Add Member Modal Form Fields', () => {
+    it('renders Add Member modal with bank_account_number and tgl_awal_anggota fields', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota initialShowModal={true} />);
+
+      // Modal title
+      expect(html).toContain('Tambah Anggota Baru');
+
+      // Bank Account Number input & label
+      expect(html).toContain('Nomor Rekening Bank (Opsional)');
+      expect(html).toContain('placeholder="Contoh: 115738953714"');
+
+      // Join Date input & label
+      expect(html).toContain('Tanggal Bergabung');
+      expect(html).toContain('type="date"');
+
+      // Existing required fields remain intact
+      expect(html).toContain('NRP');
+      expect(html).toContain('Nama Lengkap');
+      expect(html).toContain('Pangkat');
+      expect(html).toContain('Gaji Pokok (Master THP)');
     });
   });
 

@@ -47,7 +47,11 @@ export async function triggerMemberExportPdf(
   }
 }
 
-export default function ManajemenAnggota() {
+interface ManajemenAnggotaProps {
+  initialShowModal?: boolean;
+}
+
+export default function ManajemenAnggota({ initialShowModal = false }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,7 +68,7 @@ export default function ManajemenAnggota() {
   }, [search]);
 
   // Modal State
-  const [showModal, setShowModal] = useState(false);
+  const [showModal, setShowModal] = useState(initialShowModal);
   const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(null);
   const [formData, setFormData] = useState({
     nrp: '',

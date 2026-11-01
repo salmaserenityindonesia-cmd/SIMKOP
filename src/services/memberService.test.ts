@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getMembersComprehensiveReport, MemberComprehensiveExportRow } from './memberService';
+import {
+  getMembersComprehensiveReport,
+  MemberComprehensiveExportRow,
+  createMember,
+} from './memberService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => ({
@@ -432,3 +436,297 @@ describe('memberService - getMembersComprehensiveReport', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('memberService - createMember', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should successfully create a member with bank_account_number and tgl_awal_anggota, and auto-enroll deposit accounts', async () => {
+    const mockCreatedMember = {
+      id: 'member-101',
+      nrp: '12345678',
+      nama: 'Serma Joni',
+      pangkat: 'Serma',
+      master_thp: 6000000,
+      bank_account_number: '115738953714',
+      status: 'aktif',
+      membership_status: 'ACTIVE',
+      created_at: new Date('2023-05-10').toISOString(),
+    };
+
+    const mockDepositTypes = [
+      { id: 'dt-1', code: 'SP', name: 'Simpanan Pokok', is_active: true },
+      { id: 'dt-2', code: 'SW', name: 'Simpanan Wajib', is_active: true },
+      { id: 'dt-3', code: 'SB', name: 'Simpanan Belanja', is_active: true },
+      { id: 'dt-4', code: 'SL', name: 'Simpanan Lebaran', is_active: true },
+      { id: 'dt-5', code: 'SX', name: 'Non Aktif', is_active: false },
+    ];
+
+    const insertAnggotaSpy = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: mockCreatedMember, error: null }),
+      }),
+    });
+
+    const selectDepositTypesSpy = vi.fn().mockResolvedValue({
+      data: mockDepositTypes,
+      error: null,
+    });
+
+    const insertMemberDepositsSpy = vi.fn().mockResolvedValue({
+      data: null,
+      error: null,
+    });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return { insert: insertAnggotaSpy };
+      }
+      if (table === 'deposit_types') {
+        return { select: selectDepositTypesSpy };
+      }
+      if (table === 'member_deposits') {
+        return { insert: insertMemberDepositsSpy };
+      }
+      return {};
+    });
+
+    const result = await createMember({
+      nrp: '12345678',
+      nama: 'Serma Joni',
+      pangkat: 'Serma',
+      master_thp: 6000000,
+      bank_account_number: '115738953714',
+      tgl_awal_anggota: '2023-05-10',
+    });
+
+    expect(result).toEqual(mockCreatedMember);
+
+    // Verify anggota insert payload
+    expect(insertAnggotaSpy).toHaveBeenCalledWith([
+      {
+        nrp: '12345678',
+        nama: 'Serma Joni',
+        pangkat: 'Serma',
+        master_thp: 6000000,
+        bank_account_number: '115738953714',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+        created_at: new Date('2023-05-10').toISOString(),
+      },
+    ]);
+
+    // Verify member_deposits enrolls all active deposit types
+    expect(insertMemberDepositsSpy).toHaveBeenCalledWith([
+      { member_id: 'member-101', deposit_type_id: 'dt-1', is_terminated: false },
+      { member_id: 'member-101', deposit_type_id: 'dt-2', is_terminated: false },
+      { member_id: 'member-101', deposit_type_id: 'dt-3', is_terminated: false },
+      { member_id: 'member-101', deposit_type_id: 'dt-4', is_terminated: false },
+    ]);
+  });
+
+  it('should fallback to current ISO date for created_at when tgl_awal_anggota is omitted or invalid', async () => {
+    let capturedPayload: any = null;
+
+    const insertAnggotaSpy = vi.fn().mockImplementation((payload) => {
+      capturedPayload = payload[0];
+      return {
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: { id: 'member-fallback', ...payload[0] },
+            error: null,
+          }),
+        }),
+      };
+    });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') return { insert: insertAnggotaSpy };
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'member_deposits') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      return {};
+    });
+
+    const before = Date.now();
+    await createMember({
+      nrp: '888999',
+      nama: 'Kopda Fallback',
+    });
+    const after = Date.now();
+
+    expect(capturedPayload).not.toBeNull();
+    const parsedDate = new Date(capturedPayload.created_at).getTime();
+    expect(parsedDate).toBeGreaterThanOrEqual(before - 1000);
+    expect(parsedDate).toBeLessThanOrEqual(after + 1000);
+
+    // Also test invalid string
+    await createMember({
+      nrp: '888999-invalid',
+      nama: 'Invalid Date Member',
+      tgl_awal_anggota: 'not-a-valid-date',
+    });
+    const parsedInvalid = new Date(capturedPayload.created_at).getTime();
+    expect(isNaN(parsedInvalid)).toBe(false);
+  });
+
+  it('should auto-seed default deposit types if deposit_types table is empty', async () => {
+    const mockCreatedMember = {
+      id: 'member-seed-test',
+      nrp: '777666',
+      nama: 'Praka Seeder',
+    };
+
+    const seededTypes = [
+      { id: 'dt-seed-1', code: 'SP', name: 'Simpanan Pokok', is_active: true },
+      { id: 'dt-seed-2', code: 'SW', name: 'Simpanan Wajib', is_active: true },
+      { id: 'dt-seed-3', code: 'SB', name: 'Simpanan Belanja', is_active: true },
+      { id: 'dt-seed-4', code: 'SL', name: 'Simpanan Lebaran', is_active: true },
+    ];
+
+    let selectCalls = 0;
+    const selectDepositTypesSpy = vi.fn().mockImplementation(() => {
+      selectCalls++;
+      if (selectCalls === 1) {
+        // First call returns empty
+        return Promise.resolve({ data: [], error: null });
+      }
+      // Refreshed call after seed
+      return Promise.resolve({ data: seededTypes, error: null });
+    });
+
+    const insertDepositTypesSpy = vi.fn().mockResolvedValue({ error: null });
+    const insertMemberDepositsSpy = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockCreatedMember, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: selectDepositTypesSpy,
+          insert: insertDepositTypesSpy,
+        };
+      }
+      if (table === 'member_deposits') {
+        return { insert: insertMemberDepositsSpy };
+      }
+      return {};
+    });
+
+    const result = await createMember({
+      nrp: '777666',
+      nama: 'Praka Seeder',
+    });
+
+    expect(result).toEqual(mockCreatedMember);
+    expect(insertDepositTypesSpy).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'SP', name: 'Simpanan Pokok' }),
+        expect.objectContaining({ code: 'SW', name: 'Simpanan Wajib' }),
+        expect.objectContaining({ code: 'SB', name: 'Simpanan Belanja' }),
+        expect.objectContaining({ code: 'SL', name: 'Simpanan Lebaran' }),
+      ])
+    );
+    expect(insertMemberDepositsSpy).toHaveBeenCalledWith([
+      { member_id: 'member-seed-test', deposit_type_id: 'dt-seed-1', is_terminated: false },
+      { member_id: 'member-seed-test', deposit_type_id: 'dt-seed-2', is_terminated: false },
+      { member_id: 'member-seed-test', deposit_type_id: 'dt-seed-3', is_terminated: false },
+      { member_id: 'member-seed-test', deposit_type_id: 'dt-seed-4', is_terminated: false },
+    ]);
+  });
+
+  it('should throw descriptive error when member insert fails', async () => {
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'duplicate key value violates unique constraint "anggota_nrp_key"' },
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    await expect(
+      createMember({
+        nrp: '12345678',
+        nama: 'Duplicate NRP',
+      })
+    ).rejects.toThrow(
+      'Gagal mendaftarkan anggota baru: duplicate key value violates unique constraint "anggota_nrp_key"'
+    );
+  });
+
+  it('should not fail member registration if member_deposits initialization encounters an error or warning', async () => {
+    const mockCreatedMember = {
+      id: 'm-robust-1',
+      nrp: '54321',
+      nama: 'Robust Member',
+      bank_account_number: '987654321',
+      created_at: '2023-01-01T00:00:00.000Z',
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockCreatedMember, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'dt-1', code: 'SP', is_active: true }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          insert: vi.fn().mockResolvedValue({
+            data: null,
+            error: { message: 'Foreign key constraint violated on member_deposits' },
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await createMember({
+      nrp: '54321',
+      nama: 'Robust Member',
+      bank_account_number: '987654321',
+    });
+
+    expect(result).toEqual(mockCreatedMember);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'Gagal menginisialisasi akun simpanan anggota:',
+      'Foreign key constraint violated on member_deposits'
+    );
+
+    warnSpy.mockRestore();
+  });
+});
+
