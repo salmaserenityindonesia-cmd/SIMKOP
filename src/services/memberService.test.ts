@@ -3,12 +3,14 @@ import {
   getMembersComprehensiveReport,
   MemberComprehensiveExportRow,
   createMember,
+  resetAllMembersData,
 } from './memberService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => ({
   supabase: {
     from: vi.fn(),
+    rpc: vi.fn(),
   },
 }));
 
@@ -727,6 +729,45 @@ describe('memberService - createMember', () => {
     );
 
     warnSpy.mockRestore();
+  });
+});
+
+describe('memberService - resetAllMembersData', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('successfully calls reset_members_and_financial_records RPC and returns result summary', async () => {
+    const mockResult = {
+      success: true,
+      members_deleted: 15,
+      loans_deleted: 7,
+      deposits_deleted: 30,
+      message: 'Reset data anggota, simpanan, dan pinjaman berhasil diselesaikan.',
+    };
+
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: mockResult,
+      error: null,
+    });
+
+    const result = await resetAllMembersData();
+
+    expect(supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(supabase.rpc).toHaveBeenCalledWith('reset_members_and_financial_records');
+    expect(result).toEqual(mockResult);
+  });
+
+  it('throws descriptive error when RPC returns an error', async () => {
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'permission denied for function reset_members_and_financial_records' },
+    });
+
+    await expect(resetAllMembersData()).rejects.toThrow(
+      'Gagal mereset data anggota dan pembukuan: permission denied for function reset_members_and_financial_records'
+    );
+    expect(supabase.rpc).toHaveBeenCalledWith('reset_members_and_financial_records');
   });
 });
 

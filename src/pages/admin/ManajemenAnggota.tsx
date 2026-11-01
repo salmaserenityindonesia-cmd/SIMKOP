@@ -48,11 +48,40 @@ export async function triggerMemberExportPdf(
   }
 }
 
-interface ManajemenAnggotaProps {
-  initialShowModal?: boolean;
+export async function triggerResetAllMembers(
+  showToast: (msg: string, type: 'success' | 'error' | 'info') => void,
+  setIsResetting?: (val: boolean) => void,
+  onSuccess?: () => Promise<void> | void
+) {
+  setIsResetting?.(true);
+  try {
+    const res = await resetAllMembersData();
+    showToast(
+      res.message || 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+      'success'
+    );
+    if (onSuccess) {
+      await onSuccess();
+    }
+    return res;
+  } catch (err: any) {
+    console.error('Reset members error:', err);
+    showToast(err?.message || 'Gagal mengosongkan data anggota', 'error');
+    throw err;
+  } finally {
+    setIsResetting?.(false);
+  }
 }
 
-export default function ManajemenAnggota({ initialShowModal = false }: ManajemenAnggotaProps = {}) {
+export interface ManajemenAnggotaProps {
+  initialShowModal?: boolean;
+  initialResetModalOpen?: boolean;
+}
+
+export default function ManajemenAnggota({
+  initialShowModal = false,
+  initialResetModalOpen = false,
+}: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,7 +118,7 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
   const [isImporting, setIsImporting] = useState(false);
 
   // Reset Data State
-  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
   const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
@@ -253,17 +282,13 @@ export default function ManajemenAnggota({ initialShowModal = false }: Manajemen
   };
 
   const handleConfirmReset = async () => {
-    setIsResetting(true);
     try {
-      const res = await resetAllMembersData();
-      showToast(res.message || 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.', 'success');
-      setIsResetModalOpen(false);
-      await loadData();
-    } catch (err: any) {
-      console.error('Reset members error:', err);
-      showToast(err?.message || 'Gagal mengosongkan data anggota', 'error');
-    } finally {
-      setIsResetting(false);
+      await triggerResetAllMembers(showToast, setIsResetting, async () => {
+        setIsResetModalOpen(false);
+        await loadData();
+      });
+    } catch {
+      // Error is handled with toast inside triggerResetAllMembers
     }
   };
 

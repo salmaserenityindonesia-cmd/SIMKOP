@@ -8,8 +8,26 @@ export interface DangerConfirmModalProps {
   confirmationKeyword: string;
   confirmButtonLabel?: string;
   isLoading?: boolean;
+  initialKeyword?: string;
   onConfirm: () => void | Promise<void>;
   onClose: () => void;
+}
+
+export function isConfirmationKeywordMatched(input: string, keyword: string): boolean {
+  return input.trim() === keyword.trim();
+}
+
+export function handleDangerConfirmSubmit(
+  input: string,
+  keyword: string,
+  isLoading: boolean,
+  onConfirm: () => void | Promise<void>
+): boolean {
+  if (isConfirmationKeywordMatched(input, keyword) && !isLoading) {
+    onConfirm();
+    return true;
+  }
+  return false;
 }
 
 export const DangerConfirmModal: React.FC<DangerConfirmModalProps> = ({
@@ -19,16 +37,17 @@ export const DangerConfirmModal: React.FC<DangerConfirmModalProps> = ({
   confirmationKeyword,
   confirmButtonLabel = 'Ya, Kosongkan Sekarang',
   isLoading = false,
+  initialKeyword = '',
   onConfirm,
   onClose,
 }) => {
-  const [inputKeyword, setInputKeyword] = useState('');
+  const [inputKeyword, setInputKeyword] = useState(initialKeyword);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Reset input keyword whenever the modal opens or closes
   useEffect(() => {
     if (isOpen) {
-      setInputKeyword('');
+      setInputKeyword(initialKeyword);
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
@@ -36,7 +55,7 @@ export const DangerConfirmModal: React.FC<DangerConfirmModalProps> = ({
     } else {
       setInputKeyword('');
     }
-  }, [isOpen]);
+  }, [isOpen, initialKeyword]);
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -57,13 +76,11 @@ export const DangerConfirmModal: React.FC<DangerConfirmModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isKeywordMatched = inputKeyword.trim() === confirmationKeyword.trim();
+  const isKeywordMatched = isConfirmationKeywordMatched(inputKeyword, confirmationKeyword);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isKeywordMatched && !isLoading) {
-      onConfirm();
-    }
+    handleDangerConfirmSubmit(inputKeyword, confirmationKeyword, isLoading, onConfirm);
   };
 
   return (

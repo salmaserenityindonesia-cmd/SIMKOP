@@ -4,8 +4,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ManajemenAnggota, {
   triggerMemberExportExcel,
   triggerMemberExportPdf,
+  triggerResetAllMembers,
 } from './ManajemenAnggota';
-import { getMembersComprehensiveReport } from '../../services/memberService';
+import {
+  getMembersComprehensiveReport,
+  resetAllMembersData,
+} from '../../services/memberService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 
@@ -75,6 +79,13 @@ vi.mock('../../services/memberService', () => ({
       sisa_pinjaman: 2500000,
     },
   ]),
+  resetAllMembersData: vi.fn().mockResolvedValue({
+    success: true,
+    members_deleted: 1,
+    loans_deleted: 0,
+    deposits_deleted: 1,
+    message: 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+  }),
 }));
 
 vi.mock('../../services/memberExporter', () => ({
@@ -131,6 +142,17 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('bg-green-600');
       expect(html).toContain('bg-red-600');
       expect(html).toContain('lucide-download');
+    });
+
+    it('contains Reset Data toolbar button with rose styling and rotate-ccw icon', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota />);
+
+      expect(html).toContain('Reset Data');
+      expect(html).toContain('lucide-rotate-ccw');
+      expect(html).toContain('bg-rose-50');
+      expect(html).toContain('border-rose-300');
+      expect(html).toContain('text-rose-700');
+      expect(html).toContain('title="Kosongkan seluruh data anggota, simpanan, dan pinjaman"');
     });
   });
 
@@ -267,6 +289,66 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(setIsExporting).toHaveBeenLastCalledWith(false);
       expect(showToast).toHaveBeenCalledWith(
         'jsPDF rendering crashed',
+        'error'
+      );
+
+      consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('Reset Data Modal UI Structure', () => {
+    it('renders DangerConfirmModal when initialResetModalOpen is true', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota initialResetModalOpen={true} />);
+
+      expect(html).toContain('Reset Seluruh Data Anggota');
+      expect(html).toContain(
+        'PERINGATAN: Tindakan ini akan mengosongkan seluruh master data anggota, rekening simpanan, pinjaman, dan riwayat mutasi terkait secara permanen.'
+      );
+      expect(html).toContain('sales.member_id = NULL');
+      expect(html).toContain('HAPUS SEMUA DATA ANGGOTA');
+      expect(html).toContain('Ya, Kosongkan Sekarang');
+      expect(html).toContain('Batal');
+    });
+  });
+
+  describe('Reset All Members Flow (triggerResetAllMembers)', () => {
+    it('triggers reset: calls resetAllMembersData, shows success toast, and executes onSuccess callback', async () => {
+      const showToast = vi.fn();
+      const setIsResetting = vi.fn();
+      const onSuccess = vi.fn();
+
+      const result = await triggerResetAllMembers(showToast, setIsResetting, onSuccess);
+
+      expect(setIsResetting).toHaveBeenCalledWith(true);
+      expect(setIsResetting).toHaveBeenLastCalledWith(false);
+      expect(resetAllMembersData).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(
+        'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+        'success'
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('handles reset failure: shows error toast, resets loading state, and throws error', async () => {
+      const showToast = vi.fn();
+      const setIsResetting = vi.fn();
+      const onSuccess = vi.fn();
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      (resetAllMembersData as any).mockRejectedValueOnce(
+        new Error('Database RPC timeout error')
+      );
+
+      await expect(
+        triggerResetAllMembers(showToast, setIsResetting, onSuccess)
+      ).rejects.toThrow('Database RPC timeout error');
+
+      expect(setIsResetting).toHaveBeenCalledWith(true);
+      expect(setIsResetting).toHaveBeenLastCalledWith(false);
+      expect(onSuccess).not.toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith(
+        'Database RPC timeout error',
         'error'
       );
 
