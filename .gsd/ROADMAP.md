@@ -755,6 +755,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 44: Implementasi Impor Pinjaman Migrasi, Jadwal Angsuran & Rekonsiliasi Sisa Hutang
+**Status:** ⏳ In Progress
+**Objective:** Mengintegrasikan impor pinjaman historis anggota dari Excel ke dalam SIMKOP dengan mencatat rekening bank pada anggota, membuat pinjaman di loans, menyusun jadwal angsuran di loan_schedules sesuai tenor, menandai jadwal yang sudah terbayar (paid/partial) berdasarkan sisa hutang, serta menerapkan aturan exact overwrite idempoten untuk mencegah duplikasi baki hutang saat impor ulang.
+**Depends on:** Phase 4, Phase 6, Phase 9, Phase 40, Phase 42, Phase 43
+
+**Plans:**
+- [ ] Plan 44.1: Wave 1 - Data Parsing & Amortization Distribution Logic
+- [ ] Plan 44.2: Wave 2 - Atomic Loan Database Insertion with Idempotency
+- [ ] Plan 44.3: Wave 3 - Unit Testing, Static Verification & Build Check
+
+**Deliverables:**
+- Generator jadwal amortisasi migrasi `generateMigrationLoanSchedules` di `src/utils/memberMigrationParser.ts`
+- Clean Overwrite & sinkronisasi data pinjaman di `src/services/memberExcelService.ts`
+- Pratinjau data pinjaman & rekening di `src/components/members/MemberMigrationModal.tsx` & `ManajemenAnggota.tsx`
+- Suite unit tests komprehensif dan build produksi Vite sukses exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -789,6 +807,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 28 | Phase 36 | Searchable Autocomplete Produk pada Mode Kartu Stok Laporan Mutasi |
 | 29 | Phase 37 | Implementasi Kontrol Pagination pada Tabel Retur Pembelian |
 | 30 | Phase 38 | Konfigurasi Ukuran Kertas Thermal Struk (58mm vs 80mm) |
+| 31 | Phase 44 | Implementasi Impor Pinjaman Migrasi, Jadwal Angsuran & Rekonsiliasi Sisa Hutang |
 
 ---
 
@@ -839,6 +858,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 41 | Refactor Aksi Anggota: Hapus Delete & Detail Migrasi | ✅ | 3/3 | 100% |
 | 42 | Impor Anggota: Saldo As-Is & Timpa Mutlak (Exact Replacement) | ✅ | 3/3 | 100% |
 | 43 | Penggantian Baki Penuh (Exact Overwrite) Tanpa Akumulasi | ✅ | 3/3 | 100% |
+| 44 | Impor Pinjaman Migrasi, Jadwal & Rekonsiliasi Hutang | ⏳ | 0/3 | 0% |
 
 ---
 
