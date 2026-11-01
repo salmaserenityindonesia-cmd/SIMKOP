@@ -244,3 +244,63 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     members: Object.values(membersMap)
   };
 };
+
+export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
+  const currentYear = new Date().getFullYear();
+  try {
+    let startYear = currentYear;
+    let endYear = currentYear;
+
+    const { data: oldestActiveLoan, error: oldestError } = await supabase
+      .from('loans')
+      .select('disbursed_at, created_at')
+      .in('status', ['active', 'approved'])
+      .order('disbursed_at', { ascending: true, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (oldestError) {
+      console.error('Error fetching oldest active loan:', oldestError);
+      return [currentYear];
+    }
+
+    if (oldestActiveLoan) {
+      const loanDateStr = oldestActiveLoan.disbursed_at || oldestActiveLoan.created_at;
+      if (loanDateStr) {
+        const parsedYear = new Date(loanDateStr).getFullYear();
+        if (!isNaN(parsedYear) && parsedYear <= currentYear) {
+          startYear = parsedYear;
+        }
+      }
+    }
+
+    const { data: latestSchedule, error: scheduleError } = await supabase
+      .from('loan_schedules')
+      .select('due_date')
+      .order('due_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (scheduleError) {
+      console.error('Error fetching latest loan schedule:', scheduleError);
+      return [currentYear];
+    }
+
+    if (latestSchedule?.due_date) {
+      const scheduleYear = new Date(latestSchedule.due_date).getFullYear();
+      if (!isNaN(scheduleYear) && scheduleYear > currentYear) {
+        endYear = scheduleYear;
+      }
+    }
+
+    const years: number[] = [];
+    for (let y = endYear; y >= startYear; y--) {
+      years.push(y);
+    }
+
+    return years.length > 0 ? years : [currentYear];
+  } catch (err) {
+    console.error('Error fetching available loan matrix years:', err);
+    return [currentYear];
+  }
+};
