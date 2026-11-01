@@ -1,7 +1,7 @@
 ## Current Position
-- **Phase**: 40 (Data Migrasi Anggota Murni As-Is Tanpa Rumus)
-- **Task**: All plans executed & verified
-- **Status**: Complete — ready for /verify 40
+- **Phase**: 41 (Refactor Aksi Anggota: Hapus Delete & Detail Migrasi)
+- **Task**: Planning completed, ready for execution
+- **Status**: 📋 Planned (Phase 41 Plans 41.1, 41.2, 41.3 generated)
 
 ## Last Session Summary
 Phase 40 executed and verified:
@@ -10,7 +10,7 @@ Phase 40 executed and verified:
 - Plan 40.3: Comprehensive unit testing in `memberExcelService.test.ts` (11 tests), full Vitest suite (23 test files, 227 tests passing 100%), TypeScript typecheck passed, and production build exit code 0 (commits `50d67e1d`, `02dada56`).
 
 ## Next Steps
-Verify Phase 40 using `/verify 40` or proceed to next milestone/phase.
+Execute Phase 41: Refactor Aksi Manajemen Anggota: Hapus Tombol Delete & Tambahkan Modal Detail Migrasi Awal (`/execute 41`).
 
 ## Blockers
 - None.
