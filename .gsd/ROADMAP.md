@@ -792,6 +792,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 46: Implementasi Opsi Tahun Dinamis Berdasarkan Tahun Pinjaman Belum Lunas Terlama pada Matriks Pinjaman
+**Status:** ⏳ In Progress
+**Objective:** Memperbarui dropdown filter tahun pada halaman Matriks Pinjaman (`src/pages/admin/LoanMatrix.tsx`) agar beradaptasi secara dinamis diawali dari tahun paling lama di mana terdapat pinjaman anggota yang belum lunas (status active/approved) hingga tahun saat ini dan proyeksi jatuh tempo, menggantikan rentang tahun statis.
+**Depends on:** Phase 4, Phase 9, Phase 44
+
+**Plans:**
+- [ ] Plan 46.1: Wave 1 - Dynamic Year Range Resolver Service & Unit Testing
+- [ ] Plan 46.2: Wave 2 - Bind Dynamic Year Selector in LoanMatrix.tsx
+- [ ] Plan 46.3: Wave 3 - End-to-End Component Testing, Static Verification & Build Check
+
+**Deliverables:**
+- Service helper `getLoanMatrixAvailableYears()` di `src/services/loanMatrixService.ts`
+- State dan dropdown dinamis `availableYears` terikat di `src/pages/admin/LoanMatrix.tsx`
+- Suite unit test `src/services/loanMatrixService.test.ts` dan pengujian komponen `src/pages/admin/LoanMatrix.test.tsx`
+- Verifikasi build produksi Vite lolos exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -828,6 +846,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 30 | Phase 38 | Konfigurasi Ukuran Kertas Thermal Struk (58mm vs 80mm) |
 | 31 | Phase 44 | Implementasi Impor Pinjaman Migrasi, Jadwal Angsuran & Rekonsiliasi Sisa Hutang |
 | 32 | Phase 45 | Implementasi Ekspor Excel & PDF 14 Kolom Komprehensif pada Manajemen Anggota |
+| 33 | Phase 46 | Implementasi Opsi Tahun Dinamis Berdasarkan Tahun Pinjaman Belum Lunas Terlama pada Matriks Pinjaman |
 
 ---
 
@@ -880,6 +899,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 43 | Penggantian Baki Penuh (Exact Overwrite) Tanpa Akumulasi | ✅ | 3/3 | 100% |
 | 44 | Impor Pinjaman Migrasi, Jadwal & Rekonsiliasi Hutang | ✅ | 3/3 | 100% |
 | 45 | Ekspor Excel & PDF 14 Kolom Komprehensif Anggota | ✅ | 4/4 | 100% |
+| 46 | Opsi Tahun Dinamis Matriks Pinjaman | ⏳ | 0/3 | 0% |
 
 ---
 
@@ -922,5 +942,16 @@ updated: 2026-10-30T20:50:00+07:00
 | 33 | 2026-10-30 | 2026-10-30 | 1 day |
 | 34 | 2026-10-30 | 2026-10-30 | 1 day |
 | 35 | 2026-10-30 | 2026-10-30 | 1 day |
+| 36 | 2026-10-30 | 2026-10-30 | 1 day |
+| 37 | 2026-10-30 | 2026-10-30 | 1 day |
+| 38 | 2026-10-30 | 2026-10-30 | 1 day |
+| 39 | 2026-10-30 | 2026-10-30 | 1 day |
+| 40 | 2026-10-31 | 2026-10-31 | 1 day |
+| 41 | 2026-10-31 | 2026-10-31 | 1 day |
+| 42 | 2026-11-01 | 2026-11-01 | 1 day |
+| 43 | 2026-11-01 | 2026-11-01 | 1 day |
+| 44 | 2026-11-01 | 2026-11-01 | 1 day |
+| 45 | 2026-11-01 | 2026-11-01 | 1 day |
+| 46 | 2026-11-01 | — | — |
 
 
