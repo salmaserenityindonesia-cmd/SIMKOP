@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getAnggota, addAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
+import { getAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload } from 'lucide-react';
-import { getMembersComprehensiveReport } from '../../services/memberService';
+import { getMembersComprehensiveReport, createMember } from '../../services/memberService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
@@ -71,7 +71,9 @@ export default function ManajemenAnggota() {
     nama: '',
     pangkat: '',
     status: 'aktif',
-    master_thp: 0
+    master_thp: 0,
+    bank_account_number: '',
+    tgl_awal_anggota: new Date().toISOString().slice(0, 10),
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -99,7 +101,15 @@ export default function ManajemenAnggota() {
 
   const handleOpenAddModal = () => {
     setEditingAnggota(null);
-    setFormData({ nrp: '', nama: '', pangkat: '', status: 'aktif', master_thp: 0 });
+    setFormData({
+      nrp: '',
+      nama: '',
+      pangkat: '',
+      status: 'aktif',
+      master_thp: 0,
+      bank_account_number: '',
+      tgl_awal_anggota: new Date().toISOString().slice(0, 10),
+    });
     setShowModal(true);
   };
 
@@ -110,7 +120,9 @@ export default function ManajemenAnggota() {
       nama: anggota.nama,
       pangkat: anggota.pangkat || '',
       status: anggota.status || 'aktif',
-      master_thp: anggota.master_thp || 0
+      master_thp: anggota.master_thp || 0,
+      bank_account_number: anggota.bank_account_number || '',
+      tgl_awal_anggota: anggota.created_at ? anggota.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
     });
     setShowModal(true);
   };
@@ -129,10 +141,24 @@ export default function ManajemenAnggota() {
     try {
       setIsSubmitting(true);
       if (editingAnggota) {
-        await updateAnggota(editingAnggota.id, formData);
+        await updateAnggota(editingAnggota.id, {
+          nrp: formData.nrp,
+          nama: formData.nama,
+          pangkat: formData.pangkat,
+          status: formData.status,
+          master_thp: formData.master_thp,
+          bank_account_number: formData.bank_account_number,
+        });
         showToast('Data anggota berhasil diperbarui.', 'success');
       } else {
-        await addAnggota(formData);
+        await createMember({
+          nrp: formData.nrp,
+          nama: formData.nama,
+          pangkat: formData.pangkat,
+          master_thp: formData.master_thp,
+          bank_account_number: formData.bank_account_number,
+          tgl_awal_anggota: formData.tgl_awal_anggota,
+        });
         showToast('Anggota baru berhasil ditambahkan.', 'success');
       }
       setShowModal(false);
@@ -474,6 +500,19 @@ export default function ManajemenAnggota() {
                     placeholder="Contoh: Sertu, Kopda, dll"
                   />
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nomor Rekening Bank (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.bank_account_number}
+                    onChange={(e) => setFormData({...formData, bank_account_number: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                    placeholder="Contoh: 115738953714"
+                  />
+                </div>
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -489,6 +528,19 @@ export default function ManajemenAnggota() {
                     placeholder="Contoh: 5000000"
                   />
                   <p className="text-xs text-gray-500 mt-1">Gaji pokok akan digunakan untuk memvalidasi kelayakan limit pemotongan saat pengajuan pinjaman.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tanggal Bergabung <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.tgl_awal_anggota}
+                    onChange={(e) => setFormData({...formData, tgl_awal_anggota: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                  />
                 </div>
               </div>
               
