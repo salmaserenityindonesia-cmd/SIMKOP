@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 44 (Implementasi Impor Pinjaman Migrasi, Jadwal Angsuran & Rekonsiliasi Sisa Hutang)
-- **Task**: Phase execution and verification complete
-- **Status**: Complete & Verified (7/7 must-haves verified)
+- **Phase**: 45 (Implementasi Ekspor Excel & PDF 14 Kolom Komprehensif pada Manajemen Anggota)
+- **Task**: Planning complete (Plans 45.1, 45.2, 45.3, 45.4 created)
+- **Status**: Ready for execution (/execute 45)
 
 ## Last Session Summary
-Phase 44 executed and independently verified:
-- Plan 44.1: Built migration loan amortization schedule generator `generateMigrationLoanSchedules` and column sanitizer in `src/utils/memberMigrationParser.ts`, integrated into `src/services/memberExcelService.ts` and enhanced `src/components/members/MemberMigrationModal.tsx` preview (commits `b647dfd9`, `2b6d616a`).
-- Plan 44.2: Implemented clean overwrite & idempotent database synchronization in `executeMigration` for `anggota.bank_account_number`, `loans` (with format `PINJ-MIGRASI-{nrp}`), `loan_schedules`, and past `loan_repayments`. Enhanced UI toast and refresh flow in `ManajemenAnggota.tsx` (commits `835ff0b7`, `78d6123a`).
-- Plan 44.3: Comprehensive unit testing across all scenarios (15 tests in `memberMigrationParser.test.ts`, 24 tests in `memberExcelService.test.ts`, 5 tests in `MemberMigrationModal.test.tsx`, 2 tests in `ManajemenAnggota.test.tsx`), TypeScript typecheck (`tsc --noEmit`), and production build verification (`npm run build`) passing 100% (commits `05eca6ec`, `3c639156`).
-- Independent verification passed 7/7 must-haves with report at `.gsd/phases/44/VERIFICATION.md`.
+Phase 45 planned across 4 waves:
+- Plan 45.1: Build `getMembersComprehensiveReport()` data fetcher in `src/services/memberService.ts` aggregating member identity, 4 savings categories, and active loan balances.
+- Plan 45.2: Implement `exportMembersToExcel()` (14 columns matching migration schema) and `exportMembersToPdf()` (landscape A4 with cooperative profile and totals) in `src/services/memberExporter.ts`.
+- Plan 45.3: Connect toolbar Excel & PDF buttons in `src/pages/admin/ManajemenAnggota.tsx` with visual loading spinners and toast notifications.
+- Plan 45.4: Comprehensive unit tests in `memberService.test.ts`, `memberExporter.test.ts`, and `ManajemenAnggota.test.tsx`, static type check (`tsc --noEmit`), and production build verification (`npm run build`).
 
 ## Next Steps
-Phase 44 is complete. Awaiting next user request or phase definition.
+1. /execute 45 — Execute all plans for Phase 45
 
 ## Blockers
 - None.
