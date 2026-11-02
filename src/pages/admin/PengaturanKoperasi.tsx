@@ -92,21 +92,31 @@ export const isTierActive = (tier: SavingsRateTier): boolean => {
   return currentIdx >= startIdx && currentIdx <= endIdx;
 };
 
-export default function PengaturanKoperasi() {
+export interface PengaturanKoperasiProps {
+  initialLoading?: boolean;
+  initialRateTiers?: SavingsRateTier[];
+  initialAddModalOpen?: boolean;
+}
+
+export default function PengaturanKoperasi({
+  initialLoading = false,
+  initialRateTiers,
+  initialAddModalOpen = false
+}: PengaturanKoperasiProps = {}) {
   const { showToast } = useFeedback();
 
   const [form, setForm] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
   const [initialData, setInitialData] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(initialLoading);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocalOnly, setIsLocalOnly] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Savings Rate Tiers State
-  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>([]);
+  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || []);
   const [isLoadingTiers, setIsLoadingTiers] = useState(false);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddModalOpen);
   const [isSubmittingTier, setIsSubmittingTier] = useState(false);
   const [newTierForm, setNewTierForm] = useState({
     deposit_type_code: 'WAJIB',
