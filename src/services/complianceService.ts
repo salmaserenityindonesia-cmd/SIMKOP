@@ -57,11 +57,27 @@ export async function getSavingsComplianceAvailableYears(
     const wajibType = matchDepositType(dTypes, ['WAJIB', 'SW'], ['wajib']);
     const lebaranType = matchDepositType(dTypes, ['LEBARAN', 'SL'], ['lebaran', 'hari raya']);
 
-    // 2. Fetch all active members
-    const { data: members, error: membersError } = await supabase
+    // 2. Fetch all active members from public.anggota (BUKAN members)
+    let members: any[] = [];
+    let membersError: any = null;
+
+    const selectBuilder: any = supabase
       .from('anggota')
-      .select('id, nama, nrp, status, created_at')
-      .eq('status', 'aktif');
+      .select('id, nama, nrp, status, membership_status, created_at, tgl_awal_anggota');
+
+    if (typeof selectBuilder.order === 'function') {
+      const resp = await selectBuilder.order('nama', { ascending: true });
+      members = resp.data || [];
+      membersError = resp.error;
+    } else if (typeof selectBuilder.eq === 'function') {
+      const resp = await selectBuilder.eq('status', 'aktif');
+      members = resp.data || [];
+      membersError = resp.error;
+    } else {
+      const resp = await selectBuilder;
+      members = resp.data || [];
+      membersError = resp.error;
+    }
 
     if (membersError || !members || members.length === 0) {
       if (membersError) {
@@ -69,6 +85,15 @@ export async function getSavingsComplianceAvailableYears(
       }
       return [currentYear];
     }
+
+    const activeMembers = members.filter((m: any) => {
+      const st = (m.status || '').toLowerCase();
+      const mst = (m.membership_status || '').toUpperCase();
+      return st !== 'nonaktif' && mst !== 'RESIGNED';
+    });
+
+    const membersToUse = activeMembers.length > 0 ? activeMembers : members;
+    members = membersToUse;
 
     // 3. Fetch deposit transactions
     const { data: transactions, error: txError } = await supabase
@@ -250,4 +275,265 @@ export async function getSavingsComplianceAvailableYears(
     console.error('Unexpected error resolving savings compliance available years:', err);
     return [currentYear];
   }
+}
+
+
+export interface ComplianceMonthData {
+  w: number;
+  b: number;
+  l: number;
+  bal_w: number;
+  bal_b: number;
+  bal_l: number;
+}
+
+export interface ComplianceMatrixRow {
+  member_id: string;
+  nrp: string;
+  nama: string;
+  pokokLunas: boolean;
+  compliance: number;
+  balances: { w: number; b: number; l: number };
+  months: (ComplianceMonthData | null)[];
+  created_at?: string;
+  tgl_awal_anggota?: string;
+}
+
+export interface ComplianceMatrixResult {
+  rows: ComplianceMatrixRow[];
+  targets: {
+    wajib: number;
+    belanja: number;
+    lebaran: number;
+  };
+}
+
+/**
+ * Memuat data matriks kepatuhan simpanan seluruh anggota aktif untuk tahun tertentu.
+ * Menjamin:
+ * 1. Mengambil master data dari tabel `public.anggota` (BUKAN `members`).
+ * 2. Menyertakan seluruh anggota aktif yang terdaftar sebelum atau pada tahun tersebut (misal terdaftar 2023/2025 tetap muncul di 2026).
+ * 3. Menggunakan LEFT JOIN / pemisahan kueri transaksi sehingga anggota yang belum memiliki setoran di tahun tersebut TIDAK tereliminasi.
+ */
+export async function getComplianceMatrixData(
+  year: number,
+  depositType?: string
+): Promise<ComplianceMatrixResult> {
+  // 1. Ambil tipe simpanan
+  const { data: dTypes } = await supabase.from('deposit_types').select('*');
+  const typeList = dTypes || [];
+  const typeMap: Record<string, string> = {};
+  typeList.forEach((dt: any) => {
+    typeMap[(dt.name || '').toLowerCase()] = dt.id;
+    if (dt.code) typeMap[(dt.code || '').toLowerCase()] = dt.id;
+  });
+
+  const keys = Object.keys(typeMap);
+  const pokokId = typeMap[keys.find((k) => k.includes('pokok') || k === 'sp') || ''] || '';
+  const wajibId = typeMap[keys.find((k) => k.includes('wajib') || k === 'sw') || ''] || '';
+  const belanjaId = typeMap[keys.find((k) => k.includes('belanja') || k === 'sb') || ''] || '';
+  const lebaranId = typeMap[keys.find((k) => k.includes('lebaran') || k.includes('hari raya') || k === 'sl') || ''] || '';
+
+  // 2. Ambil seluruh anggota dari public.anggota (BUKAN members)
+  let rawMembers: any[] = [];
+  let memberErr: any = null;
+
+  const memberSelectBuilder: any = supabase
+    .from('anggota')
+    .select('id, nrp, nama, pangkat, membership_status, created_at, tgl_awal_anggota, status');
+
+  if (typeof memberSelectBuilder.order === 'function') {
+    const resp = await memberSelectBuilder.order('nama', { ascending: true });
+    rawMembers = resp.data || [];
+    memberErr = resp.error;
+  } else if (typeof memberSelectBuilder.eq === 'function') {
+    const resp = await memberSelectBuilder.eq('status', 'aktif');
+    rawMembers = resp.data || [];
+    memberErr = resp.error;
+  } else {
+    const resp = await memberSelectBuilder;
+    rawMembers = resp.data || [];
+    memberErr = resp.error;
+  }
+
+  if (memberErr) {
+    console.error('Error fetching members from anggota for compliance matrix:', memberErr);
+    return { rows: [], targets: { wajib: 0, belanja: 0, lebaran: 0 } };
+  }
+
+  const allMembers = rawMembers || [];
+
+  // Filter anggota aktif: bukan berstatus nonaktif atau RESIGNED
+  const activeMembers = allMembers.filter((m: any) => {
+    const st = (m.status || '').toLowerCase();
+    const mst = (m.membership_status || '').toUpperCase();
+    return st !== 'nonaktif' && mst !== 'RESIGNED';
+  });
+
+  const membersToFilter = activeMembers.length > 0 ? activeMembers : allMembers;
+
+  // Filter berdasarkan masa keanggotaan: anggota yang bergabung sebelum atau pada akhir tahun yang dipilih
+  const endOfYear = new Date(`${year}-12-31T23:59:59.999Z`);
+  const eligibleMembers = membersToFilter.filter((m: any) => {
+    const joinDateStr = m.tgl_awal_anggota || m.created_at;
+    if (!joinDateStr) return true;
+    const joinDate = new Date(joinDateStr);
+    return isNaN(joinDate.getTime()) || joinDate <= endOfYear;
+  });
+
+  // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN)
+  const { data: transactions } = await supabase
+    .from('deposit_transactions')
+    .select('amount, transaction_type, for_year, for_month, created_at, member_deposits(member_id, deposit_type_id)');
+
+  // Ambil transaksi pokok
+  const { data: pokokTxs } = await supabase
+    .from('deposit_transactions')
+    .select('amount, transaction_type, member_deposits(member_id, deposit_type_id)');
+
+  const pokokPaidByMember = new Set<string>();
+  if (pokokTxs) {
+    const pokokSums: Record<string, number> = {};
+    pokokTxs.forEach((tx: any) => {
+      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+      const mId = md?.member_id;
+      const tId = md?.deposit_type_id;
+      if (mId && (!pokokId || tId === pokokId)) {
+        const amt = Number(tx.amount) || 0;
+        if (tx.transaction_type === 'deposit') {
+          pokokSums[mId] = (pokokSums[mId] || 0) + amt;
+        } else if (tx.transaction_type === 'withdrawal') {
+          pokokSums[mId] = (pokokSums[mId] || 0) - amt;
+        }
+      }
+    });
+
+    const pokokTarget = typeList.find((dt: any) => dt.id === pokokId)?.default_amount || 100000;
+    Object.keys(pokokSums).forEach((mId) => {
+      if (pokokSums[mId] >= pokokTarget) {
+        pokokPaidByMember.add(mId);
+      }
+    });
+  }
+
+  // Agregasi setoran bulanan dan transaksi anggota
+  const paymentsByMember: Record<string, Record<number, { w: number; b: number; l: number }>> = {};
+  const memberTxs: Record<
+    string,
+    Array<{ year: number; month: number; type: string; amt: number; tId: string }>
+  > = {};
+
+  if (transactions) {
+    transactions.forEach((tx: any) => {
+      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+      if (!md) return;
+      const mId = md.member_id;
+      const tId = md.deposit_type_id;
+      const amt = Number(tx.amount) || 0;
+
+      let txYear = 0;
+      let txMonth = 0;
+
+      if (tx.transaction_type === 'deposit') {
+        txYear = tx.for_year || new Date(tx.created_at).getFullYear();
+        txMonth = tx.for_month ? tx.for_month - 1 : new Date(tx.created_at).getMonth();
+      } else {
+        const d = new Date(tx.created_at);
+        txYear = d.getFullYear();
+        txMonth = d.getMonth();
+      }
+
+      if (!memberTxs[mId]) memberTxs[mId] = [];
+      memberTxs[mId].push({ year: txYear, month: txMonth, type: tx.transaction_type, amt, tId });
+
+      // Cek kepatuhan bulanan pada tahun yang dipilih
+      if (tx.for_year === year && tx.for_month && tx.transaction_type === 'deposit') {
+        const month = tx.for_month - 1; // 0-indexed
+        if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
+        if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
+
+        if (tId === wajibId) paymentsByMember[mId][month].w += amt;
+        if (tId === belanjaId) paymentsByMember[mId][month].b += amt;
+        if (tId === lebaranId) paymentsByMember[mId][month].l += amt;
+      }
+    });
+  }
+
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+
+  // 4. Susun baris untuk setiap anggota yang eligible
+  // PENTING: Jangan buang anggota yang belum memiliki transaksi di tahun tersebut!
+  const results: ComplianceMatrixRow[] = eligibleMembers.map((m: any) => {
+    const monthsData: (ComplianceMonthData | null)[] = [];
+    let expectedCount = 0;
+    let paidCount = 0;
+
+    const joinDateStr = m.tgl_awal_anggota || m.created_at;
+    const joinDate = joinDateStr ? new Date(joinDateStr) : new Date(0);
+    const joinMonth = isNaN(joinDate.getMonth()) ? 0 : joinDate.getMonth();
+    const joinYear = isNaN(joinDate.getFullYear()) ? currentYear : joinDate.getFullYear();
+
+    for (let i = 0; i < 12; i++) {
+      // Jika bulan sebelum tanggal anggota bergabung atau bulan di masa depan
+      const isBeforeJoin = year < joinYear || (year === joinYear && i < joinMonth);
+      const isFuture = year > currentYear || (year === currentYear && i > currentMonth);
+
+      if (isFuture || isBeforeJoin) {
+        monthsData.push(null);
+      } else {
+        const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
+
+        // Hitung running balance hingga (year, i)
+        const memberTxList = memberTxs[m.id] || [];
+        let balW = 0;
+        let balB = 0;
+        let balL = 0;
+
+        for (const t of memberTxList) {
+          if (t.year < year || (t.year === year && t.month <= i)) {
+            if (t.type === 'deposit') {
+              if (t.tId === wajibId) balW += t.amt;
+              if (t.tId === belanjaId) balB += t.amt;
+              if (t.tId === lebaranId) balL += t.amt;
+            } else if (t.type === 'withdrawal') {
+              if (t.tId === wajibId) balW -= t.amt;
+              if (t.tId === belanjaId) balB -= t.amt;
+              if (t.tId === lebaranId) balL -= t.amt;
+            }
+          }
+        }
+
+        monthsData.push({ ...p, bal_w: balW, bal_b: balB, bal_l: balL });
+
+        expectedCount += 3;
+        if (p.w > 0) paidCount++;
+        if (p.b > 0) paidCount++;
+        if (p.l > 0) paidCount++;
+      }
+    }
+
+    const compliance = expectedCount > 0 ? Math.round((paidCount / expectedCount) * 100) : 100;
+
+    return {
+      member_id: m.id,
+      nrp: m.nrp,
+      nama: m.nama,
+      pokokLunas: pokokPaidByMember.has(m.id),
+      compliance,
+      balances: { w: 0, b: 0, l: 0 },
+      months: monthsData,
+      created_at: m.created_at,
+      tgl_awal_anggota: m.tgl_awal_anggota || m.created_at,
+    };
+  });
+
+  return {
+    rows: results,
+    targets: {
+      wajib: typeList.find((dt: any) => dt.id === wajibId)?.default_amount || 25000,
+      belanja: typeList.find((dt: any) => dt.id === belanjaId)?.default_amount || 50000,
+      lebaran: typeList.find((dt: any) => dt.id === lebaranId)?.default_amount || 50000,
+    },
+  };
 }

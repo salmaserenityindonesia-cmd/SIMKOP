@@ -6,8 +6,11 @@ import {
   loadComplianceAvailableYearsData,
   fetchComplianceMatrixData,
 } from './ComplianceMatrix';
-import { getSavingsComplianceAvailableYears } from '../../services/complianceService';
-import { getComplianceMatrixData, ComplianceMatrixResult } from '../../services/matrixService';
+import {
+  getSavingsComplianceAvailableYears,
+  getComplianceMatrixData,
+  ComplianceMatrixResult,
+} from '../../services/complianceService';
 import { supabase } from '../../lib/supabaseClient';
 
 // Mock layout
@@ -36,12 +39,7 @@ vi.mock('../../components/compliance/SavingsLedgerMatrixModal', () => ({
   ),
 }));
 
-// Mock complianceService
-vi.mock('../../services/complianceService', () => ({
-  getSavingsComplianceAvailableYears: vi.fn().mockResolvedValue([2026, 2025, 2024, 2023]),
-}));
-
-// Mock matrixService
+// Mock matrixService & complianceService
 const { mockMatrixResult } = vi.hoisted(() => ({
   mockMatrixResult: {
     rows: [
@@ -64,6 +62,11 @@ const { mockMatrixResult } = vi.hoisted(() => ({
     ],
     targets: { wajib: 25000, belanja: 50000, lebaran: 50000 },
   },
+}));
+
+vi.mock('../../services/complianceService', () => ({
+  getSavingsComplianceAvailableYears: vi.fn().mockResolvedValue([2026, 2025, 2024, 2023]),
+  getComplianceMatrixData: vi.fn().mockImplementation(() => Promise.resolve(mockMatrixResult)),
 }));
 
 vi.mock('../../services/matrixService', () => ({

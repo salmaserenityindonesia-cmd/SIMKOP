@@ -527,3 +527,54 @@ Pada modul "Konfigurasi Tarif Iuran Simpanan Bertingkat" di menu Pengaturan Kope
   * TypeScript typecheck (`npx tsc --noEmit`): exit code 0.
   * Vitest Suite (`npx vitest run`): 36 test files, 393/393 tests passed (100%).
   * Vite Production Build (`npm run build`): exit code 0.
+
+---
+
+# Debug Session: DEBUG-20261102-COMPLIANCE-MATRIX-MISSING-MEMBERS
+
+## Status: FIXED
+
+## Symptom
+Pada halaman Matriks Tracking Pembayaran Simpanan Tahunan (`src/pages/admin/ComplianceMatrix.tsx` atau `src/services/complianceService.ts`), ketika filter Tahun 2026 (atau tahun berjalan lainnya) dipilih, tabel menampilkan pesan kosong *"Tidak ada data anggota ditemukan"*, padahal terdapat data 4 anggota aktif (Yanto Santoso, Agus Susanto, Mulyono Santoso, Joko Arifin) di Manajemen Anggota.
+
+**When:** Saat membuka menu Matriks Kepatuhan Simpanan (`/admin/compliance-matrix`) dengan tahun terpilih 2026.
+**Expected:** Seluruh 4 anggota aktif tampil pada tabel matriks kepatuhan simpanan beserta status kewajiban simpanan 12 bulan (Januari - Desember), terlepas dari apakah mereka sudah atau belum memiliki transaksi simpanan di tahun 2026.
+**Actual:** Tabel kosong dengan notifikasi *"Tidak ada data anggota ditemukan"* karena query mengecualikan anggota yang belum memiliki transaksi simpanan di tahun terpilih dan memfilter kolom status secara kaku.
+
+## Root Cause
+1. **Query Kaku pada Kolom `status` Anggota**: Implementasi awal menggunakan `.eq('status', 'aktif')`. Pada database SIMKOP, status utama anggota dikelola lewat kolom `membership_status` (`'ACTIVE'` / `'RESIGNED'`) sementara kolom legacy `status` kerap bernilai `NULL` atau tidak terisi saat registrasi, sehingga anggota aktif tereliminasi.
+2. **Eliminasi Anggota Tanpa Transaksi (INNER JOIN Behavior)**: Query transaksi simpanan menghubungkan `deposit_transactions` dengan filter tahun secara langsung. Anggota yang belum membayarkan simpanan sama sekali di tahun 2026 tereliminasi karena tidak memiliki baris transaksi (perilaku inner join), bukannya ditampilkan dengan status tunggakan (lingkaran merah / belum lunas).
+3. **Penyaringan Masa Keanggotaan (*Join Date*)**: Pengecekan tahun bergabung sebelumnya belum mengakomodasi perbandingan tanggal yang presisi (`joinDate <= endOfYear`). Anggota yang mendaftar pada tahun 2023, 2024, atau 2025 seharusnya tetap aktif dan memenuhi syarat kewajiban simpanan di tahun 2026.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Fix Compliance Data Query Architecture in complianceService.ts
+- File: `src/services/complianceService.ts`
+  * Memastikan kueri master anggota selalu mengarah ke tabel `public.anggota` (bukan tabel `members` lama).
+  * Menyelaraskan filter status keanggotaan aktif: `status !== 'nonaktif' && membership_status !== 'RESIGNED'`.
+  * Memperbaiki logika kelayakan tahun bergabung: anggota disertakan jika `joinDate <= endOfYear` (akhir tahun yang dipilih, misalnya `2026-12-31T23:59:59.999Z`), sehingga anggota yang mendaftar di tahun-tahun sebelumnya selalu muncul.
+  * Mengadopsi arsitektur *LEFT JOIN*: mengambil semua anggota aktif terlebih dahulu, kemudian mengambil transaksi simpanan (`deposit_transactions` via `member_deposits`) untuk tahun yang dipilih. Jika anggota belum memiliki transaksi di tahun tersebut, anggota **tetap disertakan** dalam daftar baris matriks dengan nilai pembayaran `0` pada bulan terkait (ditandai sebagai tunggakan kewajiban), bukan dibuang dari tabel.
+  * Memperbarui `getSavingsComplianceAvailableYears` agar query builder tahan banting (*resilient*) saat dijalankan baik di lingkungan browser riil maupun mock unit testing.
+
+### Wave 2: Service Re-export & Frontend Component Alignment
+- File: `src/services/matrixService.ts`
+  * Mengekspor ulang fungsi `getComplianceMatrixData`, serta tipe `ComplianceMonthData`, `ComplianceMatrixRow`, dan `ComplianceMatrixResult` dari `./complianceService` untuk menjaga backwards compatibility 100%.
+- File: `src/pages/admin/ComplianceMatrix.tsx`
+  * Memperbarui impor `getComplianceMatrixData` langsung dari `complianceService`.
+  * Menyelaraskan fungsi `renderCell` dan `membersInArrears` agar menghormati filter jenis simpanan (`all`, `wajib`, `belanja`, `lebaran`).
+  * Memastikan baris anggota yang memiliki tunggakan menampilkan lencana tunggakan secara proporsional.
+
+### Wave 3: Test Verification & Build Check
+- File: `src/services/complianceService.test.ts`
+  * Menambahkan unit test komprehensif untuk `getComplianceMatrixData`:
+    - Menguji kueri master `public.anggota`.
+    - Menguji retensi anggota dengan 0 transaksi di tahun terpilih (non-elimination).
+    - Menguji pengecualian anggota yang mengundurkan diri (`membership_status = 'RESIGNED'`).
+  * Hasil: 15/15 tests passed (100%).
+- File: `src/pages/admin/ComplianceMatrix.test.tsx`
+  * Menyelaraskan mock `complianceService` dengan `getComplianceMatrixData`.
+  * Hasil: 12/12 tests passed (100%).
+- Verifikasi Sistem:
+  * TypeScript typecheck (`npx tsc --noEmit`): exit code 0.
+  * Full Vitest Suite (`npx vitest run`): 36 test files, 395/395 tests passed (100%).
+  * Production Build (`npm run build`): exit code 0.

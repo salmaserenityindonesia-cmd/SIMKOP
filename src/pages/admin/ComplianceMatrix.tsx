@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, Eye } from 'lucide-react';
-import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
-import { getSavingsComplianceAvailableYears } from '../../services/complianceService';
+import {
+  getComplianceMatrixData,
+  ComplianceMatrixRow,
+  ComplianceMonthData,
+  getSavingsComplianceAvailableYears
+} from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
 import { supabase } from '../../lib/supabaseClient';
@@ -147,8 +151,11 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     // We'll check the CURRENT_MONTH of the selected year if we assume they might owe in the past, but the prompt says "Bulan Ini"
     // Let's use CURRENT_MONTH data.
     const currentMonthData = row.months[CURRENT_MONTH];
-    if (currentMonthData && (currentMonthData.w <= 0 || currentMonthData.b <= 0 || currentMonthData.l <= 0)) {
-      return true;
+    if (currentMonthData) {
+      if (filterType === 'wajib') return currentMonthData.w <= 0;
+      if (filterType === 'belanja') return currentMonthData.b <= 0;
+      if (filterType === 'lebaran') return currentMonthData.l <= 0;
+      return currentMonthData.w <= 0 || currentMonthData.b <= 0 || currentMonthData.l <= 0;
     }
     return false;
   }).length;
@@ -157,8 +164,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
     
     const { w, b, l, bal_w, bal_b, bal_l } = monthData;
-    const allPaid = w > 0 && b > 0 && l > 0;
-    const unpaidCount = (w <= 0 ? 1 : 0) + (b <= 0 ? 1 : 0) + (l <= 0 ? 1 : 0);
+    let allPaid = w > 0 && b > 0 && l > 0;
+    let unpaidCount = (w <= 0 ? 1 : 0) + (b <= 0 ? 1 : 0) + (l <= 0 ? 1 : 0);
+
+    if (filterType === 'wajib') {
+      allPaid = w > 0;
+      unpaidCount = w <= 0 ? 1 : 0;
+    } else if (filterType === 'belanja') {
+      allPaid = b > 0;
+      unpaidCount = b <= 0 ? 1 : 0;
+    } else if (filterType === 'lebaran') {
+      allPaid = l > 0;
+      unpaidCount = l <= 0 ? 1 : 0;
+    }
 
     return (
       <div className="relative group flex justify-center items-center w-full h-full">

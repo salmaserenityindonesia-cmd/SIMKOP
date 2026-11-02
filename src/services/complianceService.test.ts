@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getSavingsComplianceAvailableYears,
+  getComplianceMatrixData,
   matchDepositType,
   DepositTypeItem,
 } from './complianceService';
@@ -404,6 +405,106 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
     it('mengembalikan undefined jika tipe simpanan tidak ditemukan', () => {
       const types = [{ id: '99', name: 'Simpanan Sukarela', code: 'SS' }];
       expect(matchDepositType(types, ['POKOK', 'SP'], ['pokok'])).toBeUndefined();
+    });
+  });
+
+  describe('getComplianceMatrixData - Architecture & Active Member Retention', () => {
+    const mockDTypes = [
+      { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'SP', default_amount: 100000 },
+      { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'SW', default_amount: 25000 },
+      { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'SB', default_amount: 50000 },
+      { id: 'dt-lebaran', name: 'Simpanan Hari Raya', code: 'SL', default_amount: 50000 },
+    ];
+
+    it('mengambil master anggota dari tabel public.anggota (BUKAN members) dan menyertakan ke-4 anggota aktif di 2026', async () => {
+      const mockMembers = [
+        { id: 'm-1', nrp: 'NRP001', nama: 'Yanto Santoso', membership_status: 'ACTIVE', tgl_awal_anggota: '2023-01-01', created_at: '2023-01-01T00:00:00Z' },
+        { id: 'm-2', nrp: 'NRP002', nama: 'Agus Susanto', membership_status: 'ACTIVE', tgl_awal_anggota: '2024-05-10', created_at: '2024-05-10T00:00:00Z' },
+        { id: 'm-3', nrp: 'NRP003', nama: 'Mulyono Santoso', membership_status: 'ACTIVE', tgl_awal_anggota: '2025-02-15', created_at: '2025-02-15T00:00:00Z' },
+        { id: 'm-4', nrp: 'NRP004', nama: 'Joko Arifin', membership_status: 'ACTIVE', tgl_awal_anggota: '2025-10-01', created_at: '2025-10-01T00:00:00Z' },
+        { id: 'm-5', nrp: 'NRP005', nama: 'Budi Resigned', membership_status: 'RESIGNED', tgl_awal_anggota: '2023-01-01', created_at: '2023-01-01T00:00:00Z' },
+      ];
+
+      const fromCalls: string[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        fromCalls.push(table);
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+              eq: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          // Transaksi kosong di 2026 untuk menguji LEFT JOIN non-eliminasi
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+
+      // Pastikan tabel anggota dipanggil dan members TIDAK dipanggil
+      expect(fromCalls).toContain('anggota');
+      expect(fromCalls).not.toContain('members');
+
+      // Pastikan ada tepat 4 anggota aktif (Budi Resigned tereksklusi)
+      expect(result.rows).toHaveLength(4);
+      const names = result.rows.map(r => r.nama);
+      expect(names).toContain('Yanto Santoso');
+      expect(names).toContain('Agus Susanto');
+      expect(names).toContain('Mulyono Santoso');
+      expect(names).toContain('Joko Arifin');
+      expect(names).not.toContain('Budi Resigned');
+
+      // Seluruh 4 anggota memiliki 12 bulan array terdefinisi
+      result.rows.forEach(row => {
+        expect(row.months).toHaveLength(12);
+      });
+    });
+
+    it('tidak mengeliminasi anggota yang belum memiliki transaksi di tahun tersebut', async () => {
+      const mockMembers = [
+        { id: 'm-1', nrp: 'NRP001', nama: 'Yanto Santoso', membership_status: 'ACTIVE', created_at: '2023-01-01T00:00:00Z' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0].nama).toBe('Yanto Santoso');
     });
   });
 });
