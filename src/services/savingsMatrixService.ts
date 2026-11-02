@@ -2,7 +2,8 @@ import { supabase } from '../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
-  SavingsRateTier
+  SavingsRateTier,
+  DEFAULT_RATE_TIERS
 } from './savingsRateService';
 
 export const MONTH_NAMES = [
