@@ -116,7 +116,47 @@ describe('savingsRateService', () => {
       expect(getApplicableRate('WAJIB', 2025, 11, [])).toBe(200000);
       expect(getApplicableRate('BELANJA', 2025, 1, [])).toBe(25000);
       expect(getApplicableRate('LEBARAN', 2025, 1, [])).toBe(50000);
+      expect(getApplicableRate('POKOK', 2025, 1, [])).toBe(0);
       expect(getApplicableRate('UNKNOWN', 2025, 1, [])).toBe(0);
+    });
+
+    it('should correctly evaluate tiered rates across multi-year timeline sequence', () => {
+      const threeTierSequence: SavingsRateTier[] = [
+        {
+          id: 'tier-1',
+          deposit_type_code: 'WAJIB',
+          start_year: 2022,
+          start_month: 1,
+          end_year: 2023,
+          end_month: 12,
+          monthly_rate: 100000
+        },
+        {
+          id: 'tier-2',
+          deposit_type_code: 'WAJIB',
+          start_year: 2024,
+          start_month: 1,
+          end_year: 2025,
+          end_month: 10,
+          monthly_rate: 150000
+        },
+        {
+          id: 'tier-3',
+          deposit_type_code: 'WAJIB',
+          start_year: 2025,
+          start_month: 11,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        }
+      ];
+
+      expect(getApplicableRate('WAJIB', 2022, 1, threeTierSequence)).toBe(100000);
+      expect(getApplicableRate('WAJIB', 2023, 12, threeTierSequence)).toBe(100000);
+      expect(getApplicableRate('WAJIB', 2024, 1, threeTierSequence)).toBe(150000);
+      expect(getApplicableRate('WAJIB', 2025, 10, threeTierSequence)).toBe(150000);
+      expect(getApplicableRate('WAJIB', 2025, 11, threeTierSequence)).toBe(200000);
+      expect(getApplicableRate('WAJIB', 2026, 12, threeTierSequence)).toBe(200000);
     });
   });
 
