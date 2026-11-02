@@ -4,6 +4,8 @@ import {
   getComplianceMatrixData,
   matchDepositType,
   DepositTypeItem,
+  SavingsSubItem,
+  MonthSavingsCell,
 } from './complianceService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -695,4 +697,127 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
       expect(aprData?.bal_w).toBe(600000);
     });
   });
+
+  describe('granular month cell structure (wajib, belanja, lebaran)', () => {
+    const mockDTypes = [
+      { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'POKOK', default_amount: 100000 },
+      { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'WAJIB', default_amount: 30000 },
+      { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'BELANJA', default_amount: 60000 },
+      { id: 'dt-lebaran', name: 'Simpanan Hari Raya', code: 'LEBARAN', default_amount: 50000 },
+    ];
+
+    const mockMembers = [
+      {
+        id: 'm-member-1',
+        nama: 'Agus Sutrisno',
+        nrp: '78910',
+        status: 'aktif',
+        created_at: '2025-01-01T00:00:00Z',
+        tgl_awal_anggota: '2025-01-01',
+      },
+    ];
+
+    it('memetakan status paid dan unpaid dengan nominal tepat untuk setiap sub-item', async () => {
+      // Month 0 (Jan): Lunas semua (wajib: 30000, belanja: 60000, lebaran: 50000)
+      // Month 1 (Feb): Hanya bayar wajib (30000), belanja dan lebaran unpaid
+      // Month 2 (Mar): Tidak bayar sama sekali (semua unpaid)
+      const transactions = [
+        // Jan - all 3
+        {
+          id: 'tx-1',
+          amount: 30000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 1,
+          member_deposits: { member_id: 'm-member-1', deposit_type_id: 'dt-wajib' },
+        },
+        {
+          id: 'tx-2',
+          amount: 60000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 1,
+          member_deposits: { member_id: 'm-member-1', deposit_type_id: 'dt-belanja' },
+        },
+        {
+          id: 'tx-3',
+          amount: 50000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 1,
+          member_deposits: { member_id: 'm-member-1', deposit_type_id: 'dt-lebaran' },
+        },
+        // Feb - only wajib
+        {
+          id: 'tx-4',
+          amount: 30000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 2,
+          member_deposits: { member_id: 'm-member-1', deposit_type_id: 'dt-wajib' },
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: transactions, error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2025);
+      expect(result.rows).toHaveLength(1);
+      const memberRow = result.rows[0];
+
+      // Targets returned correctly
+      expect(result.targets.wajib).toBe(30000);
+      expect(result.targets.belanja).toBe(60000);
+      expect(result.targets.lebaran).toBe(50000);
+
+      // Month 0 (Jan): all paid
+      const janData = memberRow.months[0];
+      expect(janData).not.toBeNull();
+      expect(janData?.wajib).toEqual({ status: 'paid', amount: 30000 });
+      expect(janData?.belanja).toEqual({ status: 'paid', amount: 60000 });
+      expect(janData?.lebaran).toEqual({ status: 'paid', amount: 50000 });
+      // Backward compatibility fields
+      expect(janData?.w).toBe(30000);
+      expect(janData?.b).toBe(60000);
+      expect(janData?.l).toBe(50000);
+
+      // Month 1 (Feb): wajib paid, belanja unpaid, lebaran unpaid
+      const febData = memberRow.months[1];
+      expect(febData).not.toBeNull();
+      expect(febData?.wajib).toEqual({ status: 'paid', amount: 30000 });
+      expect(febData?.belanja).toEqual({ status: 'unpaid', amount: 60000 });
+      expect(febData?.lebaran).toEqual({ status: 'unpaid', amount: 50000 });
+      expect(febData?.w).toBe(30000);
+      expect(febData?.b).toBe(0);
+      expect(febData?.l).toBe(0);
+
+      // Month 2 (Mar): all unpaid with target amounts
+      const marData = memberRow.months[2];
+      expect(marData).not.toBeNull();
+      expect(marData?.wajib).toEqual({ status: 'unpaid', amount: 30000 });
+      expect(marData?.belanja).toEqual({ status: 'unpaid', amount: 60000 });
+      expect(marData?.lebaran).toEqual({ status: 'unpaid', amount: 50000 });
+      expect(marData?.w).toBe(0);
+      expect(marData?.b).toBe(0);
+      expect(marData?.l).toBe(0);
+    });
+  });
 });
+
