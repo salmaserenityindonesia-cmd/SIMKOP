@@ -863,6 +863,27 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 50: Implementasi Lengkap Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan (Checkbox Grid)
+**Status:** ⏳ In Progress
+**Objective:** Mengimplementasikan dua alur terpadu untuk pengelolaan Simpanan Wajib, Belanja, dan Lebaran: modul pengaturan tarif berjenjang mandiri di Pengaturan Koperasi (`/admin/pengaturan`) dengan proteksi anti-overlap otomatis, dan modal buku besar matriks interaktif per anggota (`SavingsLedgerMatrixModal.tsx`) di Matriks Pembayaran (`/admin/compliance-matrix`) berbasis grid bulan horizontal dengan checkbox interaktif yang dinamis mengikuti nominal tarif aktif periode tersebut serta tombol "Cocokkan Otomatis dengan Saldo Impor".
+**Depends on:** Phase 8, Phase 47, Phase 49
+
+**Plans:**
+- [ ] Plan 50.1: Wave 1 - Database Migration for Savings Rate Tiers & Service Layer with Anti-Overlap Resolver
+- [ ] Plan 50.2: Wave 2 - UI Form Pengaturan Tarif Simpanan Bertingkat di Pengaturan Koperasi
+- [ ] Plan 50.3: Wave 3 - Interactive Matrix Ledger Modal (Checkbox Grid) & Compliance Matrix Integration
+- [ ] Plan 50.4: Wave 4 - Static Verification, Full Vitest Suite & Production Build Check
+
+**Deliverables:**
+- Berkas migrasi `supabase/migrations/031_create_savings_rate_tiers.sql` dengan RLS dan initial seeds
+- Modul `src/services/savingsRateService.ts` dengan CRUD, resolusi anti-overlap, dan resolver `getApplicableRate`
+- Kartu form konfigurasi tarif dan modal tambah tarif di `src/pages/admin/PengaturanKoperasi.tsx`
+- Komponen modal `src/components/compliance/SavingsLedgerMatrixModal.tsx` dengan checkbox grid per bulan dan aksi cocokkan saldo otomatis
+- Integrasi klik anggota pada `src/pages/admin/ComplianceMatrix.tsx` untuk membuka modal buku besar
+- Pengujian komprehensif Vitest dan verifikasi build produksi Vite
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -903,6 +924,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 34 | Phase 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung |
 | 35 | Phase 48 | Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota |
 | 36 | Phase 49 | Clean Slate Verification & Reset Data Anggota |
+| 37 | Phase 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan |
 
 ---
 
@@ -959,6 +981,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 47 | Filter Tahun Dinamis Matriks Kepatuhan Simpanan Menggantung | ✅ | 3/3 | 100% |
 | 48 | Revisi Form Modal Tambah Anggota Baru pada Manajemen Anggota | ✅ | 2/2 | 100% |
 | 49 | Clean Slate Verification & Reset Data Anggota | ✅ | 2/2 | 100% |
+| 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan | ⏳ | 0/4 | 0% |
 
 ---
 
@@ -1015,5 +1038,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 47 | 2026-11-01 | 2026-11-01 | 1 day |
 | 48 | 2026-11-01 | 2026-11-01 | 1 day |
 | 49 | 2026-11-02 | 2026-11-02 | 1 day |
+| 50 | 2026-11-02 | — | — |
 
 
