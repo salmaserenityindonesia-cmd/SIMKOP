@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 51 (Implementasi Fitur "Cocokkan Otomatis Semua Anggota" (Bulk Auto-Reconcile) pada Matriks Simpanan)
+- **Phase**: 52 (Refactor Tampilan Sel Matriks Kepatuhan Simpanan Menjadi 3 Sub-Baris: Wajib, Belanja, Lebaran)
 - **Task**: Phase verification complete
 - **Status**: Complete & Verified (6/6 must-haves verified)
 
 ## Last Session Summary
-Phase 51 executed and independently verified across 3 plans:
-- Plan 51.1: Implemented `bulkAutoReconcileAllMembers` engine in `src/services/savingsMatrixService.ts` with batch processing (default 50 members/chunk), FIFO ledger allocation according to `savings_rate_tiers`, preservation of lump-sum migration records (`Migrasi Saldo Awal (As-Is)`), and unit test suite in `src/services/savingsMatrixService.test.ts` (14 unit tests passing 100%). Commits: `bd0ba896`, `e60720c3`.
-- Plan 51.2: Added "Cocokkan Otomatis Semua Anggota" button on the toolbar of `src/pages/admin/ComplianceMatrix.tsx`, along with confirmation modal, deposit type selection, real-time progress bar with member name indicators, and instant matrix table reload. Component tests in `src/pages/admin/ComplianceMatrix.test.tsx` (16 tests passing 100%). Commits: `ae219cd7`, `e7d5b65f`.
-- Plan 51.3: Verified full Vitest suite (37 test files, 407 tests passing 100%), verified TypeScript static typecheck (`tsc --noEmit`), and verified production build (`npm run build`) with exit code 0. Commits: `70a79bb1`, `6eab1c3e`.
-- Independent verifier passed 6/6 must-haves with report at `.gsd/phases/51/VERIFICATION.md`.
+Phase 52 executed and independently verified across 3 plans:
+- Plan 52.1: Data contract alignment in `src/services/complianceService.ts`. Introduced `SavingsSubItem`, `MonthSavingsCell`, and extended `ComplianceMonthData` to map `wajib`, `belanja`, and `lebaran` status (`paid` vs `unpaid`) and amounts per month. Extended `src/services/complianceService.test.ts` (18 unit tests passing 100%). Commits: `f0f3be74`, `bce8473b`.
+- Plan 52.2: Multi-row cell UI in `src/pages/admin/ComplianceMatrix.tsx`. Refactored month cell into 3-row vertical layout with color indicators (`text-emerald-600` for paid wajib/lebaran, `text-teal-600` for paid belanja, `text-rose-600` for unpaid, and `-` in slate-400 for not applicable). Widened month column `min-w-[95px] md:min-w-[105px]`. Enabled direct cell click to open `SavingsLedgerMatrixModal`. Updated legend footer. Extended `src/pages/admin/ComplianceMatrix.test.tsx` (23 tests passing 100%). Commits: `845277f5`, `5d375b3e`.
+- Plan 52.3: Full static TypeScript verification (`tsc --noEmit`), full Vitest suite run (37 test files, 410 tests passing 100%), and production build verification (`npm run build`) with exit code 0. Commits: `c4f8c1b9`, `33728fc1`.
+- Independent verifier passed 6/6 must-haves with report at `.gsd/phases/52/VERIFICATION.md`.
 
 ## Next Steps
-Phase 51 is complete. Awaiting next user request or milestone review.
+Phase 52 is complete. Awaiting next user request or milestone review.
 
 ## Blockers
 - None.
@@ -19,7 +19,10 @@ Phase 51 is complete. Awaiting next user request or milestone review.
 ## Context Dump
 
 ### Decisions Made
-- **Batch Processing Chunks**: Memproses anggota dalam batch berisi 50 orang per kueri untuk mengoptimalkan throughput dan mencegah PostgREST payload / URL parameter limits.
-- **Preservasi Saldo Awal Migrasi**: Membersihkan mutasi rutin berkala lama namun secara ketat memproteksi transaksi saldo awal berlabel `Migrasi Saldo Awal (As-Is)`.
-- **Integrasi Pilihan Tipe Simpanan**: Modal konfirmasi menyediakan pilihan `ALL` (semua simpanan: Wajib, Belanja, Lebaran) atau terarah pada salah satu jenis simpanan saja.
-- **Auto-Refresh Matriks**: Setelah proses rekonsiliasi massal selesai, antarmuka langsung memanggil `fetchComplianceMatrixData` tanpa mengharuskan operator me-reload browser.
+- **Granular Data Contract**: Mempertahankan backward-compatibility dengan properti flat (`w`, `b`, `l`, `bal_w`, `bal_b`, `bal_l`) sembari menambahkan sub-objek terstruktur `wajib`, `belanja`, `lebaran` berisi status dan nominal.
+- **3-Subrow Visual Presentation**: Setiap sel bulan menampilkan rincian:
+  * Wajib: Emerald-600 (lunas) / Rose-600 (tunggakan)
+  * Belanja: Teal-600 (lunas) / Rose-600 (tunggakan)
+  * Lebaran: Emerald-600 (lunas) / Rose-600 (tunggakan)
+- **Cell-Click Ledger Trigger**: Klik pada setiap sel bulan langsung membuka `SavingsLedgerMatrixModal` untuk anggota tersebut.
+- **Responsive Width**: Header dan sel bulan disetel ke `min-w-[95px] md:min-w-[105px]` untuk mencegah pemotongan teks atau angka nominal rupiah.

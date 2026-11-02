@@ -1,4 +1,4 @@
-﻿---
+---
 milestone: SIMKOP v1.0
 version: 1.0.0
 updated: 2026-10-30T20:50:00+07:00
@@ -904,6 +904,26 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 52: Refactor Tampilan Sel Matriks Kepatuhan Simpanan Menjadi 3 Sub-Baris (Wajib, Belanja, Lebaran)
+**Status:** ✅ Complete
+**Objective:** Mengubah tampilan sel bulanan (Jan - Des) pada Matriks Tracking Pembayaran Simpanan Tahunan (/admin/compliance-matrix) dari indikator centang/badge tunggal menjadi tampilan matriks ringkas 3 sub-baris (Wajib, Belanja, Lebaran) dengan status dan nominal transparan, penyesuaian lebar kolom, dan interaksi klik buku besar.
+**Depends on:** Phase 51
+
+**Plans:**
+- [x] Plan 52.1: Wave 1 - Data Contract Alignment in complianceService.ts & Unit Tests
+- [x] Plan 52.2: Wave 2 - Multi-Row Cell UI in ComplianceMatrix.tsx & Component Tests
+- [x] Plan 52.3: Wave 3 - Static Verification, Full Vitest Suite & Production Build
+
+**Deliverables:**
+- Interface `SavingsSubItem`, `MonthSavingsCell`, dan ekstensi `ComplianceMonthData` di `src/services/complianceService.ts`
+- Unit tests untuk struktur granular per jenis simpanan di `src/services/complianceService.test.ts`
+- Komponen sel 3 sub-baris vertikal dengan warna status (hijau/teal/merah/abu-abu) di `src/pages/admin/ComplianceMatrix.tsx`
+- Kolom bulan responsive (~95px - 105px) dan interaksi klik sel pembuka `SavingsLedgerMatrixModal`
+- Pengujian komponen sel di `src/pages/admin/ComplianceMatrix.test.tsx`
+- Verifikasi statis TypeScript dan production build Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -946,6 +966,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 36 | Phase 49 | Clean Slate Verification & Reset Data Anggota |
 | 37 | Phase 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan |
 | 38 | Phase 51 | Bulk Auto-Reconcile Matriks Simpanan |
+| 39 | Phase 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris |
 
 ---
 
@@ -1004,6 +1025,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 49 | Clean Slate Verification & Reset Data Anggota | ✅ | 2/2 | 100% |
 | 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan | ✅ | 4/4 | 100% |
 | 51 | Bulk Auto-Reconcile Matriks Simpanan | ✅ | 3/3 | 100% |
+| 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1062,5 +1084,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 49 | 2026-11-02 | 2026-11-02 | 1 day |
 | 50 | 2026-11-02 | 2026-11-02 | 1 day |
 | 51 | 2026-11-02 | 2026-11-02 | 1 day |
+| 52 | 2026-11-02 | 2026-11-02 | 1 day |
 
 
