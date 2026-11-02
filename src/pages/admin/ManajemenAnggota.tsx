@@ -137,6 +137,8 @@ export default function ManajemenAnggota({
     }
   }
 
+  const fetchMembers = loadData;
+
   const handleOpenAddModal = () => {
     setEditingAnggota(null);
     setFormData({
@@ -285,7 +287,7 @@ export default function ManajemenAnggota({
     try {
       await triggerResetAllMembers(showToast, setIsResetting, async () => {
         setIsResetModalOpen(false);
-        await loadData();
+        await fetchMembers();
       });
     } catch {
       // Error is handled with toast inside triggerResetAllMembers

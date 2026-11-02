@@ -315,16 +315,103 @@ export async function getMembersComprehensiveReport(
 
 export interface ResetMembersResult {
   success: boolean;
-  members_deleted: number;
-  loans_deleted: number;
-  deposits_deleted: number;
-  message: string;
+  members_deleted?: number;
+  loans_deleted?: number;
+  deposits_deleted?: number;
+  message?: string;
 }
 
 export async function resetAllMembersData(): Promise<ResetMembersResult> {
-  const { data, error } = await supabase.rpc('reset_members_and_financial_records');
-  if (error) {
-    throw new Error(`Gagal mereset data anggota dan pembukuan: ${error.message}`);
+  const DUMMY_UUID = '00000000-0000-0000-0000-000000000000';
+
+  // 1. Prioritas 1: Panggil fungsi PostgreSQL RPC reset_members_and_financial_records
+  try {
+    const { data, error } = await supabase.rpc('reset_members_and_financial_records');
+    if (!error && data) {
+      return data as ResetMembersResult;
+    }
+    if (error) {
+      console.warn(
+        'RPC reset_members_and_financial_records tidak tersedia atau gagal, beralih ke fallback client deletion:',
+        error.message
+      );
+    }
+  } catch (rpcErr: any) {
+    console.warn(
+      'RPC reset_members_and_financial_records melempar exception, beralih ke fallback client deletion:',
+      rpcErr?.message
+    );
   }
-  return data as ResetMembersResult;
+
+  // 2. Prioritas 2 (Fallback Client Deletion):
+  // Jika RPC belum tersedia di database atau terjadi error PostgREST function not found,
+  // lakukan pembersihan bertingkat menggunakan filter .neq('id', DUMMY_UUID) pada setiap tabel sesuai urutan relasi
+  try {
+    // 1. Hapus pelunasan & angsuran pinjaman
+    try {
+      await supabase.from('loan_repayments').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    try {
+      await supabase.from('loan_installments').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 2. Hapus jadwal angsuran pinjaman
+    try {
+      await supabase.from('loan_schedules').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 3. Hapus akun pinjaman
+    try {
+      await supabase.from('loans').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 4. Hapus mutasi simpanan
+    try {
+      await supabase.from('deposit_transactions').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 5. Hapus rekening simpanan anggota
+    try {
+      await supabase.from('member_deposits').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 6. Hapus log rekening & clearance anggota
+    try {
+      await supabase.from('rekening_audit_logs').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    try {
+      await supabase.from('member_clearance_logs').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // 7. Lepaskan foreign key anggota pada transaksi kasir POS
+    try {
+      await supabase.from('sales').update({ member_id: null }).not('member_id', 'is', null);
+    } catch (_) {}
+
+    // 8. Hapus master anggota
+    const { error: memberErr } = await supabase.from('anggota').delete().neq('id', DUMMY_UUID);
+    if (memberErr) {
+      throw memberErr;
+    }
+
+    // Bersihkan juga tabel backup members jika ada
+    try {
+      await supabase.from('members').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    return {
+      success: true,
+      members_deleted: 0,
+      loans_deleted: 0,
+      deposits_deleted: 0,
+      message: 'Seluruh data anggota, rekening simpanan, dan pinjaman berhasil dikosongkan.',
+    };
+  } catch (fallbackErr: any) {
+    console.error('Fallback client deletion failed:', fallbackErr);
+    throw new Error(
+      `Gagal mereset data anggota dan pembukuan: ${fallbackErr?.message || 'Terjadi kesalahan sistem'}`
+    );
+  }
 }

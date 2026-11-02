@@ -758,16 +758,56 @@ describe('memberService - resetAllMembersData', () => {
     expect(result).toEqual(mockResult);
   });
 
-  it('throws descriptive error when RPC returns an error', async () => {
+  it('falls back to client-side cascading deletion using .neq and .not when RPC fails', async () => {
     (supabase.rpc as any) = vi.fn().mockResolvedValue({
       data: null,
-      error: { message: 'permission denied for function reset_members_and_financial_records' },
+      error: { message: 'Could not find the function public.reset_members_and_financial_records in the schema cache' },
+    });
+
+    const mockNeq = vi.fn().mockResolvedValue({ error: null });
+    const mockNot = vi.fn().mockResolvedValue({ error: null });
+    const mockDelete = vi.fn().mockReturnValue({ neq: mockNeq });
+    const mockUpdate = vi.fn().mockReturnValue({ not: mockNot });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return { update: mockUpdate };
+      }
+      return { delete: mockDelete };
+    });
+
+    const result = await resetAllMembersData();
+
+    expect(supabase.rpc).toHaveBeenCalledWith('reset_members_and_financial_records');
+    expect(mockDelete).toHaveBeenCalled();
+    expect(mockNeq).toHaveBeenCalledWith('id', '00000000-0000-0000-0000-000000000000');
+    expect(mockUpdate).toHaveBeenCalledWith({ member_id: null });
+    expect(mockNot).toHaveBeenCalledWith('member_id', 'is', null);
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Seluruh data anggota, rekening simpanan, dan pinjaman berhasil dikosongkan.');
+  });
+
+  it('throws descriptive error when both RPC and fallback deletion encounter an error', async () => {
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'RPC not found' },
+    });
+
+    const mockNeq = vi.fn().mockImplementation(() => Promise.resolve({ error: { message: 'permission denied for table anggota' } }));
+    const mockNot = vi.fn().mockResolvedValue({ error: null });
+    const mockDelete = vi.fn().mockReturnValue({ neq: mockNeq });
+    const mockUpdate = vi.fn().mockReturnValue({ not: mockNot });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return { update: mockUpdate };
+      }
+      return { delete: mockDelete };
     });
 
     await expect(resetAllMembersData()).rejects.toThrow(
-      'Gagal mereset data anggota dan pembukuan: permission denied for function reset_members_and_financial_records'
+      'Gagal mereset data anggota dan pembukuan: permission denied for table anggota'
     );
-    expect(supabase.rpc).toHaveBeenCalledWith('reset_members_and_financial_records');
   });
 });
 

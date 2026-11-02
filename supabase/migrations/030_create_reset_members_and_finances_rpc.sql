@@ -17,42 +17,42 @@ DECLARE
 BEGIN
     -- 1. Bersihkan riwayat pelunasan pinjaman & cicilan tambahan
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'loan_repayments') THEN
-        DELETE FROM public.loan_repayments;
+        DELETE FROM public.loan_repayments WHERE id IS NOT NULL;
     END IF;
 
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'loan_installments') THEN
-        EXECUTE 'DELETE FROM public.loan_installments';
+        EXECUTE 'DELETE FROM public.loan_installments WHERE id IS NOT NULL';
     END IF;
 
     -- 2. Bersihkan jadwal tenor pinjaman
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'loan_schedules') THEN
-        DELETE FROM public.loan_schedules;
+        DELETE FROM public.loan_schedules WHERE id IS NOT NULL;
     END IF;
 
     -- 3. Bersihkan master pinjaman
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'loans') THEN
         SELECT COUNT(*) INTO deleted_loans_count FROM public.loans;
-        DELETE FROM public.loans;
+        DELETE FROM public.loans WHERE id IS NOT NULL;
     END IF;
 
     -- 4. Bersihkan mutasi transaksi simpanan
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'deposit_transactions') THEN
-        DELETE FROM public.deposit_transactions;
+        DELETE FROM public.deposit_transactions WHERE id IS NOT NULL;
     END IF;
 
     -- 5. Bersihkan akun simpanan anggota
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'member_deposits') THEN
         SELECT COUNT(*) INTO deleted_deposits_count FROM public.member_deposits;
-        DELETE FROM public.member_deposits;
+        DELETE FROM public.member_deposits WHERE id IS NOT NULL;
     END IF;
 
     -- 6. Bersihkan log audit rekening dan log clearance jika tabel ada
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'rekening_audit_logs') THEN
-        EXECUTE 'DELETE FROM public.rekening_audit_logs';
+        EXECUTE 'DELETE FROM public.rekening_audit_logs WHERE id IS NOT NULL';
     END IF;
 
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'member_clearance_logs') THEN
-        EXECUTE 'DELETE FROM public.member_clearance_logs';
+        EXECUTE 'DELETE FROM public.member_clearance_logs WHERE id IS NOT NULL';
     END IF;
 
     -- 7. Lepaskan relasi anggota pada penjualan POS toko agar data kasir dan omzet penjualan tetap utuh
@@ -63,12 +63,12 @@ BEGIN
     -- 8. Kosongkan tabel anggota
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'anggota') THEN
         SELECT COUNT(*) INTO deleted_members_count FROM public.anggota;
-        DELETE FROM public.anggota;
+        DELETE FROM public.anggota WHERE id IS NOT NULL;
     END IF;
 
     -- Bersihkan tabel cadangan members jika ada
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'members') THEN
-        EXECUTE 'DELETE FROM public.members';
+        EXECUTE 'DELETE FROM public.members WHERE id IS NOT NULL';
     END IF;
 
     -- 9. Catat aktivitas reset ke tabel public.audit_logs jika tabel tersedia
