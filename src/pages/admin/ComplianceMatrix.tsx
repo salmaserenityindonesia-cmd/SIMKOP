@@ -246,55 +246,108 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
   const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number, row: ComplianceMatrixRow) => {
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
-    
-    const { w, b, l, bal_w, bal_b, bal_l } = monthData;
-    let allPaid = w > 0 && b > 0 && l > 0;
-    let unpaidCount = (w <= 0 ? 1 : 0) + (b <= 0 ? 1 : 0) + (l <= 0 ? 1 : 0);
 
-    if (filterType === 'wajib') {
-      allPaid = w > 0;
-      unpaidCount = w <= 0 ? 1 : 0;
-    } else if (filterType === 'belanja') {
-      allPaid = b > 0;
-      unpaidCount = b <= 0 ? 1 : 0;
-    } else if (filterType === 'lebaran') {
-      allPaid = l > 0;
-      unpaidCount = l <= 0 ? 1 : 0;
-    }
+    const wajibItem = monthData.wajib || {
+      status: (monthData.w > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
+      amount: monthData.w > 0 ? monthData.w : (targets.wajib || 200000),
+    };
+    const belanjaItem = monthData.belanja || {
+      status: (monthData.b > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
+      amount: monthData.b > 0 ? monthData.b : (targets.belanja || 50000),
+    };
+    const lebaranItem = monthData.lebaran || {
+      status: (monthData.l > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
+      amount: monthData.l > 0 ? monthData.l : (targets.lebaran || 50000),
+    };
 
     return (
-      <div className="relative group flex justify-center items-center w-full h-full">
-        {allPaid ? (
-          <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-        ) : (
-          <div className="flex items-center justify-center w-7 h-7 rounded-full bg-red-50 text-red-600 text-xs font-bold border border-red-200">
-            {unpaidCount}
-          </div>
-        )}
+      <div 
+        onClick={() => setSelectedMember({
+          id: row.member_id,
+          nrp: row.nrp,
+          nama: row.nama,
+          joinDate: row.tgl_awal_anggota || row.created_at
+        })}
+        className="relative group flex flex-col gap-0.5 py-1 px-1.5 text-[11px] leading-tight font-mono select-none rounded hover:bg-slate-100/80 cursor-pointer transition-colors"
+        title={`Klik untuk rincian buku besar ${row.nama} - ${MONTHS[monthIndex]} ${year}`}
+      >
+        {/* Baris Simpanan Wajib */}
+        <div className="flex items-center justify-between gap-1.5">
+          <span className="text-[10px] uppercase font-bold text-slate-500">wajib</span>
+          <span className={
+            wajibItem.status === 'paid'
+              ? 'text-emerald-600 font-semibold'
+              : wajibItem.status === 'unpaid'
+              ? 'text-rose-600 font-bold'
+              : 'text-slate-400'
+          }>
+            {wajibItem.status === 'paid'
+              ? Number(wajibItem.amount).toLocaleString('id-ID')
+              : wajibItem.status === 'unpaid'
+              ? Number(wajibItem.amount || 200000).toLocaleString('id-ID')
+              : '-'}
+          </span>
+        </div>
 
-        {/* Tooltip */}
+        {/* Baris Simpanan Belanja */}
+        <div className="flex items-center justify-between gap-1.5">
+          <span className="text-[10px] uppercase font-bold text-slate-500">belanja</span>
+          <span className={
+            belanjaItem.status === 'paid'
+              ? 'text-teal-600 font-semibold'
+              : belanjaItem.status === 'unpaid'
+              ? 'text-rose-600 font-bold'
+              : 'text-slate-400'
+          }>
+            {belanjaItem.status === 'paid'
+              ? Number(belanjaItem.amount).toLocaleString('id-ID')
+              : belanjaItem.status === 'unpaid'
+              ? Number(belanjaItem.amount || 50000).toLocaleString('id-ID')
+              : '-'}
+          </span>
+        </div>
+
+        {/* Baris Simpanan Lebaran */}
+        <div className="flex items-center justify-between gap-1.5">
+          <span className="text-[10px] uppercase font-bold text-slate-500">lebaran</span>
+          <span className={
+            lebaranItem.status === 'paid'
+              ? 'text-emerald-600 font-semibold'
+              : lebaranItem.status === 'unpaid'
+              ? 'text-rose-600 font-bold'
+              : 'text-slate-400'
+          }>
+            {lebaranItem.status === 'paid'
+              ? Number(lebaranItem.amount).toLocaleString('id-ID')
+              : lebaranItem.status === 'unpaid'
+              ? Number(lebaranItem.amount || 50000).toLocaleString('id-ID')
+              : '-'}
+          </span>
+        </div>
+
+        {/* Tooltip Hover Detail */}
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
           <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{MONTHS[monthIndex]} {year}</div>
           <div className="space-y-1.5">
             <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Wajib:</span>
               <div className="text-right">
-                <div>{w > 0 ? <span className="text-emerald-400">{formatCurrency(w)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_w.toLocaleString('id-ID')}</div>
+                <div>{wajibItem.status === 'paid' ? <span className="text-emerald-400">{formatCurrency(Number(wajibItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_w || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
             <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Belanja:</span>
               <div className="text-right">
-                <div>{b > 0 ? <span className="text-emerald-400">{formatCurrency(b)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_b.toLocaleString('id-ID')}</div>
+                <div>{belanjaItem.status === 'paid' ? <span className="text-teal-400">{formatCurrency(Number(belanjaItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_b || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
             <div className="flex justify-between items-center gap-2">
               <span>Lebaran:</span>
               <div className="text-right">
-                <div>{l > 0 ? <span className="text-emerald-400">{formatCurrency(l)}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {bal_l.toLocaleString('id-ID')}</div>
+                <div>{lebaranItem.status === 'paid' ? <span className="text-emerald-400">{formatCurrency(Number(lebaranItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_l || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
           </div>
@@ -439,7 +492,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                   Informasi Anggota
                 </th>
                 {MONTHS.map((month, idx) => (
-                  <th key={month} className={`py-3 px-2 border-b border-slate-200 text-center min-w-[60px] ${idx === CURRENT_MONTH ? 'bg-emerald-50/50 border-x-2 border-x-emerald-200/50' : ''}`}>
+                  <th key={month} className={`py-3 px-2 border-b border-slate-200 text-center min-w-[95px] md:min-w-[105px] ${idx === CURRENT_MONTH ? 'bg-emerald-50/50 border-x-2 border-x-emerald-200/50' : ''}`}>
                     {month}
                   </th>
                 ))}
@@ -536,18 +589,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       <div className="bg-white rounded-b-xl border border-t-0 border-slate-200 p-4 flex flex-col md:flex-row justify-between items-center gap-4 text-sm">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span className="text-slate-600">Lunas Lengkap</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
+            <span className="text-slate-600">Lunas (Hijau / Teal)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center w-5 h-5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold border border-red-200">
-              1
-            </div>
-            <span className="text-slate-600">Ada Tunggakan</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block"></span>
+            <span className="text-slate-600">Belum Bayar / Tunggakan (Merah)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="text-gray-300 text-lg leading-none">-</div>
-            <span className="text-slate-600">Belum Terbit Tagihan</span>
+            <span className="text-slate-400 font-bold font-mono">-</span>
+            <span className="text-slate-600">Belum Terdaftar / Tidak Berlaku</span>
           </div>
         </div>
 
