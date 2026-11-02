@@ -476,6 +476,29 @@ export default function SavingsLedgerMatrixModal({
         await deleteQuery;
       }
 
+      // Hapus transaksi gelondongan awal migrasi (for_month IS NULL atau bertuliskan deskripsi "Saldo Awal Migrasi Sistem")
+      // dari tabel deposit_transactions saat rincian bulanan dibentuk agar tidak terhitung ganda
+      if (newCheckedKeys.length > 0) {
+        try {
+          const delQuery: any = supabase.from('deposit_transactions').delete();
+          if (typeof delQuery.eq === 'function') {
+            const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
+            if (eqQuery && typeof eqQuery.is === 'function') {
+              const isQuery = eqQuery.is('for_month', null);
+              if (isQuery && typeof isQuery.ilike === 'function') {
+                await isQuery.ilike('description', '%migrasi%');
+              } else if (isQuery && typeof isQuery.then === 'function') {
+                await isQuery;
+              }
+            } else if (eqQuery && typeof eqQuery.then === 'function') {
+              await eqQuery;
+            }
+          }
+        } catch (delBulkErr) {
+          console.warn('Gagal menghapus transaksi migrasi gelondongan di modal:', delBulkErr);
+        }
+      }
+
       // 2. Insert transaksi untuk seluruh bulan yang baru dicentang
       const txsToInsert = newCheckedKeys.map(key => {
         const [yStr, mStr] = key.split('-');

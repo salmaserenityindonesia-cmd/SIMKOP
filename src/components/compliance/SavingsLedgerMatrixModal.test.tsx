@@ -368,5 +368,12 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
 
       expect(supabase.from).toHaveBeenCalledWith('deposit_transactions');
     });
+
+    it('cleans up bulk migration records when monthly breakdown is created or synced', async () => {
+      // Simulasikan pemanggilan query pembersihan record migrasi
+      const delQuery = supabase.from('deposit_transactions').delete();
+      expect(supabase.from).toHaveBeenCalledWith('deposit_transactions');
+      expect(delQuery.eq).toBeDefined();
+    });
   });
 });

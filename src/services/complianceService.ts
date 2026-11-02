@@ -124,14 +124,15 @@ export async function getSavingsComplianceAvailableYears(
       }
 
       let month = 0;
-      if (tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))) {
+      const hasExplicitMonth = tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month));
+      if (hasExplicitMonth) {
         month = Number(tx.for_month) - 1; // 1-indexed to 0-indexed
       } else if (tx.created_at) {
         const m = new Date(tx.created_at).getMonth();
         if (!isNaN(m)) month = m;
       }
 
-      return { memberId, depositTypeId, amount, type, year, month };
+      return { memberId, depositTypeId, amount, type, year, month, hasExplicitMonth };
     };
 
     // --- KONDISI 1: Simpanan Pokok Belum Lunas ---
@@ -429,7 +430,7 @@ export async function getComplianceMatrixData(
   // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN)
   const { data: transactions } = await supabase
     .from('deposit_transactions')
-    .select('amount, transaction_type, for_year, for_month, created_at, member_deposits(member_id, deposit_type_id)');
+    .select('amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)');
 
   // Ambil transaksi pokok
   const { data: pokokTxs } = await supabase
@@ -461,6 +462,48 @@ export async function getComplianceMatrixData(
     });
   }
 
+  // Helper untuk mengidentifikasi transaksi gelondongan migrasi / saldo awal
+  const isBulkMigrationTx = (tx: any): boolean => {
+    const desc = (tx.description || '').toLowerCase();
+    const isMigrationDesc =
+      desc.includes('migra') ||
+      desc.includes('saldo awal') ||
+      desc.includes('historical') ||
+      desc.includes('one-time');
+    return (
+      isMigrationDesc &&
+      (tx.for_month === null ||
+        tx.for_month === undefined ||
+        desc.includes('saldo awal migrasi sistem') ||
+        desc.includes('migrasi saldo awal (as-is)'))
+    );
+  };
+
+  // Cek apakah akun simpanan anggota sudah memiliki rincian bulanan (breakdown mutasi)
+  const hasBreakdownSet = new Set<string>();
+  if (transactions) {
+    transactions.forEach((tx: any) => {
+      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+      if (!md) return;
+      const mId = md.member_id;
+      const tId = md.deposit_type_id;
+      const key = `${mId}_${tId}`;
+
+      const desc = (tx.description || '').toLowerCase();
+      const isBreakdown =
+        tx.transaction_type === 'deposit' &&
+        tx.for_month !== null &&
+        tx.for_month !== undefined &&
+        tx.for_year !== null &&
+        tx.for_year !== undefined &&
+        (desc.includes('setoran matriks') || !isBulkMigrationTx(tx));
+
+      if (isBreakdown) {
+        hasBreakdownSet.add(key);
+      }
+    });
+  }
+
   // Agregasi setoran bulanan dan transaksi anggota
   const paymentsByMember: Record<string, Record<number, { w: number; b: number; l: number }>> = {};
   const memberTxs: Record<
@@ -475,15 +518,25 @@ export async function getComplianceMatrixData(
       const mId = md.member_id;
       const tId = md.deposit_type_id;
       const amt = Number(tx.amount) || 0;
+      const key = `${mId}_${tId}`;
+
+      const isBulk = isBulkMigrationTx(tx);
+      const hasBreakdown = hasBreakdownSet.has(key);
+
+      // Jika rincian bulanan sudah ada, singkirkan transaksi gelondongan awal migrasi agar tidak terhitung dua kali
+      if (isBulk && hasBreakdown) {
+        return;
+      }
 
       let txYear = 0;
-      let txMonth = 0;
+      let txMonth = 0; // 0-indexed: 0 = Jan .. 11 = Des
 
       if (tx.transaction_type === 'deposit') {
-        txYear = tx.for_year || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
-        txMonth = tx.for_month !== null && tx.for_month !== undefined
-          ? tx.for_month - 1
-          : (tx.created_at ? new Date(tx.created_at).getMonth() : 0);
+        txYear = Number(tx.for_year) || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
+        txMonth =
+          tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))
+            ? Number(tx.for_month) - 1
+            : (tx.created_at ? new Date(tx.created_at).getMonth() : 0);
       } else {
         const d = tx.created_at ? new Date(tx.created_at) : new Date();
         txYear = d.getFullYear();
@@ -493,8 +546,11 @@ export async function getComplianceMatrixData(
       if (!memberTxs[mId]) memberTxs[mId] = [];
       memberTxs[mId].push({ year: txYear, month: txMonth, type: tx.transaction_type, amt, tId });
 
-      // Cek kepatuhan bulanan pada tahun yang dipilih
-      if (txYear === year && tx.transaction_type === 'deposit') {
+      // Cek setoran rutin bulanan khusus pada tahun yang dipilih
+      // Saldo gelondongan migrasi (isBulk) TIDAK BOLEH dihitung sebagai setoran bulanan rutin
+      const isRoutineMonthly = tx.for_month !== null && tx.for_month !== undefined && !isBulk;
+
+      if (txYear === year && tx.transaction_type === 'deposit' && isRoutineMonthly) {
         const month = txMonth; // 0-indexed
         if (month >= 0 && month < 12) {
           if (!paymentsByMember[mId]) paymentsByMember[mId] = {};

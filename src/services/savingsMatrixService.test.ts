@@ -697,4 +697,82 @@ describe('savingsMatrixService - bulkAutoReconcileAllMembers', () => {
     expect(insertedTxs.some(t => t.description.includes('BELANJA'))).toBe(true);
     expect(insertedTxs.some(t => t.description.includes('LEBARAN'))).toBe(true);
   });
+
+  it('menghapus saldo gelondongan awal migrasi (for_month IS NULL atau deskripsi Saldo Awal Migrasi Sistem) saat rekonsiliasi bulanan dieksekusi', async () => {
+    const mockMembers = [
+      { id: 'm-yanto', nrp: '001', nama: 'Yanto Santoso', status: 'aktif', created_at: '2025-02-04' }
+    ];
+
+    const mockMemberDeposits = [
+      {
+        id: 'md-yanto-wajib',
+        member_id: 'm-yanto',
+        deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib' },
+        deposit_transactions: [
+          {
+            id: 'bulk-migra-tx',
+            amount: 4000000,
+            transaction_type: 'deposit',
+            for_month: null,
+            for_year: null,
+            description: 'Saldo Awal Migrasi Sistem'
+          }
+        ]
+      }
+    ];
+
+    const deletedIds: string[] = [];
+    const deleteEqCalls: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+            error: null
+          })
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: mockMemberDeposits, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+              deletedIds.push(...ids);
+              return Promise.resolve({ data: null, error: null });
+            }),
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              deleteEqCalls.push({ col, val });
+              return {
+                is: vi.fn().mockReturnValue({
+                  ilike: vi.fn().mockResolvedValue({ data: null, error: null })
+                })
+              };
+            })
+          }),
+          insert: vi.fn().mockResolvedValue({ data: [], error: null })
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await bulkAutoReconcileAllMembers('WAJIB');
+
+    expect(result.success).toBe(true);
+    expect(deletedIds).toContain('bulk-migra-tx');
+    expect(deleteEqCalls.some(c => c.col === 'member_deposit_id' && c.val === 'md-yanto-wajib')).toBe(true);
+  });
 });

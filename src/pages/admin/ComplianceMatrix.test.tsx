@@ -537,6 +537,33 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
     it('exports fetchComplianceData as alias to fetchComplianceMatrixData', () => {
       expect(fetchComplianceData).toBe(fetchComplianceMatrixData);
     });
+
+    it('renders correct tooltip with exact monthly amount and running total for Yanto Santoso (Feb: 200k/Total: 200k)', () => {
+      const yantoRow = {
+        member_id: 'm-yanto',
+        nrp: 'NRP-YANTO',
+        nama: 'Yanto Santoso',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 4000000, b: 0, l: 0 },
+        months: [
+          null, // Jan (sebelum bergabung)
+          { w: 200000, b: 0, l: 0, bal_w: 200000, bal_b: 0, bal_l: 0 }, // Feb (bulan 1)
+          { w: 200000, b: 0, l: 0, bal_w: 400000, bal_b: 0, bal_l: 0 }, // Mar (bulan 2)
+          null, null, null, null, null, null, null, null, null
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2025" initialData={[yantoRow]} />
+      );
+
+      // Pastikan nama Yanto Santoso muncul
+      expect(html).toContain('Yanto Santoso');
+      // Pastikan nominal setoran dan total running balance muncul di tooltip
+      expect(html).toContain('Total: Rp 200.000');
+      expect(html).toContain('Total: Rp 400.000');
+    });
   });
 });
 

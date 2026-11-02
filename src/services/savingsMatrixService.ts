@@ -496,6 +496,43 @@ export async function bulkAutoReconcileAllMembers(
           });
 
           if (txsToInsert.length > 0) {
+            // Hapus atau singkirkan transaksi gelondongan awal migrasi (for_month IS NULL atau bertuliskan deskripsi "Saldo Awal Migrasi Sistem")
+            // dari tabel deposit_transactions agar saldo tidak terhitung dua kali saat rincian bulanan sudah dibentuk
+            try {
+              const bulkMigrationTxIds = txs
+                .filter((t: any) => {
+                  const desc = (t.description || '').toLowerCase();
+                  const isMigration = desc.includes('migra') || desc.includes('saldo awal');
+                  return isMigration && (t.for_month === null || t.for_month === undefined || desc.includes('saldo awal migrasi sistem'));
+                })
+                .map((t: any) => t.id)
+                .filter(Boolean);
+
+              if (bulkMigrationTxIds.length > 0) {
+                const delByIdQuery: any = supabase.from('deposit_transactions').delete();
+                if (typeof delByIdQuery.in === 'function') {
+                  await delByIdQuery.in('id', bulkMigrationTxIds);
+                }
+              }
+
+              const delQuery: any = supabase.from('deposit_transactions').delete();
+              if (typeof delQuery.eq === 'function') {
+                const eqQuery = delQuery.eq('member_deposit_id', md.id);
+                if (eqQuery && typeof eqQuery.is === 'function') {
+                  const isQuery = eqQuery.is('for_month', null);
+                  if (isQuery && typeof isQuery.ilike === 'function') {
+                    await isQuery.ilike('description', '%migrasi%');
+                  } else if (isQuery && typeof isQuery.then === 'function') {
+                    await isQuery;
+                  }
+                } else if (eqQuery && typeof eqQuery.then === 'function') {
+                  await eqQuery;
+                }
+              }
+            } catch (delBulkErr) {
+              console.warn('Gagal menghapus transaksi migrasi gelondongan:', delBulkErr);
+            }
+
             const { error: insErr } = await supabase
               .from('deposit_transactions')
               .insert(txsToInsert);

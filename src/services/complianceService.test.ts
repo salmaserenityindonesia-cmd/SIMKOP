@@ -589,5 +589,110 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
         expect(row.pokokLunas).toBe(true);
       });
     });
+
+    it('menghitung running balance kronologis secara tepat dan mencegah akumulasi ganda saldo migrasi gelondongan (Yanto Santoso Feb 2025: 200k/total 200k, Mar: 200k/total 400k)', async () => {
+      const mockMembers = [
+        {
+          id: 'm-yanto',
+          nrp: 'NRP-YANTO',
+          nama: 'Yanto Santoso',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2025-02-04',
+          created_at: '2025-02-04T00:00:00Z',
+        },
+      ];
+
+      // Simulasi Yanto Santoso:
+      // Saldo awal migrasi Rp 4.000.000 (gelondongan) masih ada di database,
+      // DAN rincian bulanan 20 bulan @ Rp 200.000 (Feb 2025 s/d Sep 2026) sudah dibentuk
+      const yantoTxs: any[] = [
+        {
+          id: 'tx-bulk-migration',
+          amount: 4000000,
+          transaction_type: 'deposit',
+          for_year: null,
+          for_month: null,
+          description: 'Saldo Awal Migrasi Sistem',
+          created_at: '2025-02-04T00:00:00Z',
+          member_deposits: { member_id: 'm-yanto', deposit_type_id: 'dt-wajib' },
+        },
+      ];
+
+      // Tambahkan 20 baris mutasi bulanan @ Rp 200.000
+      // 2025: Feb (2) s/d Des (12) = 11 bulan
+      for (let mo = 2; mo <= 12; mo++) {
+        yantoTxs.push({
+          id: `tx-matrix-2025-${mo}`,
+          amount: 200000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: mo,
+          description: `Setoran Matriks WAJIB ${mo} 2025`,
+          member_deposits: { member_id: 'm-yanto', deposit_type_id: 'dt-wajib' },
+        });
+      }
+      // 2026: Jan (1) s/d Sep (9) = 9 bulan
+      for (let mo = 1; mo <= 9; mo++) {
+        yantoTxs.push({
+          id: `tx-matrix-2026-${mo}`,
+          amount: 200000,
+          transaction_type: 'deposit',
+          for_year: 2026,
+          for_month: mo,
+          description: `Setoran Matriks WAJIB ${mo} 2026`,
+          member_deposits: { member_id: 'm-yanto', deposit_type_id: 'dt-wajib' },
+        });
+      }
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: yantoTxs, error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2025);
+      expect(result.rows).toHaveLength(1);
+      const yantoRow = result.rows[0];
+      expect(yantoRow.nama).toBe('Yanto Santoso');
+
+      // Bulan Januari 2025: sebelum bergabung (null)
+      expect(yantoRow.months[0]).toBeNull();
+
+      // Bulan Februari 2025 (bulan pertama bergabung):
+      // Wajib: 200.000, bal_w: 200.000 (BUKAN 4.200.000!)
+      const febData = yantoRow.months[1];
+      expect(febData).not.toBeNull();
+      expect(febData?.w).toBe(200000);
+      expect(febData?.bal_w).toBe(200000);
+
+      // Bulan Maret 2025:
+      // Wajib: 200.000, bal_w: 400.000
+      const marData = yantoRow.months[2];
+      expect(marData).not.toBeNull();
+      expect(marData?.w).toBe(200000);
+      expect(marData?.bal_w).toBe(400000);
+
+      // Bulan April 2025:
+      // Wajib: 200.000, bal_w: 600.000
+      const aprData = yantoRow.months[3];
+      expect(aprData).not.toBeNull();
+      expect(aprData?.w).toBe(200000);
+      expect(aprData?.bal_w).toBe(600000);
+    });
   });
 });
