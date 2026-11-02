@@ -63,7 +63,7 @@ export async function getSavingsComplianceAvailableYears(
 
     const selectBuilder: any = supabase
       .from('anggota')
-      .select('id, nama, nrp, status, membership_status, created_at, tgl_awal_anggota');
+      .select('id, nama, nrp, status, membership_status, created_at');
 
     if (typeof selectBuilder.order === 'function') {
       const resp = await selectBuilder.order('nama', { ascending: true });
@@ -335,25 +335,70 @@ export async function getComplianceMatrixData(
   const lebaranId = typeMap[keys.find((k) => k.includes('lebaran') || k.includes('hari raya') || k === 'sl') || ''] || '';
 
   // 2. Ambil seluruh anggota dari public.anggota (BUKAN members)
+  // WAJIB mengambil seluruh anggota aktif dari public.anggota yang terdaftar pada atau sebelum tahun yang dipilih
+  const endOfYear = `${year}-12-31`;
+  const endOfYearIso = `${year}-12-31T23:59:59.999Z`;
   let rawMembers: any[] = [];
   let memberErr: any = null;
 
-  const memberSelectBuilder: any = supabase
-    .from('anggota')
-    .select('id, nrp, nama, pangkat, membership_status, created_at, tgl_awal_anggota, status');
+  try {
+    const memberSelectBuilder: any = supabase
+      .from('anggota')
+      .select('id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status');
 
-  if (typeof memberSelectBuilder.order === 'function') {
-    const resp = await memberSelectBuilder.order('nama', { ascending: true });
-    rawMembers = resp.data || [];
-    memberErr = resp.error;
-  } else if (typeof memberSelectBuilder.eq === 'function') {
-    const resp = await memberSelectBuilder.eq('status', 'aktif');
-    rawMembers = resp.data || [];
-    memberErr = resp.error;
-  } else {
-    const resp = await memberSelectBuilder;
-    rawMembers = resp.data || [];
-    memberErr = resp.error;
+    let executed = false;
+    // Chaining kueri Supabase PostgREST: .eq('status', 'aktif').lte('created_at', endOfYear).order('nama', { ascending: true })
+    if (typeof memberSelectBuilder.eq === 'function') {
+      const eqBuilder = memberSelectBuilder.eq('status', 'aktif');
+      if (eqBuilder && typeof eqBuilder.lte === 'function') {
+        const lteBuilder = eqBuilder.lte('created_at', endOfYearIso);
+        if (lteBuilder && typeof lteBuilder.order === 'function') {
+          const resp = await lteBuilder.order('nama', { ascending: true });
+          rawMembers = resp.data || [];
+          memberErr = resp.error;
+          executed = true;
+        } else {
+          const resp = await (lteBuilder || eqBuilder);
+          rawMembers = resp.data || [];
+          memberErr = resp.error;
+          executed = true;
+        }
+      } else if (eqBuilder && typeof eqBuilder.order === 'function') {
+        const resp = await eqBuilder.order('nama', { ascending: true });
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+        executed = true;
+      } else if (eqBuilder && typeof eqBuilder.then === 'function') {
+        const resp = await eqBuilder;
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+        executed = true;
+      }
+    }
+
+    if (!executed) {
+      if (typeof memberSelectBuilder.order === 'function') {
+        const resp = await memberSelectBuilder.order('nama', { ascending: true });
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+      } else {
+        const resp = await memberSelectBuilder;
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+      }
+    }
+
+    // Jika filter status di DB mengembalikan data kosong (misal karena status legacy bernilai NULL),
+    // lakukan fallback query tanpa filter status agar data anggota aktif tetap diambil
+    if ((!rawMembers || rawMembers.length === 0) && !memberErr && typeof memberSelectBuilder.order === 'function') {
+      const fallbackResp = await memberSelectBuilder.order('nama', { ascending: true });
+      if (fallbackResp?.data && fallbackResp.data.length > 0) {
+        rawMembers = fallbackResp.data;
+      }
+    }
+  } catch (err: any) {
+    console.error('Error fetching members from anggota for compliance matrix:', err);
+    memberErr = err;
   }
 
   if (memberErr) {
@@ -373,12 +418,12 @@ export async function getComplianceMatrixData(
   const membersToFilter = activeMembers.length > 0 ? activeMembers : allMembers;
 
   // Filter berdasarkan masa keanggotaan: anggota yang bergabung sebelum atau pada akhir tahun yang dipilih
-  const endOfYear = new Date(`${year}-12-31T23:59:59.999Z`);
+  const endOfYearDate = new Date(endOfYearIso);
   const eligibleMembers = membersToFilter.filter((m: any) => {
-    const joinDateStr = m.tgl_awal_anggota || m.created_at;
+    const joinDateStr = m.created_at || m.tgl_awal_anggota;
     if (!joinDateStr) return true;
     const joinDate = new Date(joinDateStr);
-    return isNaN(joinDate.getTime()) || joinDate <= endOfYear;
+    return isNaN(joinDate.getTime()) || joinDate <= endOfYearDate;
   });
 
   // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN)
@@ -435,10 +480,12 @@ export async function getComplianceMatrixData(
       let txMonth = 0;
 
       if (tx.transaction_type === 'deposit') {
-        txYear = tx.for_year || new Date(tx.created_at).getFullYear();
-        txMonth = tx.for_month ? tx.for_month - 1 : new Date(tx.created_at).getMonth();
+        txYear = tx.for_year || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
+        txMonth = tx.for_month !== null && tx.for_month !== undefined
+          ? tx.for_month - 1
+          : (tx.created_at ? new Date(tx.created_at).getMonth() : 0);
       } else {
-        const d = new Date(tx.created_at);
+        const d = tx.created_at ? new Date(tx.created_at) : new Date();
         txYear = d.getFullYear();
         txMonth = d.getMonth();
       }
@@ -447,14 +494,16 @@ export async function getComplianceMatrixData(
       memberTxs[mId].push({ year: txYear, month: txMonth, type: tx.transaction_type, amt, tId });
 
       // Cek kepatuhan bulanan pada tahun yang dipilih
-      if (tx.for_year === year && tx.for_month && tx.transaction_type === 'deposit') {
-        const month = tx.for_month - 1; // 0-indexed
-        if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
-        if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
+      if (txYear === year && tx.transaction_type === 'deposit') {
+        const month = txMonth; // 0-indexed
+        if (month >= 0 && month < 12) {
+          if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
+          if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
 
-        if (tId === wajibId) paymentsByMember[mId][month].w += amt;
-        if (tId === belanjaId) paymentsByMember[mId][month].b += amt;
-        if (tId === lebaranId) paymentsByMember[mId][month].l += amt;
+          if (tId === wajibId) paymentsByMember[mId][month].w += amt;
+          if (tId === belanjaId) paymentsByMember[mId][month].b += amt;
+          if (tId === lebaranId) paymentsByMember[mId][month].l += amt;
+        }
       }
     });
   }

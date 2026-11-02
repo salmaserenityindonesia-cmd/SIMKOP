@@ -506,5 +506,88 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
       expect(result.rows).toHaveLength(1);
       expect(result.rows[0].nama).toBe('Yanto Santoso');
     });
+
+    it('menampilkan seluruh anggota aktif ketika tidak ada tunggakan sama sekali (kepatuhan 100%) dengan query ter-chain', async () => {
+      const mockMembers = [
+        { id: 'm-1', nrp: 'NRP001', nama: 'Yanto Santoso', status: 'aktif', membership_status: 'ACTIVE', created_at: '2023-01-01T00:00:00Z' },
+        { id: 'm-2', nrp: 'NRP002', nama: 'Agus Susanto', status: 'aktif', membership_status: 'ACTIVE', created_at: '2024-05-10T00:00:00Z' },
+        { id: 'm-3', nrp: 'NRP003', nama: 'Mulyono Santoso', status: 'aktif', membership_status: 'ACTIVE', created_at: '2025-02-15T00:00:00Z' },
+        { id: 'm-4', nrp: 'NRP004', nama: 'Joko Arifin', status: 'aktif', membership_status: 'ACTIVE', created_at: '2025-10-01T00:00:00Z' },
+      ];
+
+      // Simulasi seluruh anggota sudah lunas simpanan wajib, belanja, dan lebaran untuk seluruh bulan yang jatuh tempo
+      const paidTxs: any[] = [];
+      mockMembers.forEach((m) => {
+        // Pokok lunas
+        paidTxs.push({
+          amount: 100000,
+          transaction_type: 'deposit',
+          member_deposits: { member_id: m.id, deposit_type_id: 'dt-pokok' },
+          created_at: '2025-01-01T00:00:00Z',
+        });
+        // Wajib, Belanja, Lebaran lunas 12 bulan di 2026
+        for (let mo = 1; mo <= 12; mo++) {
+          paidTxs.push({
+            amount: 25000,
+            transaction_type: 'deposit',
+            for_year: 2026,
+            for_month: mo,
+            member_deposits: { member_id: m.id, deposit_type_id: 'dt-wajib' },
+          });
+          paidTxs.push({
+            amount: 50000,
+            transaction_type: 'deposit',
+            for_year: 2026,
+            for_month: mo,
+            member_deposits: { member_id: m.id, deposit_type_id: 'dt-belanja' },
+          });
+          paidTxs.push({
+            amount: 50000,
+            transaction_type: 'deposit',
+            for_year: 2026,
+            for_month: mo,
+            member_deposits: { member_id: m.id, deposit_type_id: 'dt-lebaran' },
+          });
+        }
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return {
+            select: vi.fn().mockReturnValue(chainObj),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: paidTxs, error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+
+      // Seluruh 4 anggota tetap tampil meskipun tidak ada yang menunggak
+      expect(result.rows).toHaveLength(4);
+      expect(result.rows.map((r) => r.nama)).toEqual([
+        'Yanto Santoso',
+        'Agus Susanto',
+        'Mulyono Santoso',
+        'Joko Arifin',
+      ]);
+      // Semua anggota memiliki kepatuhan 100%
+      result.rows.forEach((row) => {
+        expect(row.compliance).toBe(100);
+        expect(row.pokokLunas).toBe(true);
+      });
+    });
   });
 });
