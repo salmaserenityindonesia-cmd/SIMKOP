@@ -5,6 +5,7 @@ import {
   ComplianceMatrix,
   loadComplianceAvailableYearsData,
   fetchComplianceMatrixData,
+  fetchComplianceData,
   handleBulkAutoReconcile,
 } from './ComplianceMatrix';
 import {
@@ -531,6 +532,10 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(result).toBeNull();
       expect(consoleErrorSpy).toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
+    });
+
+    it('exports fetchComplianceData as alias to fetchComplianceMatrixData', () => {
+      expect(fetchComplianceData).toBe(fetchComplianceMatrixData);
     });
   });
 });

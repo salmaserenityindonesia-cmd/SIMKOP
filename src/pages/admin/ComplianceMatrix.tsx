@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useContext } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
+import FeedbackContext from '../../context/FeedbackContext';
 import {
   Search,
   Download,
@@ -140,6 +141,8 @@ export const fetchComplianceMatrixData = async (
   }
 };
 
+export const fetchComplianceData = fetchComplianceMatrixData;
+
 export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialYear,
   initialAvailableYears,
@@ -186,6 +189,17 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [bulkResult, setBulkResult] = useState<{ totalSuccess: number; totalFailed: number } | null>(
     initialBulkResult || null
   );
+
+  const feedback = useContext(FeedbackContext);
+
+  const handleReloadAfterBulk = async () => {
+    await fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+    setShowConfirmBulkModal(false);
+    setBulkResult(null);
+    if (feedback?.showToast) {
+      feedback.showToast('Data matriks berhasil disinkronisasi', 'success');
+    }
+  };
 
   useEffect(() => {
     loadComplianceAvailableYearsData(setAvailableYears, setYear);
@@ -615,12 +629,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               </div>
               {!isBulkReconciling && (
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (bulkResult) {
-                      fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+                      await handleReloadAfterBulk();
+                    } else {
+                      setShowConfirmBulkModal(false);
+                      setBulkResult(null);
                     }
-                    setShowConfirmBulkModal(false);
-                    setBulkResult(null);
                   }}
                   data-testid="close-bulk-modal-btn"
                   className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
@@ -780,11 +795,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               {/* After Execution: Close and Refresh Button */}
               {!isBulkReconciling && bulkResult !== null && (
                 <button
-                  onClick={() => {
-                    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
-                    setShowConfirmBulkModal(false);
-                    setBulkResult(null);
-                  }}
+                  onClick={handleReloadAfterBulk}
                   data-testid="complete-bulk-modal-btn"
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
                 >

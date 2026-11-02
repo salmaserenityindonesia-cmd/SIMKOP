@@ -612,4 +612,89 @@ describe('savingsMatrixService - bulkAutoReconcileAllMembers', () => {
       errors: []
     });
   });
+
+  it('mendukung opsi "Semua Jenis Simpanan" dan memproses ketiga jenis simpanan', async () => {
+    const mockMembers = [
+      { id: 'm-semua', nrp: '009', nama: 'Member Semua', status: 'aktif', created_at: '2024-01-01' }
+    ];
+
+    const mockMemberDeposits = [
+      {
+        id: 'md-wajib',
+        member_id: 'm-semua',
+        deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib' },
+        deposit_transactions: [
+          { id: 'tx-w', amount: 150000, transaction_type: 'deposit', description: 'Migrasi Saldo Awal (As-Is)' }
+        ]
+      },
+      {
+        id: 'md-belanja',
+        member_id: 'm-semua',
+        deposit_types: { code: 'BELANJA', name: 'Simpanan Belanja' },
+        deposit_transactions: [
+          { id: 'tx-b', amount: 25000, transaction_type: 'deposit', description: 'Migrasi Saldo Awal (As-Is)' }
+        ]
+      },
+      {
+        id: 'md-lebaran',
+        member_id: 'm-semua',
+        deposit_types: { code: 'LEBARAN', name: 'Simpanan Hari Raya' },
+        deposit_transactions: [
+          { id: 'tx-l', amount: 50000, transaction_type: 'deposit', description: 'Migrasi Saldo Awal (As-Is)' }
+        ]
+      }
+    ];
+
+    const insertedTxs: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib' },
+              { id: 'dt-b', code: 'BELANJA', name: 'Simpanan Belanja' },
+              { id: 'dt-l', code: 'LEBARAN', name: 'Simpanan Hari Raya' }
+            ],
+            error: null
+          })
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: mockMemberDeposits, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          delete: vi.fn().mockReturnValue({ in: vi.fn().mockResolvedValue({ data: null, error: null }) }),
+          insert: vi.fn().mockImplementation((rows: any[]) => {
+            insertedTxs.push(...rows);
+            return Promise.resolve({ data: rows, error: null });
+          })
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await bulkAutoReconcileAllMembers('Semua Jenis Simpanan');
+
+    expect(result.success).toBe(true);
+    expect(result.totalMembers).toBe(1);
+    expect(result.totalSuccess).toBe(1);
+    expect(result.totalFailed).toBe(0);
+    expect(insertedTxs).toHaveLength(3);
+    expect(insertedTxs.some(t => t.description.includes('WAJIB'))).toBe(true);
+    expect(insertedTxs.some(t => t.description.includes('BELANJA'))).toBe(true);
+    expect(insertedTxs.some(t => t.description.includes('LEBARAN'))).toBe(true);
+  });
 });

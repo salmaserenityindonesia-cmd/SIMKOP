@@ -157,41 +157,68 @@ export function resolveDepositTypeCode(typeObj: any): 'WAJIB' | 'BELANJA' | 'LEB
  * menggunakan algoritma FIFO bertingkat dengan pemrosesan per batch.
  */
 export async function bulkAutoReconcileAllMembers(
-  depositTypeCode: string,
+  depositTypeCode: string = 'ALL',
   onProgress?: (progress: BulkReconcileProgress) => void,
   options?: BulkReconcileOptions
 ): Promise<BulkReconcileResult> {
-  const codeUpper = (depositTypeCode || 'ALL').toUpperCase();
-  let normalizedTypes: Array<'WAJIB' | 'BELANJA' | 'LEBARAN'> = [];
-  if (codeUpper === 'ALL') {
-    normalizedTypes = ['WAJIB', 'BELANJA', 'LEBARAN'];
-  } else if (codeUpper === 'WAJIB' || codeUpper === 'SW') {
-    normalizedTypes = ['WAJIB'];
-  } else if (codeUpper === 'BELANJA' || codeUpper === 'SB') {
-    normalizedTypes = ['BELANJA'];
-  } else if (codeUpper === 'LEBARAN' || codeUpper === 'SL') {
-    normalizedTypes = ['LEBARAN'];
+  const rawType = (depositTypeCode || 'ALL').trim();
+  const isAll = !rawType || rawType === 'ALL' || rawType.toLowerCase().includes('semua');
+  let typesToProcess: Array<'WAJIB' | 'BELANJA' | 'LEBARAN'> = [];
+  if (isAll) {
+    typesToProcess = ['WAJIB', 'BELANJA', 'LEBARAN'];
   } else {
-    normalizedTypes = [codeUpper as any];
+    const resolved = resolveDepositTypeCode(rawType);
+    if (resolved) {
+      typesToProcess = [resolved];
+    } else {
+      const codeUpper = rawType.toUpperCase();
+      if (codeUpper === 'SW' || codeUpper === 'WAJIB') typesToProcess = ['WAJIB'];
+      else if (codeUpper === 'SB' || codeUpper === 'BELANJA') typesToProcess = ['BELANJA'];
+      else if (codeUpper === 'SL' || codeUpper === 'LEBARAN') typesToProcess = ['LEBARAN'];
+      else typesToProcess = [codeUpper as any];
+    }
   }
 
   // 1. Ambil seluruh anggota aktif dari public.anggota
   let membersQuery: any = supabase
     .from('anggota')
-    .select('id, nrp, nama, created_at, tgl_awal_anggota, status, membership_status');
+    .select('id, nrp, nama, created_at');
 
-  if (typeof membersQuery.order === 'function') {
-    membersQuery = membersQuery.order('nrp', { ascending: true });
+  let membersData: any[] = [];
+  let membersError: any = null;
+
+  if (typeof membersQuery.eq === 'function') {
+    const eqQuery = membersQuery.eq('status', 'aktif');
+    if (eqQuery && typeof eqQuery.order === 'function') {
+      const resp = await eqQuery.order('nrp', { ascending: true });
+      membersData = resp.data || [];
+      membersError = resp.error;
+    } else if (eqQuery && typeof eqQuery.then === 'function') {
+      const resp = await eqQuery;
+      membersData = resp.data || [];
+      membersError = resp.error;
+    }
   }
 
-  const { data: membersData, error: membersError } = await membersQuery;
+  if ((!membersData || membersData.length === 0) && !membersError) {
+    if (typeof membersQuery.order === 'function') {
+      const resp = await membersQuery.order('nrp', { ascending: true });
+      membersData = resp.data || [];
+      membersError = resp.error;
+    } else if (typeof membersQuery.then === 'function') {
+      const resp = await membersQuery;
+      membersData = resp.data || [];
+      membersError = resp.error;
+    }
+  }
+
   if (membersError) {
     throw new Error(`Gagal memuat data anggota: ${membersError.message || membersError}`);
   }
 
   const activeMembers = (membersData || []).filter((m: any) => {
-    const st = (m.status || '').toLowerCase();
-    const mst = (m.membership_status || '').toUpperCase();
+    const st = (m.status || 'aktif').toLowerCase();
+    const mst = (m.membership_status || 'ACTIVE').toUpperCase();
     return st !== 'nonaktif' && mst !== 'RESIGNED';
   });
 
@@ -206,17 +233,63 @@ export async function bulkAutoReconcileAllMembers(
     };
   }
 
-  // 2. Ambil tarif simpanan aktif bertingkat
-  const rateTiers = await getRateTiers();
+  // 2. Ambil data master deposit_types untuk mendapatkan pemetaan kode ke ID
+  let depTypes: any[] = [];
+  try {
+    const { data: dtData } = await supabase
+      .from('deposit_types')
+      .select('id, code, name');
+    depTypes = dtData || [];
+  } catch (err) {
+    console.warn('Gagal memuat deposit_types:', err);
+  }
 
-  // 3. Persiapkan konfigurasi batching
+  const depTypeMap = new Map<string, string>();
+  (depTypes || []).forEach((dt: any) => {
+    if (dt.code) {
+      depTypeMap.set(dt.code.toUpperCase(), dt.id);
+    }
+    const resolved = resolveDepositTypeCode(dt);
+    if (resolved) {
+      depTypeMap.set(resolved, dt.id);
+    }
+  });
+
+  // 3. Ambil seluruh master tarif dari public.savings_rate_tiers
+  let rateTiers: SavingsRateTier[] = [];
+  try {
+    rateTiers = await getRateTiers(undefined, false);
+  } catch (err) {
+    console.warn('Gagal memuat rate tiers via getRateTiers:', err);
+  }
+
+  if (!rateTiers || rateTiers.length === 0) {
+    try {
+      const { data: tiers } = await supabase
+        .from('savings_rate_tiers')
+        .select('*')
+        .order('start_year', { ascending: true })
+        .order('start_month', { ascending: true });
+      if (tiers && tiers.length > 0) {
+        rateTiers = tiers as any;
+      }
+    } catch (err) {
+      console.warn('Gagal query savings_rate_tiers langsung:', err);
+    }
+  }
+
+  if (!rateTiers || rateTiers.length === 0) {
+    rateTiers = DEFAULT_RATE_TIERS;
+  }
+
+  // 4. Persiapkan konfigurasi batching
   const batchSize = options?.batchSize && options.batchSize > 0 ? options.batchSize : 50;
   let processedCount = 0;
   let totalSuccess = 0;
   let totalFailed = 0;
   const errors: Array<{ memberId: string; memberName: string; error: string }> = [];
 
-  // 4. Proses anggota per batch
+  // 5. Proses anggota per batch
   for (let i = 0; i < totalMembers; i += batchSize) {
     const batch = activeMembers.slice(i, i + batchSize);
     const batchIds = batch.map(m => m.id);
@@ -276,15 +349,72 @@ export async function bulkAutoReconcileAllMembers(
     for (const member of batch) {
       try {
         const mDeposits = depositsByMember.get(member.id) || [];
-        const effectiveJoinDate = member.tgl_awal_anggota || member.created_at || null;
+        const effectiveJoinDate = member.created_at || member.tgl_awal_anggota || null;
         const joinYear = effectiveJoinDate ? new Date(effectiveJoinDate).getFullYear() : 2024;
         const resolvedStartYear = options?.startYear ?? (isNaN(joinYear) ? 2024 : Math.min(joinYear, 2024));
         const resolvedEndYear = options?.endYear ?? Math.max(new Date().getFullYear(), 2025);
 
         const monthGrid = generateMonthGrid(resolvedStartYear, resolvedEndYear);
 
-        for (const targetType of normalizedTypes) {
-          const md = mDeposits.find(d => resolveDepositTypeCode(d.deposit_types) === targetType);
+        for (const targetType of typesToProcess) {
+          const depTypeId = depTypeMap.get(targetType);
+          let md = mDeposits.find(d => {
+            if (depTypeId && d.deposit_type_id === depTypeId) return true;
+            return resolveDepositTypeCode(d.deposit_types) === targetType;
+          });
+
+          // Cari atau buat (upsert) rekening di public.member_deposits untuk member_id dan deposit_type_id jika belum ada
+          if (!md && depTypeId) {
+            try {
+              let existingId: string | null = null;
+              const checkQuery: any = supabase
+                .from('member_deposits')
+                .select('id')
+                .eq('member_id', member.id)
+                .eq('deposit_type_id', depTypeId);
+
+              const checkRes = typeof checkQuery.maybeSingle === 'function'
+                ? await checkQuery.maybeSingle()
+                : await checkQuery;
+
+              if (checkRes?.data) {
+                const row = Array.isArray(checkRes.data) ? checkRes.data[0] : checkRes.data;
+                existingId = row?.id;
+              }
+
+              if (!existingId) {
+                const insQuery: any = supabase
+                  .from('member_deposits')
+                  .insert({
+                    member_id: member.id,
+                    deposit_type_id: depTypeId,
+                    is_terminated: false
+                  })
+                  .select('id');
+                const insRes = typeof insQuery.maybeSingle === 'function'
+                  ? await insQuery.maybeSingle()
+                  : await insQuery;
+                if (insRes?.data) {
+                  const row = Array.isArray(insRes.data) ? insRes.data[0] : insRes.data;
+                  existingId = row?.id;
+                }
+              }
+
+              if (existingId) {
+                md = {
+                  id: existingId,
+                  member_id: member.id,
+                  deposit_type_id: depTypeId,
+                  deposit_types: { id: depTypeId, code: targetType },
+                  deposit_transactions: []
+                };
+                mDeposits.push(md);
+              }
+            } catch (upsertErr) {
+              console.warn(`Gagal upsert member_deposits untuk ${member.nama} (${targetType}):`, upsertErr);
+            }
+          }
+
           if (!md) {
             continue;
           }
@@ -328,12 +458,10 @@ export async function bulkAutoReconcileAllMembers(
             effectiveJoinDate
           );
 
-          // Hapus transaksi matriks lama pada rentang grid (lindungi mutasi migrasi riil)
+          // Hapus transaksi matriks / rekonsiliasi lama pada rentang grid (lindungi mutasi migrasi riil)
           const oldMatrixTxIds = txs
             .filter((t: any) => {
               if (t.transaction_type !== 'deposit') return false;
-              const y = Number(t.for_year);
-              if (y < resolvedStartYear || y > resolvedEndYear) return false;
               const desc = (t.description || '').toLowerCase();
               if (desc.includes('migra') || desc.includes('saldo awal') || desc.includes('historical') || desc.includes('one-time')) {
                 return false;
