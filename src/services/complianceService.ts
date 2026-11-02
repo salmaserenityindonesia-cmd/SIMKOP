@@ -279,6 +279,18 @@ export async function getSavingsComplianceAvailableYears(
 }
 
 
+export interface SavingsSubItem {
+  status: 'paid' | 'unpaid' | 'not_applicable';
+  amount: number;
+}
+
+export interface MonthSavingsCell {
+  month: number;
+  wajib: SavingsSubItem;
+  belanja: SavingsSubItem;
+  lebaran: SavingsSubItem;
+}
+
 export interface ComplianceMonthData {
   w: number;
   b: number;
@@ -286,6 +298,9 @@ export interface ComplianceMonthData {
   bal_w: number;
   bal_b: number;
   bal_l: number;
+  wajib?: SavingsSubItem;
+  belanja?: SavingsSubItem;
+  lebaran?: SavingsSubItem;
 }
 
 export interface ComplianceMatrixRow {
@@ -567,6 +582,10 @@ export async function getComplianceMatrixData(
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
 
+  const targetWajib = typeList.find((dt: any) => dt.id === wajibId)?.default_amount || 25000;
+  const targetBelanja = typeList.find((dt: any) => dt.id === belanjaId)?.default_amount || 50000;
+  const targetLebaran = typeList.find((dt: any) => dt.id === lebaranId)?.default_amount || 50000;
+
   // 4. Susun baris untuk setiap anggota yang eligible
   // PENTING: Jangan buang anggota yang belum memiliki transaksi di tahun tersebut!
   const results: ComplianceMatrixRow[] = eligibleMembers.map((m: any) => {
@@ -609,7 +628,28 @@ export async function getComplianceMatrixData(
           }
         }
 
-        monthsData.push({ ...p, bal_w: balW, bal_b: balB, bal_l: balL });
+        const wajibItem: SavingsSubItem = {
+          status: p.w > 0 ? 'paid' : 'unpaid',
+          amount: p.w > 0 ? p.w : targetWajib,
+        };
+        const belanjaItem: SavingsSubItem = {
+          status: p.b > 0 ? 'paid' : 'unpaid',
+          amount: p.b > 0 ? p.b : targetBelanja,
+        };
+        const lebaranItem: SavingsSubItem = {
+          status: p.l > 0 ? 'paid' : 'unpaid',
+          amount: p.l > 0 ? p.l : targetLebaran,
+        };
+
+        monthsData.push({
+          ...p,
+          bal_w: balW,
+          bal_b: balB,
+          bal_l: balL,
+          wajib: wajibItem,
+          belanja: belanjaItem,
+          lebaran: lebaranItem,
+        });
 
         expectedCount += 3;
         if (p.w > 0) paidCount++;
@@ -636,9 +676,9 @@ export async function getComplianceMatrixData(
   return {
     rows: results,
     targets: {
-      wajib: typeList.find((dt: any) => dt.id === wajibId)?.default_amount || 25000,
-      belanja: typeList.find((dt: any) => dt.id === belanjaId)?.default_amount || 50000,
-      lebaran: typeList.find((dt: any) => dt.id === lebaranId)?.default_amount || 50000,
+      wajib: targetWajib,
+      belanja: targetBelanja,
+      lebaran: targetLebaran,
     },
   };
 }
