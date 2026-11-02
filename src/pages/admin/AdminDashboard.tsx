@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getDashboardStats, DashboardStats, getCommitmentStats, CommitmentStats } from '../../services/koperasiService';
+import { getCommitmentStats, CommitmentStats } from '../../services/koperasiService';
+import { getDashboardStats, DashboardStats } from '../../services/dashboardService';
 import { useCart } from '../../lib/cartStore';
 import { Link } from 'react-router-dom';
 import { generateDatabaseBackup } from '../../services/backupService';
@@ -105,7 +106,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
               <div className="text-headline-md font-headline-md text-primary font-semibold tracking-tight">
-                Rp {stats?.totalPenjualanHariIni.toLocaleString('id-ID')}
+                Rp {(stats?.totalPenjualanHariIni ?? 0).toLocaleString('id-ID')}
               </div>
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Penjualan retail berjalan</div>
             </div>
@@ -127,7 +128,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
               <div className="text-headline-md font-headline-md text-primary font-semibold tracking-tight">
-                {stats?.totalPinjamanAktif}
+                {stats?.totalPinjamanAktif ?? 0}
               </div>
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Berkas pinjaman berjalan</div>
             </div>
@@ -149,7 +150,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
               <div className="text-headline-md font-headline-md text-error font-semibold tracking-tight">
-                {stats?.stokKritis}
+                {stats?.stokKritis ?? 0}
               </div>
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Produk butuh restock</div>
             </div>

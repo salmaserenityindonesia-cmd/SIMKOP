@@ -932,56 +932,11 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
   return riwayat;
 }
 
-export interface DashboardStats {
-  totalPenjualanHariIni: number;
-  totalPinjamanAktif: number;
-  stokKritis: number;
-  transaksiTersimpan: number;
-}
-
-export async function getDashboardStats(): Promise<DashboardStats> {
-  let totalPenjualanHariIni = 0;
-  let totalPinjamanAktif = 0;
-  let stokKritis = 0;
-  
-  // Total Penjualan Hari Ini
-  const today = new Date().toISOString().split('T')[0];
-  const { data: sales, error: salesError } = await supabase
-    .from('transaksi')
-    .select('total')
-    .gte('created_at', `${today}T00:00:00.000Z`);
-    
-  if (!salesError && sales) {
-    totalPenjualanHariIni = sales.reduce((acc, curr) => acc + curr.total, 0);
-  } else {
-    // Mock if table doesn't exist
-    totalPenjualanHariIni = 48720500;
-  }
-
-  // Total Pinjaman Aktif
-  const { count: loanCount, error: loanError } = await supabase
-    .from('pinjaman')
-    .select('*', { count: 'exact', head: true })
-    .eq('status', 'approved');
-    
-  if (!loanError && loanCount !== null) {
-    totalPinjamanAktif = loanCount;
-  } else {
-    // Mock if table doesn't exist
-    totalPinjamanAktif = 182;
-  }
-
-  // Stok Kritis
-  const produkList = await getProduk();
-  stokKritis = produkList.filter(p => p.stock <= p.min_stock_alert).length;
-
-  return {
-    totalPenjualanHariIni,
-    totalPinjamanAktif,
-    stokKritis,
-    transaksiTersimpan: 0 // Will be handled by the UI via cartStore
-  };
-}
+export {
+  getDashboardStats,
+  fetchDashboardMetrics,
+  type DashboardStats
+} from './dashboardService';
 
 // Phase 8: Dynamic Deposits & Loans CRUD
 
