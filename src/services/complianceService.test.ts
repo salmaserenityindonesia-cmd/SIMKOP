@@ -818,6 +818,85 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
       expect(marData?.b).toBe(0);
       expect(marData?.l).toBe(0);
     });
+
+    it('Hendra Gunawan (2024): mutasi WAJIB 200.000 dari Mei s/d Des 2024 berstatus paid dengan amount 200000', async () => {
+      const mockDTypes2024 = [
+        { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'POKOK', default_amount: 100000 },
+        { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'WAJIB', default_amount: 150000 },
+        { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'BELANJA', default_amount: 50000 },
+        { id: 'dt-lebaran', name: 'Simpanan Lebaran', code: 'LEBARAN', default_amount: 50000 },
+      ];
+
+      const hendraMember = [
+        {
+          id: 'm-hendra',
+          nama: 'Hendra Gunawan',
+          nrp: 'NRP-HENDRA',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2024-05-01',
+          created_at: '2024-05-01T00:00:00Z',
+        },
+      ];
+
+      // Mutasi Hendra Gunawan di deposit_transactions:
+      // Dari Mei (5) s/d Des (12) 2024 dengan nominal Rp 200.000
+      const hendraTxs: any[] = [];
+      for (let mo = 5; mo <= 12; mo++) {
+        hendraTxs.push({
+          id: `tx-hendra-${mo}`,
+          amount: 200000,
+          transaction_type: 'deposit',
+          for_year: 2024,
+          for_month: mo,
+          description: `Setoran Matriks WAJIB ${mo} 2024`,
+          member_deposits: { member_id: 'm-hendra', deposit_type_id: 'dt-wajib' },
+        });
+      }
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes2024, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: hendraMember, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: hendraTxs, error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2024);
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0];
+      expect(row.nama).toBe('Hendra Gunawan');
+
+      // Bulan Jan - Apr (sebelum bergabung dan tidak ada transaksi): null
+      expect(row.months[0]).toBeNull();
+      expect(row.months[1]).toBeNull();
+      expect(row.months[2]).toBeNull();
+      expect(row.months[3]).toBeNull();
+
+      // Bulan Mei s/d Des 2024: status paid dan amount 200000
+      for (let mIdx = 4; mIdx <= 11; mIdx++) {
+        const cell = row.months[mIdx];
+        expect(cell).not.toBeNull();
+        expect(cell?.wajib?.status).toBe('paid');
+        expect(cell?.wajib?.amount).toBe(200000);
+        expect(cell?.w).toBe(200000);
+      }
+
+      // Compliance dihitung positif
+      expect(row.compliance).toBeGreaterThan(0);
+    });
   });
 });
 

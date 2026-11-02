@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   bulkAutoReconcileAllMembers,
+  reconcileSingleMemberDeposit,
   generateMonthGrid,
   matchAutomaticFifo,
   isMonthBeforeJoin,
@@ -774,5 +775,109 @@ describe('savingsMatrixService - bulkAutoReconcileAllMembers', () => {
     expect(result.success).toBe(true);
     expect(deletedIds).toContain('bulk-migra-tx');
     expect(deleteEqCalls.some(c => c.col === 'member_deposit_id' && c.val === 'md-yanto-wajib')).toBe(true);
+  });
+});
+
+describe('savingsMatrixService - reconcileSingleMemberDeposit', () => {
+  const mockTiers: SavingsRateTier[] = [
+    {
+      id: 'tier-w-1',
+      deposit_type_code: 'WAJIB',
+      start_year: 2024,
+      start_month: 1,
+      end_year: 2025,
+      end_month: 10,
+      monthly_rate: 150000
+    },
+    {
+      id: 'tier-w-2',
+      deposit_type_code: 'WAJIB',
+      start_year: 2025,
+      start_month: 11,
+      end_year: null,
+      end_month: null,
+      monthly_rate: 200000
+    }
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(savingsRateService, 'getRateTiers').mockResolvedValue(mockTiers);
+  });
+
+  it('rekonsiliasi saldo individual untuk satu jenis simpanan (WAJIB)', async () => {
+    const mockDeposits = [
+      {
+        id: 'md-single-1',
+        member_id: 'member-single',
+        deposit_type_id: 'dt-wajib',
+        deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+        deposit_transactions: [
+          {
+            id: 'tx-migra-single',
+            amount: 300000,
+            transaction_type: 'deposit',
+            for_month: null,
+            for_year: null,
+            description: 'Saldo Awal Migrasi Sistem'
+          }
+        ]
+      }
+    ];
+
+    const inserted: any[] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: mockDeposits, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+            error: null
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              is: vi.fn().mockReturnValue({
+                ilike: vi.fn().mockResolvedValue({ data: null, error: null })
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    neq: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          }),
+          insert: vi.fn().mockImplementation((rows: any[]) => {
+            inserted.push(...rows);
+            return Promise.resolve({ data: rows, error: null });
+          })
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const res = await reconcileSingleMemberDeposit('member-single', 'WAJIB', {
+      rateTiers: mockTiers,
+      joinDate: '2024-01-01'
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.matchedKeys).toEqual(['2024-01', '2024-02']);
+    expect(res.insertedCount).toBe(2);
+    expect(inserted).toHaveLength(2);
+    expect(inserted[0].amount).toBe(150000);
+    expect(inserted[1].amount).toBe(150000);
   });
 });

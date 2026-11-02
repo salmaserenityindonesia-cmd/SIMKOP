@@ -344,11 +344,32 @@ export async function getComplianceMatrixData(
     if (dt.code) typeMap[(dt.code || '').toLowerCase()] = dt.id;
   });
 
+  const isTypeMatch = (dt: any, codes: string[], keywords: string[]) => {
+    const c = (dt.code || '').toUpperCase();
+    const n = (dt.name || '').toLowerCase();
+    return codes.some((code) => c === code.toUpperCase()) || keywords.some((k) => n.includes(k.toLowerCase()));
+  };
+
+  const pokokType = matchDepositType(typeList, ['POKOK', 'SP'], ['pokok']);
+  const wajibType = matchDepositType(typeList, ['WAJIB', 'SW'], ['wajib']);
+  const belanjaType = matchDepositType(typeList, ['BELANJA', 'SB'], ['belanja']);
+  const lebaranType = matchDepositType(typeList, ['LEBARAN', 'SL', 'SHR'], ['lebaran', 'hari raya']);
+
   const keys = Object.keys(typeMap);
-  const pokokId = typeMap[keys.find((k) => k.includes('pokok') || k === 'sp') || ''] || '';
-  const wajibId = typeMap[keys.find((k) => k.includes('wajib') || k === 'sw') || ''] || '';
-  const belanjaId = typeMap[keys.find((k) => k.includes('belanja') || k === 'sb') || ''] || '';
-  const lebaranId = typeMap[keys.find((k) => k.includes('lebaran') || k.includes('hari raya') || k === 'sl') || ''] || '';
+  const pokokId = pokokType?.id || typeMap[keys.find((k) => k.includes('pokok') || k === 'sp') || ''] || '';
+  const wajibId = wajibType?.id || typeMap[keys.find((k) => k.includes('wajib') || k === 'sw') || ''] || '';
+  const belanjaId = belanjaType?.id || typeMap[keys.find((k) => k.includes('belanja') || k === 'sb') || ''] || '';
+  const lebaranId = lebaranType?.id || typeMap[keys.find((k) => k.includes('lebaran') || k.includes('hari raya') || k === 'sl') || ''] || '';
+
+  const pokokTypeIds = new Set(typeList.filter((dt) => isTypeMatch(dt, ['POKOK', 'SP'], ['pokok'])).map((dt) => dt.id));
+  const wajibTypeIds = new Set(typeList.filter((dt) => isTypeMatch(dt, ['WAJIB', 'SW'], ['wajib'])).map((dt) => dt.id));
+  const belanjaTypeIds = new Set(typeList.filter((dt) => isTypeMatch(dt, ['BELANJA', 'SB'], ['belanja'])).map((dt) => dt.id));
+  const lebaranTypeIds = new Set(typeList.filter((dt) => isTypeMatch(dt, ['LEBARAN', 'SL', 'SHR'], ['lebaran', 'hari raya'])).map((dt) => dt.id));
+
+  if (pokokId) pokokTypeIds.add(pokokId);
+  if (wajibId) wajibTypeIds.add(wajibId);
+  if (belanjaId) belanjaTypeIds.add(belanjaId);
+  if (lebaranId) lebaranTypeIds.add(lebaranId);
 
   // 2. Ambil seluruh anggota dari public.anggota (BUKAN members)
   // WAJIB mengambil seluruh anggota aktif dari public.anggota yang terdaftar pada atau sebelum tahun yang dipilih
@@ -443,23 +464,40 @@ export async function getComplianceMatrixData(
   });
 
   // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN)
+  const { data: memberDepositsList } = await supabase
+    .from('member_deposits')
+    .select('id, member_id, deposit_type_id');
+  const mdMap = new Map<string, { member_id: string; deposit_type_id: string }>();
+  (memberDepositsList || []).forEach((md: any) => {
+    if (md.id) {
+      mdMap.set(md.id, { member_id: md.member_id, deposit_type_id: md.deposit_type_id });
+    }
+  });
+
   const { data: transactions } = await supabase
     .from('deposit_transactions')
-    .select('amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)');
+    .select('id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)');
+
+  // Helper untuk mengekstrak member_id dan deposit_type_id dari transaksi
+  const parseTxInfo = (tx: any) => {
+    const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+    const mdFromMap = tx.member_deposit_id ? mdMap.get(tx.member_deposit_id) : undefined;
+    const memberId = tx.member_id || md?.member_id || mdFromMap?.member_id;
+    const depositTypeId = tx.deposit_type_id || md?.deposit_type_id || mdFromMap?.deposit_type_id;
+    return { memberId, depositTypeId };
+  };
 
   // Ambil transaksi pokok
   const { data: pokokTxs } = await supabase
     .from('deposit_transactions')
-    .select('amount, transaction_type, member_deposits(member_id, deposit_type_id)');
+    .select('id, member_deposit_id, amount, transaction_type, member_deposits(member_id, deposit_type_id)');
 
   const pokokPaidByMember = new Set<string>();
   if (pokokTxs) {
     const pokokSums: Record<string, number> = {};
     pokokTxs.forEach((tx: any) => {
-      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
-      const mId = md?.member_id;
-      const tId = md?.deposit_type_id;
-      if (mId && (!pokokId || tId === pokokId)) {
+      const { memberId: mId, depositTypeId: tId } = parseTxInfo(tx);
+      if (mId && (!pokokId || pokokTypeIds.has(tId) || tId === pokokId)) {
         const amt = Number(tx.amount) || 0;
         if (tx.transaction_type === 'deposit') {
           pokokSums[mId] = (pokokSums[mId] || 0) + amt;
@@ -485,12 +523,16 @@ export async function getComplianceMatrixData(
       desc.includes('saldo awal') ||
       desc.includes('historical') ||
       desc.includes('one-time');
+
+    const hasExplicitMonth =
+      tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month));
+    const isLumpSumAmount = Number(tx.amount) > 200000;
+
     return (
       isMigrationDesc &&
-      (tx.for_month === null ||
-        tx.for_month === undefined ||
-        desc.includes('saldo awal migrasi sistem') ||
-        desc.includes('migrasi saldo awal (as-is)'))
+      (!hasExplicitMonth ||
+        (isLumpSumAmount &&
+          (desc.includes('saldo awal migrasi sistem') || desc.includes('migrasi saldo awal (as-is)'))))
     );
   };
 
@@ -498,10 +540,8 @@ export async function getComplianceMatrixData(
   const hasBreakdownSet = new Set<string>();
   if (transactions) {
     transactions.forEach((tx: any) => {
-      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
-      if (!md) return;
-      const mId = md.member_id;
-      const tId = md.deposit_type_id;
+      const { memberId: mId, depositTypeId: tId } = parseTxInfo(tx);
+      if (!mId) return;
       const key = `${mId}_${tId}`;
 
       const desc = (tx.description || '').toLowerCase();
@@ -528,10 +568,8 @@ export async function getComplianceMatrixData(
 
   if (transactions) {
     transactions.forEach((tx: any) => {
-      const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
-      if (!md) return;
-      const mId = md.member_id;
-      const tId = md.deposit_type_id;
+      const { memberId: mId, depositTypeId: tId } = parseTxInfo(tx);
+      if (!mId) return;
       const amt = Number(tx.amount) || 0;
       const key = `${mId}_${tId}`;
 
@@ -544,14 +582,16 @@ export async function getComplianceMatrixData(
       }
 
       let txYear = 0;
-      let txMonth = 0; // 0-indexed: 0 = Jan .. 11 = Des
+      let txMonth = -1; // 0-indexed: 0 = Jan .. 11 = Des
 
       if (tx.transaction_type === 'deposit') {
         txYear = Number(tx.for_year) || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
-        txMonth =
-          tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))
-            ? Number(tx.for_month) - 1
-            : (tx.created_at ? new Date(tx.created_at).getMonth() : 0);
+        if (tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))) {
+          const rawM = Number(tx.for_month);
+          txMonth = rawM >= 1 && rawM <= 12 ? rawM - 1 : rawM;
+        } else if (tx.created_at) {
+          txMonth = new Date(tx.created_at).getMonth();
+        }
       } else {
         const d = tx.created_at ? new Date(tx.created_at) : new Date();
         txYear = d.getFullYear();
@@ -571,9 +611,9 @@ export async function getComplianceMatrixData(
           if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
           if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
 
-          if (tId === wajibId) paymentsByMember[mId][month].w += amt;
-          if (tId === belanjaId) paymentsByMember[mId][month].b += amt;
-          if (tId === lebaranId) paymentsByMember[mId][month].l += amt;
+          if (wajibTypeIds.has(tId) || tId === wajibId) paymentsByMember[mId][month].w += amt;
+          if (belanjaTypeIds.has(tId) || tId === belanjaId) paymentsByMember[mId][month].b += amt;
+          if (lebaranTypeIds.has(tId) || tId === lebaranId) paymentsByMember[mId][month].l += amt;
         }
       }
     });
@@ -603,11 +643,14 @@ export async function getComplianceMatrixData(
       const isBeforeJoin = year < joinYear || (year === joinYear && i < joinMonth);
       const isFuture = year > currentYear || (year === currentYear && i > currentMonth);
 
-      if (isFuture || isBeforeJoin) {
+      const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
+      const hasAnyPayment = p.w > 0 || p.b > 0 || p.l > 0;
+
+      if (isFuture) {
+        monthsData.push(null);
+      } else if (isBeforeJoin && !hasAnyPayment) {
         monthsData.push(null);
       } else {
-        const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
-
         // Hitung running balance hingga (year, i)
         const memberTxList = memberTxs[m.id] || [];
         let balW = 0;
@@ -616,29 +659,33 @@ export async function getComplianceMatrixData(
 
         for (const t of memberTxList) {
           if (t.year < year || (t.year === year && t.month <= i)) {
+            const isWajib = wajibTypeIds.has(t.tId) || t.tId === wajibId;
+            const isBelanja = belanjaTypeIds.has(t.tId) || t.tId === belanjaId;
+            const isLebaran = lebaranTypeIds.has(t.tId) || t.tId === lebaranId;
+
             if (t.type === 'deposit') {
-              if (t.tId === wajibId) balW += t.amt;
-              if (t.tId === belanjaId) balB += t.amt;
-              if (t.tId === lebaranId) balL += t.amt;
+              if (isWajib) balW += t.amt;
+              if (isBelanja) balB += t.amt;
+              if (isLebaran) balL += t.amt;
             } else if (t.type === 'withdrawal') {
-              if (t.tId === wajibId) balW -= t.amt;
-              if (t.tId === belanjaId) balB -= t.amt;
-              if (t.tId === lebaranId) balL -= t.amt;
+              if (isWajib) balW -= t.amt;
+              if (isBelanja) balB -= t.amt;
+              if (isLebaran) balL -= t.amt;
             }
           }
         }
 
         const wajibItem: SavingsSubItem = {
-          status: p.w > 0 ? 'paid' : 'unpaid',
-          amount: p.w > 0 ? p.w : targetWajib,
+          status: p.w > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
+          amount: p.w > 0 ? p.w : isBeforeJoin ? 0 : targetWajib,
         };
         const belanjaItem: SavingsSubItem = {
-          status: p.b > 0 ? 'paid' : 'unpaid',
-          amount: p.b > 0 ? p.b : targetBelanja,
+          status: p.b > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
+          amount: p.b > 0 ? p.b : isBeforeJoin ? 0 : targetBelanja,
         };
         const lebaranItem: SavingsSubItem = {
-          status: p.l > 0 ? 'paid' : 'unpaid',
-          amount: p.l > 0 ? p.l : targetLebaran,
+          status: p.l > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
+          amount: p.l > 0 ? p.l : isBeforeJoin ? 0 : targetLebaran,
         };
 
         monthsData.push({
@@ -651,10 +698,18 @@ export async function getComplianceMatrixData(
           lebaran: lebaranItem,
         });
 
-        expectedCount += 3;
-        if (p.w > 0) paidCount++;
-        if (p.b > 0) paidCount++;
-        if (p.l > 0) paidCount++;
+        if (wajibItem.status !== 'not_applicable') {
+          expectedCount += 1;
+          if (wajibItem.status === 'paid') paidCount += 1;
+        }
+        if (belanjaItem.status !== 'not_applicable') {
+          expectedCount += 1;
+          if (belanjaItem.status === 'paid') paidCount += 1;
+        }
+        if (lebaranItem.status !== 'not_applicable') {
+          expectedCount += 1;
+          if (lebaranItem.status === 'paid') paidCount += 1;
+        }
       }
     }
 

@@ -31,6 +31,7 @@ import {
   BulkReconcileProgress,
   BulkReconcileResult
 } from '../../services/savingsMatrixService';
+import { clearTierCache } from '../../services/savingsRateService';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const CURRENT_MONTH = new Date().getMonth();
@@ -193,7 +194,8 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const feedback = useContext(FeedbackContext);
 
   const handleReloadAfterBulk = async () => {
-    await fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+    clearTierCache();
+    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
     setShowConfirmBulkModal(false);
     setBulkResult(null);
     if (feedback?.showToast) {
@@ -231,15 +233,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     : '100';
 
   const membersInArrears = data.filter(row => {
-    // Only check arrears if the current year matches the selected year, or if we want to show arrears for the selected year's current month?
-    // We'll check the CURRENT_MONTH of the selected year if we assume they might owe in the past, but the prompt says "Bulan Ini"
-    // Let's use CURRENT_MONTH data.
     const currentMonthData = row.months[CURRENT_MONTH];
     if (currentMonthData) {
-      if (filterType === 'wajib') return currentMonthData.w <= 0;
-      if (filterType === 'belanja') return currentMonthData.b <= 0;
-      if (filterType === 'lebaran') return currentMonthData.l <= 0;
-      return currentMonthData.w <= 0 || currentMonthData.b <= 0 || currentMonthData.l <= 0;
+      const isWajibArrears = currentMonthData.wajib ? currentMonthData.wajib.status === 'unpaid' : currentMonthData.w <= 0;
+      const isBelanjaArrears = currentMonthData.belanja ? currentMonthData.belanja.status === 'unpaid' : currentMonthData.b <= 0;
+      const isLebaranArrears = currentMonthData.lebaran ? currentMonthData.lebaran.status === 'unpaid' : currentMonthData.l <= 0;
+
+      if (filterType === 'wajib') return isWajibArrears;
+      if (filterType === 'belanja') return isBelanjaArrears;
+      if (filterType === 'lebaran') return isLebaranArrears;
+      return isWajibArrears || isBelanjaArrears || isLebaranArrears;
     }
     return false;
   }).length;
@@ -281,11 +284,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {wajibItem.status === 'paid'
-              ? Number(wajibItem.amount).toLocaleString('id-ID')
-              : wajibItem.status === 'unpaid'
-              ? Number(wajibItem.amount || 200000).toLocaleString('id-ID')
-              : '-'}
+            {wajibItem.status === 'not_applicable'
+              ? '-'
+              : Number(wajibItem.amount).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -299,11 +300,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {belanjaItem.status === 'paid'
-              ? Number(belanjaItem.amount).toLocaleString('id-ID')
-              : belanjaItem.status === 'unpaid'
-              ? Number(belanjaItem.amount || 50000).toLocaleString('id-ID')
-              : '-'}
+            {belanjaItem.status === 'not_applicable'
+              ? '-'
+              : Number(belanjaItem.amount).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -317,11 +316,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {lebaranItem.status === 'paid'
-              ? Number(lebaranItem.amount).toLocaleString('id-ID')
-              : lebaranItem.status === 'unpaid'
-              ? Number(lebaranItem.amount || 50000).toLocaleString('id-ID')
-              : '-'}
+            {lebaranItem.status === 'not_applicable'
+              ? '-'
+              : Number(lebaranItem.amount).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -869,7 +866,11 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         bulkTargetType,
                         setIsBulkReconciling,
                         setBulkProgress,
-                        setBulkResult
+                        setBulkResult,
+                        async () => {
+                          clearTierCache();
+                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
+                        }
                       );
                     }}
                     data-testid="start-bulk-reconcile-btn"

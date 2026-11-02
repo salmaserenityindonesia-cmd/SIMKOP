@@ -36,6 +36,22 @@ export interface BulkReconcileOptions {
   endYear?: number;
 }
 
+export interface ReconcileSingleMemberOptions {
+  rateTiers?: SavingsRateTier[];
+  depTypes?: any[];
+  joinDate?: string | null;
+  startYear?: number;
+  endYear?: number;
+  memberDeposits?: any[];
+}
+
+export interface ReconcileSingleMemberResult {
+  success: boolean;
+  memberDepositId?: string;
+  matchedKeys: string[];
+  insertedCount: number;
+}
+
 /**
  * Memeriksa apakah suatu periode (tahun, bulan) berada sebelum tanggal masuk anggota
  */
@@ -154,12 +170,411 @@ export function resolveDepositTypeCode(typeObj: any): 'WAJIB' | 'BELANJA' | 'LEB
 }
 
 /**
+ * Melakukan rekonsiliasi FIFO otomatis saldo buku besar simpanan untuk satu anggota individual.
+ * Logika ini identik dan selaras dengan aksi "Cocokkan Otomatis dengan Saldo Impor" pada modal buku besar individual.
+ */
+export async function reconcileSingleMemberDeposit(
+  memberId: string,
+  depositTypeCode: string,
+  options?: ReconcileSingleMemberOptions
+): Promise<ReconcileSingleMemberResult> {
+  const rawType = (depositTypeCode || 'ALL').trim();
+  const isAll = !rawType || rawType === 'ALL' || rawType.toLowerCase().includes('semua');
+
+  // Jika ALL / SEMUA, proses WAJIB, BELANJA, dan LEBARAN secara berurutan
+  if (isAll) {
+    const subTypes: Array<'WAJIB' | 'BELANJA' | 'LEBARAN'> = ['WAJIB', 'BELANJA', 'LEBARAN'];
+    let totalInserted = 0;
+    const allKeys: string[] = [];
+    let lastMdId: string | undefined;
+
+    for (const st of subTypes) {
+      const res = await reconcileSingleMemberDeposit(memberId, st, options);
+      totalInserted += res.insertedCount;
+      allKeys.push(...res.matchedKeys);
+      if (res.memberDepositId) lastMdId = res.memberDepositId;
+    }
+
+    return {
+      success: true,
+      memberDepositId: lastMdId,
+      matchedKeys: allKeys,
+      insertedCount: totalInserted
+    };
+  }
+
+  const resolved = resolveDepositTypeCode(rawType);
+  const targetType = (resolved || rawType.toUpperCase()) as 'WAJIB' | 'BELANJA' | 'LEBARAN';
+
+  // 1. Ambil master rate tiers jika tidak disediakan
+  let rateTiers = options?.rateTiers;
+  if (!rateTiers || rateTiers.length === 0) {
+    try {
+      rateTiers = await getRateTiers(undefined, false);
+    } catch (err) {
+      console.warn('Gagal memuat rate tiers via getRateTiers:', err);
+    }
+
+    if (!rateTiers || rateTiers.length === 0) {
+      try {
+        const { data: tiers } = await supabase
+          .from('savings_rate_tiers')
+          .select('*')
+          .order('start_year', { ascending: true })
+          .order('start_month', { ascending: true });
+        if (tiers && tiers.length > 0) {
+          rateTiers = tiers as any;
+        }
+      } catch (err) {
+        console.warn('Gagal query savings_rate_tiers langsung:', err);
+      }
+    }
+
+    if (!rateTiers || rateTiers.length === 0) {
+      rateTiers = DEFAULT_RATE_TIERS;
+    }
+  }
+
+  // 2. Ambil master deposit_types jika tidak disediakan
+  let dtList = options?.depTypes;
+  if (!dtList || dtList.length === 0) {
+    try {
+      const { data: dTypes } = await supabase
+        .from('deposit_types')
+        .select('id, name, code');
+      dtList = dTypes || [];
+    } catch (err) {
+      console.warn('Gagal memuat deposit_types:', err);
+      dtList = [];
+    }
+  }
+
+  const findDtId = (keywords: string[], fallbackId: string) => {
+    const match = (dtList || []).find((dt: any) => {
+      const c = (dt.code || '').toUpperCase();
+      const n = (dt.name || '').toLowerCase();
+      return keywords.some(k => c === k.toUpperCase() || n.includes(k.toLowerCase()));
+    });
+    return match?.id || fallbackId;
+  };
+
+  let targetDepTypeId: string | undefined;
+  if (targetType === 'WAJIB') {
+    targetDepTypeId = findDtId(['WAJIB', 'SW'], 'dt-wajib');
+  } else if (targetType === 'BELANJA') {
+    targetDepTypeId = findDtId(['BELANJA', 'SB'], 'dt-belanja');
+  } else if (targetType === 'LEBARAN') {
+    targetDepTypeId = findDtId(['LEBARAN', 'SL', 'HARI RAYA'], 'dt-lebaran');
+  }
+
+  // 3. Ambil join date jika belum disediakan
+  let effectiveJoin = options?.joinDate;
+  if (!effectiveJoin && memberId) {
+    try {
+      let memberQuery: any = supabase
+        .from('anggota')
+        .select('created_at, tgl_awal_anggota');
+
+      let memberRecord: any = null;
+      if (typeof memberQuery.eq === 'function') {
+        const eqQuery = memberQuery.eq('id', memberId);
+        if (eqQuery && typeof eqQuery.single === 'function') {
+          const resp = await eqQuery.single();
+          memberRecord = resp.data;
+        } else if (eqQuery && typeof eqQuery.then === 'function') {
+          const resp = await eqQuery;
+          memberRecord = Array.isArray(resp.data) ? resp.data[0] : resp.data;
+        }
+      }
+
+      if (memberRecord) {
+        effectiveJoin = memberRecord.tgl_awal_anggota || memberRecord.created_at;
+      }
+    } catch (err) {
+      console.warn('Gagal query join date anggota:', err);
+    }
+  }
+
+  // 4. Ambil data member_deposits untuk member ini
+  let mDeposits: any[] = options?.memberDeposits || [];
+  if (!mDeposits || mDeposits.length === 0) {
+    try {
+      let mdQuery: any = supabase
+        .from('member_deposits')
+        .select(`
+          id,
+          member_id,
+          deposit_type_id,
+          deposit_types ( id, name, code ),
+          deposit_transactions (
+            id,
+            amount,
+            for_month,
+            for_year,
+            transaction_type,
+            description,
+            created_at
+          )
+        `);
+
+      if (typeof mdQuery.eq === 'function') {
+        const resp = await mdQuery.eq('member_id', memberId);
+        mDeposits = resp.data || [];
+      } else if (typeof mdQuery.in === 'function') {
+        const resp = await mdQuery.in('member_id', [memberId]);
+        mDeposits = resp.data || [];
+      } else {
+        const resp = await mdQuery;
+        mDeposits = resp.data || [];
+      }
+    } catch (err) {
+      console.warn(`Gagal query member_deposits untuk memberId ${memberId}:`, err);
+      mDeposits = [];
+    }
+  }
+
+  let md = mDeposits.find((d: any) => {
+    if (d.member_id && d.member_id !== memberId) return false;
+    if (targetDepTypeId && d.deposit_type_id === targetDepTypeId) return true;
+    const resolvedCode = resolveDepositTypeCode(d.deposit_types);
+    return resolvedCode === targetType;
+  });
+
+  // Cari atau buat (upsert) rekening di public.member_deposits jika belum ada
+  if (!md && targetDepTypeId) {
+    try {
+      let existingId: string | null = null;
+      const checkQuery: any = supabase
+        .from('member_deposits')
+        .select('id');
+
+      if (typeof checkQuery.eq === 'function') {
+        const eqQuery = checkQuery.eq('member_id', memberId);
+        if (eqQuery && typeof eqQuery.eq === 'function') {
+          const eqTypeQuery = eqQuery.eq('deposit_type_id', targetDepTypeId);
+          const checkRes = typeof eqTypeQuery.maybeSingle === 'function'
+            ? await eqTypeQuery.maybeSingle()
+            : await eqTypeQuery;
+          if (checkRes?.data) {
+            const row = Array.isArray(checkRes.data) ? checkRes.data[0] : checkRes.data;
+            existingId = row?.id;
+          }
+        }
+      }
+
+      const tableDeposits: any = supabase.from('member_deposits');
+      if (!existingId && typeof tableDeposits.insert === 'function') {
+        const insQuery: any = tableDeposits
+          .insert({
+            member_id: memberId,
+            deposit_type_id: targetDepTypeId,
+            is_terminated: false
+          });
+
+        let insRes: any = null;
+        if (typeof insQuery.select === 'function') {
+          const selQuery = insQuery.select('id');
+          insRes = typeof selQuery.maybeSingle === 'function'
+            ? await selQuery.maybeSingle()
+            : (typeof selQuery.single === 'function' ? await selQuery.single() : await selQuery);
+        } else {
+          insRes = await insQuery;
+        }
+
+        if (insRes?.data) {
+          const row = Array.isArray(insRes.data) ? insRes.data[0] : insRes.data;
+          existingId = row?.id;
+        }
+      }
+
+      if (existingId) {
+        md = {
+          id: existingId,
+          member_id: memberId,
+          deposit_type_id: targetDepTypeId,
+          deposit_types: { id: targetDepTypeId, code: targetType },
+          deposit_transactions: []
+        };
+      }
+    } catch (upsertErr) {
+      console.warn(`Gagal upsert member_deposits untuk ${memberId} (${targetType}):`, upsertErr);
+    }
+  }
+
+  if (!md) {
+    return { success: true, matchedKeys: [], insertedCount: 0 };
+  }
+
+  const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
+
+  // 5. Tentukan saldo impor/migrasi persis seperti alur modal individual
+  const migrationTx = txs.find((t: any) => {
+    const d = (t.description || '').toLowerCase();
+    return d.includes('migra') || d.includes('saldo awal') || d.includes('historical') || d.includes('one-time');
+  });
+
+  let targetBalance = 0;
+  if (migrationTx) {
+    targetBalance = Number(migrationTx.amount || 0);
+  } else {
+    let net = 0;
+    for (const t of txs) {
+      const amt = Number(t.amount || 0);
+      if (t.transaction_type === 'withdrawal') net -= amt;
+      else net += amt;
+    }
+    targetBalance = Math.max(0, net);
+  }
+
+  if (targetBalance <= 0) {
+    return { success: true, memberDepositId: md.id, matchedKeys: [], insertedCount: 0 };
+  }
+
+  // 6. Grid rentang tahun
+  let sYear = options?.startYear ?? 2024;
+  if (!options?.startYear && effectiveJoin) {
+    const d = new Date(effectiveJoin);
+    if (!isNaN(d.getTime())) {
+      sYear = Math.min(2024, d.getFullYear());
+    }
+  }
+  const currentYear = new Date().getFullYear();
+  const eYear = options?.endYear ?? Math.max(2026, currentYear);
+  const monthGrid = generateMonthGrid(sYear, eYear);
+
+  // 7. Hitung bulan yang tercentang menggunakan algoritma FIFO
+  const matchedKeys = matchAutomaticFifo(
+    targetBalance,
+    monthGrid,
+    targetType,
+    rateTiers,
+    effectiveJoin
+  );
+
+  // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil)
+  const oldRoutineTxIds = txs
+    .filter((t: any) => {
+      if (t.transaction_type !== 'deposit') return false;
+      const desc = (t.description || '').toLowerCase();
+      if (desc.includes('migra') || desc.includes('saldo awal') || desc.includes('historical') || desc.includes('one-time')) {
+        return false;
+      }
+      const y = t.for_year;
+      return (y && y >= sYear && y <= eYear) || desc.includes('setoran matriks') || desc.includes('rekonsiliasi otomatis');
+    })
+    .map((t: any) => t.id)
+    .filter(Boolean);
+
+  if (oldRoutineTxIds.length > 0) {
+    const delInQuery: any = supabase.from('deposit_transactions').delete();
+    if (typeof delInQuery.in === 'function') {
+      const { error: delErr } = await delInQuery.in('id', oldRoutineTxIds);
+      if (delErr) throw delErr;
+    }
+  }
+
+  // Juga eksekusi query delete bermetode chained seperti modal jika didukung
+  const deleteQuery: any = supabase
+    .from('deposit_transactions')
+    .delete();
+
+  if (typeof deleteQuery.eq === 'function') {
+    const eqQuery = deleteQuery.eq('member_deposit_id', md.id);
+    if (eqQuery && typeof eqQuery.gte === 'function') {
+      const gteQuery = eqQuery.gte('for_year', sYear);
+      if (gteQuery && typeof gteQuery.lte === 'function') {
+        const lteQuery = gteQuery.lte('for_year', eYear);
+        if (lteQuery && typeof lteQuery.eq === 'function') {
+          const typeQuery = lteQuery.eq('transaction_type', 'deposit');
+          if (typeQuery && typeof typeQuery.neq === 'function') {
+            await typeQuery.neq('description', 'Migrasi Saldo Awal (As-Is)');
+          } else if (typeQuery && typeof typeQuery.then === 'function') {
+            await typeQuery;
+          }
+        }
+      }
+    }
+  }
+
+  // 9. Singkirkan transaksi gelondongan migrasi jika matchedKeys > 0
+  if (matchedKeys.length > 0) {
+    try {
+      const bulkMigrationTxIds = txs
+        .filter((t: any) => {
+          const desc = (t.description || '').toLowerCase();
+          const isMigration = desc.includes('migra') || desc.includes('saldo awal');
+          return isMigration && (t.for_month === null || t.for_month === undefined || desc.includes('saldo awal migrasi sistem'));
+        })
+        .map((t: any) => t.id)
+        .filter(Boolean);
+
+      if (bulkMigrationTxIds.length > 0) {
+        const delByIdQuery: any = supabase.from('deposit_transactions').delete();
+        if (typeof delByIdQuery.in === 'function') {
+          await delByIdQuery.in('id', bulkMigrationTxIds);
+        }
+      }
+
+      const delQuery: any = supabase.from('deposit_transactions').delete();
+      if (typeof delQuery.eq === 'function') {
+        const eqQuery = delQuery.eq('member_deposit_id', md.id);
+        if (eqQuery && typeof eqQuery.is === 'function') {
+          const isQuery = eqQuery.is('for_month', null);
+          if (isQuery && typeof isQuery.ilike === 'function') {
+            await isQuery.ilike('description', '%migrasi%');
+          } else if (isQuery && typeof isQuery.then === 'function') {
+            await isQuery;
+          }
+        } else if (eqQuery && typeof eqQuery.then === 'function') {
+          await eqQuery;
+        }
+      }
+    } catch (delBulkErr) {
+      console.warn('Gagal menghapus transaksi migrasi gelondongan:', delBulkErr);
+    }
+  }
+
+  // 10. Simpan transaksi baru untuk setiap bulan yang dicocokkan FIFO
+  const txsToInsert = matchedKeys.map(key => {
+    const [yStr, mStr] = key.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const rate = getApplicableRate(targetType, y, m, rateTiers);
+    return {
+      member_deposit_id: md.id,
+      amount: rate,
+      for_month: m,
+      for_year: y,
+      transaction_type: 'deposit',
+      description: `Setoran Matriks ${targetType} ${MONTH_NAMES[m - 1]} ${y}`
+    };
+  });
+
+  if (txsToInsert.length > 0) {
+    const { error: insErr } = await supabase
+      .from('deposit_transactions')
+      .insert(txsToInsert);
+    if (insErr) throw insErr;
+  }
+
+  return {
+    success: true,
+    memberDepositId: md.id,
+    matchedKeys,
+    insertedCount: txsToInsert.length
+  };
+}
+
+export const reconcileMemberSavingsDeposit = reconcileSingleMemberDeposit;
+export const autoReconcileMember = reconcileSingleMemberDeposit;
+
+/**
  * Menjalankan rekonsiliasi otomatis saldo buku besar simpanan massal untuk seluruh anggota aktif
- * menggunakan algoritma FIFO bertingkat dengan pemrosesan per batch.
+ * dengan mengeksekusi logika reconcileSingleMemberDeposit yang identik dengan modal per anggota.
  */
 export async function bulkAutoReconcileAllMembers(
   depositTypeCode: string = 'ALL',
-  onProgress?: (progress: BulkReconcileProgress) => void,
+  onProgress?: ((progress: BulkReconcileProgress) => void) | ((processed: number, total: number) => void),
   options?: BulkReconcileOptions
 ): Promise<BulkReconcileResult> {
   const rawType = (depositTypeCode || 'ALL').trim();
@@ -183,7 +598,7 @@ export async function bulkAutoReconcileAllMembers(
   // 1. Ambil seluruh anggota aktif dari public.anggota
   let membersQuery: any = supabase
     .from('anggota')
-    .select('id, nrp, nama, created_at');
+    .select('id, nrp, nama, created_at, tgl_awal_anggota, status, membership_status');
 
   let membersData: any[] = [];
   let membersError: any = null;
@@ -234,7 +649,7 @@ export async function bulkAutoReconcileAllMembers(
     };
   }
 
-  // 2. Ambil data master deposit_types untuk mendapatkan pemetaan kode ke ID
+  // 2. Ambil master data sekali di awal agar efisien dan konsisten
   let depTypes: any[] = [];
   try {
     const { data: dtData } = await supabase
@@ -245,18 +660,6 @@ export async function bulkAutoReconcileAllMembers(
     console.warn('Gagal memuat deposit_types:', err);
   }
 
-  const depTypeMap = new Map<string, string>();
-  (depTypes || []).forEach((dt: any) => {
-    if (dt.code) {
-      depTypeMap.set(dt.code.toUpperCase(), dt.id);
-    }
-    const resolved = resolveDepositTypeCode(dt);
-    if (resolved) {
-      depTypeMap.set(resolved, dt.id);
-    }
-  });
-
-  // 3. Ambil seluruh master tarif dari public.savings_rate_tiers
   let rateTiers: SavingsRateTier[] = [];
   try {
     rateTiers = await getRateTiers(undefined, false);
@@ -283,280 +686,46 @@ export async function bulkAutoReconcileAllMembers(
     rateTiers = DEFAULT_RATE_TIERS;
   }
 
-  // 4. Persiapkan konfigurasi batching
-  const batchSize = options?.batchSize && options.batchSize > 0 ? options.batchSize : 50;
-  let processedCount = 0;
   let totalSuccess = 0;
   let totalFailed = 0;
   const errors: Array<{ memberId: string; memberName: string; error: string }> = [];
 
-  // 5. Proses anggota per batch
-  for (let i = 0; i < totalMembers; i += batchSize) {
-    const batch = activeMembers.slice(i, i + batchSize);
-    const batchIds = batch.map(m => m.id);
+  const reportProgress = (processed: number, total: number, memberName?: string) => {
+    if (!onProgress) return;
+    if (onProgress.length === 2) {
+      (onProgress as any)(processed, total);
+    } else {
+      (onProgress as any)({
+        processed,
+        total,
+        currentMemberName: memberName || ''
+      });
+    }
+  };
 
-    let memberDepositsData: any[] = [];
+  // 3. Proses tiap anggota satu per satu menggunakan fungsi rekonsiliasi yang persis sama dengan modal
+  for (let i = 0; i < totalMembers; i++) {
+    const member = activeMembers[i];
     try {
-      const { data, error: mdError } = await supabase
-        .from('member_deposits')
-        .select(`
-          id,
-          member_id,
-          deposit_type_id,
-          deposit_types ( id, name, code ),
-          deposit_transactions (
-            id,
-            amount,
-            for_month,
-            for_year,
-            transaction_type,
-            description,
-            created_at
-          )
-        `)
-        .in('member_id', batchIds);
-
-      if (mdError) {
-        throw mdError;
-      }
-      memberDepositsData = data || [];
-    } catch (batchErr: any) {
-      for (const m of batch) {
-        processedCount++;
-        totalFailed++;
-        errors.push({
-          memberId: m.id,
-          memberName: m.nama || m.nrp || 'Unknown',
-          error: batchErr?.message || String(batchErr)
-        });
-        onProgress?.({
-          processed: processedCount,
-          total: totalMembers,
-          currentMemberName: m.nama || m.nrp || ''
+      for (const targetType of typesToProcess) {
+        await reconcileSingleMemberDeposit(member.id, targetType, {
+          rateTiers,
+          depTypes,
+          joinDate: member.tgl_awal_anggota || member.created_at || null,
+          startYear: options?.startYear,
+          endYear: options?.endYear
         });
       }
-      continue;
-    }
-
-    // Kelompokkan member_deposits berdasarkan member_id
-    const depositsByMember = new Map<string, any[]>();
-    for (const md of memberDepositsData) {
-      const list = depositsByMember.get(md.member_id) || [];
-      list.push(md);
-      depositsByMember.set(md.member_id, list);
-    }
-
-    // Proses masing-masing anggota dalam batch
-    for (const member of batch) {
-      try {
-        const mDeposits = depositsByMember.get(member.id) || [];
-        const effectiveJoinDate = member.created_at || member.tgl_awal_anggota || null;
-        const joinYear = effectiveJoinDate ? new Date(effectiveJoinDate).getFullYear() : 2024;
-        const resolvedStartYear = options?.startYear ?? (isNaN(joinYear) ? 2024 : Math.min(joinYear, 2024));
-        const resolvedEndYear = options?.endYear ?? Math.max(new Date().getFullYear(), 2025);
-
-        const monthGrid = generateMonthGrid(resolvedStartYear, resolvedEndYear);
-
-        for (const targetType of typesToProcess) {
-          const depTypeId = depTypeMap.get(targetType);
-          let md = mDeposits.find(d => {
-            if (depTypeId && d.deposit_type_id === depTypeId) return true;
-            return resolveDepositTypeCode(d.deposit_types) === targetType;
-          });
-
-          // Cari atau buat (upsert) rekening di public.member_deposits untuk member_id dan deposit_type_id jika belum ada
-          if (!md && depTypeId) {
-            try {
-              let existingId: string | null = null;
-              const checkQuery: any = supabase
-                .from('member_deposits')
-                .select('id')
-                .eq('member_id', member.id)
-                .eq('deposit_type_id', depTypeId);
-
-              const checkRes = typeof checkQuery.maybeSingle === 'function'
-                ? await checkQuery.maybeSingle()
-                : await checkQuery;
-
-              if (checkRes?.data) {
-                const row = Array.isArray(checkRes.data) ? checkRes.data[0] : checkRes.data;
-                existingId = row?.id;
-              }
-
-              if (!existingId) {
-                const insQuery: any = supabase
-                  .from('member_deposits')
-                  .insert({
-                    member_id: member.id,
-                    deposit_type_id: depTypeId,
-                    is_terminated: false
-                  })
-                  .select('id');
-                const insRes = typeof insQuery.maybeSingle === 'function'
-                  ? await insQuery.maybeSingle()
-                  : await insQuery;
-                if (insRes?.data) {
-                  const row = Array.isArray(insRes.data) ? insRes.data[0] : insRes.data;
-                  existingId = row?.id;
-                }
-              }
-
-              if (existingId) {
-                md = {
-                  id: existingId,
-                  member_id: member.id,
-                  deposit_type_id: depTypeId,
-                  deposit_types: { id: depTypeId, code: targetType },
-                  deposit_transactions: []
-                };
-                mDeposits.push(md);
-              }
-            } catch (upsertErr) {
-              console.warn(`Gagal upsert member_deposits untuk ${member.nama} (${targetType}):`, upsertErr);
-            }
-          }
-
-          if (!md) {
-            continue;
-          }
-
-          const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
-
-          // Tentukan saldo awal/impor dari mutasi migrasi riil atau akumulasi saldo riil
-          const migrationTx = txs.find((t: any) => {
-            const d = (t.description || '').toLowerCase();
-            return d.includes('migra') || d.includes('saldo awal') || d.includes('historical') || d.includes('one-time');
-          });
-
-          let targetBalance = 0;
-          if (migrationTx) {
-            targetBalance = Number(migrationTx.amount || 0);
-          } else {
-            const nonMatrixTxs = txs.filter((t: any) => {
-              const d = (t.description || '').toLowerCase();
-              return !d.includes('setoran matriks') && !d.includes('rekonsiliasi otomatis');
-            });
-            const baseTxs = nonMatrixTxs.length > 0 ? nonMatrixTxs : txs;
-            let net = 0;
-            for (const t of baseTxs) {
-              const amt = Number(t.amount || 0);
-              if (t.transaction_type === 'withdrawal') net -= amt;
-              else net += amt;
-            }
-            targetBalance = Math.max(0, net);
-          }
-
-          if (targetBalance <= 0) {
-            continue;
-          }
-
-          // Hitung bulan yang berhak lunas menggunakan algoritma FIFO
-          const matchedKeys = matchAutomaticFifo(
-            targetBalance,
-            monthGrid,
-            targetType,
-            rateTiers,
-            effectiveJoinDate
-          );
-
-          // Hapus transaksi matriks / rekonsiliasi lama pada rentang grid (lindungi mutasi migrasi riil)
-          const oldMatrixTxIds = txs
-            .filter((t: any) => {
-              if (t.transaction_type !== 'deposit') return false;
-              const desc = (t.description || '').toLowerCase();
-              if (desc.includes('migra') || desc.includes('saldo awal') || desc.includes('historical') || desc.includes('one-time')) {
-                return false;
-              }
-              return desc.includes('setoran matriks') || desc.includes('rekonsiliasi otomatis');
-            })
-            .map((t: any) => t.id)
-            .filter(Boolean);
-
-          if (oldMatrixTxIds.length > 0) {
-            const { error: delErr } = await supabase
-              .from('deposit_transactions')
-              .delete()
-              .in('id', oldMatrixTxIds);
-            if (delErr) throw delErr;
-          }
-
-          // Simpan transaksi baru untuk setiap bulan yang dicocokkan FIFO
-          const txsToInsert = matchedKeys.map(key => {
-            const [yStr, mStr] = key.split('-');
-            const y = parseInt(yStr, 10);
-            const m = parseInt(mStr, 10);
-            const rate = getApplicableRate(targetType, y, m, rateTiers);
-            return {
-              member_deposit_id: md.id,
-              amount: rate,
-              for_month: m,
-              for_year: y,
-              transaction_type: 'deposit',
-              description: `Setoran Matriks ${targetType} ${MONTH_NAMES[m - 1]} ${y}`
-            };
-          });
-
-          if (txsToInsert.length > 0) {
-            // Hapus atau singkirkan transaksi gelondongan awal migrasi (for_month IS NULL atau bertuliskan deskripsi "Saldo Awal Migrasi Sistem")
-            // dari tabel deposit_transactions agar saldo tidak terhitung dua kali saat rincian bulanan sudah dibentuk
-            try {
-              const bulkMigrationTxIds = txs
-                .filter((t: any) => {
-                  const desc = (t.description || '').toLowerCase();
-                  const isMigration = desc.includes('migra') || desc.includes('saldo awal');
-                  return isMigration && (t.for_month === null || t.for_month === undefined || desc.includes('saldo awal migrasi sistem'));
-                })
-                .map((t: any) => t.id)
-                .filter(Boolean);
-
-              if (bulkMigrationTxIds.length > 0) {
-                const delByIdQuery: any = supabase.from('deposit_transactions').delete();
-                if (typeof delByIdQuery.in === 'function') {
-                  await delByIdQuery.in('id', bulkMigrationTxIds);
-                }
-              }
-
-              const delQuery: any = supabase.from('deposit_transactions').delete();
-              if (typeof delQuery.eq === 'function') {
-                const eqQuery = delQuery.eq('member_deposit_id', md.id);
-                if (eqQuery && typeof eqQuery.is === 'function') {
-                  const isQuery = eqQuery.is('for_month', null);
-                  if (isQuery && typeof isQuery.ilike === 'function') {
-                    await isQuery.ilike('description', '%migrasi%');
-                  } else if (isQuery && typeof isQuery.then === 'function') {
-                    await isQuery;
-                  }
-                } else if (eqQuery && typeof eqQuery.then === 'function') {
-                  await eqQuery;
-                }
-              }
-            } catch (delBulkErr) {
-              console.warn('Gagal menghapus transaksi migrasi gelondongan:', delBulkErr);
-            }
-
-            const { error: insErr } = await supabase
-              .from('deposit_transactions')
-              .insert(txsToInsert);
-            if (insErr) throw insErr;
-          }
-        }
-
-        totalSuccess++;
-      } catch (memberErr: any) {
-        totalFailed++;
-        errors.push({
-          memberId: member.id,
-          memberName: member.nama || member.nrp || 'Unknown',
-          error: memberErr?.message || String(memberErr)
-        });
-      } finally {
-        processedCount++;
-        onProgress?.({
-          processed: processedCount,
-          total: totalMembers,
-          currentMemberName: member.nama || member.nrp || ''
-        });
-      }
+      totalSuccess++;
+    } catch (memberErr: any) {
+      totalFailed++;
+      errors.push({
+        memberId: member.id,
+        memberName: member.nama || member.nrp || 'Unknown',
+        error: memberErr?.message || String(memberErr)
+      });
+    } finally {
+      reportProgress(i + 1, totalMembers, member.nama || member.nrp);
     }
   }
 

@@ -663,6 +663,51 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Belum Bayar / Tunggakan (Merah)');
       expect(html).toContain('Belum Terdaftar / Tidak Berlaku');
     });
+
+    it('renders green emerald styling for Hendra Gunawan paid months (Mei s/d Nov 2024)', () => {
+      const monthsData: any[] = [
+        null, null, null, null, // Jan - Apr 2024 before join
+      ];
+      // Mei s/d Nov 2024
+      for (let m = 5; m <= 11; m++) {
+        monthsData.push({
+          w: 200000,
+          b: 50000,
+          l: 50000,
+          bal_w: (m - 4) * 200000,
+          bal_b: (m - 4) * 50000,
+          bal_l: (m - 4) * 50000,
+          wajib: { status: 'paid' as const, amount: 200000 },
+          belanja: { status: 'paid' as const, amount: 50000 },
+          lebaran: { status: 'paid' as const, amount: 50000 },
+        });
+      }
+      monthsData.push(null); // Des 2024
+
+      const hendraRow = {
+        member_id: 'm-hendra',
+        nrp: 'NRP-HENDRA',
+        nama: 'Hendra Gunawan',
+        pokokLunas: true,
+        compliance: 88,
+        balances: { w: 1400000, b: 350000, l: 350000 },
+        months: monthsData,
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2024" initialData={[hendraRow]} />
+      );
+
+      // Pastikan nama Hendra Gunawan muncul
+      expect(html).toContain('Hendra Gunawan');
+      // Pastikan teks WAJIB 200.000 berwarna emerald green
+      expect(html).toContain('text-emerald-600 font-semibold');
+      expect(html).toContain('200.000');
+      // Pastikan tooltip mencerminkan lunas
+      expect(html).toContain('Total: Rp 1.400.000');
+      // Pastikan progress kepatuhan 88% ditampilkan
+      expect(html).toContain('88%');
+    });
   });
 });
 

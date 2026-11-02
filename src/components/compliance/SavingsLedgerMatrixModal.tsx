@@ -18,6 +18,7 @@ import {
   SavingsRateTier,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
+import { reconcileSingleMemberDeposit } from '../../services/savingsMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 
 export type DepositTabType = 'WAJIB' | 'BELANJA' | 'LEBARAN';
@@ -553,20 +554,41 @@ export default function SavingsLedgerMatrixModal({
 
   // Quick Action 2: Cocokkan Otomatis dengan Saldo Impor (FIFO Matching)
   const handleAutoMatchWithImportBalance = async () => {
-    const matchedKeys = matchAutomaticFifo(
-      targetDbBalance,
-      allGridMonths,
-      activeTab,
-      rateTiers,
-      resolvedJoinDate
-    );
+    setSyncing(true);
+    try {
+      const res = await reconcileSingleMemberDeposit(memberId, activeTab, {
+        rateTiers,
+        joinDate: resolvedJoinDate,
+        startYear,
+        endYear
+      });
 
-    setCheckedMonths(prev => ({
-      ...prev,
-      [activeTab]: new Set(matchedKeys)
-    }));
+      setCheckedMonths(prev => ({
+        ...prev,
+        [activeTab]: new Set(res.matchedKeys)
+      }));
 
-    await syncBatchToDatabase(matchedKeys);
+      onSuccess?.();
+    } catch (err) {
+      console.error('Failed to auto reconcile with import balance:', err);
+      // Fallback ke modal internal logic jika terjadi kegagalan
+      const matchedKeys = matchAutomaticFifo(
+        targetDbBalance,
+        allGridMonths,
+        activeTab,
+        rateTiers,
+        resolvedJoinDate
+      );
+
+      setCheckedMonths(prev => ({
+        ...prev,
+        [activeTab]: new Set(matchedKeys)
+      }));
+
+      await syncBatchToDatabase(matchedKeys);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // Quick Action 3: Batal Centang Semua
