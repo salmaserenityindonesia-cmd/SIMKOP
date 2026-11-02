@@ -23,8 +23,74 @@ import {
   AlertTriangle,
   Upload,
   Trash2,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Layers,
+  Plus,
+  X,
+  Calendar
 } from 'lucide-react';
+import {
+  getRateTiers,
+  addRateTier,
+  deleteRateTier,
+  SavingsRateTier
+} from '../../services/savingsRateService';
+
+export const MONTH_NAMES = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
+export const formatRupiah = (val: number): string => {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(val);
+};
+
+export const formatPeriod = (tier: SavingsRateTier): string => {
+  const startStr = `${MONTH_NAMES[tier.start_month - 1] || tier.start_month} ${tier.start_year}`;
+  if (!tier.end_year || !tier.end_month) {
+    return `${startStr} - Seterusnya`;
+  }
+  const endStr = `${MONTH_NAMES[tier.end_month - 1] || tier.end_month} ${tier.end_year}`;
+  return `${startStr} - ${endStr}`;
+};
+
+export const getDepositTypeBadge = (code: string) => {
+  switch ((code || '').toUpperCase()) {
+    case 'WAJIB':
+      return {
+        label: 'Simpanan Wajib',
+        className: 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      };
+    case 'BELANJA':
+      return {
+        label: 'Simpanan Belanja',
+        className: 'bg-amber-50 text-amber-700 border-amber-200'
+      };
+    case 'LEBARAN':
+      return {
+        label: 'Simpanan Lebaran',
+        className: 'bg-purple-50 text-purple-700 border-purple-200'
+      };
+    default:
+      return {
+        label: code,
+        className: 'bg-slate-50 text-slate-700 border-slate-200'
+      };
+  }
+};
+
+export const isTierActive = (tier: SavingsRateTier): boolean => {
+  const now = new Date();
+  const currentIdx = now.getFullYear() * 12 + (now.getMonth() + 1);
+  const startIdx = tier.start_year * 12 + tier.start_month;
+  const endIdx = tier.end_year && tier.end_month ? tier.end_year * 12 + tier.end_month : Infinity;
+  return currentIdx >= startIdx && currentIdx <= endIdx;
+};
 
 export default function PengaturanKoperasi() {
   const { showToast } = useFeedback();
@@ -37,9 +103,100 @@ export default function PengaturanKoperasi() {
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Savings Rate Tiers State
+  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>([]);
+  const [isLoadingTiers, setIsLoadingTiers] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSubmittingTier, setIsSubmittingTier] = useState(false);
+  const [newTierForm, setNewTierForm] = useState({
+    deposit_type_code: 'WAJIB',
+    start_year: new Date().getFullYear(),
+    start_month: new Date().getMonth() + 1,
+    is_forever: true,
+    end_year: new Date().getFullYear() + 1,
+    end_month: 12,
+    monthly_rate: '',
+    notes: ''
+  });
+
   useEffect(() => {
     loadProfile();
+    loadRateTiers();
   }, []);
+
+  const loadRateTiers = async () => {
+    setIsLoadingTiers(true);
+    try {
+      const data = await getRateTiers(undefined, true);
+      setRateTiers(data);
+    } catch (err: any) {
+      console.error('Failed to load rate tiers:', err);
+    } finally {
+      setIsLoadingTiers(false);
+    }
+  };
+
+  const handleAddTierSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const rate = Number(newTierForm.monthly_rate);
+    if (!rate || rate <= 0) {
+      showToast('Nominal tarif iuran harus lebih besar dari 0', 'warning');
+      return;
+    }
+    if (!newTierForm.is_forever) {
+      const startIdx = Number(newTierForm.start_year) * 12 + Number(newTierForm.start_month);
+      const endIdx = Number(newTierForm.end_year) * 12 + Number(newTierForm.end_month);
+      if (endIdx < startIdx) {
+        showToast('Periode akhir tidak boleh lebih awal dari periode mulai', 'warning');
+        return;
+      }
+    }
+
+    setIsSubmittingTier(true);
+    try {
+      await addRateTier({
+        deposit_type_code: newTierForm.deposit_type_code,
+        start_year: Number(newTierForm.start_year),
+        start_month: Number(newTierForm.start_month),
+        end_year: newTierForm.is_forever ? null : Number(newTierForm.end_year),
+        end_month: newTierForm.is_forever ? null : Number(newTierForm.end_month),
+        monthly_rate: rate,
+        notes: newTierForm.notes.trim() || undefined
+      });
+      showToast('Tarif simpanan baru berhasil ditambahkan!', 'success');
+      setIsAddModalOpen(false);
+      setNewTierForm({
+        deposit_type_code: 'WAJIB',
+        start_year: new Date().getFullYear(),
+        start_month: new Date().getMonth() + 1,
+        is_forever: true,
+        end_year: new Date().getFullYear() + 1,
+        end_month: 12,
+        monthly_rate: '',
+        notes: ''
+      });
+      await loadRateTiers();
+    } catch (err: any) {
+      showToast(err.message || 'Gagal menambahkan tarif simpanan baru', 'error');
+    } finally {
+      setIsSubmittingTier(false);
+    }
+  };
+
+  const handleDeleteTier = async (tier: SavingsRateTier) => {
+    const badge = getDepositTypeBadge(tier.deposit_type_code);
+    const confirmMsg = `Hapus pengaturan tarif ${badge.label} (${formatRupiah(tier.monthly_rate)}) periode ${formatPeriod(tier)}?`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+    try {
+      await deleteRateTier(tier.id);
+      showToast('Tarif iuran simpanan berhasil dihapus', 'success');
+      await loadRateTiers();
+    } catch (err: any) {
+      showToast(err.message || 'Gagal menghapus tarif simpanan', 'error');
+    }
+  };
 
   const loadProfile = async () => {
     setIsLoading(true);
@@ -203,7 +360,8 @@ export default function PengaturanKoperasi() {
             <p className="text-sm text-slate-500">Memuat profil koperasi...</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Left Column: Logo & Form Identitas */}
             <div className="lg:col-span-7 space-y-6">
               {/* Logo Card */}
@@ -508,8 +666,323 @@ export default function PengaturanKoperasi() {
               </div>
             </div>
           </div>
-        )}
-      </div>
-    </AdminLayout>
+
+          {/* Rate Tiers Configuration Card */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-slate-800 text-base">Konfigurasi Tarif Iuran Simpanan Bertingkat</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Atur penyesuaian nominal iuran bulanan simpanan anggota per rentang periode (misal: penyesuaian tarif Simpanan Wajib pasca RAT).
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(true)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Tambah Kenaikan Tarif</span>
+              </button>
+            </div>
+
+            <div className="p-6">
+              {/* Anti-overlap banner hint */}
+              <div className="mb-4 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-slate-700">Proteksi Anti-Overlap Otomatis:</span> Saat Anda menambahkan tarif baru yang berlaku seterusnya, sistem otomatis menutup periode tarif lama sebelumnya tepat satu bulan sebelum periode tarif baru dimulai.
+                </div>
+              </div>
+
+              {isLoadingTiers ? (
+                <div className="py-8 text-center">
+                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600 mb-2" />
+                  <p className="text-xs text-slate-500">Memuat konfigurasi tarif...</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider">
+                        <th className="py-3 px-4">Jenis Simpanan</th>
+                        <th className="py-3 px-4">Rentang Periode</th>
+                        <th className="py-3 px-4">Nominal Bulanan</th>
+                        <th className="py-3 px-4">Catatan / No. SK</th>
+                        <th className="py-3 px-4 text-center">Status</th>
+                        <th className="py-3 px-4 text-right">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {rateTiers.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-slate-400">
+                            Belum ada data tarif simpanan bertingkat.
+                          </td>
+                        </tr>
+                      ) : (
+                        rateTiers.map(tier => {
+                          const badge = getDepositTypeBadge(tier.deposit_type_code);
+                          const active = isTierActive(tier);
+                          return (
+                            <tr key={tier.id} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3.5 px-4">
+                                <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-semibold border ${badge.className}`}>
+                                  {badge.label}
+                                </span>
+                              </td>
+                              <td className="py-3.5 px-4 font-medium text-slate-800">
+                                <div className="flex items-center gap-1.5">
+                                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{formatPeriod(tier)}</span>
+                                </div>
+                              </td>
+                              <td className="py-3.5 px-4 font-bold text-slate-900">
+                                {formatRupiah(tier.monthly_rate)}
+                              </td>
+                              <td className="py-3.5 px-4 text-slate-500 max-w-xs truncate">
+                                {tier.notes || '-'}
+                              </td>
+                              <td className="py-3.5 px-4 text-center">
+                                {active ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    Aktif
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                                    Riwayat
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3.5 px-4 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTier(tier)}
+                                  title="Hapus tarif ini"
+                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Modal Dialog Form Tambah Kenaikan Tarif Simpanan */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">Tambah Kenaikan Tarif Simpanan</h3>
+                  <p className="text-xs text-slate-500">Konfigurasi nominal iuran berjenjang untuk periode waktu tertentu</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body Form */}
+            <form onSubmit={handleAddTierSubmit} className="p-6 space-y-4 text-sm">
+              {/* Jenis Simpanan */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Jenis Simpanan <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={newTierForm.deposit_type_code}
+                  onChange={e => setNewTierForm({ ...newTierForm, deposit_type_code: e.target.value })}
+                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-medium text-slate-800"
+                >
+                  <option value="WAJIB">Simpanan Wajib</option>
+                  <option value="BELANJA">Simpanan Belanja</option>
+                  <option value="LEBARAN">Simpanan Hari Raya (Lebaran)</option>
+                </select>
+              </div>
+
+              {/* Periode Mulai */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Periode Mulai Berlaku <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-1">Bulan Mulai</label>
+                    <select
+                      value={newTierForm.start_month}
+                      onChange={e => setNewTierForm({ ...newTierForm, start_month: Number(e.target.value) })}
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800"
+                    >
+                      {MONTH_NAMES.map((name, idx) => (
+                        <option key={idx + 1} value={idx + 1}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-1">Tahun Mulai</label>
+                    <input
+                      type="number"
+                      min="2000"
+                      max="2100"
+                      value={newTierForm.start_year}
+                      onChange={e => setNewTierForm({ ...newTierForm, start_year: Number(e.target.value) })}
+                      required
+                      className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800 font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Berlaku Seterusnya Checkbox */}
+              <div className="pt-1">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newTierForm.is_forever}
+                    onChange={e => setNewTierForm({ ...newTierForm, is_forever: e.target.checked })}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                  />
+                  <span className="text-xs font-semibold text-slate-700">Berlaku Seterusnya (Open-Ended)</span>
+                </label>
+                <p className="text-[11px] text-slate-400 ml-6.5 mt-0.5">
+                  Tarif aktif terus digunakan hingga ada penyesuaian tarif berikutnya di masa depan.
+                </p>
+              </div>
+
+              {/* Periode Akhir (Hanya jika is_forever == false) */}
+              {!newTierForm.is_forever && (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                    Periode Akhir Berlaku <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Bulan Akhir</label>
+                      <select
+                        value={newTierForm.end_month}
+                        onChange={e => setNewTierForm({ ...newTierForm, end_month: Number(e.target.value) })}
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800"
+                      >
+                        {MONTH_NAMES.map((name, idx) => (
+                          <option key={idx + 1} value={idx + 1}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Tahun Akhir</label>
+                      <input
+                        type="number"
+                        min="2000"
+                        max="2100"
+                        value={newTierForm.end_year}
+                        onChange={e => setNewTierForm({ ...newTierForm, end_year: Number(e.target.value) })}
+                        required
+                        className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800 font-medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Nominal Iuran Baru */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Nominal Iuran Bulanan Baru (Rp) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-xs font-semibold text-slate-400">Rp</span>
+                  <input
+                    type="number"
+                    min="1000"
+                    step="1000"
+                    value={newTierForm.monthly_rate}
+                    onChange={e => setNewTierForm({ ...newTierForm, monthly_rate: e.target.value })}
+                    required
+                    placeholder="Contoh: 200000"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800 font-semibold"
+                  />
+                </div>
+              </div>
+
+              {/* Catatan / Dasar Keputusan */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Catatan / Dasar Keputusan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={newTierForm.notes}
+                  onChange={e => setNewTierForm({ ...newTierForm, notes: e.target.value })}
+                  placeholder="Contoh: Kenaikan tarif berdasarkan RAT Tahun Buku 2024"
+                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 text-slate-800"
+                />
+              </div>
+
+              {/* Modal Actions */}
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  disabled={isSubmittingTier}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingTier}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSubmittingTier ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Menyimpan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      <span>Simpan Tarif</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  </AdminLayout>
   );
 }
+
+export { PengaturanKoperasi };
+
