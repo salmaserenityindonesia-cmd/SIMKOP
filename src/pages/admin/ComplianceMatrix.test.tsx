@@ -51,6 +51,7 @@ const { mockMatrixResult } = vi.hoisted(() => ({
         nama: 'Budi Santoso',
         pokokLunas: true,
         compliance: 100,
+        balances: { w: 300000, b: 600000, l: 600000 },
         months: Array(12).fill({
           w: 25000,
           b: 50000,
