@@ -20,11 +20,16 @@ DROP POLICY IF EXISTS "Allow public read on savings_rate_tiers" ON public.saving
 CREATE POLICY "Allow public read on savings_rate_tiers"
   ON public.savings_rate_tiers FOR SELECT USING (true);
 
+DROP POLICY IF EXISTS "Allow authenticated delete on savings_rate_tiers" ON public.savings_rate_tiers;
+CREATE POLICY "Allow authenticated delete on savings_rate_tiers"
+  ON public.savings_rate_tiers FOR DELETE
+  USING (true);
+
 DROP POLICY IF EXISTS "Allow authenticated manage on savings_rate_tiers" ON public.savings_rate_tiers;
 CREATE POLICY "Allow authenticated manage on savings_rate_tiers"
   ON public.savings_rate_tiers FOR ALL
-  USING (auth.role() = 'authenticated' OR auth.role() = 'anon')
-  WITH CHECK (auth.role() = 'authenticated' OR auth.role() = 'anon');
+  USING (true)
+  WITH CHECK (true);
 
 -- Index for lookup efficiency
 CREATE INDEX IF NOT EXISTS idx_savings_rate_tiers_lookup 

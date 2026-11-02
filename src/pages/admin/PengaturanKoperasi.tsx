@@ -201,7 +201,8 @@ export default function PengaturanKoperasi({
     }
     try {
       await deleteRateTier(tier.id);
-      showToast('Tarif iuran simpanan berhasil dihapus', 'success');
+      setRateTiers(prev => prev.filter(t => t.id !== tier.id));
+      showToast('Tarif berhasil dihapus', 'success');
       await loadRateTiers();
     } catch (err: any) {
       showToast(err.message || 'Gagal menghapus tarif simpanan', 'error');

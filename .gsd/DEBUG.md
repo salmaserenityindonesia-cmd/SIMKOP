@@ -481,3 +481,49 @@ Pada halaman Manajemen Anggota (`src/pages/admin/ManajemenAnggota.tsx`), tombol 
 
 
 
+
+---
+
+# Debug Session: DEBUG-20261102-SAVINGS-RATE-TIERS-DELETE-AUTO-RESEED
+
+## Status: FIXED
+
+## Symptom
+Pada modul "Konfigurasi Tarif Iuran Simpanan Bertingkat" di menu Pengaturan Koperasi (`src/pages/admin/PengaturanKoperasi.tsx`), ketika admin menghapus seluruh baris tarif hingga tabel kosong, data awal (Rp 150.000, Rp 200.000, Rp 25.000, Rp 50.000) kembali muncul secara otomatis saat halaman disegarkan atau saat fungsi fetch dijalankan.
+
+**When:** Saat seluruh baris tarif iuran simpanan dihapus dari tabel hingga kosong, lalu data dimuat ulang.
+**Expected:** Tabel tetap bersih dan kosong (`[]`) setelah seluruh data dihapus.
+**Actual:** Fungsi `getRateTiers` secara otomatis mengembalikan atau menginjeksi kembali `DEFAULT_RATE_TIERS` karena mendeteksi `data.length === 0`.
+
+## Root Cause
+1. **Auto-Reseed Fallback di Service**: Pada `src/services/savingsRateService.ts`, fungsi `getRateTiers()` memiliki pengecekan `if (!error && data && data.length > 0)`. Jika tabel telah dikosongkan (`data.length === 0`), kode melompat ke blok fallback lokal yang mengevaluasi `(stored && stored.length > 0) ? stored : DEFAULT_RATE_TIERS`, sehingga otomatis menghidupkan kembali `DEFAULT_RATE_TIERS` dan menyimpannya kembali ke cache/localStorage.
+2. **Penanganan Error Delete yang Tertelan**: Pada `deleteRateTier()`, pemanggilan `.delete()` ke Supabase berada dalam blok try-catch yang menelan error (`console.warn`) tanpa melempar error (`throw error`), sehingga jika terjadi pelanggaran RLS, admin di sisi UI tidak mengetahui bahwa baris di database tidak benar-benar terhapus.
+3. **Kebijakan RLS DELETE Eksplisit**: Kebijakan RLS pada tabel `savings_rate_tiers` perlu menyertakan policy `DELETE` eksplisit (`FOR DELETE USING (true)`) dan `FOR ALL USING (true) WITH CHECK (true)` agar operasi penghapusan tidak terhalang oleh restriksi hak akses Supabase.
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Clean Up Auto-Reseed in savingsRateService.ts
+- File: `src/services/savingsRateService.ts`
+  * Menghapus mekanisme auto-reseed `DEFAULT_RATE_TIERS` pada `getRateTiers()`. Ketika kueri database berhasil mengembalikan `data: []`, fungsi secara jujur mengembalikan array kosong `[]` serta memperbarui cache & localStorage ke `[]`.
+  * Memperbarui `deleteRateTier(id: string)`: jika Supabase mengembalikan `error`, fungsi langsung melempar error (`throw error`). Jika berhasil, cache dan localStorage diperbarui dengan baris yang tersisa (termasuk `[]` jika semua telah dihapus).
+  * Memastikan `getApplicableRate()` tetap memiliki fallback acuan internal (`getHardcodedFallback`) sehingga perhitungan iuran simpanan pada matriks kepatuhan tetap stabil meskipun tabel tarif dikosongkan.
+- File: `src/services/savingsRateService.test.ts`
+  * Menambahkan pengujian penghapusan seluruh baris hingga tabel kosong dan memastikan `getRateTiers` tetap mengembalikan array kosong tanpa auto-reseeding.
+  * Menambahkan pengujian pelemparan error saat operasi delete gagal di database.
+  * Hasil: 19/19 unit tests passed (100%).
+
+### Wave 2: Ensure Explicit RLS DELETE Policy
+- File: `supabase/migrations/030_fix_savings_rate_tiers_delete_policy.sql` & `supabase/migrations/031_create_savings_rate_tiers.sql`
+  * Menambahkan policy DELETE eksplisit:
+    `CREATE POLICY "Allow authenticated delete on savings_rate_tiers" ON public.savings_rate_tiers FOR DELETE USING (true);`
+  * Menetapkan policy MANAGE global yang mengizinkan seluruh operasi:
+    `CREATE POLICY "Allow authenticated manage on savings_rate_tiers" ON public.savings_rate_tiers FOR ALL USING (true) WITH CHECK (true);`
+  * Melengkapi migrasi dengan pengecekan `CREATE TABLE IF NOT EXISTS` agar sepenuhnya idempoten dan aman terhadap urutan eksekusi.
+
+### Wave 3: UI State Refresh & Production Build Check
+- File: `src/pages/admin/PengaturanKoperasi.tsx`
+  * Mengoptimalkan `handleDeleteTier`: memfilter `rateTiers` secara instan di state lokal (`setRateTiers(prev => prev.filter(...))`), menampilkan toast `Tarif berhasil dihapus`, dan memanggil ulang `loadRateTiers()`.
+- Verifikasi Pengujian & Build:
+  * TypeScript typecheck (`npx tsc --noEmit`): exit code 0.
+  * Vitest Suite (`npx vitest run`): 36 test files, 393/393 tests passed (100%).
+  * Vite Production Build (`npm run build`): exit code 0.

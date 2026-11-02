@@ -203,7 +203,7 @@ describe('savingsRateService', () => {
       );
     });
 
-    it('should fall back gracefully to local storage or defaults when Supabase fails', async () => {
+    it('should return stored local tiers when Supabase fails if localStorage has data, or empty array if empty', async () => {
       const selectMock = vi.fn().mockReturnValue({
         order: vi.fn().mockReturnValue({
           order: vi.fn().mockResolvedValue({ data: null, error: { message: 'Network error' } })
@@ -215,9 +215,22 @@ describe('savingsRateService', () => {
       });
 
       const tiers = await getRateTiers(undefined, true);
-      expect(tiers.length).toBeGreaterThan(0);
-      const wajibTiers = tiers.filter(t => t.deposit_type_code === 'WAJIB');
-      expect(wajibTiers).toHaveLength(2);
+      expect(tiers).toEqual([]);
+    });
+
+    it('should return empty array when table is empty and not resurrect default tiers', async () => {
+      const selectMock = vi.fn().mockReturnValue({
+        order: vi.fn().mockReturnValue({
+          order: vi.fn().mockResolvedValue({ data: [], error: null })
+        })
+      });
+
+      (supabase.from as any).mockReturnValue({
+        select: selectMock
+      });
+
+      const tiers = await getRateTiers(undefined, true);
+      expect(tiers).toEqual([]);
     });
 
     it('should filter by depositTypeCode when specified', async () => {
@@ -424,6 +437,52 @@ describe('savingsRateService', () => {
       const stored = JSON.parse(mockStorage[SAVINGS_RATE_TIERS_STORAGE_KEY]) as SavingsRateTier[];
       expect(stored).toHaveLength(1);
       expect(stored[0].id).toBe('tier-to-keep');
+    });
+
+    it('should allow deleting all tiers until empty and subsequent getRateTiers returns empty array without reseeding', async () => {
+      const initialTiers: SavingsRateTier[] = [
+        {
+          id: 'last-tier',
+          deposit_type_code: 'WAJIB',
+          start_year: 2024,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 150000
+        }
+      ];
+
+      mockStorage[SAVINGS_RATE_TIERS_STORAGE_KEY] = JSON.stringify(initialTiers);
+
+      const deleteMock = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: null, error: null })
+      });
+
+      (supabase.from as any).mockReturnValue({
+        delete: deleteMock,
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      });
+
+      await deleteRateTier('last-tier');
+      const remainingStored = JSON.parse(mockStorage[SAVINGS_RATE_TIERS_STORAGE_KEY]) as SavingsRateTier[];
+      expect(remainingStored).toHaveLength(0);
+
+      const fetched = await getRateTiers(undefined, true);
+      expect(fetched).toEqual([]);
+    });
+
+    it('should throw error when database delete operation fails', async () => {
+      (supabase.from as any).mockReturnValue({
+        delete: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: new Error('RLS violation: delete not allowed') })
+        })
+      });
+
+      await expect(deleteRateTier('tier-id')).rejects.toThrow('RLS violation: delete not allowed');
     });
   });
 });

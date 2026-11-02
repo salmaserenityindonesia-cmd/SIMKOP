@@ -152,7 +152,7 @@ export function sortRateTiers(tiers: SavingsRateTier[]): SavingsRateTier[] {
 export async function getRateTiers(depositTypeCode?: string, forceRefresh = false): Promise<SavingsRateTier[]> {
   const normalizedCode = depositTypeCode ? depositTypeCode.toUpperCase() : undefined;
 
-  if (!forceRefresh && cachedRateTiers) {
+  if (!forceRefresh && cachedRateTiers !== null) {
     const filtered = normalizedCode 
       ? cachedRateTiers.filter(t => t.deposit_type_code.toUpperCase() === normalizedCode)
       : cachedRateTiers;
@@ -170,32 +170,36 @@ export async function getRateTiers(depositTypeCode?: string, forceRefresh = fals
     }
 
     const { data, error } = await query;
-    if (!error && data && data.length > 0) {
-      if (!normalizedCode) {
-        cachedRateTiers = data;
-        saveStoredLocalRateTiers(data);
+    if (error) {
+      console.error('Gagal mengambil data tarif dari database:', error);
+      // Fallback ke penyimpanan lokal jika kueri database gagal/offline
+      const stored = getStoredLocalRateTiers();
+      if (stored !== null) {
+        const filtered = normalizedCode
+          ? stored.filter(t => t.deposit_type_code.toUpperCase() === normalizedCode)
+          : stored;
+        return sortRateTiers(filtered);
       }
-      return sortRateTiers(data);
+      return [];
     }
+
+    const result = data || [];
+    if (!normalizedCode) {
+      cachedRateTiers = result;
+      saveStoredLocalRateTiers(result);
+    }
+    return sortRateTiers(result);
   } catch (err) {
-    console.warn('Could not fetch savings_rate_tiers from Supabase, falling back to local storage/defaults', err);
+    console.error('Exception saat memuat savings_rate_tiers:', err);
+    const stored = getStoredLocalRateTiers();
+    if (stored !== null) {
+      const filtered = normalizedCode
+        ? stored.filter(t => t.deposit_type_code.toUpperCase() === normalizedCode)
+        : stored;
+      return sortRateTiers(filtered);
+    }
+    return [];
   }
-
-  // Fallback to local storage or defaults
-  const stored = getStoredLocalRateTiers();
-  const source = (stored && stored.length > 0) ? stored : DEFAULT_RATE_TIERS;
-  
-  // Cache the resolved source
-  cachedRateTiers = source;
-  if (!stored) {
-    saveStoredLocalRateTiers(source);
-  }
-
-  const result = normalizedCode
-    ? source.filter(t => t.deposit_type_code.toUpperCase() === normalizedCode)
-    : source;
-
-  return sortRateTiers(result);
 }
 
 /**
@@ -290,14 +294,20 @@ export async function addRateTier(payload: AddRateTierPayload): Promise<SavingsR
  * Menghapus tier tarif berdasarkan ID
  */
 export async function deleteRateTier(id: string): Promise<boolean> {
-  try {
-    await supabase.from('savings_rate_tiers').delete().eq('id', id);
-  } catch (err) {
-    console.warn('Failed to delete tier from Supabase:', err);
+  const { error } = await supabase
+    .from('savings_rate_tiers')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Gagal menghapus tarif dari database:', error);
+    throw error;
   }
 
-  const allTiers = (cachedRateTiers || getStoredLocalRateTiers() || DEFAULT_RATE_TIERS).filter(t => t.id !== id);
-  saveStoredLocalRateTiers(allTiers);
+  const current = (cachedRateTiers !== null ? cachedRateTiers : getStoredLocalRateTiers()) || [];
+  const updated = current.filter(t => t.id !== id);
+  cachedRateTiers = updated;
+  saveStoredLocalRateTiers(updated);
   return true;
 }
 
@@ -335,7 +345,7 @@ export function getApplicableRate(
     return 0;
   };
 
-  const pool = cachedTiers || cachedRateTiers || getStoredLocalRateTiers() || DEFAULT_RATE_TIERS;
+  const pool = cachedTiers || (cachedRateTiers !== null ? cachedRateTiers : getStoredLocalRateTiers()) || [];
   const matchingTiers = sortRateTiers(pool.filter(t => t.deposit_type_code.toUpperCase() === code));
 
   if (matchingTiers.length === 0) {
