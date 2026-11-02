@@ -1,15 +1,17 @@
 ## Current Position
 - **Phase**: 51 (Implementasi Fitur "Cocokkan Otomatis Semua Anggota" (Bulk Auto-Reconcile) pada Matriks Simpanan)
-- **Task**: Plan 51.2 complete
-- **Status**: Ready for Plan 51.3 (Wave 3)
+- **Task**: Phase verification complete
+- **Status**: Complete & Verified (6/6 must-haves verified)
 
-## Plans
-- [x] 51.1: Bulk Auto-Reconcile Engine in savingsMatrixService.ts & Unit Tests (Wave 1)
-- [x] 51.2: Toolbar Action & Modal Progress Dialog in ComplianceMatrix.tsx & Component Tests (Wave 2)
-- [ ] 51.3: Static Verification, Full Vitest Suite & Production Build (Wave 3)
+## Last Session Summary
+Phase 51 executed and independently verified across 3 plans:
+- Plan 51.1: Implemented `bulkAutoReconcileAllMembers` engine in `src/services/savingsMatrixService.ts` with batch processing (default 50 members/chunk), FIFO ledger allocation according to `savings_rate_tiers`, preservation of lump-sum migration records (`Migrasi Saldo Awal (As-Is)`), and unit test suite in `src/services/savingsMatrixService.test.ts` (14 unit tests passing 100%). Commits: `bd0ba896`, `e60720c3`.
+- Plan 51.2: Added "Cocokkan Otomatis Semua Anggota" button on the toolbar of `src/pages/admin/ComplianceMatrix.tsx`, along with confirmation modal, deposit type selection, real-time progress bar with member name indicators, and instant matrix table reload. Component tests in `src/pages/admin/ComplianceMatrix.test.tsx` (16 tests passing 100%). Commits: `ae219cd7`, `e7d5b65f`.
+- Plan 51.3: Verified full Vitest suite (37 test files, 407 tests passing 100%), verified TypeScript static typecheck (`tsc --noEmit`), and verified production build (`npm run build`) with exit code 0. Commits: `70a79bb1`, `6eab1c3e`.
+- Independent verifier passed 6/6 must-haves with report at `.gsd/phases/51/VERIFICATION.md`.
 
 ## Next Steps
-1. Execute Plan 51.3: Static Verification, Full Vitest Suite & Production Build (Wave 3)
+Phase 51 is complete. Awaiting next user request or milestone review.
 
 ## Blockers
 - None.
@@ -17,8 +19,7 @@
 ## Context Dump
 
 ### Decisions Made
-- **Pendekatan Batch Processing**: Mengelompokkan 1.000 anggota ke dalam batch berisi 25 - 50 anggota per iterasi kueri Supabase agar terhindar dari PostgREST payload limit maupun HTTP timeout.
-- **Preservasi Saldo Awal Migrasi**: Menggunakan kriteria selektif saat menghapus transaksi rekonsiliasi lama agar mutasi bertuliskan `Migrasi Saldo Awal (As-Is)` tetap aman dan tidak terhapus.
-- **Dukungan Multi-Tipe Simpanan**: Mendukung eksekusi terfokus per jenis simpanan (`WAJIB`, `BELANJA`, `LEBARAN`) maupun serentak (`ALL`).
-- **Pelaporan Progres Real-Time**: Callback `onProgress({ processed, total, currentMemberName })` memicu update state pada antarmuka dialog modal `ComplianceMatrix.tsx`, memberikan pengalaman visual progress bar yang responsif dan lancar bagi operator.
-- **Penyelarasan Desain UI**: Menggunakan tombol emerald `bg-emerald-600` dengan ikon putar `RefreshCw` yang konsisten dengan desain sistem SIMKOP.
+- **Batch Processing Chunks**: Memproses anggota dalam batch berisi 50 orang per kueri untuk mengoptimalkan throughput dan mencegah PostgREST payload / URL parameter limits.
+- **Preservasi Saldo Awal Migrasi**: Membersihkan mutasi rutin berkala lama namun secara ketat memproteksi transaksi saldo awal berlabel `Migrasi Saldo Awal (As-Is)`.
+- **Integrasi Pilihan Tipe Simpanan**: Modal konfirmasi menyediakan pilihan `ALL` (semua simpanan: Wajib, Belanja, Lebaran) atau terarah pada salah satu jenis simpanan saja.
+- **Auto-Refresh Matriks**: Setelah proses rekonsiliasi massal selesai, antarmuka langsung memanggil `fetchComplianceMatrixData` tanpa mengharuskan operator me-reload browser.

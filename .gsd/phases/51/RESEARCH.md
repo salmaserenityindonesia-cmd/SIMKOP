@@ -53,3 +53,4 @@ Untuk 1.000 anggota:
 3. **Akun Simpanan Belum Terdaftar**:
    - *Risk*: Anggota belum memiliki record `member_deposits`.
    - *Mitigation*: Jika anggota memiliki saldo migrasi namun belum ada record di `member_deposits`, buatkan `member_deposits` baru terlebih dahulu sebelum menyimpan transaksi.
+

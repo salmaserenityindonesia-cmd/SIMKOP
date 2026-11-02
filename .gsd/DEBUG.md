@@ -578,3 +578,45 @@ Pada halaman Matriks Tracking Pembayaran Simpanan Tahunan (`src/pages/admin/Comp
   * TypeScript typecheck (`npx tsc --noEmit`): exit code 0.
   * Full Vitest Suite (`npx vitest run`): 36 test files, 395/395 tests passed (100%).
   * Production Build (`npm run build`): exit code 0.
+
+---
+
+# Debug Session: DEBUG-20261102-COMPLIANCE-MATRIX-ZERO-ARREARS-RETENTION
+
+## Status: FIXED
+
+## Symptom
+Pada halaman Matriks Tracking Pembayaran Simpanan Tahunan (`src/pages/admin/ComplianceMatrix.tsx` atau `src/services/complianceService.ts`), ketika filter "Tahun 2026" dipilih di dropdown dan seluruh anggota tertib bayar (kepatuhan 100%, 0 tunggakan):
+- Tabel menampilkan pesan kosong *"Tidak ada data anggota ditemukan"* dan *"Anggota Menunggak Bulan Ini: 0 Orang"*.
+- Expected: Seluruh anggota aktif (Yanto Santoso, Agus Susanto, Mulyono Santoso, Joko Arifin) tetap ditampilkan secara utuh pada baris tabel matriks simpanan dengan indikator centang hijau (lunas) atau strip abu-abu (belum jatuh tempo/belum terbit). Pesan *"Tidak ada data anggota ditemukan"* HANYA boleh muncul jika jumlah total anggota aktif di database memang 0.
+
+## Root Cause
+1. **Query Select Kolom Non-Eksisten (`tgl_awal_anggota`)**: Kueri `supabase.from('anggota').select(...)` meminta kolom `tgl_awal_anggota` yang tidak terdefinisi di skema PostgreSQL tabel `public.anggota` (kolom yang tersedia: `id, nrp, nama, pangkat, bank_account_number, status, membership_status, created_at`). Akibatnya kueri database menghasilkan PostgREST error `column anggota.tgl_awal_anggota does not exist` dan mengembalikan baris kosong `{ rows: [] }`.
+2. **Kueri Supabase Ter-chain & Penanganan Status**: Pengecekan anggota aktif memerlukan query builder ter-chain `.eq('status', 'aktif').lte('created_at', endOfYear).order('nama', { ascending: true })` dengan graceful fallback untuk mengakomodasi fleksibilitas data `status` dan `membership_status` (`'ACTIVE'`).
+3. **Empty State Guardrails di Frontend**: Kondisi empty state tabel perlu membedakan antara pencarian string tanpa hasil (`Tidak ada data anggota yang cocok dengan pencarian "..."`) vs total data database memang kosong (`Tidak ada data anggota ditemukan.`).
+
+## Solusi & Implementasi (GSD Framework)
+
+### Wave 1: Fix Member Population Query in complianceService.ts
+- File: `src/services/complianceService.ts`
+  * Menghapus referensi kolom `tgl_awal_anggota` dari kueri SELECT `public.anggota`, menyelaraskan ke kolom resmi: `id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status`.
+  * Mengimplementasikan kueri ter-chain yang kuat: `.eq('status', 'aktif').lte('created_at', endOfYearIso).order('nama', { ascending: true })` lengkap dengan fallback jika status di DB kosong atau kueri mock di lingkungan pengujian.
+  * Menggunakan tanggal bergabung berbasis `created_at` (atau properti memori `tgl_awal_anggota` jika ada) untuk penyaringan kelayakan masa keanggotaan (`joinDate <= endOfYearDate`).
+  * Memastikan agregasi mutasi simpanan (`deposit_transactions`) memetakan seluruh 12 bulan (Jan - Des) secara konsisten untuk setiap anggota tanpa eliminasi.
+
+### Wave 2: Verify UI Rendering in ComplianceMatrix.tsx
+- File: `src/pages/admin/ComplianceMatrix.tsx`
+  * Memperbarui pesan empty state tabel: pesan *"Tidak ada data anggota ditemukan."* hanya tampil jika `data.length === 0`, sedangkan jika filter pencarian tidak menemukan hasil ditampilkan *"Tidak ada data anggota yang cocok dengan pencarian \"...\""*.
+  * Memastikan seluruh 4 nama anggota (Yanto Santoso, Agus Susanto, Joko Arifin, Mulyono Santoso) langsung ter-render di tabel saat tahun 2026 dipilih dan kepatuhan 100%.
+  * Mempertahankan kartu KPI: Tingkat Kepatuhan (YTD) 100.0%, Anggota Menunggak Bulan Ini 0 Orang, dan seluruh baris menampilkan centang hijau lunas atau strip abu-abu belum terbit.
+
+### Wave 3: Build Verification & Static Check
+- File: `src/services/complianceService.test.ts`
+  * Menambahkan unit test baru: `menampilkan seluruh anggota aktif ketika tidak ada tunggakan sama sekali (kepatuhan 100%) dengan query ter-chain`.
+  * Hasil: 16/16 tests passed.
+- File: `src/pages/admin/ComplianceMatrix.test.tsx`
+  * Menambahkan unit test baru: `renders all active members in table when there are no arrears in 2026`.
+  * Hasil: 13/13 tests passed.
+- Verifikasi Sistem:
+  * Vitest Full Suite (`npx vitest run`): 36 test files, 397/397 tests passed (100%).
+  * Vite Production Build (`npm run build`): exit code 0.

@@ -107,3 +107,4 @@ Mengimplementasikan modul backend service `src/services/savingsMatrixService.ts`
 - [ ] Mutasi saldo awal migrasi terlindungi dan tidak terhapus selama proses rekonsiliasi.
 - [ ] Callback `onProgress` dipanggil dengan data progres yang akurat.
 - [ ] Pengujian unit di `src/services/savingsMatrixService.test.ts` lolos 100%.
+
