@@ -4,6 +4,7 @@ import { Search, Download, Send, CheckCircle2, FileSpreadsheet, AlertTriangle, E
 import { getComplianceMatrixData, ComplianceMatrixRow, ComplianceMonthData } from '../../services/matrixService';
 import { getSavingsComplianceAvailableYears } from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
+import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
 
@@ -14,6 +15,13 @@ export interface ComplianceMatrixProps {
   initialYear?: string | number;
   initialAvailableYears?: number[];
   onYearChange?: (year: string) => void;
+  initialData?: ComplianceMatrixRow[];
+  initialSelectedMember?: {
+    id: string;
+    nrp: string;
+    nama: string;
+    joinDate?: string | null;
+  } | null;
 }
 
 export const loadComplianceAvailableYearsData = async (
@@ -79,6 +87,8 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialYear,
   initialAvailableYears,
   onYearChange,
+  initialData,
+  initialSelectedMember,
 }) => {
   const currentYearStr = new Date().getFullYear().toString();
   const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
@@ -92,10 +102,15 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
-  const [data, setData] = useState<ComplianceMatrixRow[]>([]);
+  const [data, setData] = useState<ComplianceMatrixRow[]>(initialData || []);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
-  const [loading, setLoading] = useState(true);
-  const [selectedMember, setSelectedMember] = useState<{id: string, nrp: string, nama: string} | null>(null);
+  const [loading, setLoading] = useState(initialData === undefined);
+  const [selectedMember, setSelectedMember] = useState<{
+    id: string;
+    nrp: string;
+    nama: string;
+    joinDate?: string | null;
+  } | null>(initialSelectedMember || null);
   const [totalSetoran, setTotalSetoran] = useState(0);
 
   useEffect(() => {
@@ -339,7 +354,18 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 <tr key={row.nrp} className="hover:bg-slate-50/50 transition-colors group/row">
                   <td className="sticky left-0 bg-white group-hover/row:bg-slate-50/90 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     <div className="flex flex-col">
-                      <span className="font-semibold text-slate-800">{row.nama}</span>
+                      <button
+                        onClick={() => setSelectedMember({
+                          id: row.member_id,
+                          nrp: row.nrp,
+                          nama: row.nama,
+                          joinDate: row.tgl_awal_anggota || row.created_at
+                        })}
+                        className="font-semibold text-slate-800 hover:text-emerald-600 transition-colors text-left cursor-pointer"
+                        title="Buka Buku Besar Matriks Simpanan"
+                      >
+                        {row.nama}
+                      </button>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">{row.nrp}</span>
                         {row.pokokLunas ? (
@@ -371,8 +397,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         </div>
                       </div>
                       <button 
-                        onClick={() => setSelectedMember({ id: row.member_id, nrp: row.nrp, nama: row.nama })}
-                        className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Buku Pembantu">
+                        onClick={() => setSelectedMember({
+                          id: row.member_id,
+                          nrp: row.nrp,
+                          nama: row.nama,
+                          joinDate: row.tgl_awal_anggota || row.created_at
+                        })}
+                        className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                        title="Buku Besar Matriks Simpanan"
+                        aria-label={`Buku Besar ${row.nama}`}
+                      >
                         <Eye className="w-4 h-4" />
                       </button>
                     </div>
@@ -445,11 +479,15 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       </div>
 
       {selectedMember && (
-        <MemberLedgerModal
+        <SavingsLedgerMatrixModal
           memberId={selectedMember.id}
           memberNrp={selectedMember.nrp}
           memberName={selectedMember.nama}
+          joinDate={selectedMember.joinDate}
           onClose={() => setSelectedMember(null)}
+          onSuccess={() => {
+            fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+          }}
         />
       )}
     </AdminLayout>

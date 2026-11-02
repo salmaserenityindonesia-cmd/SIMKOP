@@ -18,6 +18,8 @@ export interface ComplianceMatrixRow {
   compliance: number;
   balances: { w: number, b: number, l: number };
   months: (ComplianceMonthData | null)[];
+  created_at?: string;
+  tgl_awal_anggota?: string;
 }
 export interface ComplianceMatrixResult {
   rows: ComplianceMatrixRow[];
@@ -45,7 +47,7 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
   const lebaranId = typeMap[keys.find(k => k.includes('lebaran') || k.includes('hari raya')) || ''];
 
   // 2. Fetch all active members
-  const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at').eq('status', 'aktif');
+  const { data: members } = await supabase.from('anggota').select('id, nama, nrp, status, created_at, tgl_awal_anggota').eq('status', 'aktif');
   if (!members) return { rows: [], targets: { wajib: 0, belanja: 0, lebaran: 0 } };
 
   // 3. Fetch deposit commitments / transactions
@@ -169,7 +171,9 @@ export async function getComplianceMatrixData(year: number): Promise<ComplianceM
       pokokLunas: pokokPaidByMember.has(m.id),
       compliance,
       balances: { w: 0, b: 0, l: 0 }, // no longer used globally
-      months: monthsData
+      months: monthsData,
+      created_at: m.created_at,
+      tgl_awal_anggota: m.tgl_awal_anggota || m.created_at
     };
   });
 

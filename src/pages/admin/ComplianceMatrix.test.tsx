@@ -22,6 +22,20 @@ vi.mock('../../components/members/MemberLedgerModal', () => ({
   default: () => null,
 }));
 
+// Mock SavingsLedgerMatrixModal
+vi.mock('../../components/compliance/SavingsLedgerMatrixModal', () => ({
+  default: ({ memberId, memberNrp, memberName, joinDate, onClose, onSuccess }: any) => (
+    <div data-testid="savings-ledger-matrix-modal">
+      <span data-testid="modal-member-id">{memberId}</span>
+      <span data-testid="modal-member-nrp">{memberNrp}</span>
+      <span data-testid="modal-member-name">{memberName}</span>
+      <span data-testid="modal-join-date">{joinDate}</span>
+      <button onClick={onClose} data-testid="modal-close-btn">Tutup</button>
+      <button onClick={onSuccess} data-testid="modal-success-btn">Simpan</button>
+    </div>
+  ),
+}));
+
 // Mock complianceService
 vi.mock('../../services/complianceService', () => ({
   getSavingsComplianceAvailableYears: vi.fn().mockResolvedValue([2026, 2025, 2024, 2023]),
@@ -258,4 +272,45 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       consoleErrorSpy.mockRestore();
     });
   });
+
+  describe('SavingsLedgerMatrixModal Integration in ComplianceMatrix', () => {
+    it('renders member rows with ledger matrix modal triggers (name button & Eye action button)', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={mockMatrixResult.rows} />
+      );
+
+      // Verify member name and NRP in the table row
+      expect(html).toContain('Budi Santoso');
+      expect(html).toContain('12345678');
+
+      // Verify button title and aria-label for opening the ledger matrix modal
+      expect(html).toContain('title="Buka Buku Besar Matriks Simpanan"');
+      expect(html).toContain('aria-label="Buku Besar Budi Santoso"');
+    });
+
+    it('renders SavingsLedgerMatrixModal when an active member is selected', () => {
+      const selectedMember = {
+        id: 'm-1',
+        nrp: '12345678',
+        nama: 'Budi Santoso',
+        joinDate: '2024-01-01',
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialData={mockMatrixResult.rows}
+          initialSelectedMember={selectedMember}
+        />
+      );
+
+      // Verify modal is rendered with member information
+      expect(html).toContain('data-testid="savings-ledger-matrix-modal"');
+      expect(html).toContain('data-testid="modal-member-id"');
+      expect(html).toContain('m-1');
+      expect(html).toContain('12345678');
+      expect(html).toContain('Budi Santoso');
+      expect(html).toContain('2024-01-01');
+    });
+  });
 });
+
