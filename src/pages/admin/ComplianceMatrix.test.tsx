@@ -565,6 +565,105 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Total: Rp 400.000');
     });
   });
+
+  describe('Multi-Row Itemized Savings Cells (3 Sub-Baris: Wajib, Belanja, Lebaran)', () => {
+    it('renders 3 sub-row labels (wajib, belanja, lebaran) and formatted amounts inside month cells', () => {
+      const row = {
+        member_id: 'm-sample',
+        nrp: '11223344',
+        nama: 'Bambang Pamungkas',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 250000, b: 500000, l: 500000 },
+        months: [
+          {
+            w: 25000,
+            b: 50000,
+            l: 50000,
+            bal_w: 25000,
+            bal_b: 50000,
+            bal_l: 50000,
+            wajib: { status: 'paid' as const, amount: 25000 },
+            belanja: { status: 'paid' as const, amount: 50000 },
+            lebaran: { status: 'paid' as const, amount: 50000 },
+          },
+          null, null, null, null, null, null, null, null, null, null, null
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialData={[row]} />
+      );
+
+      // Verify labels rendered
+      expect(html).toContain('wajib');
+      expect(html).toContain('belanja');
+      expect(html).toContain('lebaran');
+
+      // Verify paid color classes
+      expect(html).toContain('text-emerald-600 font-semibold');
+      expect(html).toContain('text-teal-600 font-semibold');
+
+      // Verify formatted amounts
+      expect(html).toContain('25.000');
+      expect(html).toContain('50.000');
+
+      // Verify title attribute for ledger interaction
+      expect(html).toContain('title="Klik untuk rincian buku besar Bambang Pamungkas - Jan 2026"');
+    });
+
+    it('renders rose/red indicators for unpaid arrears and slate dash for not applicable / before registration', () => {
+      const rowWithArrears = {
+        member_id: 'm-arrears',
+        nrp: '99887766',
+        nama: 'Siti Aminah',
+        pokokLunas: false,
+        compliance: 50,
+        balances: { w: 0, b: 0, l: 0 },
+        months: [
+          null, // Jan (sebelum bergabung)
+          {
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 0,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'unpaid' as const, amount: 200000 },
+            belanja: { status: 'unpaid' as const, amount: 50000 },
+            lebaran: { status: 'unpaid' as const, amount: 50000 },
+          },
+          null, null, null, null, null, null, null, null, null, null
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialData={[rowWithArrears]} />
+      );
+
+      // Verify unpaid color class
+      expect(html).toContain('text-rose-600 font-bold');
+      expect(html).toContain('200.000');
+
+      // Verify not applicable dash
+      expect(html).toContain('<div class="text-gray-300 text-xs text-center">-</div>');
+
+      // Verify title on the active unpaid month (Feb 2026)
+      expect(html).toContain('title="Klik untuk rincian buku besar Siti Aminah - Feb 2026"');
+    });
+
+    it('renders column headers with min-w-[95px] md:min-w-[105px] and updated legend', () => {
+      const html = renderToStaticMarkup(<ComplianceMatrix initialYear="2026" />);
+
+      // Verify header min-width
+      expect(html).toContain('min-w-[95px] md:min-w-[105px]');
+
+      // Verify new legend text
+      expect(html).toContain('Lunas (Hijau / Teal)');
+      expect(html).toContain('Belum Bayar / Tunggakan (Merah)');
+      expect(html).toContain('Belum Terdaftar / Tidak Berlaku');
+    });
+  });
 });
 
 
