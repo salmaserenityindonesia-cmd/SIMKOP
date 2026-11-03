@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 54 — Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan
+> **Current Phase:** 55 — Rapikan Layout Kas Riil Anggota pada Matriks Simpanan (No-Wrap & Tabular Nums)
 > **Status:** ⏳ Ready for Execution
 
 ## Must-Haves (from SPEC)
@@ -967,6 +967,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 55: Rapikan Layout Kas Riil Anggota pada Matriks Simpanan (No-Wrap & Tabular Nums)
+**Status:** ⏳ Ready for Execution
+**Objective:** Merapikan tata letak kartu ringkasan Kas Riil Anggota pada kolom Informasi Anggota di halaman Matriks Tracking Pembayaran Simpanan Tahunan (`src/pages/admin/ComplianceMatrix.tsx`) agar tidak mengalami pemisahan atau line wrapping nominal mata uang, menetapkan lebar minimum kolom `min-w-[260px]`, dan menggunakan tipografi angka tabular (`tabular-nums`) yang rapi dan konsisten.
+**Depends on:** Phase 54
+
+**Plans:**
+- [ ] Plan 55.1: Enforce whitespace-nowrap and Expand Member Column Width
+- [ ] Plan 55.2: Static Verification, Full Vitest Suite & Production Build
+
+**Deliverables:**
+- Penerapan utilitas `whitespace-nowrap`, `tabular-nums`, dan lebar kolom `min-w-[260px] w-64 md:w-[280px] shrink-0` pada `src/pages/admin/ComplianceMatrix.tsx`
+- Penataan visual kartu kas riil anggota dengan header badge emerald lembut dan rincian terstruktur
+- Sinkronisasi assertion pengujian di `src/pages/admin/ComplianceMatrix.test.tsx`
+- Verifikasi statis TypeScript (`tsc --noEmit`), Vitest suite 100%, dan build produksi Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1012,6 +1029,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 39 | Phase 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris |
 | 40 | Phase 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) |
 | 41 | Phase 54 | Saldo Kas Riil Anggota pada Matriks Simpanan |
+| 42 | Phase 55 | Rapikan Layout Kas Riil Anggota pada Matriks Simpanan |
 
 ---
 
@@ -1073,6 +1091,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
 | 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ✅ | 4/4 | 100% |
 | 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | ✅ | 3/3 | 100% |
+| 55 | Rapikan Layout Kas Riil Anggota Matriks | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -1134,5 +1153,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 52 | 2026-11-02 | 2026-11-02 | 1 day |
 | 53 | 2026-11-03 | 2026-11-03 | 1 day |
 | 54 | 2026-11-03 | 2026-11-03 | 1 day |
+| 55 | 2026-11-03 | — | — |
 
 

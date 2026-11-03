@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 54 (Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan)
-- **Task**: Phase verification complete
-- **Status**: Complete & Verified (6/6 deliverables verified)
+- **Phase**: 55 (Rapikan Layout Kas Riil Anggota pada Matriks Simpanan (No-Wrap & Tabular Nums))
+- **Task**: Planning complete
+- **Status**: Ready for Execution (0/2 plans executed)
 
 ## Last Session Summary
-Phase 54 executed and verified across 3 plans:
-- Plan 54.1: Database View & Service Layer Net Savings Aggregation. Created `supabase/migrations/033_create_member_net_savings_view.sql` with PostgreSQL view `public.view_member_net_savings` aggregating deposits and withdrawals per member and deposit type. Enriched `getComplianceMatrixData` in `src/services/complianceService.ts` with `netSavings` (`wajib`, `belanja`, `lebaran`, `total`), backed by unit tests in `src/services/complianceService.test.ts` (27/27 tests passed). Commits: `551c3077`, `6adc8947`.
-- Plan 54.2: Render Real Cash Balance in Member Information Column. Renders a compact, transparent "Kas Riil Anggota" summary card in `src/pages/admin/ComplianceMatrix.tsx` directly under the member name and Pokok status badge. Updated component tests in `src/pages/admin/ComplianceMatrix.test.tsx` (35/35 tests passed). Commits: `0357f2eb`, `ef5f2eda`.
-- Plan 54.3: Static Verification, Full Vitest Suite & Production Build. Fixed type alignment in `src/components/compliance/SavingsLedgerMatrixModal.tsx`. Verified TypeScript typecheck (`tsc --noEmit`), full Vitest suite (41 test files, 487 tests passing 100%), and Vite production build with exit code 0. Commit: `1f2c1678`.
-- Independent verification report produced at `.gsd/phases/54/VERIFICATION.md` confirming 6/6 requirements satisfied.
+- Phase 54 completed and verified (View agregasi `view_member_net_savings`, pengayaan `complianceService`, dan kartu Kas Riil Anggota).
+- Phase 55 planned: 2 plans across 2 waves:
+  - Plan 55.1: Enforce whitespace-nowrap and Expand Member Column Width (`src/pages/admin/ComplianceMatrix.tsx`, `src/pages/admin/ComplianceMatrix.test.tsx`) (Wave 1)
+  - Plan 55.2: Static Verification, Full Vitest Suite & Production Build (Wave 2)
+- Research documented in `.gsd/phases/55/RESEARCH.md`.
 
 ## Next Steps
-Phase 54 is complete. Awaiting next user request or roadmap update.
+1. `/execute 55` or execute Plan 55.1
 
 ## Blockers
 - None.
@@ -19,6 +19,6 @@ Phase 54 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Next Migration Sequence**: Menggunakan nomor `033_create_member_net_savings_view.sql` karena nomor `031` dan `032` telah dialokasikan untuk migrasi tarif berjenjang dan pembersihan data pinjaman orphan.
-- **Resilient Fallback Aggregation**: Pada `complianceService.ts`, selain membaca `view_member_net_savings`, disiapkan fallback perhitungan netto client-side dari transaksi yang sudah dimuat. Hal ini menjamin stabilitas fungsionalitas baik pada database yang sudah menjalankan migrasi view maupun pada mock test suite.
-- **Monospace Typography in Member Cell**: Kartu ringkas posisi kas riil menggunakan font monospace dan format mata uang `id-ID` agar perataan digit nominal simpanan (Wajib, Belanja, Lebaran, dan Total Kas Riil) terlihat teratur dan mudah dibaca oleh admin.
+- **No-Wrap & Tabular Nums Styling**: Menerapkan kelas `whitespace-nowrap` dan `tabular-nums` pada kartu ringkasan kas riil anggota serta menetapkan lebar minimum kolom `min-w-[260px] w-64 md:w-[280px] shrink-0` pada elemen `<th>` dan `<td>` kolom Informasi Anggota agar angka nominal mata uang tidak terlipat atau terpisah dari simbol `Rp`.
+- **Badge Styling**: Menggunakan chip header `Kas Riil` dengan background emerald lembut (`bg-emerald-50/70 border border-emerald-200/60 text-emerald-900`) dan rincian per sub-kategori simpanan terstruktur vertikal yang simetris.
+- **Test Synchronisation**: Menyesuaikan assertion di `src/pages/admin/ComplianceMatrix.test.tsx` untuk memastikan keselarasan teks label dan memastikan seluruh test suite tetap 100% hijau.
