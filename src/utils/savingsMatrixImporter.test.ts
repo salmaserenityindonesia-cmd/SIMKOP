@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import {
   parseMonthYearHeader,
   extractNumericAmount,
+  extractCellText,
   parseSavingsMatrixExcel
 } from './savingsMatrixImporter';
 
@@ -51,6 +52,18 @@ describe('savingsMatrixImporter', () => {
       expect(parseMonthYearHeader('Status Validasi')).toBeNull();
       expect(parseMonthYearHeader('')).toBeNull();
       expect(parseMonthYearHeader(null)).toBeNull();
+    });
+  });
+
+  describe('extractCellText', () => {
+    it('harus mengekstrak teks dari berbagai jenis sel (string, number, formula result, richText)', () => {
+      expect(extractCellText('1001')).toBe('1001');
+      expect(extractCellText(1002)).toBe('1002');
+      expect(extractCellText({ result: '1003' })).toBe('1003');
+      expect(extractCellText({ text: '1004' })).toBe('1004');
+      expect(extractCellText({ richText: [{ text: '100' }, { text: '5' }] })).toBe('1005');
+      expect(extractCellText(null)).toBe('');
+      expect(extractCellText(undefined)).toBe('');
     });
   });
 

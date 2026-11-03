@@ -27,7 +27,8 @@ import {
   getComplianceMatrixData,
   ComplianceMatrixRow,
   ComplianceMonthData,
-  getSavingsComplianceAvailableYears
+  getSavingsComplianceAvailableYears,
+  ImportSavingsMatrixLedgerResult
 } from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
@@ -104,13 +105,30 @@ export const handleImportMatrixSuccess = async (
   setTargets: (t: any) => void,
   setTotalSetoran: (s: number) => void,
   setShowImportModal: (show: boolean) => void,
-  feedback?: any
+  feedback?: any,
+  importResult?: ImportSavingsMatrixLedgerResult
 ): Promise<void> => {
   clearTierCache();
   await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
   setShowImportModal(false);
   if (feedback?.showToast) {
-    feedback.showToast('Buku besar berhasil disinkronkan dari file Excel', 'success');
+    if (importResult) {
+      const successCount = importResult.totalSuccess ?? importResult.totalMembers;
+      const failedCount = importResult.totalFailed ?? 0;
+      if (failedCount > 0) {
+        feedback.showToast(
+          `Impor selesai: ${successCount} anggota berhasil, ${failedCount} anggota gagal`,
+          'warning'
+        );
+      } else {
+        feedback.showToast(
+          `Buku besar berhasil disinkronkan: ${successCount} anggota berhasil (${importResult.totalTransactions} mutasi)`,
+          'success'
+        );
+      }
+    } else {
+      feedback.showToast('Buku besar berhasil disinkronkan dari file Excel', 'success');
+    }
   }
 };
 
@@ -1070,7 +1088,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       <SavingsMatrixImportModal
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
-        onSuccess={() =>
+        onSuccess={(result) =>
           handleImportMatrixSuccess(
             year,
             setLoading,
@@ -1078,7 +1096,8 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
             setTargets,
             setTotalSetoran,
             setShowImportModal,
-            feedback
+            feedback,
+            result
           )
         }
         defaultType="WAJIB"

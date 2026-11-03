@@ -29,7 +29,7 @@ import {
 export interface SavingsMatrixImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (result?: ImportSavingsMatrixLedgerResult) => void;
   defaultType?: 'WAJIB' | 'BELANJA' | 'LEBARAN';
   // Props untuk pengujian / controlled state
   initialType?: 'WAJIB' | 'BELANJA' | 'LEBARAN';
@@ -204,19 +204,26 @@ export default function SavingsMatrixImportModal({
         }
       );
 
-      if (result.success) {
+      if (result.success || (result.totalSuccess !== undefined && result.totalSuccess > 0)) {
         const typeLabel = DEPOSIT_TYPE_OPTIONS.find(t => t.id === selectedType)?.label || selectedType;
-        const msg = `Berhasil menyinkronkan ${result.totalTransactions} mutasi ${typeLabel} untuk ${result.totalMembers} anggota ke buku besar.`;
+        const successCount = result.totalSuccess ?? result.totalMembers;
+        const failedCount = result.totalFailed ?? 0;
+        const summaryText = failedCount > 0 
+          ? `${successCount} anggota berhasil, ${failedCount} anggota gagal`
+          : `${successCount} anggota berhasil`;
+        const msg = `Berhasil menyinkronkan ${result.totalTransactions} mutasi ${typeLabel} (${summaryText}) ke buku besar.`;
         if (feedback?.showToast) {
-          feedback.showToast(msg, 'success');
+          feedback.showToast(msg, failedCount > 0 ? 'warning' : 'success');
         }
-        onSuccess();
+        onSuccess(result);
         onClose();
         handleReset();
       } else {
-        const errDetails = result.errors && result.errors.length > 0 
-          ? result.errors.join(', ') 
-          : 'Terjadi kegagalan saat import database.';
+        const errDetails = (result.errorList && result.errorList.length > 0)
+          ? result.errorList.join(', ')
+          : (result.errors && result.errors.length > 0 
+            ? result.errors.join(', ') 
+            : 'Terjadi kegagalan saat import database.');
         setErrorMessage(errDetails);
       }
     } catch (err: any) {
@@ -485,7 +492,9 @@ export default function SavingsMatrixImportModal({
               </div>
               <p className="text-[11px] text-slate-500 text-center" data-testid="progress-text">
                 {progress
-                  ? `Memproses ${progress.processed} dari ${progress.total} mutasi...`
+                  ? (progress.memberIndex && progress.totalMembers
+                      ? `Memproses anggota ${progress.memberIndex} dari ${progress.totalMembers}...`
+                      : `Memproses ${progress.processed} dari ${progress.total} mutasi...`)
                   : 'Mempersiapkan transaksi...'}
               </p>
             </div>

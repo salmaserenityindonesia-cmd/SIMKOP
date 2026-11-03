@@ -13,6 +13,60 @@ export interface DepositTypeItem {
 }
 
 /**
+ * Helper untuk mengambil seluruh data dari Supabase dengan paging otomatis
+ * guna mengatasi batasan default 1.000 baris per request pada PostgREST.
+ */
+export async function fetchAllPaged<T = any>(
+  table: string,
+  columns: string,
+  filterFn?: (query: any) => any
+): Promise<{ data: T[]; error: any }> {
+  const PAGE_SIZE = 1000;
+  let allData: T[] = [];
+  let page = 0;
+  let hasMore = true;
+  let lastError: any = null;
+
+  while (hasMore) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    let query: any = supabase.from(table).select(columns);
+    if (filterFn) {
+      query = filterFn(query);
+    }
+
+    if (typeof query.range === 'function') {
+      const { data, error } = await query.range(from, to);
+      if (error) {
+        lastError = error;
+        hasMore = false;
+        break;
+      }
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allData.push(...data);
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      }
+    } else {
+      const { data, error } = await query;
+      if (error) {
+        lastError = error;
+      } else if (data && Array.isArray(data)) {
+        allData = data;
+      }
+      hasMore = false;
+    }
+  }
+
+  return { data: allData, error: lastError };
+}
+
+/**
  * Helper to identify deposit type based on code or name keywords.
  */
 export function matchDepositType(
@@ -100,10 +154,11 @@ export async function getSavingsComplianceAvailableYears(
     const membersToUse = activeMembers.length > 0 ? activeMembers : members;
     members = membersToUse;
 
-    // 3. Fetch deposit transactions
-    const { data: transactions, error: txError } = await supabase
-      .from('deposit_transactions')
-      .select('amount, transaction_type, for_year, for_month, created_at, member_deposits!inner(member_id, deposit_type_id)');
+    // 3. Fetch deposit transactions with automatic paging (supporting >1000 records)
+    const { data: transactions, error: txError } = await fetchAllPaged(
+      'deposit_transactions',
+      'amount, transaction_type, for_year, for_month, created_at, member_deposits!inner(member_id, deposit_type_id)'
+    );
 
     if (txError) {
       console.error('Error fetching deposit transactions for available years:', txError);
@@ -476,10 +531,11 @@ export async function getComplianceMatrixData(
     return isNaN(joinDate.getTime()) || joinDate <= endOfYearDate;
   });
 
-  // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN)
-  const { data: memberDepositsList } = await supabase
-    .from('member_deposits')
-    .select('id, member_id, deposit_type_id');
+  // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN) dengan paging
+  const { data: memberDepositsList } = await fetchAllPaged(
+    'member_deposits',
+    'id, member_id, deposit_type_id'
+  );
   const mdMap = new Map<string, { member_id: string; deposit_type_id: string }>();
   (memberDepositsList || []).forEach((md: any) => {
     if (md.id) {
@@ -487,9 +543,10 @@ export async function getComplianceMatrixData(
     }
   });
 
-  const { data: transactions } = await supabase
-    .from('deposit_transactions')
-    .select('id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)');
+  const { data: transactions } = await fetchAllPaged(
+    'deposit_transactions',
+    'id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)'
+  );
 
   // Helper untuk mengekstrak member_id dan deposit_type_id dari transaksi
   const parseTxInfo = (tx: any) => {
@@ -500,10 +557,11 @@ export async function getComplianceMatrixData(
     return { memberId, depositTypeId };
   };
 
-  // Ambil transaksi pokok
-  const { data: pokokTxs } = await supabase
-    .from('deposit_transactions')
-    .select('id, member_deposit_id, amount, transaction_type, member_deposits(member_id, deposit_type_id)');
+  // Ambil transaksi pokok dengan paging
+  const { data: pokokTxs } = await fetchAllPaged(
+    'deposit_transactions',
+    'id, member_deposit_id, amount, transaction_type, member_deposits(member_id, deposit_type_id)'
+  );
 
   const pokokPaidByMember = new Set<string>();
   if (pokokTxs) {
@@ -832,6 +890,9 @@ export interface ImportSavingsMatrixLedgerResult {
   success: boolean;
   totalMembers: number;
   totalTransactions: number;
+  totalSuccess?: number;
+  totalFailed?: number;
+  errorList?: string[];
   errors?: string[];
 }
 
@@ -839,42 +900,52 @@ export interface ImportSavingsMatrixProgress {
   processed: number;
   total: number;
   percent: number;
+  currentMember?: string;
+  memberIndex?: number;
+  totalMembers?: number;
+  message?: string;
 }
 
 /**
  * Menyinkronkan mutasi bulanan hasil parsing matriks simpanan Excel ke tabel deposit_transactions.
- * Membersihkan mutasi rekonsiliasi lama & saldo awal migrasi lump-sum untuk jenis simpanan tersebut
- * guna mencegah duplikasi / akumulasi ganda (double-counting).
- * Melakukan batch insert dengan pembagian chunk 100 transaksi per request.
+ * Dilengkapi isolasi pemrosesan per anggota (try-catch), auto-provisioning akun rekening member_deposits,
+ * pembersihan mutasi lama/migrasi gelondongan, dan chunking massal maksimal 100 baris per request.
  */
 export async function importSavingsMatrixLedger(
   depositTypeCode: 'WAJIB' | 'BELANJA' | 'LEBARAN',
   mutations: ParsedMonthlyDeposit[],
   onProgress?: (progress: ImportSavingsMatrixProgress) => void
 ): Promise<ImportSavingsMatrixLedgerResult> {
-  const errors: string[] = [];
+  const errorList: string[] = [];
 
   if (!mutations || mutations.length === 0) {
     return {
       success: true,
       totalMembers: 0,
       totalTransactions: 0,
+      totalSuccess: 0,
+      totalFailed: 0,
+      errorList: [],
       errors: []
     };
   }
 
   try {
-    // 1. Dapatkan tipe simpanan target
+    // 1. Resolusi Deposit Type ID
     const { data: dTypes, error: dtErr } = await supabase
       .from('deposit_types')
       .select('id, name, code');
 
     if (dtErr || !dTypes || dTypes.length === 0) {
+      const msg = 'Gagal memuat tipe simpanan: ' + (dtErr?.message || 'Data deposit_types kosong');
       return {
         success: false,
         totalMembers: 0,
         totalTransactions: 0,
-        errors: ['Gagal memuat tipe simpanan: ' + (dtErr?.message || 'Data deposit_types kosong')]
+        totalSuccess: 0,
+        totalFailed: 0,
+        errorList: [msg],
+        errors: [msg]
       };
     }
 
@@ -888,224 +959,326 @@ export async function importSavingsMatrixLedger(
     }
 
     if (!targetType) {
+      const msg = `Tipe simpanan "${depositTypeCode}" tidak ditemukan dalam database.`;
       return {
         success: false,
         totalMembers: 0,
         totalTransactions: 0,
-        errors: [`Tipe simpanan "${depositTypeCode}" tidak ditemukan dalam database.`]
+        totalSuccess: 0,
+        totalFailed: 0,
+        errorList: [msg],
+        errors: [msg]
       };
     }
 
-    // 2. Petakan NRP ke member_id dari tabel anggota
-    const uniqueNrps = Array.from(new Set(mutations.map(m => m.nrp.trim()))).filter(Boolean);
+    // 2. Auto-Provisioning Akun member_deposits
+    const uniqueNrps = Array.from(
+      new Set(mutations.map(m => String(m.nrp || '').trim()).filter(Boolean))
+    );
 
-    const { data: members, error: mErr } = await supabase
-      .from('anggota')
-      .select('id, nrp, nama, status, membership_status')
-      .in('nrp', uniqueNrps);
-
-    if (mErr) {
-      return {
-        success: false,
-        totalMembers: 0,
-        totalTransactions: 0,
-        errors: ['Gagal memuat data anggota: ' + mErr.message]
-      };
-    }
-
+    // Ambil seluruh ID anggota dari public.anggota yang cocok dengan nrp pada file Excel
     const nrpToMemberMap = new Map<string, any>();
-    if (members) {
-      for (const m of members) {
-        if (m.nrp) {
-          nrpToMemberMap.set(String(m.nrp).trim().toUpperCase(), m);
+    const NRP_CHUNK_SIZE = 100;
+    for (let i = 0; i < uniqueNrps.length; i += NRP_CHUNK_SIZE) {
+      const chunk = uniqueNrps.slice(i, i + NRP_CHUNK_SIZE);
+      const { data: members, error: mErr } = await supabase
+        .from('anggota')
+        .select('id, nrp, nama, status, membership_status')
+        .in('nrp', chunk);
+
+      if (mErr) {
+        const msg = 'Gagal memuat data anggota: ' + mErr.message;
+        return {
+          success: false,
+          totalMembers: 0,
+          totalTransactions: 0,
+          totalSuccess: 0,
+          totalFailed: 0,
+          errorList: [msg],
+          errors: [msg]
+        };
+      }
+
+      if (members) {
+        for (const m of members) {
+          if (m.nrp) {
+            nrpToMemberMap.set(String(m.nrp).trim().toUpperCase(), m);
+          }
         }
       }
     }
 
     const missingNrps = uniqueNrps.filter(nrp => !nrpToMemberMap.has(nrp.toUpperCase()));
     if (missingNrps.length > 0) {
-      errors.push(`Beberapa NRP tidak ditemukan di database: ${missingNrps.join(', ')}`);
+      errorList.push(`Beberapa NRP tidak ditemukan di database: ${missingNrps.join(', ')}`);
     }
 
-    // Filter mutasi valid yang memiliki anggota terdaftar dan nominal > 0
-    const validMutations = mutations.filter(m => nrpToMemberMap.has(m.nrp.trim().toUpperCase()) && m.amount > 0);
-    if (validMutations.length === 0) {
-      return {
-        success: false,
-        totalMembers: 0,
-        totalTransactions: 0,
-        errors: ['Tidak ada data mutasi yang cocok dengan anggota aktif di sistem.', ...errors]
-      };
-    }
-
-    // Kumpulkan member_id unik yang terpengaruh
-    const matchedMemberIds = Array.from(
-      new Set(validMutations.map(m => nrpToMemberMap.get(m.nrp.trim().toUpperCase()).id))
+    // Saring mutasi valid (anggota ada di database dan nominal > 0)
+    const validMutations = mutations.filter(
+      m => nrpToMemberMap.has(String(m.nrp || '').trim().toUpperCase()) && m.amount > 0
     );
 
-    // 3. Ambil atau buat akun member_deposits untuk seluruh anggota tersebut
-    const { data: existingDeposits, error: depErr } = await supabase
-      .from('member_deposits')
-      .select('id, member_id, deposit_type_id')
-      .eq('deposit_type_id', targetType.id)
-      .in('member_id', matchedMemberIds);
-
-    if (depErr) {
+    if (validMutations.length === 0) {
+      const msg = 'Tidak ada data mutasi yang cocok dengan anggota aktif di sistem.';
+      errorList.unshift(msg);
       return {
         success: false,
         totalMembers: 0,
         totalTransactions: 0,
-        errors: ['Gagal memuat member_deposits: ' + depErr.message, ...errors]
+        totalSuccess: 0,
+        totalFailed: 0,
+        errorList,
+        errors: errorList
       };
     }
 
-    const memberIdToDepositId = new Map<string, string>();
-    if (existingDeposits) {
-      for (const dep of existingDeposits) {
-        memberIdToDepositId.set(dep.member_id, dep.id);
+    // Identifikasi urutan anggota unik yang akan diproses
+    const matchedMembers: any[] = [];
+    const seenMemberIds = new Set<string>();
+    for (const nrp of uniqueNrps) {
+      const member = nrpToMemberMap.get(nrp.toUpperCase());
+      if (member && !seenMemberIds.has(member.id)) {
+        seenMemberIds.add(member.id);
+        matchedMembers.push(member);
       }
     }
 
-    const missingDepositMemberIds = matchedMemberIds.filter(id => !memberIdToDepositId.has(id));
-    if (missingDepositMemberIds.length > 0) {
-      const newDepositRows = missingDepositMemberIds.map(memId => ({
-        member_id: memId,
+    const matchedMemberIds = matchedMembers.map(m => m.id);
+
+    // Periksa akun rekening member_deposits yang sudah ada
+    const memberIdToDepositId = new Map<string, string>();
+    for (let i = 0; i < matchedMemberIds.length; i += 100) {
+      const chunkIds = matchedMemberIds.slice(i, i + 100);
+      const { data: existingDeposits, error: depErr } = await supabase
+        .from('member_deposits')
+        .select('id, member_id, deposit_type_id')
+        .eq('deposit_type_id', targetType.id)
+        .in('member_id', chunkIds);
+
+      if (depErr) {
+        const msg = 'Gagal memuat member_deposits: ' + depErr.message;
+        errorList.push(msg);
+        return {
+          success: false,
+          totalMembers: 0,
+          totalTransactions: 0,
+          totalSuccess: 0,
+          totalFailed: 0,
+          errorList,
+          errors: errorList
+        };
+      }
+
+      if (existingDeposits) {
+        for (const dep of existingDeposits) {
+          memberIdToDepositId.set(dep.member_id, dep.id);
+        }
+      }
+    }
+
+    // Auto-provision jika ada anggota yang belum memiliki baris rekening di member_deposits
+    const missingDepositMembers = matchedMembers.filter(m => !memberIdToDepositId.has(m.id));
+    if (missingDepositMembers.length > 0) {
+      const newDepositRows = missingDepositMembers.map(mem => ({
+        member_id: mem.id,
         deposit_type_id: targetType!.id,
+        is_terminated: false,
         status: 'active'
       }));
 
-      const insBuilder: any = supabase.from('member_deposits').insert(newDepositRows);
-      let createdDeps: any = null;
-      if (typeof insBuilder.select === 'function') {
-        const { data, error } = await insBuilder.select('id, member_id');
-        if (error) {
-          return {
-            success: false,
-            totalMembers: 0,
-            totalTransactions: 0,
-            errors: ['Gagal membuat akun member_deposits baru: ' + error.message, ...errors]
-          };
+      for (let i = 0; i < newDepositRows.length; i += 100) {
+        const insertChunk = newDepositRows.slice(i, i + 100);
+        const insBuilder: any = supabase.from('member_deposits').insert(insertChunk);
+
+        let createdDeps: any = null;
+        if (typeof insBuilder.select === 'function') {
+          const { data, error } = await insBuilder.select('id, member_id');
+          if (error) {
+            console.warn('Gagal insert member_deposits:', error.message);
+          } else {
+            createdDeps = data;
+          }
+        } else {
+          const { error } = await insBuilder;
+          if (error) {
+            console.warn('Gagal insert member_deposits:', error.message);
+          }
         }
-        createdDeps = data;
-      } else {
-        const { error } = await insBuilder;
-        if (error) {
-          return {
-            success: false,
-            totalMembers: 0,
-            totalTransactions: 0,
-            errors: ['Gagal membuat akun member_deposits baru: ' + error.message, ...errors]
-          };
+
+        if (!createdDeps || createdDeps.length === 0) {
+          const chunkMemberIds = insertChunk.map(r => r.member_id);
+          const { data: refetched } = await supabase
+            .from('member_deposits')
+            .select('id, member_id')
+            .eq('deposit_type_id', targetType.id)
+            .in('member_id', chunkMemberIds);
+          createdDeps = refetched || [];
         }
-      }
 
-      if (!createdDeps || createdDeps.length === 0) {
-        const { data: refetched } = await supabase
-          .from('member_deposits')
-          .select('id, member_id')
-          .eq('deposit_type_id', targetType.id)
-          .in('member_id', missingDepositMemberIds);
-        createdDeps = refetched || [];
-      }
-
-      if (createdDeps) {
-        for (const cd of createdDeps) {
-          memberIdToDepositId.set(cd.member_id, cd.id);
-        }
-      }
-    }
-
-    const allMemberDepositIds = Array.from(memberIdToDepositId.values());
-
-    // 4 & 5. Hapus mutasi lama untuk mencegah akumulasi ganda (double-counting):
-    // - Rekonsiliasi lama ('Rekonsiliasi Otomatis' / 'Import Matriks Buku Besar Excel')
-    // - Transaksi saldo awal migrasi lump-sum (for_month IS NULL / deskripsi saldo awal atau migrasi)
-    if (allMemberDepositIds.length > 0) {
-      const { data: existingTxs, error: fetchTxErr } = await supabase
-        .from('deposit_transactions')
-        .select('id, member_deposit_id, description, for_month')
-        .in('member_deposit_id', allMemberDepositIds);
-
-      if (!fetchTxErr && existingTxs && existingTxs.length > 0) {
-        const idsToDelete = existingTxs
-          .filter((tx: any) => {
-            const desc = (tx.description || '').toLowerCase();
-            const isReconciled = desc.includes('rekonsiliasi otomatis') || desc.includes('import matriks buku besar');
-            const isLumpSumOrMigration = tx.for_month === null || tx.for_month === undefined || desc.includes('saldo awal') || desc.includes('migrasi');
-            return isReconciled || isLumpSumOrMigration;
-          })
-          .map((tx: any) => tx.id);
-
-        if (idsToDelete.length > 0) {
-          const DEL_CHUNK_SIZE = 100;
-          for (let i = 0; i < idsToDelete.length; i += DEL_CHUNK_SIZE) {
-            const chunk = idsToDelete.slice(i, i + DEL_CHUNK_SIZE);
-            const { error: delErr } = await supabase
-              .from('deposit_transactions')
-              .delete()
-              .in('id', chunk);
-
-            if (delErr) {
-              console.warn('Gagal membersihkan mutasi lama:', delErr.message);
-            }
+        if (createdDeps) {
+          for (const cd of createdDeps) {
+            memberIdToDepositId.set(cd.member_id, cd.id);
           }
         }
       }
     }
 
-    // 6. Siapkan transaksi baru
-    const newTransactions: any[] = [];
-    for (const mut of validMutations) {
-      const member = nrpToMemberMap.get(mut.nrp.trim().toUpperCase());
-      if (!member) continue;
-      const mdId = memberIdToDepositId.get(member.id);
-      if (!mdId) continue;
+    // 3. Isolasi Pemrosesan per Anggota (Try-Catch per Baris) & 4. Chunking Massal
+    let totalSuccess = 0;
+    let totalFailed = 0;
+    let totalTransactions = 0;
+    const totalMemberCount = matchedMembers.length;
 
-      newTransactions.push({
-        member_deposit_id: mdId,
-        transaction_type: 'deposit',
-        amount: mut.amount,
-        for_month: mut.month,
-        for_year: mut.year,
-        description: 'Import Matriks Buku Besar Excel'
-      });
-    }
+    for (let idx = 0; idx < totalMemberCount; idx++) {
+      const member = matchedMembers[idx];
+      const memberNrpUpper = String(member.nrp || '').trim().toUpperCase();
+      const currentMemberName = member.nama || member.nrp;
 
-    // 7. Lakukan batch insert massal secara bertahap (chunking per 100 baris)
-    const BATCH_SIZE = 100;
-    let totalInserted = 0;
-    for (let i = 0; i < newTransactions.length; i += BATCH_SIZE) {
-      const chunk = newTransactions.slice(i, i + BATCH_SIZE);
-      const { error: insTxErr } = await supabase
-        .from('deposit_transactions')
-        .insert(chunk);
+      if (onProgress) {
+        const memberIdx = idx + 1;
+        const percent = Math.round((idx / totalMemberCount) * 100);
+        onProgress({
+          processed: totalTransactions,
+          total: validMutations.length,
+          percent,
+          currentMember: currentMemberName,
+          memberIndex: memberIdx,
+          totalMembers: totalMemberCount,
+          message: `Memproses anggota ${memberIdx} dari ${totalMemberCount}...`
+        });
+      }
 
-      if (insTxErr) {
-        errors.push(`Gagal menyimpan transaksi batch baris ${i + 1}-${i + chunk.length}: ${insTxErr.message}`);
-      } else {
-        totalInserted += chunk.length;
+      try {
+        let depositAccountId = memberIdToDepositId.get(member.id);
+        if (!depositAccountId) {
+          // Auto-provision via upsert jika belum terdaftar di map (menjamin akun Setyawan Pratama dkk selalu tersedia)
+          const { data: upsertData } = await supabase
+            .from('member_deposits')
+            .upsert(
+              {
+                member_id: member.id,
+                deposit_type_id: targetType.id,
+                is_terminated: false,
+                status: 'active'
+              },
+              { onConflict: 'member_id,deposit_type_id' }
+            )
+            .select('id')
+            .maybeSingle();
+
+          if (upsertData?.id) {
+            depositAccountId = upsertData.id;
+          } else {
+            const { data: refetched } = await supabase
+              .from('member_deposits')
+              .select('id')
+              .eq('member_id', member.id)
+              .eq('deposit_type_id', targetType.id)
+              .maybeSingle();
+            depositAccountId = refetched?.id;
+          }
+
+          if (depositAccountId) {
+            memberIdToDepositId.set(member.id, depositAccountId);
+          }
+        }
+
+        if (!depositAccountId) {
+          throw new Error(`Akun rekening simpanan tidak ditemukan untuk anggota ${currentMemberName}`);
+        }
+
+        // a. Bersihkan transaksi rekonsiliasi lama & impor matriks milik anggota tersebut:
+        await supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', depositAccountId)
+          .ilike('description', '%matriks%');
+
+        // b. Hapus mutasi lama yang memuat deskripsi 'Saldo Awal' agar tidak menumpuk:
+        await supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', depositAccountId)
+          .ilike('description', '%saldo awal%');
+
+        // c. Hapus transaksi saldo awal migrasi gelondongan (for_month IS NULL) yang deskripsinya memuat kata 'migrasi'
+        await supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', depositAccountId)
+          .is('for_month', null)
+          .ilike('description', '%migrasi%');
+
+        // d. Kumpulkan mutasi bulanan milik anggota ini yang memiliki amount > 0
+        const memberMutations = validMutations.filter(
+          m => String(m.nrp || '').trim().toUpperCase() === memberNrpUpper
+        );
+
+        const memberTransactions = memberMutations.map(m => ({
+          member_deposit_id: depositAccountId,
+          transaction_type: 'deposit',
+          amount: m.amount,
+          for_month: m.month,
+          for_year: m.year,
+          description: 'Import Matriks Buku Besar Excel'
+        }));
+
+        // e. Chunking Massal Transaksi Baru (Maksimal 100 Baris per Request)
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < memberTransactions.length; i += CHUNK_SIZE) {
+          const batch = memberTransactions.slice(i, i + CHUNK_SIZE);
+          const { error: insErr } = await supabase
+            .from('deposit_transactions')
+            .insert(batch);
+          if (insErr) {
+            console.error(`Gagal menyimpan batch transaksi ${i} - ${i + CHUNK_SIZE} (${currentMemberName}):`, insErr);
+            throw insErr;
+          }
+        }
+
+        totalTransactions += memberTransactions.length;
+        totalSuccess++;
+      } catch (memberErr: any) {
+        totalFailed++;
+        const errMsg = `Gagal memproses anggota ${currentMemberName} (${member.nrp}): ${memberErr?.message || String(memberErr)}`;
+        console.error(errMsg, memberErr);
+        errorList.push(errMsg);
       }
 
       if (onProgress) {
-        const processed = Math.min(newTransactions.length, i + chunk.length);
-        const percent = Math.round((processed / newTransactions.length) * 100);
-        onProgress({ processed, total: newTransactions.length, percent });
+        const memberIdx = idx + 1;
+        const percent = Math.round((memberIdx / totalMemberCount) * 100);
+        onProgress({
+          processed: totalTransactions,
+          total: validMutations.length,
+          percent,
+          currentMember: currentMemberName,
+          memberIndex: memberIdx,
+          totalMembers: totalMemberCount,
+          message: `Memproses anggota ${memberIdx} dari ${totalMemberCount}...`
+        });
       }
     }
 
-    const hasFatalErrors = errors.some(e => e.startsWith('Gagal menyimpan transaksi batch'));
     return {
-      success: !hasFatalErrors && totalInserted > 0,
-      totalMembers: matchedMemberIds.length,
-      totalTransactions: totalInserted,
-      errors: errors.length > 0 ? errors : undefined
+      success: totalSuccess > 0,
+      totalMembers: totalMemberCount,
+      totalTransactions,
+      totalSuccess,
+      totalFailed,
+      errorList,
+      errors: errorList.length > 0 ? errorList : undefined
     };
   } catch (err: any) {
+    const fatalMsg = 'Terjadi kesalahan saat memproses impor mutasi: ' + (err?.message || String(err));
     return {
       success: false,
       totalMembers: 0,
       totalTransactions: 0,
-      errors: ['Terjadi kesalahan saat memproses impor mutasi: ' + (err?.message || String(err))]
+      totalSuccess: 0,
+      totalFailed: 0,
+      errorList: [fatalMsg],
+      errors: [fatalMsg]
     };
   }
 }

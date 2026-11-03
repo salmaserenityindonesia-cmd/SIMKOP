@@ -50,6 +50,23 @@ const NON_MONTH_KEYWORDS = [
 ];
 
 /**
+ * Ekstraksi nilai string dari sel Excel secara aman (string murni, number, formula result, richText)
+ */
+export function extractCellText(val: any): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number') return String(val).trim();
+  if (typeof val === 'object') {
+    if ('result' in val) return extractCellText(val.result);
+    if ('text' in val && typeof val.text === 'string') return val.text.trim();
+    if ('richText' in val && Array.isArray(val.richText)) {
+      return val.richText.map((t: any) => t.text || '').join('').trim();
+    }
+  }
+  return String(val).trim();
+}
+
+/**
  * Parsing teks header kolom menjadi { month, year } jika sesuai format bulan/tahun
  */
 export function parseMonthYearHeader(headerVal: any): { month: number; year: number } | null {
@@ -241,9 +258,7 @@ export async function parseSavingsMatrixExcel(
 
       for (let c = 1; c <= cellCount; c++) {
         const val = row.getCell(c).value;
-        let str = '';
-        if (typeof val === 'string') str = val.trim();
-        else if (typeof val === 'object' && val && 'text' in val) str = String(val.text).trim();
+        const str = extractCellText(val);
 
         if (str.toUpperCase() === 'NRP' || str.toUpperCase().startsWith('NRP')) {
           headerRowIndex = r;
@@ -278,7 +293,7 @@ export async function parseSavingsMatrixExcel(
         if (typeof cellVal === 'string') label = cellVal.trim();
         else if (typeof cellVal === 'object' && cellVal && 'text' in cellVal) label = String(cellVal.text).trim();
         else if (cellVal instanceof Date) label = `${parsed.month}/${parsed.year}`;
-        else label = String(cellVal ?? '');
+        else label = extractCellText(cellVal);
 
         detectedMonths.push({
           colIndex: c,
@@ -305,17 +320,12 @@ export async function parseSavingsMatrixExcel(
 
     // Iterasi baris data (mulai dari baris setelah header)
     let totalRows = 0;
-    const totalRowCount = worksheet.rowCount;
+    const totalRowCount = Math.max(worksheet.rowCount || 0, worksheet.actualRowCount || 0);
 
     for (let r = headerRowIndex + 1; r <= totalRowCount; r++) {
       const row = worksheet.getRow(r);
       const nrpCellVal = row.getCell(nrpColIndex).value;
-
-      let rawNrp = nrpCellVal;
-      if (rawNrp && typeof rawNrp === 'object' && 'text' in rawNrp) {
-        rawNrp = rawNrp.text;
-      }
-      const nrp = String(rawNrp ?? '').trim();
+      const nrp = extractCellText(nrpCellVal);
 
       // Lewati baris kosong atau baris ringkasan/header duplikat
       if (!nrp || nrp === '-' || nrp.toUpperCase() === 'NRP' || nrp.toLowerCase().startsWith('total')) {

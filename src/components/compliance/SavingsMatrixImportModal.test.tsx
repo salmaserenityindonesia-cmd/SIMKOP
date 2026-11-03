@@ -121,6 +121,29 @@ describe('SavingsMatrixImportModal Component & Import Flow', () => {
       expect(html).toContain('Memproses 50 dari 100 mutasi...');
       expect(html).toContain('Menyinkronkan...');
     });
+
+    it('renders dynamic member progress (Memproses anggota X dari Y...) when memberIndex is provided', () => {
+      const html = renderToStaticMarkup(
+        <SavingsMatrixImportModal
+          isOpen={true}
+          onClose={vi.fn()}
+          onSuccess={vi.fn()}
+          initialIsImporting={true}
+          initialProgress={{
+            processed: 60,
+            total: 120,
+            percent: 50,
+            memberIndex: 14,
+            totalMembers: 28,
+            currentMember: 'Oki Sanjaya'
+          }}
+        />
+      );
+
+      expect(html).toContain('Sinkronisasi Buku Besar...');
+      expect(html).toContain('50%');
+      expect(html).toContain('Memproses anggota 14 dari 28...');
+    });
   });
 
   describe('Wrapper & Service Integration Tests', () => {

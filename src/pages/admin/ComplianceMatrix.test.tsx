@@ -854,6 +854,74 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         'success'
       );
     });
+
+    it('handleImportMatrixSuccess displays summary toast when importResult has partial failures', async () => {
+      const setLoading = vi.fn();
+      const setData = vi.fn();
+      const setTargets = vi.fn();
+      const setTotalSetoran = vi.fn();
+      const setShowImportModal = vi.fn();
+      const feedback = { showToast: vi.fn() };
+
+      await handleImportMatrixSuccess(
+        '2026',
+        setLoading,
+        setData,
+        setTargets,
+        setTotalSetoran,
+        setShowImportModal,
+        feedback,
+        {
+          success: true,
+          totalMembers: 28,
+          totalTransactions: 1500,
+          totalSuccess: 26,
+          totalFailed: 2,
+          errorList: ['Gagal Oki', 'Gagal Prabowo']
+        }
+      );
+
+      expect(getComplianceMatrixData).toHaveBeenCalledWith(2026);
+      expect(setShowImportModal).toHaveBeenCalledWith(false);
+      expect(feedback.showToast).toHaveBeenCalledWith(
+        'Impor selesai: 26 anggota berhasil, 2 anggota gagal',
+        'warning'
+      );
+    });
+
+    it('handleImportMatrixSuccess displays summary toast when importResult is completely successful', async () => {
+      const setLoading = vi.fn();
+      const setData = vi.fn();
+      const setTargets = vi.fn();
+      const setTotalSetoran = vi.fn();
+      const setShowImportModal = vi.fn();
+      const feedback = { showToast: vi.fn() };
+
+      await handleImportMatrixSuccess(
+        '2026',
+        setLoading,
+        setData,
+        setTargets,
+        setTotalSetoran,
+        setShowImportModal,
+        feedback,
+        {
+          success: true,
+          totalMembers: 28,
+          totalTransactions: 1680,
+          totalSuccess: 28,
+          totalFailed: 0,
+          errorList: []
+        }
+      );
+
+      expect(getComplianceMatrixData).toHaveBeenCalledWith(2026);
+      expect(setShowImportModal).toHaveBeenCalledWith(false);
+      expect(feedback.showToast).toHaveBeenCalledWith(
+        'Buku besar berhasil disinkronkan: 28 anggota berhasil (1680 mutasi)',
+        'success'
+      );
+    });
   });
 
   describe('Member Real Cash Net Savings Card Display', () => {

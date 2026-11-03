@@ -4,6 +4,7 @@ import {
   getComplianceMatrixData,
   matchDepositType,
   importSavingsMatrixLedger,
+  fetchAllPaged,
   DepositTypeItem,
   SavingsSubItem,
   MonthSavingsCell,
@@ -909,6 +910,37 @@ describe('complianceService - importSavingsMatrixLedger', () => {
     { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Hari Raya' },
   ];
 
+  const createDeleteChain = (onDelete?: (record: any) => void) => {
+    const callRecord: any = {};
+    const chain: any = {
+      eq: vi.fn().mockImplementation((col: string, val: any) => {
+        callRecord.eqCol = col;
+        callRecord.eqVal = val;
+        return chain;
+      }),
+      ilike: vi.fn().mockImplementation((col: string, val: any) => {
+        callRecord.ilikeCol = col;
+        callRecord.ilikeVal = val;
+        return chain;
+      }),
+      is: vi.fn().mockImplementation((col: string, val: any) => {
+        callRecord.isCol = col;
+        callRecord.isVal = val;
+        return chain;
+      }),
+      in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+        callRecord.inCol = col;
+        callRecord.inVal = ids;
+        return chain;
+      }),
+      then: (resolve: any) => {
+        if (onDelete) onDelete({ ...callRecord });
+        return Promise.resolve({ error: null }).then(resolve);
+      },
+    };
+    return chain;
+  };
+
   it('harus mengembalikan sukses langsung jika daftar mutasi kosong', async () => {
     const res = await importSavingsMatrixLedger('WAJIB', []);
     expect(res.success).toBe(true);
@@ -933,7 +965,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       { id: 'tx-keep', member_deposit_id: 'md-1', description: 'Setoran Kasir POS', for_month: 2 },
     ];
 
-    const deletedIds: string[][] = [];
+    const deleteCalls: Array<{ eqVal?: any; ilikeVal?: any; isVal?: any }> = [];
     const insertedTxs: any[][] = [];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -963,12 +995,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
           select: vi.fn().mockReturnValue({
             in: vi.fn().mockResolvedValue({ data: mockExistingTxs, error: null }),
           }),
-          delete: vi.fn().mockReturnValue({
-            in: vi.fn().mockImplementation((_col: string, ids: string[]) => {
-              deletedIds.push(ids);
-              return Promise.resolve({ error: null });
-            }),
-          }),
+          delete: vi.fn().mockImplementation(() => createDeleteChain((rec) => deleteCalls.push(rec))),
           insert: vi.fn().mockImplementation((batch: any[]) => {
             insertedTxs.push(batch);
             return Promise.resolve({ error: null });
@@ -990,13 +1017,18 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(result.success).toBe(true);
       expect(result.totalMembers).toBe(2);
       expect(result.totalTransactions).toBe(4);
+      expect(result.totalSuccess).toBe(2);
+      expect(result.totalFailed).toBe(0);
 
-      // Verifikasi penghapusan transaksi lama (hanya tx-old-1 dan tx-old-2 yang dihapus)
-      expect(deletedIds.flat()).toEqual(['tx-old-1', 'tx-old-2']);
+      // Verifikasi penghapusan transaksi lama per anggota (matriks & migrasi)
+      expect(deleteCalls.length).toBeGreaterThanOrEqual(4);
+      expect(deleteCalls.some(c => c.eqVal === 'md-1' && c.ilikeVal === '%matriks%')).toBe(true);
+      expect(deleteCalls.some(c => c.eqVal === 'md-2' && c.ilikeVal === '%matriks%')).toBe(true);
+      expect(deleteCalls.some(c => c.eqVal === 'md-1' && c.ilikeVal === '%migrasi%')).toBe(true);
+      expect(deleteCalls.some(c => c.eqVal === 'md-2' && c.ilikeVal === '%migrasi%')).toBe(true);
 
       // Verifikasi mutasi baru tersimpan dengan deskripsi benar
-      expect(insertedTxs).toHaveLength(1);
-      expect(insertedTxs[0]).toHaveLength(4);
+      expect(insertedTxs.flat()).toHaveLength(4);
       expect(insertedTxs[0][0]).toMatchObject({
         member_deposit_id: 'md-1',
         amount: 150000,
@@ -1045,9 +1077,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({ data: [], error: null }),
             }),
-            delete: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ error: null }),
-            }),
+            delete: vi.fn().mockImplementation(() => createDeleteChain()),
             insert: vi.fn().mockImplementation((batch: any[]) => {
               insertedTxs.push(batch);
               return Promise.resolve({ error: null });
@@ -1070,6 +1100,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(createdDeposits[0]).toMatchObject({
         member_id: 'm-new',
         deposit_type_id: 'dt-wajib',
+        is_terminated: false,
       });
       expect(insertedTxs[0][0].member_deposit_id).toBe('md-new-1');
     });
@@ -1106,9 +1137,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({ data: [], error: null }),
             }),
-            delete: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ error: null }),
-            }),
+            delete: vi.fn().mockImplementation(() => createDeleteChain()),
             insert: vi.fn().mockImplementation((batch: any[]) => {
               batchCalls.push(batch);
               return Promise.resolve({ error: null });
@@ -1136,6 +1165,199 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(batchCalls).toHaveLength(2); // 100 + 50
       expect(batchCalls[0]).toHaveLength(100);
       expect(batchCalls[1]).toHaveLength(50);
+    });
+
+    it('harus mengisolasi kegagalan per anggota dengan try-catch tanpa menghentikan anggota lain', async () => {
+      const mockMembers = [
+        { id: 'm-fail', nrp: '1001', nama: 'Oki Sanjaya' },
+        { id: 'm-ok', nrp: '1002', nama: 'Prabowo Hadi' },
+      ];
+      const mockDeposits = [
+        { id: 'md-fail', member_id: 'm-fail', deposit_type_id: 'dt-belanja' },
+        { id: 'md-ok', member_id: 'm-ok', deposit_type_id: 'dt-belanja' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: mockDeposits, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockImplementation(() => createDeleteChain()),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              if (batch[0]?.member_deposit_id === 'md-fail') {
+                return Promise.resolve({ error: new Error('PostgREST payload constraint error') });
+              }
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const mutations = [
+        { nrp: '1001', year: 2024, month: 1, amount: 50000 },
+        { nrp: '1002', year: 2024, month: 1, amount: 50000 },
+      ];
+
+      const progressLogs: any[] = [];
+      const result = await importSavingsMatrixLedger('BELANJA', mutations, (p) => progressLogs.push(p));
+
+      // Partial success: 1 berhasil, 1 gagal
+      expect(result.success).toBe(true);
+      expect(result.totalMembers).toBe(2);
+      expect(result.totalSuccess).toBe(1);
+      expect(result.totalFailed).toBe(1);
+      expect(result.totalTransactions).toBe(1);
+      expect(result.errorList).toHaveLength(1);
+      expect(result.errorList[0]).toContain('Oki Sanjaya');
+
+      // Verifikasi progress callback memuat memberIndex dan totalMembers
+      expect(progressLogs.length).toBeGreaterThanOrEqual(2);
+      expect(progressLogs.some(p => p.message && p.message.includes('Memproses anggota'))).toBe(true);
+    });
+
+    it('harus mampu memproses 29 anggota dengan 1.112 transaksi tanpa terputus pada kuota 1000 (Setyawan Pratama dkk)', async () => {
+      // Buat 29 anggota (NRP 1001 s/d 1029)
+      const mock29Members = Array.from({ length: 29 }, (_, i) => ({
+        id: `m-${i + 1}`,
+        nrp: `NRP-${1000 + i + 1}`,
+        nama: i === 24 ? 'Setyawan Pratama' : i === 25 ? 'Taufik Santoso' : i === 26 ? 'Wahyu Wibowo' : `Anggota ${i + 1}`,
+      }));
+
+      const mock29Deposits = mock29Members.map((m, i) => ({
+        id: `md-${i + 1}`,
+        member_id: m.id,
+        deposit_type_id: 'dt-wajib',
+      }));
+
+      // Buat 1.112 transaksi terbagi di 29 anggota
+      const mutations: any[] = [];
+      let txCount = 0;
+      for (let mIdx = 0; mIdx < 29; mIdx++) {
+        // Anggota 0-23 masing-masing ~40 mutasi (960 total), anggota 24-28 sisa mutasi (152 total) -> total 1.112
+        const countForMember = mIdx < 24 ? 40 : (mIdx === 28 ? 32 : 30);
+        for (let j = 0; j < countForMember; j++) {
+          txCount++;
+          mutations.push({
+            nrp: mock29Members[mIdx].nrp,
+            year: 2021 + Math.floor(j / 12),
+            month: (j % 12) + 1,
+            amount: 200000,
+          });
+        }
+      }
+      expect(mutations.length).toBe(1112);
+
+      const batchInsertSizes: number[] = [];
+      const deletedDescriptions: string[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mock29Members, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: mock29Deposits, error: null }),
+              }),
+            }),
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'md-upserted' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockImplementation(() =>
+              createDeleteChain((rec) => {
+                if (rec.ilikeVal) deletedDescriptions.push(rec.ilikeVal);
+              })
+            ),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              batchInsertSizes.push(batch.length);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+
+      expect(result.success).toBe(true);
+      expect(result.totalMembers).toBe(29);
+      expect(result.totalTransactions).toBe(1112);
+      expect(result.totalSuccess).toBe(29);
+      expect(result.totalFailed).toBe(0);
+
+      // Verifikasi seluruh batch insert berukuran <= 100 baris
+      expect(batchInsertSizes.length).toBeGreaterThan(0);
+      batchInsertSizes.forEach((size) => {
+        expect(size).toBeLessThanOrEqual(100);
+      });
+      const totalInsertedRows = batchInsertSizes.reduce((a, b) => a + b, 0);
+      expect(totalInsertedRows).toBe(1112);
+
+      // Verifikasi pembersihan 'Saldo Awal' dan 'matriks' terpanggil
+      expect(deletedDescriptions).toContain('%saldo awal%');
+      expect(deletedDescriptions).toContain('%matriks%');
+    });
+
+    it('fetchAllPaged harus mengambil seluruh data multi-halaman melewati batas 1.000 PostgREST', async () => {
+      // Simulasikan tabel deposit_transactions dengan 1.112 baris
+      const fake1112Rows = Array.from({ length: 1112 }, (_, i) => ({ id: `row-${i + 1}` }));
+      const requestedRanges: Array<{ from: number; to: number }> = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockImplementation((from: number, to: number) => {
+                requestedRanges.push({ from, to });
+                const slice = fake1112Rows.slice(from, to + 1);
+                return Promise.resolve({ data: slice, error: null });
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const { data, error } = await fetchAllPaged('deposit_transactions', 'id');
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(1112);
+      expect(requestedRanges).toEqual([
+        { from: 0, to: 999 },
+        { from: 1000, to: 1999 },
+      ]);
     });
 
     it('harus menangani kasus error jika tipe simpanan tidak ditemukan', async () => {
