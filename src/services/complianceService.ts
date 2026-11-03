@@ -308,6 +308,13 @@ export interface ComplianceMonthData {
   lebaran?: SavingsSubItem;
 }
 
+export interface MemberNetSavings {
+  wajib: number;
+  belanja: number;
+  lebaran: number;
+  total: number;
+}
+
 export interface ComplianceMatrixRow {
   member_id: string;
   nrp: string;
@@ -318,6 +325,7 @@ export interface ComplianceMatrixRow {
   months: (ComplianceMonthData | null)[];
   created_at?: string;
   tgl_awal_anggota?: string;
+  netSavings?: MemberNetSavings;
 }
 
 export interface ComplianceMatrixResult {
@@ -520,6 +528,49 @@ export async function getComplianceMatrixData(
     });
   }
 
+  // 3b. Query view_member_net_savings untuk posisi saldo kas riil netto
+  const netSavingsByMember: Record<string, MemberNetSavings> = {};
+  try {
+    const { data: viewNetSavings, error: viewError } = await supabase
+      .from('view_member_net_savings')
+      .select('member_id, deposit_type_code, deposit_type_name, net_cash_balance');
+
+    if (!viewError && Array.isArray(viewNetSavings) && viewNetSavings.length > 0) {
+      viewNetSavings.forEach((row: any) => {
+        const mId = row.member_id;
+        if (!mId) return;
+        if (!netSavingsByMember[mId]) {
+          netSavingsByMember[mId] = { wajib: 0, belanja: 0, lebaran: 0, total: 0 };
+        }
+
+        const code = (row.deposit_type_code || '').toUpperCase();
+        const name = (row.deposit_type_name || '').toLowerCase();
+        const netAmt = Number(row.net_cash_balance) || 0;
+
+        if (code === 'WAJIB' || code === 'SW' || name.includes('wajib')) {
+          netSavingsByMember[mId].wajib += netAmt;
+        } else if (code === 'BELANJA' || code === 'SB' || name.includes('belanja')) {
+          netSavingsByMember[mId].belanja += netAmt;
+        } else if (
+          code === 'LEBARAN' ||
+          code === 'SL' ||
+          code === 'SHR' ||
+          name.includes('lebaran') ||
+          name.includes('hari raya')
+        ) {
+          netSavingsByMember[mId].lebaran += netAmt;
+        }
+      });
+
+      Object.keys(netSavingsByMember).forEach((mId) => {
+        const s = netSavingsByMember[mId];
+        s.total = s.wajib + s.belanja + s.lebaran;
+      });
+    }
+  } catch (err) {
+    // Fallback resilien ke kalkulasi log transaksi jika view belum tersedia
+  }
+
   // Helper untuk mengidentifikasi transaksi gelondongan migrasi / saldo awal
   const isBulkMigrationTx = (tx: any): boolean => {
     const desc = (tx.description || '').toLowerCase();
@@ -720,6 +771,39 @@ export async function getComplianceMatrixData(
 
     const compliance = expectedCount > 0 ? Math.round((paidCount / expectedCount) * 100) : 100;
 
+    // Hitung posisi saldo kas riil netto (dari view atau fallback dari log transaksi)
+    let netSavings = netSavingsByMember[m.id];
+    if (!netSavings) {
+      const memberTxList = memberTxs[m.id] || [];
+      let fallbackWajib = 0;
+      let fallbackBelanja = 0;
+      let fallbackLebaran = 0;
+
+      for (const t of memberTxList) {
+        const isWajib = wajibTypeIds.has(t.tId) || t.tId === wajibId;
+        const isBelanja = belanjaTypeIds.has(t.tId) || t.tId === belanjaId;
+        const isLebaran = lebaranTypeIds.has(t.tId) || t.tId === lebaranId;
+
+        const amt = Math.abs(t.amt);
+        if (t.type === 'deposit') {
+          if (isWajib) fallbackWajib += amt;
+          if (isBelanja) fallbackBelanja += amt;
+          if (isLebaran) fallbackLebaran += amt;
+        } else if (t.type === 'withdrawal') {
+          if (isWajib) fallbackWajib -= amt;
+          if (isBelanja) fallbackBelanja -= amt;
+          if (isLebaran) fallbackLebaran -= amt;
+        }
+      }
+
+      netSavings = {
+        wajib: fallbackWajib,
+        belanja: fallbackBelanja,
+        lebaran: fallbackLebaran,
+        total: fallbackWajib + fallbackBelanja + fallbackLebaran,
+      };
+    }
+
     return {
       member_id: m.id,
       nrp: m.nrp,
@@ -730,6 +814,7 @@ export async function getComplianceMatrixData(
       months: monthsData,
       created_at: m.created_at,
       tgl_awal_anggota: m.tgl_awal_anggota || m.created_at,
+      netSavings,
     };
   });
 

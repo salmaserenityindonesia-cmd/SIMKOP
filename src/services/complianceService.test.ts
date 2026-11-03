@@ -7,6 +7,7 @@ import {
   DepositTypeItem,
   SavingsSubItem,
   MonthSavingsCell,
+  MemberNetSavings,
 } from './complianceService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -1152,6 +1153,218 @@ describe('complianceService - importSavingsMatrixLedger', () => {
 
       expect(result.success).toBe(false);
       expect(result.errors?.[0]).toContain('Gagal memuat tipe simpanan');
+    });
+  });
+
+  describe('getComplianceMatrixData - Net Savings Aggregation (real cash position)', () => {
+    const mockDTypes = [
+      { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'POKOK', default_amount: 100000 },
+      { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'WAJIB', default_amount: 25000 },
+      { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'BELANJA', default_amount: 50000 },
+      { id: 'dt-lebaran', name: 'Simpanan Hari Raya', code: 'LEBARAN', default_amount: 50000 },
+    ];
+
+    it('mengembalikan properti netSavings pada setiap baris anggota langsung dari view_member_net_savings', async () => {
+      const mockMembers = [
+        {
+          id: 'm-net-1',
+          nrp: 'NRP-NET-1',
+          nama: 'Kapten Haryanto',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          created_at: '2024-01-01T00:00:00Z',
+        },
+      ];
+
+      const mockViewRows = [
+        { member_id: 'm-net-1', deposit_type_code: 'WAJIB', deposit_type_name: 'Simpanan Wajib', net_cash_balance: 300000 },
+        { member_id: 'm-net-1', deposit_type_code: 'BELANJA', deposit_type_name: 'Simpanan Belanja', net_cash_balance: 150000 },
+        { member_id: 'm-net-1', deposit_type_code: 'LEBARAN', deposit_type_name: 'Simpanan Hari Raya', net_cash_balance: 100000 },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'view_member_net_savings') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockViewRows, error: null }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: [], error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0];
+      expect(row.nama).toBe('Kapten Haryanto');
+      expect(row.netSavings).toBeDefined();
+      expect(row.netSavings).toEqual({
+        wajib: 300000,
+        belanja: 150000,
+        lebaran: 100000,
+        total: 550000,
+      });
+    });
+
+    it('menghitung fallback netSavings secara tepat saat view tidak tersedia jika anggota memiliki setoran dan penarikan belanja', async () => {
+      const mockMembers = [
+        {
+          id: 'm-net-2',
+          nrp: 'NRP-NET-2',
+          nama: 'Sertu Bambang',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          created_at: '2024-01-01T00:00:00Z',
+        },
+      ];
+
+      // Skenario transaksi:
+      // - Wajib: setoran 250.000
+      // - Belanja: setoran 500.000, penarikan (dipakai belanja POS) 200.000 -> netto: 300.000
+      // - Lebaran: setoran 300.000, penarikan 100.000 -> netto: 200.000
+      // - Total kas riil = 250.000 + 300.000 + 200.000 = 750.000
+      const transactions = [
+        {
+          id: 'tx-w-1',
+          amount: 250000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 1,
+          member_deposits: { member_id: 'm-net-2', deposit_type_id: 'dt-wajib' },
+        },
+        {
+          id: 'tx-b-dep',
+          amount: 500000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 1,
+          member_deposits: { member_id: 'm-net-2', deposit_type_id: 'dt-belanja' },
+        },
+        {
+          id: 'tx-b-wd',
+          amount: 200000,
+          transaction_type: 'withdrawal',
+          for_year: 2025,
+          for_month: 2,
+          description: 'Belanja di POS Kasir',
+          member_deposits: { member_id: 'm-net-2', deposit_type_id: 'dt-belanja' },
+        },
+        {
+          id: 'tx-l-dep',
+          amount: 300000,
+          transaction_type: 'deposit',
+          for_year: 2025,
+          for_month: 3,
+          member_deposits: { member_id: 'm-net-2', deposit_type_id: 'dt-lebaran' },
+        },
+        {
+          id: 'tx-l-wd',
+          amount: 100000,
+          transaction_type: 'withdrawal',
+          for_year: 2025,
+          for_month: 4,
+          description: 'Pencairan Simpanan Lebaran',
+          member_deposits: { member_id: 'm-net-2', deposit_type_id: 'dt-lebaran' },
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'view_member_net_savings') {
+          // Simulasi view tidak tersedia / kosong sehingga memaksa fallback transaksi
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: transactions, error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0];
+      expect(row.nama).toBe('Sertu Bambang');
+      expect(row.netSavings).toBeDefined();
+      expect(row.netSavings?.wajib).toBe(250000);
+      expect(row.netSavings?.belanja).toBe(300000);
+      expect(row.netSavings?.lebaran).toBe(200000);
+      expect(row.netSavings?.total).toBe(750000);
+    });
+
+    it('mengembalikan netSavings 0 untuk anggota baru tanpa transaksi sama sekali', async () => {
+      const mockMembers = [
+        {
+          id: 'm-new-zero',
+          nrp: 'NRP-ZERO',
+          nama: 'Prada Baru',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'view_member_net_savings') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: [], error: null })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0];
+      expect(row.netSavings).toEqual({
+        wajib: 0,
+        belanja: 0,
+        lebaran: 0,
+        total: 0,
+      });
     });
   });
 
