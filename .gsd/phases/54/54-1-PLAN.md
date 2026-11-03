@@ -86,3 +86,4 @@ Membangun PostgreSQL View `view_member_net_savings` pada migrasi database Supaba
     Lapisan service kepatuhan kini mengekspos saldo kas bersih riil anggota secara terstruktur.
   </done>
 </task>
+

@@ -1,16 +1,16 @@
 ## Current Position
 - **Phase**: 54 (Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan)
-- **Task**: Ready for execution
-- **Status**: ⏳ Ready for Execution (3 plans generated)
+- **Task**: Plan 54.1 completed (Database View & Service Layer Net Savings Aggregation)
+- **Status**: 🔄 In Progress (1/3 plans complete)
 
 ## Last Session Summary
-Phase 54 planned and structured across 3 atomic execution plans:
-- Plan 54.1: Database View & Service Layer Net Savings Aggregation. Creates `supabase/migrations/033_create_member_net_savings_view.sql` with PostgreSQL view `view_member_net_savings` aggregating deposits and withdrawals per member and deposit type. Enriches `getComplianceMatrixData` in `src/services/complianceService.ts` with `netSavings` (`wajib`, `belanja`, `lebaran`, `total`), backed by unit tests in `src/services/complianceService.test.ts`.
-- Plan 54.2: Render Real Cash Balance in Member Information Column. Renders a compact, transparent "Kas Riil Anggota" summary card in `src/pages/admin/ComplianceMatrix.tsx` directly under the member name and Pokok status badge. Updates component tests in `src/pages/admin/ComplianceMatrix.test.tsx`.
-- Plan 54.3: Static Verification, Full Vitest Suite & Production Build. Runs TypeScript static check (`tsc --noEmit`), full Vitest suite (41+ test files), and Vite production build (`npm run build`).
+- Plan 54.1 executed and verified:
+  - Task 1: Built `supabase/migrations/033_create_member_net_savings_view.sql` with PostgreSQL view `public.view_member_net_savings` aggregating deposits and withdrawals per member and deposit type. Commit: `551c3077`.
+  - Task 2: Extended `complianceService.ts` with `MemberNetSavings` interface and enriched `getComplianceMatrixData` to retrieve real cash balances with resilient client-side fallback. Added unit tests in `complianceService.test.ts` (all 27 tests passing). Commit: `6adc8947`.
+  - Summary artifact created at `.gsd/phases/54/54-1-SUMMARY.md`.
 
 ## Next Steps
-Execute Phase 54 starting with Plan 54.1 (`/execute 54.1` or sequential execution).
+Proceed to Plan 54.2: Render Real Cash Balance in Member Information Column (`src/pages/admin/ComplianceMatrix.tsx`, `src/pages/admin/ComplianceMatrix.test.tsx`).
 
 ## Blockers
 - None.

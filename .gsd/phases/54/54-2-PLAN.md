@@ -93,3 +93,4 @@ Mengintegrasikan tampilan kartu ringkas "Kas Riil Anggota" pada kolom pertama ("
     Pengujian komponen memvalidasi tampilan saldo kas riil secara menyeluruh.
   </done>
 </task>
+

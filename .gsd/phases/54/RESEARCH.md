@@ -87,3 +87,4 @@ Fase 54 menyelesaikan permasalahan ini dengan:
   - Baris Lebaran: `Rp {lebaran.toLocaleString('id-ID')}`
   - Tipografi: Font monospace (`font-mono text-[11px]`), rapi, batas tepi atas halus (`border-t border-slate-100 mt-2 pt-2`).
 - Kolom tabel tetap stabil dengan lebar `w-[280px]` yang sudah mencukupi untuk menampung kartu ringkas tanpa menyebabkan pergeseran horizontal sel bulan.
+

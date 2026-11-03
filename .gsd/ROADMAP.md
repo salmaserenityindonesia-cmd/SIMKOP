@@ -954,7 +954,7 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 53
 
 **Plans:**
-- [ ] Plan 54.1: Database View & Service Layer Net Savings Aggregation
+- [x] Plan 54.1: Database View & Service Layer Net Savings Aggregation
 - [ ] Plan 54.2: Render Real Cash Balance in Member Information Column
 - [ ] Plan 54.3: Static Verification, Full Vitest Suite & Production Build
 
@@ -1072,7 +1072,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 51 | Bulk Auto-Reconcile Matriks Simpanan | ✅ | 3/3 | 100% |
 | 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
 | 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ✅ | 4/4 | 100% |
-| 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | ⏳ | 0/3 | 0% |
+| 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | 🔄 | 1/3 | 33% |
 
 ---
 
