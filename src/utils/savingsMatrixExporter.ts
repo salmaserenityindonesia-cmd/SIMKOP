@@ -124,7 +124,14 @@ export async function generateSavingsMatrixWorkbook(
     try {
       const selectBuilder: any = supabase
         .from('anggota')
-        .select('id, nrp, nama, created_at, tgl_awal_anggota, status, membership_status');
+        .select(`
+          id,
+          nrp,
+          nama,
+          created_at,
+          status,
+          membership_status
+        `);
 
       let resp: any;
       if (typeof selectBuilder.order === 'function') {
@@ -133,15 +140,22 @@ export async function generateSavingsMatrixWorkbook(
         resp = await selectBuilder;
       }
 
+      if (resp?.error) {
+        throw resp.error;
+      }
+
       const allMembers = resp?.data || [];
-      members = allMembers.filter((m: any) => {
-        const st = (m.status || 'aktif').toLowerCase();
-        const mst = (m.membership_status || 'ACTIVE').toUpperCase();
-        return st !== 'nonaktif' && mst !== 'RESIGNED';
+      const filtered = allMembers.filter((m: any) => {
+        return (
+          m.status?.toLowerCase() === 'aktif' ||
+          m.membership_status?.toUpperCase() === 'ACTIVE' ||
+          !m.status
+        );
       });
+      members = filtered.length > 0 ? filtered : allMembers;
     } catch (err) {
       console.warn('Gagal memuat anggota untuk ekspor matriks:', err);
-      members = [];
+      throw err;
     }
   }
 
@@ -333,9 +347,10 @@ export async function generateSavingsMatrixWorkbook(
     const joinDate = member.tgl_awal_anggota || member.created_at;
     const formattedJoin = formatJoinDate(joinDate);
 
-    // Cari member_deposit rekening simpanan ini
+    // Cari member_deposit rekening simpanan ini untuk anggota yang bersangkutan
     const md = memberDeposits.find((d: any) => {
-      if (d.member_id && d.member_id !== member.id) return false;
+      const depMemberId = d.member_id || d.memberId;
+      if (depMemberId && depMemberId !== member.id) return false;
       if (targetDepTypeId && d.deposit_type_id === targetDepTypeId) return true;
       const resCode = resolveDepositTypeCode(d.deposit_types);
       return resCode === depositTypeCode;

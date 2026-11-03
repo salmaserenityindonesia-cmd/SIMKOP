@@ -253,7 +253,7 @@ export default function SavingsLedgerMatrixModal({
           try {
             const { data: memberRecord } = await supabase
               .from('anggota')
-              .select('created_at, tgl_awal_anggota')
+              .select('created_at')
               .eq('id', memberId)
               .single();
             if (memberRecord) {

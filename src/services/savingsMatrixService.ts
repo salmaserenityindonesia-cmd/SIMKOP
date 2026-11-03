@@ -273,7 +273,7 @@ export async function reconcileSingleMemberDeposit(
     try {
       let memberQuery: any = supabase
         .from('anggota')
-        .select('created_at, tgl_awal_anggota');
+        .select('created_at');
 
       let memberRecord: any = null;
       if (typeof memberQuery.eq === 'function') {
@@ -598,7 +598,7 @@ export async function bulkAutoReconcileAllMembers(
   // 1. Ambil seluruh anggota aktif dari public.anggota
   let membersQuery: any = supabase
     .from('anggota')
-    .select('id, nrp, nama, created_at, tgl_awal_anggota, status, membership_status');
+    .select('id, nrp, nama, created_at, status, membership_status');
 
   let membersData: any[] = [];
   let membersError: any = null;

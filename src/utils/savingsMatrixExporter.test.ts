@@ -439,6 +439,104 @@ describe('savingsMatrixExporter', () => {
       expect(supabase.from).toHaveBeenCalledWith('deposit_types');
       expect(wb.getWorksheet('Matriks WAJIB')).toBeDefined();
     });
+
+    it('should include members even if they have no member_deposits or transactions', async () => {
+      const memberWithoutDeposits = {
+        id: 'mem-zero',
+        nrp: '1099',
+        nama: 'Zainal Baru',
+        created_at: '2024-01-01T00:00:00.000Z',
+        status: 'aktif',
+        membership_status: 'ACTIVE'
+      };
+
+      const wb = await generateSavingsMatrixWorkbook({
+        depositTypeCode: 'WAJIB',
+        startYear: 2024,
+        startMonth: 1,
+        endYear: 2024,
+        endMonth: 3,
+        members: [memberWithoutDeposits],
+        rateTiers: mockRateTiers,
+        memberDeposits: [], // kosong sama sekali
+        autoSave: false
+      });
+
+      const ws = wb.getWorksheet('Matriks WAJIB');
+      expect(ws).toBeDefined();
+
+      const row2 = ws!.getRow(2);
+      expect(row2.getCell(1).value).toBe('1099');
+      expect(row2.getCell(2).value).toBe('Zainal Baru');
+      expect(row2.getCell(3).value).toBe('2024-01-01');
+      expect(row2.getCell(4).value).toBe(0); // Saldo Acuan = 0
+
+      // Kolom 5, 6, 7 (Jan, Feb, Mar) -> null
+      expect(row2.getCell(5).value).toBeNull();
+      expect(row2.getCell(6).value).toBeNull();
+      expect(row2.getCell(7).value).toBeNull();
+
+      // Formula total alokasi, selisih, status validasi tetap terbentuk
+      const totalCell = row2.getCell(8);
+      const selisihCell = row2.getCell(9);
+      const statusCell = row2.getCell(10);
+
+      expect(totalCell.formula).toBe('SUM(E2:G2)');
+      expect(totalCell.result).toBe(0);
+      expect(selisihCell.formula).toBe('H2-D2');
+      expect(selisihCell.result).toBe(0);
+      expect(statusCell.result).toBe('SEIMBANG');
+    });
+
+    it('should inclusively include members with different casing or missing status', async () => {
+      const variedMembers = [
+        { id: 'm1', nrp: '001', nama: 'Member Aktif Lower', created_at: '2024-01-01', status: 'aktif' },
+        { id: 'm2', nrp: '002', nama: 'Member Aktif Capitalized', created_at: '2024-01-01', status: 'Aktif' },
+        { id: 'm3', nrp: '003', nama: 'Member Active Enum', created_at: '2024-01-01', membership_status: 'ACTIVE' },
+        { id: 'm4', nrp: '004', nama: 'Member No Status', created_at: '2024-01-01', status: null, membership_status: null }
+      ];
+
+      (supabase.from as any).mockImplementation((tableName: string) => {
+        if (tableName === 'anggota') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              expect(cols).not.toContain('tgl_awal_anggota');
+              return {
+                order: vi.fn().mockResolvedValue({
+                  data: variedMembers,
+                  error: null
+                })
+              };
+            })
+          };
+        }
+        if (tableName === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }], error: null }) };
+        }
+        if (tableName === 'savings_rate_tiers') {
+          return createMockBuilder(mockRateTiers);
+        }
+        return createMockBuilder([]);
+      });
+
+      const wb = await generateSavingsMatrixWorkbook({
+        depositTypeCode: 'WAJIB',
+        startYear: 2024,
+        startMonth: 1,
+        endYear: 2024,
+        endMonth: 2,
+        autoSave: false
+      });
+
+      const ws = wb.getWorksheet('Matriks WAJIB');
+      expect(ws).toBeDefined();
+      // Baris 1: Header, Baris 2..5: 4 anggota
+      expect(ws!.rowCount).toBe(5);
+      expect(ws!.getRow(2).getCell(1).value).toBe('001');
+      expect(ws!.getRow(3).getCell(1).value).toBe('002');
+      expect(ws!.getRow(4).getCell(1).value).toBe('003');
+      expect(ws!.getRow(5).getCell(1).value).toBe('004');
+    });
   });
 
   describe('exportSavingsMatrixExcel', () => {
