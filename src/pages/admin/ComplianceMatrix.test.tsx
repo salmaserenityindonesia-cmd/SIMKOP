@@ -86,6 +86,12 @@ const { mockMatrixResult } = vi.hoisted(() => ({
         pokokLunas: true,
         compliance: 100,
         balances: { w: 300000, b: 600000, l: 600000 },
+        netSavings: {
+          wajib: 500000,
+          belanja: 150000,
+          lebaran: 300000,
+          total: 950000,
+        },
         months: Array(12).fill({
           w: 25000,
           b: 50000,
@@ -847,6 +853,92 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         'Buku besar berhasil disinkronkan dari file Excel',
         'success'
       );
+    });
+  });
+
+  describe('Member Real Cash Net Savings Card Display', () => {
+    it('renders real cash net balance card under member name with itemized amounts', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={mockMatrixResult.rows} />
+      );
+
+      // Verify card container by testid
+      expect(html).toContain('data-testid="member-net-savings-12345678"');
+
+      // Verify title "Kas Riil Anggota" and formatted values
+      expect(html).toContain('Kas Riil Anggota');
+      expect(html).toContain('Rp 950.000');
+      expect(html).toContain('Wajib:');
+      expect(html).toContain('Rp 500.000');
+      expect(html).toContain('Belanja:');
+      expect(html).toContain('Rp 150.000');
+      expect(html).toContain('Lebaran:');
+      expect(html).toContain('Rp 300.000');
+    });
+
+    it('safely renders zero amounts (Rp 0) when netSavings is undefined or has 0 balances', () => {
+      const rowWithoutNetSavings = [
+        {
+          member_id: 'm-zero',
+          nrp: '99999999',
+          nama: 'Anggota Baru',
+          pokokLunas: false,
+          compliance: 50,
+          balances: { w: 0, b: 0, l: 0 },
+          // netSavings is undefined
+          months: Array(12).fill({
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 0,
+            bal_b: 0,
+            bal_l: 0,
+          }),
+        },
+      ];
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={rowWithoutNetSavings} />
+      );
+
+      expect(html).toContain('data-testid="member-net-savings-99999999"');
+      expect(html).toContain('Kas Riil Anggota');
+      expect(html).toContain('Rp 0');
+    });
+
+    it('safely renders zero amounts when netSavings explicitly contains zeros', () => {
+      const rowWithZeroNetSavings = [
+        {
+          member_id: 'm-explicit-zero',
+          nrp: '88888888',
+          nama: 'Anggota Nol',
+          pokokLunas: true,
+          compliance: 100,
+          balances: { w: 0, b: 0, l: 0 },
+          netSavings: {
+            wajib: 0,
+            belanja: 0,
+            lebaran: 0,
+            total: 0,
+          },
+          months: Array(12).fill({
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 0,
+            bal_b: 0,
+            bal_l: 0,
+          }),
+        },
+      ];
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={rowWithZeroNetSavings} />
+      );
+
+      expect(html).toContain('data-testid="member-net-savings-88888888"');
+      expect(html).toContain('Kas Riil Anggota');
+      expect(html).toContain('Rp 0');
     });
   });
 });
