@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 51 — Implementasi Fitur "Cocokkan Otomatis Semua Anggota" (Bulk Auto-Reconcile) pada Matriks Simpanan
+> **Current Phase:** 54 — Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan
 > **Status:** ⏳ Ready for Execution
 
 ## Must-Haves (from SPEC)
@@ -948,6 +948,25 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 54: Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan
+**Status:** ⏳ Ready for Execution
+**Objective:** Menampilkan posisi keuangan kas riil anggota secara transparan dan akurat (memperhitungkan pengurangan akibat belanja potong simpanan di POS kasir dan penarikan tunai) langsung pada kolom Informasi Anggota di halaman Matriks Kepatuhan Simpanan melalui database view agregasi buku besar, pengayaan complianceService, dan kartu ringkasan kas riil.
+**Depends on:** Phase 53
+
+**Plans:**
+- [ ] Plan 54.1: Database View & Service Layer Net Savings Aggregation
+- [ ] Plan 54.2: Render Real Cash Balance in Member Information Column
+- [ ] Plan 54.3: Static Verification, Full Vitest Suite & Production Build
+
+**Deliverables:**
+- Skrip migrasi database `supabase/migrations/033_create_member_net_savings_view.sql` untuk view agregasi saldo kas riil
+- Pengayaan `src/services/complianceService.ts` dengan properti `netSavings` (wajib, belanja, lebaran, total)
+- Kartu visualisasi ringkas 'Kas Riil Anggota' di bawah nama anggota pada `src/pages/admin/ComplianceMatrix.tsx`
+- Suite pengujian unit dan komponen di `src/services/complianceService.test.ts` dan `src/pages/admin/ComplianceMatrix.test.tsx`
+- Verifikasi statis TypeScript dan production build Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -992,6 +1011,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 38 | Phase 51 | Bulk Auto-Reconcile Matriks Simpanan |
 | 39 | Phase 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris |
 | 40 | Phase 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) |
+| 41 | Phase 54 | Saldo Kas Riil Anggota pada Matriks Simpanan |
 
 ---
 
@@ -1052,6 +1072,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 51 | Bulk Auto-Reconcile Matriks Simpanan | ✅ | 3/3 | 100% |
 | 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
 | 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ✅ | 4/4 | 100% |
+| 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | ⏳ | 0/3 | 0% |
 
 ---
 
@@ -1112,5 +1133,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 51 | 2026-11-02 | 2026-11-02 | 1 day |
 | 52 | 2026-11-02 | 2026-11-02 | 1 day |
 | 53 | 2026-11-03 | 2026-11-03 | 1 day |
+| 54 | 2026-11-03 | — | — |
 
 

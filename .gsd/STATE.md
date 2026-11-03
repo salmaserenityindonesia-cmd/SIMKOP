@@ -1,18 +1,16 @@
 ## Current Position
-- **Phase**: 53 (Ekspor & Impor Matriks Buku Besar Simpanan via Excel (.xlsx) dengan Formula Validasi Selisih)
-- **Task**: Phase verification complete
-- **Status**: Complete & Verified (7/7 must-haves verified)
+- **Phase**: 54 (Tampilkan Saldo Kas Riil Anggota (Net Bersih Setelah Belanja & Penarikan) pada Matriks Simpanan)
+- **Task**: Ready for execution
+- **Status**: ⏳ Ready for Execution (3 plans generated)
 
 ## Last Session Summary
-Phase 53 executed and independently verified across 4 plans:
-- Plan 53.1: Excel Exporter Engine with Difference Validation Formula & Unit Tests. Built `src/utils/savingsMatrixExporter.ts` and `src/utils/savingsMatrixExporter.test.ts`. Implemented Excel export with horizontal month grid (May 2021 to Sep 2026), dynamic formulas for Total Alokasi (`=SUM(...)`), Selisih (`=[Total]-[Acuan]`), Status Validasi (`=IF([Selisih]=0, "SEIMBANG", ...)`), and conditional formatting. Commits: `f62f3140`, `633fd6ff`.
-- Plan 53.2: Excel Importer & Ledger Mutation Processor & Unit Tests. Built `src/utils/savingsMatrixImporter.ts` with flexible header extraction and non-zero mutation detection. Implemented `importSavingsMatrixLedger` in `src/services/complianceService.ts` with double-counting prevention (purging old reconciliation records and lump-sum migration records), missing NRP detection, and 100-row batch chunking with real-time progress callbacks. Added unit tests in `src/utils/savingsMatrixImporter.test.ts` and `src/services/complianceService.test.ts`. Commits: `f53b7524`, `617896d0`.
-- Plan 53.3: Toolbar UI Integration in ComplianceMatrix.tsx, Modals & Component Tests. Built `src/components/compliance/SavingsMatrixImportModal.tsx` with drag-and-drop file upload, type radio selection, live parsing summary, and animated progress bar. Integrated export dropdown and import audit button into `src/pages/admin/ComplianceMatrix.tsx`. Updated tests in `src/components/compliance/SavingsMatrixImportModal.test.tsx` and `src/pages/admin/ComplianceMatrix.test.tsx`. Commits: `17a12fe6`, `9db523f6`.
-- Plan 53.4: Static Verification, Full Vitest Suite & Production Build. Verified TypeScript typecheck (`tsc --noEmit`), full Vitest suite (41 test files, 479 tests passing 100%), and Vite production build with exit code 0. Commits: `71e2ee9d`, `2a899e3b`.
-- Independent verifier passed 7/7 must-haves with report at `.gsd/phases/53/VERIFICATION.md`.
+Phase 54 planned and structured across 3 atomic execution plans:
+- Plan 54.1: Database View & Service Layer Net Savings Aggregation. Creates `supabase/migrations/033_create_member_net_savings_view.sql` with PostgreSQL view `view_member_net_savings` aggregating deposits and withdrawals per member and deposit type. Enriches `getComplianceMatrixData` in `src/services/complianceService.ts` with `netSavings` (`wajib`, `belanja`, `lebaran`, `total`), backed by unit tests in `src/services/complianceService.test.ts`.
+- Plan 54.2: Render Real Cash Balance in Member Information Column. Renders a compact, transparent "Kas Riil Anggota" summary card in `src/pages/admin/ComplianceMatrix.tsx` directly under the member name and Pokok status badge. Updates component tests in `src/pages/admin/ComplianceMatrix.test.tsx`.
+- Plan 54.3: Static Verification, Full Vitest Suite & Production Build. Runs TypeScript static check (`tsc --noEmit`), full Vitest suite (41+ test files), and Vite production build (`npm run build`).
 
 ## Next Steps
-Phase 53 is complete. Awaiting next user request or milestone review.
+Execute Phase 54 starting with Plan 54.1 (`/execute 54.1` or sequential execution).
 
 ## Blockers
 - None.
@@ -20,6 +18,6 @@ Phase 53 is complete. Awaiting next user request or milestone review.
 ## Context Dump
 
 ### Decisions Made
-- **Dynamic Excel Formulas**: Menggunakan formula native ExcelJS untuk validasi horizontal agar saat admin mengedit berkas secara lokal di Excel/LibreOffice, angka total alokasi, selisih saldo acuan, dan status SEIMBANG/KURANG/LEBIH langsung bereaksi secara instan.
-- **Double-Counting Safe Guard**: Saat impor mutasi matriks buku besar simpanan, sistem secara atomik menghapus mutasi rekonsiliasi lama ('Rekonsiliasi Otomatis' dan 'Import Matriks Buku Besar Excel') dan mutasi migrasi gelondongan (`for_month IS NULL`) yang sudah diuraikan ke bulanan.
-- **Dedicated Modal & Progress Feedback**: Komponen modal `SavingsMatrixImportModal.tsx` memberikan visualisasi pembacaan berkas (total baris dan transaksi nominal > 0) serta progress bar real-time selama proses chunk insert ke database.
+- **Next Migration Sequence**: Menggunakan nomor `033_create_member_net_savings_view.sql` karena nomor `031` dan `032` telah dialokasikan untuk migrasi tarif berjenjang dan pembersihan data pinjaman orphan.
+- **Resilient Fallback Aggregation**: Pada `complianceService.ts`, selain membaca `view_member_net_savings`, disiapkan fallback perhitungan netto client-side dari transaksi yang sudah dimuat. Hal ini menjamin stabilitas fungsionalitas baik pada database yang sudah menjalankan migrasi view maupun pada mock test suite.
+- **Monospace Typography in Member Cell**: Kartu ringkas posisi kas riil menggunakan font monospace dan format mata uang `id-ID` agar perataan digit nominal simpanan (Wajib, Belanja, Lebaran, dan Total Kas Riil) terlihat teratur dan mudah dibaca oleh admin.
