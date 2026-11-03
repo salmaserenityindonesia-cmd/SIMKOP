@@ -1,3 +1,8 @@
+/**
+ * ComplianceMatrix.tsx
+ * Halaman Matriks Kepatuhan Simpanan Anggota.
+ * Menyediakan audit visual kepatuhan, ekspor Excel berformula, dan modal impor mutasi buku besar.
+ */
 import { useState, useEffect, useContext } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';

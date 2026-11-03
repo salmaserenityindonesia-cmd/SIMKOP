@@ -1,3 +1,7 @@
+/**
+ * complianceService.ts
+ * Layanan kepatuhan simpanan anggota, analisis audit, dan rekonsiliasi mutasi buku besar.
+ */
 import { supabase } from '../lib/supabaseClient';
 import type { ParsedMonthlyDeposit } from '../utils/savingsMatrixImporter';
 

@@ -1,3 +1,7 @@
+/**
+ * SavingsMatrixImportModal.tsx
+ * Modal interaktif untuk upload, pratinjau, dan sinkronisasi matriks buku besar simpanan Excel.
+ */
 import React, { useState, useContext, useRef, useCallback } from 'react';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
