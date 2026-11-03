@@ -691,6 +691,33 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                           <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium border border-amber-200">Pokok: Belum</span>
                         )}
                       </div>
+
+                      <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col gap-0.5 text-[11px] font-mono select-none" data-testid={`member-net-savings-${row.nrp}`}>
+                        <div className="flex items-center justify-between text-slate-500 font-semibold text-[10px] uppercase">
+                          <span>Kas Riil Anggota</span>
+                          <span className="text-emerald-700 font-bold">
+                            Rp {Number(row.netSavings?.total || 0).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Wajib:</span>
+                          <span className="font-semibold text-slate-800">
+                            Rp {Number(row.netSavings?.wajib || 0).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Belanja:</span>
+                          <span className="font-semibold text-slate-800">
+                            Rp {Number(row.netSavings?.belanja || 0).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Lebaran:</span>
+                          <span className="font-semibold text-slate-800">
+                            Rp {Number(row.netSavings?.lebaran || 0).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </td>
                   
