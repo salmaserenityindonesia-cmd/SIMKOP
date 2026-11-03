@@ -111,6 +111,41 @@ export function generateHorizontalMonths(
 }
 
 /**
+ * Menghitung saldo acuan deterministik berdasarkan jumlah bulan berhak anggota:
+ * Jumlah Bulan Berhak = (TahunCutoff * 12 + BulanCutoff) - (TahunMasuk * 12 + BulanMasuk) + 1
+ * Nilai Saldo Acuan Database otomatis persis sama dengan: Jumlah Bulan Berhak * Nominal Tarif Periode
+ */
+export function calculateDeterministicBaseline(
+  joinDate: string | Date | null | undefined,
+  cutoffYear: number,
+  cutoffMonth: number,
+  depositTypeCode: string,
+  rateTiers: SavingsRateTier[]
+): number {
+  if (!joinDate) return 0;
+  const d = typeof joinDate === 'string' ? new Date(joinDate) : joinDate;
+  if (isNaN(d.getTime())) return 0;
+
+  const joinYear = d.getFullYear();
+  const joinMonth = d.getMonth() + 1;
+
+  const cutoffIndex = cutoffYear * 12 + cutoffMonth;
+  const joinIndex = joinYear * 12 + joinMonth;
+
+  if (joinIndex > cutoffIndex) return 0;
+
+  let total = 0;
+  for (let y = joinYear; y <= cutoffYear; y++) {
+    const mStart = (y === joinYear) ? joinMonth : 1;
+    const mEnd = (y === cutoffYear) ? cutoffMonth : 12;
+    for (let m = mStart; m <= mEnd; m++) {
+      total += getApplicableRate(depositTypeCode, y, m, rateTiers);
+    }
+  }
+  return total;
+}
+
+/**
  * Menghasilkan Workbook ExcelJS untuk matriks simpanan dengan formula validasi selisih
  */
 export async function generateSavingsMatrixWorkbook(
@@ -269,8 +304,19 @@ export async function generateSavingsMatrixWorkbook(
     }
   }
 
-  const eYear = options.endYear ?? 2026;
-  const eMonth = options.endMonth ?? 9;
+  // Tentukan batas akhir periode ekspor secara deterministik (default: bulan berjalan saat file diekspor)
+  const endPeriodDate = new Date();
+  const currentYear = endPeriodDate.getFullYear();
+  const currentMonth = endPeriodDate.getMonth() + 1;
+
+  const eYear = options.endYear ?? currentYear;
+  const eMonth = options.endMonth ?? (options.endYear !== undefined && options.endYear !== currentYear ? 12 : currentMonth);
+
+  // Pastikan rentang awal tidak melebihi rentang akhir
+  if (sYear * 12 + sMonth > eYear * 12 + eMonth) {
+    sYear = eYear;
+    sMonth = eMonth;
+  }
 
   const monthColumns = generateHorizontalMonths(sYear, sMonth, eYear, eMonth, 5);
   const totalMonths = monthColumns.length;

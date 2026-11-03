@@ -4,7 +4,8 @@ import {
   exportSavingsMatrixExcel,
   getColumnLetter,
   formatJoinDate,
-  generateHorizontalMonths
+  generateHorizontalMonths,
+  calculateDeterministicBaseline
 } from './savingsMatrixExporter';
 import { supabase } from '../lib/supabaseClient';
 import { SavingsRateTier } from '../services/savingsRateService';
@@ -242,6 +243,42 @@ describe('savingsMatrixExporter', () => {
         colIndex: 7,
         colLetter: 'G'
       });
+    });
+
+    it('calculateDeterministicBaseline should calculate accurate balance without day-of-month comparison issues', () => {
+      // 1. Tanggal masuk awal bulan (1 Mei 2021) vs tengah bulan (5 Mei 2021)
+      const belanjaTiers: SavingsRateTier[] = [
+        {
+          id: 'tier-sb',
+          deposit_type_code: 'BELANJA',
+          start_year: 2021,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 50000,
+          notes: 'Tarif Flat Belanja'
+        }
+      ];
+
+      // Dari Mei 2021 hingga Nov 2026: (2026 * 12 + 11) - (2021 * 12 + 5) + 1 = 67 bulan
+      // 67 bulan * 50.000 = 3.350.000
+      const baseline1 = calculateDeterministicBaseline('2021-05-01', 2026, 11, 'BELANJA', belanjaTiers);
+      const baseline2 = calculateDeterministicBaseline('2021-05-05', 2026, 11, 'BELANJA', belanjaTiers);
+      expect(baseline1).toBe(3350000);
+      expect(baseline2).toBe(3350000);
+      expect(baseline1).toBe(baseline2); // Keduanya identik tanpa day-comparison bug
+
+      // 2. Fallback untuk tanggal invalid / kosong
+      expect(calculateDeterministicBaseline(null, 2026, 11, 'BELANJA', belanjaTiers)).toBe(0);
+      expect(calculateDeterministicBaseline('invalid-date', 2026, 11, 'BELANJA', belanjaTiers)).toBe(0);
+
+      // 3. Tanggal bergabung di masa depan melampaui cut-off
+      expect(calculateDeterministicBaseline('2027-01-01', 2026, 11, 'BELANJA', belanjaTiers)).toBe(0);
+
+      // 4. Perhitungan tarif berjenjang (Simpanan Wajib)
+      // Jan 2025 - Des 2025: Jan-Okt (10 bln @ 150k = 1.500.000), Nov-Des (2 bln @ 200k = 400.000) -> 1.900.000
+      const wajibBaseline = calculateDeterministicBaseline('2025-01-01', 2025, 12, 'WAJIB', mockRateTiers);
+      expect(wajibBaseline).toBe(1900000);
     });
   });
 
@@ -536,6 +573,90 @@ describe('savingsMatrixExporter', () => {
       expect(ws!.getRow(3).getCell(1).value).toBe('002');
       expect(ws!.getRow(4).getCell(1).value).toBe('003');
       expect(ws!.getRow(5).getCell(1).value).toBe('004');
+    });
+
+    it('should synchronize horizontal months up to current period (Nov-26) and ensure members with early join dates are SEIMBANG', async () => {
+      // Data anggota yang memiliki tanggal masuk di awal bulan (tanggal 1, 2, 3)
+      const specialMembers = [
+        { id: 'm-mulyadi', nrp: '101', nama: 'Mulyadi Utomo', created_at: '2021-05-01', tgl_awal_anggota: '2021-05-01', status: 'aktif' },
+        { id: 'm-mulyono', nrp: '102', nama: 'Mulyono Santoso', created_at: '2021-05-02', tgl_awal_anggota: '2021-05-02', status: 'aktif' },
+        { id: 'm-prabowo', nrp: '103', nama: 'Prabowo Hadi', created_at: '2021-05-03', tgl_awal_anggota: '2021-05-03', status: 'aktif' },
+        { id: 'm-rian', nrp: '104', nama: 'Rian Firmansyah', created_at: '2021-05-01', tgl_awal_anggota: '2021-05-01', status: 'aktif' },
+        { id: 'm-wawan', nrp: '105', nama: 'Wawan Gunawan', created_at: '2021-05-02', tgl_awal_anggota: '2021-05-02', status: 'aktif' }
+      ];
+
+      const belanjaTiers: SavingsRateTier[] = [
+        {
+          id: 'tier-sb',
+          deposit_type_code: 'BELANJA',
+          start_year: 2021,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 50000,
+          notes: 'Tarif Belanja'
+        }
+      ];
+
+      // Saldo acuan migrasi database 66 bulan = Rp 3.300.000
+      const specialDeposits = specialMembers.map((m, idx) => ({
+        id: `md-${idx}`,
+        member_id: m.id,
+        deposit_type_id: 'dt-belanja',
+        deposit_types: { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja Bulanan' },
+        deposit_transactions: [
+          {
+            id: `tx-${idx}`,
+            amount: 3300000, // 66 bulan alokasi
+            description: 'Saldo Awal Migrasi',
+            transaction_type: 'deposit',
+            for_month: null,
+            for_year: null
+          }
+        ]
+      }));
+
+      // Ekspor tanpa menentukan endYear dan endMonth (menguji default deterministik ke bulan berjalan)
+      const wb = await generateSavingsMatrixWorkbook({
+        depositTypeCode: 'BELANJA',
+        members: specialMembers,
+        rateTiers: belanjaTiers,
+        memberDeposits: specialDeposits,
+        autoSave: false
+      });
+
+      const ws = wb.getWorksheet('Matriks BELANJA');
+      expect(ws).toBeDefined();
+
+      // Pastikan kolom bulan mencakup hingga Nov-26 (bukan terpotong di Sep-26)
+      const headerRow = ws!.getRow(1);
+      const cellValues: string[] = [];
+      headerRow.eachCell((cell) => {
+        if (typeof cell.value === 'string') cellValues.push(cell.value);
+      });
+
+      expect(cellValues).toContain('Nov-26');
+      expect(cellValues).toContain('Total Alokasi');
+      expect(cellValues).toContain('Selisih');
+      expect(cellValues).toContain('Status Validasi');
+
+      // Seluruh 5 anggota harus memiliki status validasi "SEIMBANG" dan selisih = 0
+      const totalColIdx = cellValues.indexOf('Total Alokasi') + 1;
+      const selisihColIdx = cellValues.indexOf('Selisih') + 1;
+      const statusColIdx = cellValues.indexOf('Status Validasi') + 1;
+
+      for (let r = 2; r <= 6; r++) {
+        const row = ws!.getRow(r);
+        const saldoAcuan = row.getCell(4).value;
+        const totalCell = row.getCell(totalColIdx);
+        const selisihCell = row.getCell(selisihColIdx);
+        const statusCell = row.getCell(statusColIdx);
+
+        expect(saldoAcuan).toBe(3300000);
+        expect(totalCell.result).toBe(3300000);
+        expect(selisihCell.result).toBe(0);
+        expect(statusCell.result).toBe('SEIMBANG');
+      }
     });
   });
 
