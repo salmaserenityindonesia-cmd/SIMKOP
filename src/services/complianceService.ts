@@ -340,8 +340,9 @@ export async function getSavingsComplianceAvailableYears(
 
 
 export interface SavingsSubItem {
-  status: 'paid' | 'unpaid' | 'not_applicable';
+  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial';
   amount: number;
+  targetAmount?: number;
 }
 
 export interface MonthSavingsCell {

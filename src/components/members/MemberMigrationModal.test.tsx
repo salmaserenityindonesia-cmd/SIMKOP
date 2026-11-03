@@ -154,4 +154,22 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
     expect(markup).toContain('max-w-7xl');
     expect(markup).toContain('overflow-x-auto border rounded-xl max-h-[55vh] shadow-xs');
   });
+
+  it('renders progress bar and status when isImporting is true with importProgress', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(MemberMigrationModal, {
+        isOpen: true,
+        onClose: vi.fn(),
+        onConfirm: vi.fn(),
+        parseResult: dummyParseResult,
+        isImporting: true,
+        importProgress: { current: 50, total: 100 },
+      })
+    );
+
+    expect(markup).toContain('Memproses: 50 / 100 anggota...');
+    expect(markup).toContain('50%');
+    expect(markup).toContain('transition-all duration-300');
+    expect(markup).toContain('disabled=""'); // Buttons disabled during import
+  });
 });

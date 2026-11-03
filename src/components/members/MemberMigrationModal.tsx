@@ -1,4 +1,4 @@
-import { X, AlertTriangle, CheckCircle, Upload } from 'lucide-react';
+import { X, AlertTriangle, CheckCircle, Upload, Loader2 } from 'lucide-react';
 import { MemberParseResult } from '../../services/memberExcelService';
 
 interface Props {
@@ -7,9 +7,17 @@ interface Props {
   onConfirm: () => void;
   parseResult: MemberParseResult | null;
   isImporting: boolean;
+  importProgress?: { current: number; total: number } | null;
 }
 
-export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parseResult, isImporting }: Props) {
+export default function MemberMigrationModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  parseResult,
+  isImporting,
+  importProgress,
+}: Props) {
   if (!isOpen || !parseResult) return null;
 
   const { rows, errors } = parseResult;
@@ -177,6 +185,34 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
           </div>
         </div>
 
+        {isImporting && importProgress && (
+          <div className="px-6 py-4 bg-blue-50 border-t border-blue-200">
+            <div className="flex justify-between items-center text-sm font-semibold text-blue-900 mb-2">
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                Memproses: {importProgress.current} / {importProgress.total} anggota...
+              </span>
+              <span>
+                {importProgress.total > 0
+                  ? Math.round((importProgress.current / importProgress.total) * 100)
+                  : 0}%
+              </span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden">
+              <div
+                className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                style={{
+                  width: `${
+                    importProgress.total > 0
+                      ? Math.min(100, Math.round((importProgress.current / importProgress.total) * 100))
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="p-6 border-t bg-gray-50 flex justify-end space-x-3">
           <button
             onClick={onClose}
@@ -191,7 +227,12 @@ export default function MemberMigrationModal({ isOpen, onClose, onConfirm, parse
             className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md hover:opacity-90 font-medium flex items-center disabled:opacity-50"
           >
             {isImporting ? (
-              <>Tunggu Sebentar...</>
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                {importProgress && importProgress.total > 0
+                  ? `Memproses (${Math.round((importProgress.current / importProgress.total) * 100)}%)...`
+                  : 'Tunggu Sebentar...'}
+              </>
             ) : (
               <>
                 <Upload className="w-4 h-4 mr-2" />

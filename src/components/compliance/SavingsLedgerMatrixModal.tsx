@@ -18,7 +18,12 @@ import {
   SavingsRateTier,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
-import { reconcileSingleMemberDeposit } from '../../services/savingsMatrixService';
+import {
+  reconcileSingleMemberDeposit,
+  calculateTotalChecked,
+  calculateFifoAllocation,
+  matchAutomaticFifo
+} from '../../services/savingsMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 
 export type DepositTabType = 'WAJIB' | 'BELANJA' | 'LEBARAN';
@@ -33,6 +38,8 @@ export interface SavingsLedgerMatrixModalProps {
   initialActiveTab?: DepositTabType;
   initialDbBalances?: Partial<Record<DepositTabType, number>>;
   initialCheckedMonths?: Partial<Record<DepositTabType, string[]>>;
+  initialMonthAmounts?: Partial<Record<DepositTabType, Record<string, number> | Map<string, number>>>;
+  initialLoading?: boolean;
 }
 
 export const MONTH_NAMES = [
@@ -124,65 +131,11 @@ export function generateMonthGrid(
   return list;
 }
 
-/**
- * Menghitung total nominal dari bulan-bulan yang tercentang
- */
-export function calculateTotalChecked(
-  checkedKeys: Iterable<string>,
-  depositTypeCode: string,
-  rateTiers: SavingsRateTier[]
-): number {
-  let total = 0;
-  for (const key of checkedKeys) {
-    const [yStr, mStr] = key.split('-');
-    const y = parseInt(yStr, 10);
-    const m = parseInt(mStr, 10);
-    if (!isNaN(y) && !isNaN(m)) {
-      total += getApplicableRate(depositTypeCode, y, m, rateTiers);
-    }
-  }
-  return total;
-}
-
-/**
- * Algoritma FIFO: Mulai dari bulan awal yang valid (setelah tanggal bergabung),
- * centang berurutan ke bulan-bulan berikutnya dengan nominal tarif aktif periode tersebut
- * hingga total tercentang tepat menyamai saldo impor tanpa melebihi saldo.
- */
-export function matchAutomaticFifo(
-  targetBalance: number,
-  months: Array<{ year: number; month: number; key: string }>,
-  depositTypeCode: string,
-  rateTiers: SavingsRateTier[],
-  joinDate?: string | Date | null
-): string[] {
-  if (targetBalance <= 0) return [];
-
-  let remaining = targetBalance;
-  const matchedKeys: string[] = [];
-
-  // Urutkan bulan secara kronologis
-  const sortedMonths = [...months].sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
-
-  for (const m of sortedMonths) {
-    if (isMonthBeforeJoin(m.year, m.month, joinDate)) {
-      continue;
-    }
-
-    const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers);
-    if (rate <= 0) continue;
-
-    if (remaining >= rate) {
-      matchedKeys.push(m.key);
-      remaining -= rate;
-    } else {
-      // Saldo tidak mencukupi untuk bulan penuh ini, hentikan FIFO
-      break;
-    }
-  }
-
-  return matchedKeys;
-}
+export {
+  calculateTotalChecked,
+  calculateFifoAllocation,
+  matchAutomaticFifo
+};
 
 export default function SavingsLedgerMatrixModal({
   memberId,
@@ -193,10 +146,12 @@ export default function SavingsLedgerMatrixModal({
   onSuccess,
   initialActiveTab = 'WAJIB',
   initialDbBalances,
-  initialCheckedMonths
+  initialCheckedMonths,
+  initialMonthAmounts,
+  initialLoading
 }: SavingsLedgerMatrixModalProps) {
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
 
@@ -215,6 +170,28 @@ export default function SavingsLedgerMatrixModal({
     WAJIB: new Set(initialCheckedMonths?.WAJIB || []),
     BELANJA: new Set(initialCheckedMonths?.BELANJA || []),
     LEBARAN: new Set(initialCheckedMonths?.LEBARAN || [])
+  });
+
+  // State nominal transaksi per bulan (untuk mendukung nominal riil parsial)
+  const [monthAmounts, setMonthAmounts] = useState<Record<DepositTabType, Map<string, number>>>(() => {
+    const initMap: Record<DepositTabType, Map<string, number>> = {
+      WAJIB: new Map(),
+      BELANJA: new Map(),
+      LEBARAN: new Map()
+    };
+    if (initialMonthAmounts) {
+      (['WAJIB', 'BELANJA', 'LEBARAN'] as DepositTabType[]).forEach(tab => {
+        const tabAmounts = initialMonthAmounts[tab];
+        if (tabAmounts) {
+          if (tabAmounts instanceof Map) {
+            initMap[tab] = new Map(tabAmounts);
+          } else {
+            initMap[tab] = new Map(Object.entries(tabAmounts));
+          }
+        }
+      });
+    }
+    return initMap;
   });
 
   const [resolvedJoinDate, setResolvedJoinDate] = useState<string | null>(joinDate || null);
@@ -315,6 +292,11 @@ export default function SavingsLedgerMatrixModal({
           BELANJA: new Set(initialCheckedMonths?.BELANJA || []),
           LEBARAN: new Set(initialCheckedMonths?.LEBARAN || [])
         };
+        const newMonthAmounts: Record<DepositTabType, Map<string, number>> = {
+          WAJIB: new Map(),
+          BELANJA: new Map(),
+          LEBARAN: new Map()
+        };
 
         if (memberDepositsData && memberDepositsData.length > 0) {
           for (const md of memberDepositsData as any[]) {
@@ -357,7 +339,7 @@ export default function SavingsLedgerMatrixModal({
               }
             }
 
-            // Ambil bulan-bulan yang tercentang dari deposit_transactions
+            // Ambil bulan-bulan yang tercentang dari deposit_transactions beserta nominal riilnya
             for (const t of txs) {
               if (t.transaction_type === 'deposit' && t.for_year && t.for_month) {
                 const desc = (t.description || '').toLowerCase();
@@ -366,6 +348,7 @@ export default function SavingsLedgerMatrixModal({
                 if (!isLumpSumMigration) {
                   const key = `${t.for_year}-${String(t.for_month).padStart(2, '0')}`;
                   newCheckedMonths[tab].add(key);
+                  newMonthAmounts[tab].set(key, Number(t.amount || 0));
                 }
               }
             }
@@ -376,6 +359,7 @@ export default function SavingsLedgerMatrixModal({
           setMemberDepositMap(map);
           setDbBalances(newDbBalances);
           setCheckedMonths(newCheckedMonths);
+          setMonthAmounts(newMonthAmounts);
         }
       } catch (err) {
         console.error('Error initializing SavingsLedgerMatrixModal:', err);
@@ -393,9 +377,10 @@ export default function SavingsLedgerMatrixModal({
 
   // Perhitungan saldo saat ini untuk tab aktif
   const currentCheckedSet = checkedMonths[activeTab] || new Set();
+  const currentMonthAmounts = monthAmounts[activeTab] || new Map<string, number>();
   const totalChecked = useMemo(() => {
-    return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers);
-  }, [currentCheckedSet, activeTab, rateTiers]);
+    return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers, currentMonthAmounts);
+  }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts]);
 
   const targetDbBalance = dbBalances[activeTab] || 0;
   const balanceDifference = totalChecked - targetDbBalance;
@@ -405,18 +390,25 @@ export default function SavingsLedgerMatrixModal({
   const handleToggleMonth = async (year: number, month: number, key: string) => {
     const isCurrentlyChecked = currentCheckedSet.has(key);
     const updatedSet = new Set(currentCheckedSet);
+    const updatedAmounts = new Map(currentMonthAmounts);
     const applicableRate = getApplicableRate(activeTab, year, month, rateTiers);
 
     if (isCurrentlyChecked) {
       updatedSet.delete(key);
+      updatedAmounts.delete(key);
     } else {
       updatedSet.add(key);
+      updatedAmounts.set(key, applicableRate);
     }
 
     // Optimistic UI update
     setCheckedMonths(prev => ({
       ...prev,
       [activeTab]: updatedSet
+    }));
+    setMonthAmounts(prev => ({
+      ...prev,
+      [activeTab]: updatedAmounts
     }));
 
     // Real-time Supabase sync
@@ -456,7 +448,7 @@ export default function SavingsLedgerMatrixModal({
   };
 
   // Helper sinkronisasi batch ke Supabase
-  const syncBatchToDatabase = async (newCheckedKeys: string[]) => {
+  const syncBatchToDatabase = async (newCheckedKeys: string[], customAmounts?: Map<string, number>) => {
     const memberDepositId = memberDepositMap[activeTab];
     if (!memberDepositId) return;
 
@@ -506,13 +498,17 @@ export default function SavingsLedgerMatrixModal({
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
         const rate = getApplicableRate(activeTab, y, m, rateTiers);
+        const amt = customAmounts ? (customAmounts.get(key) ?? rate) : rate;
+        const isPartial = amt < rate && amt > 0;
         return {
           member_deposit_id: memberDepositId,
-          amount: rate,
+          amount: amt,
           for_month: m,
           for_year: y,
           transaction_type: 'deposit',
-          description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[m - 1]} ${y}`
+          description: isPartial
+            ? 'Rekonsiliasi Otomatis (Setoran Parsial)'
+            : `Setoran Matriks ${activeTab} ${MONTH_NAMES[m - 1]} ${y}`
         };
       });
 
@@ -535,12 +531,15 @@ export default function SavingsLedgerMatrixModal({
     const nowMonth = now.getMonth() + 1;
 
     const matchedKeys: string[] = [];
+    const updatedAmounts = new Map(currentMonthAmounts);
     for (const m of allGridMonths) {
       if (isMonthBeforeJoin(m.year, m.month, resolvedJoinDate)) {
         continue;
       }
       if (m.year < nowYear || (m.year === nowYear && m.month <= nowMonth)) {
         matchedKeys.push(m.key);
+        const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
+        updatedAmounts.set(m.key, rate);
       }
     }
 
@@ -548,8 +547,12 @@ export default function SavingsLedgerMatrixModal({
       ...prev,
       [activeTab]: new Set(matchedKeys)
     }));
+    setMonthAmounts(prev => ({
+      ...prev,
+      [activeTab]: updatedAmounts
+    }));
 
-    await syncBatchToDatabase(matchedKeys);
+    await syncBatchToDatabase(matchedKeys, updatedAmounts);
   };
 
   // Quick Action 2: Cocokkan Otomatis dengan Saldo Impor (FIFO Matching)
@@ -563,29 +566,57 @@ export default function SavingsLedgerMatrixModal({
         endYear
       });
 
+      const updatedAmounts = new Map<string, number>();
+      if (res.allocatedTransactions && res.allocatedTransactions.length > 0) {
+        for (const tx of res.allocatedTransactions) {
+          updatedAmounts.set(tx.key, tx.amount);
+        }
+      } else {
+        for (const key of res.matchedKeys) {
+          const [yStr, mStr] = key.split('-');
+          const y = parseInt(yStr, 10);
+          const m = parseInt(mStr, 10);
+          updatedAmounts.set(key, getApplicableRate(activeTab, y, m, rateTiers));
+        }
+      }
+
       setCheckedMonths(prev => ({
         ...prev,
         [activeTab]: new Set(res.matchedKeys)
+      }));
+      setMonthAmounts(prev => ({
+        ...prev,
+        [activeTab]: updatedAmounts
       }));
 
       onSuccess?.();
     } catch (err) {
       console.error('Failed to auto reconcile with import balance:', err);
       // Fallback ke modal internal logic jika terjadi kegagalan
-      const matchedKeys = matchAutomaticFifo(
+      const fifoRes = calculateFifoAllocation(
         targetDbBalance,
         allGridMonths,
         activeTab,
         rateTiers,
-        resolvedJoinDate
+        resolvedJoinDate,
+        memberDepositMap[activeTab]
       );
+
+      const fallbackAmounts = new Map<string, number>();
+      for (const tx of fifoRes.allocatedTransactions) {
+        fallbackAmounts.set(tx.key, tx.amount);
+      }
 
       setCheckedMonths(prev => ({
         ...prev,
-        [activeTab]: new Set(matchedKeys)
+        [activeTab]: new Set(fifoRes.matchedKeys)
+      }));
+      setMonthAmounts(prev => ({
+        ...prev,
+        [activeTab]: fallbackAmounts
       }));
 
-      await syncBatchToDatabase(matchedKeys);
+      await syncBatchToDatabase(fifoRes.matchedKeys, fallbackAmounts);
     } finally {
       setSyncing(false);
     }
@@ -596,6 +627,10 @@ export default function SavingsLedgerMatrixModal({
     setCheckedMonths(prev => ({
       ...prev,
       [activeTab]: new Set()
+    }));
+    setMonthAmounts(prev => ({
+      ...prev,
+      [activeTab]: new Map()
     }));
 
     await syncBatchToDatabase([]);
@@ -819,8 +854,14 @@ export default function SavingsLedgerMatrixModal({
                         const beforeJoin = isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
                         const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
-                        const badgeClass = getBadgeColorClass(activeTab, m.year, m.month, rate);
-                        const badgeLabel = formatRateBadge(rate);
+                        const txAmount = currentMonthAmounts.get(m.key);
+                        const isPartial = isChecked && typeof txAmount === 'number' && txAmount > 0 && txAmount < rate;
+                        const badgeClass = isPartial
+                          ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
+                          : getBadgeColorClass(activeTab, m.year, m.month, rate);
+                        const badgeLabel = isPartial
+                          ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} / ${Number(rate).toLocaleString('id-ID')}`
+                          : formatRateBadge(rate);
 
                         if (beforeJoin) {
                           return (
@@ -838,7 +879,11 @@ export default function SavingsLedgerMatrixModal({
                           <td
                             key={m.key}
                             className={`py-3 px-1 border-r border-b border-slate-100 align-middle transition-colors ${
-                              isChecked ? 'bg-emerald-50/40' : 'bg-white'
+                              isPartial
+                                ? 'bg-amber-50/50'
+                                : isChecked
+                                ? 'bg-emerald-50/40'
+                                : 'bg-white'
                             }`}
                           >
                             <div className="flex flex-col items-center justify-center gap-1.5">
@@ -846,11 +891,29 @@ export default function SavingsLedgerMatrixModal({
                                 type="checkbox"
                                 checked={isChecked}
                                 onChange={() => handleToggleMonth(m.year, m.month, m.key)}
-                                className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer transition-transform hover:scale-110"
+                                className={`w-4 h-4 rounded cursor-pointer transition-transform hover:scale-110 ${
+                                  isPartial
+                                    ? 'text-amber-600 accent-amber-600 border-amber-400 focus:ring-amber-500'
+                                    : 'text-emerald-600 accent-emerald-600 border-slate-300 focus:ring-emerald-500'
+                                }`}
                                 aria-label={`Checkbox ${m.label}`}
+                                title={
+                                  isPartial
+                                    ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} dari Rp ${Number(rate).toLocaleString('id-ID')}`
+                                    : undefined
+                                }
+                                data-testid={isPartial ? `partial-checkbox-${m.key}` : `checkbox-${m.key}`}
                               />
                               <span
-                                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border leading-none font-mono ${badgeClass}`}
+                                className={`text-[10px] px-1.5 py-0.5 rounded border leading-none font-mono ${badgeClass} ${
+                                  isPartial ? 'whitespace-nowrap shadow-2xs font-bold text-amber-900 bg-amber-100 border-amber-300' : 'font-semibold'
+                                }`}
+                                title={
+                                  isPartial
+                                    ? `Setoran Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} dari kewajiban Rp ${Number(rate).toLocaleString('id-ID')} (Kurang Rp ${Number(rate - txAmount).toLocaleString('id-ID')})`
+                                    : undefined
+                                }
+                                data-testid={isPartial ? `partial-badge-${m.key}` : undefined}
                               >
                                 {badgeLabel}
                               </span>

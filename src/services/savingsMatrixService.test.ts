@@ -4,6 +4,7 @@ import {
   reconcileSingleMemberDeposit,
   generateMonthGrid,
   matchAutomaticFifo,
+  calculateFifoAllocation,
   isMonthBeforeJoin,
   calculateTotalChecked,
   resolveDepositTypeCode,
@@ -103,9 +104,67 @@ describe('savingsMatrixService - Helper Functions', () => {
     expect(matchAutomaticFifo(0, grid, 'WAJIB', mockTiers)).toEqual([]);
     expect(matchAutomaticFifo(-10000, grid, 'WAJIB', mockTiers)).toEqual([]);
 
-    // Saldo tidak mencukupi untuk bulan penuh berikutnya
+    // Saldo tidak mencukupi untuk bulan penuh berikutnya dialokasikan ke bulan berikutnya sebagai parsial
     const partialMatch = matchAutomaticFifo(200000, grid, 'WAJIB', mockTiers, '2024-01-01');
-    expect(partialMatch).toEqual(['2024-01']); // 150.000 dialokasikan, 50.000 sisa tidak cukup untuk Feb (150.000)
+    expect(partialMatch).toEqual(['2024-01', '2024-02']); // 150.000 (Jan full) + 50.000 (Feb partial)
+
+    // Jika includePartial diset false, hanya mengembalikan bulan penuh
+    const fullOnly = matchAutomaticFifo(200000, grid, 'WAJIB', mockTiers, '2024-01-01', { includePartial: false });
+    expect(fullOnly).toEqual(['2024-01']);
+  });
+
+  it('calculateFifoAllocation allocates remainder balance to next month as partial transaction', () => {
+    const grid = generateMonthGrid(2022, 2026);
+    // Kasus Agus Susanto: join Ags 2022, target Rp 10.200.000
+    // 15 bulan @ 200.000 (Ags 22 - Okt 23) + 34 bulan @ 210.000 (Nov 23 - Ags 26) = 10.140.000
+    // Sisa 60.000 dialokasikan ke Sep 2026 sebagai parsial
+    const agusTiers: SavingsRateTier[] = [
+      {
+        id: 'tier-1',
+        deposit_type_code: 'WAJIB',
+        start_year: 2022,
+        start_month: 8,
+        end_year: 2023,
+        end_month: 10,
+        monthly_rate: 200000
+      },
+      {
+        id: 'tier-2',
+        deposit_type_code: 'WAJIB',
+        start_year: 2023,
+        start_month: 11,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 210000
+      }
+    ];
+
+    const result = calculateFifoAllocation(
+      10200000,
+      grid,
+      'WAJIB',
+      agusTiers,
+      '2022-08-01',
+      'md-agus'
+    );
+
+    expect(result.totalAllocated).toBe(10200000);
+    expect(result.remainingBalance).toBe(0);
+    expect(result.matchedKeys).toHaveLength(50); // 15 + 34 + 1
+    expect(result.matchedKeys[result.matchedKeys.length - 1]).toBe('2026-09');
+
+    expect(result.partialTransaction).toBeDefined();
+    expect(result.partialTransaction).toEqual({
+      member_deposit_id: 'md-agus',
+      transaction_type: 'deposit',
+      amount: 60000,
+      for_month: 9,
+      for_year: 2026,
+      description: 'Rekonsiliasi Otomatis (Setoran Parsial)',
+      key: '2026-09',
+      applicableRate: 210000,
+      isPartial: true
+    });
   });
 
   it('resolveDepositTypeCode identifies correct deposit codes', () => {

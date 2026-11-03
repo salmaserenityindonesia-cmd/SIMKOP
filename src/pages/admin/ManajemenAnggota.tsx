@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getAnggota, updateAnggota, Anggota } from '../../services/koperasiService';
+import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw } from 'lucide-react';
 import { getMembersComprehensiveReport, createMember, resetAllMembersData } from '../../services/memberService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
@@ -116,6 +116,7 @@ export default function ManajemenAnggota({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [parseResult, setParseResult] = useState<MemberParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
 
   // Reset Data State
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
@@ -128,7 +129,7 @@ export default function ManajemenAnggota({
   async function loadData() {
     try {
       setLoading(true);
-      const data = await getAnggota();
+      const data = await fetchAllAnggotaPaged();
       setAnggotaList(data);
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data');
@@ -266,10 +267,13 @@ export default function ManajemenAnggota({
     if (!parseResult) return;
     
     setIsImporting(true);
+    setImportProgress({ current: 0, total: parseResult.rows.length });
     try {
-      await executeMigration(parseResult);
+      await executeMigration(parseResult, (current, total) => {
+        setImportProgress({ current, total });
+      });
       setIsImportModalOpen(false);
-      await loadData();
+      await fetchMembers();
       const totalAnggota = parseResult.rows.length;
       const totalPinjaman = parseResult.rows.filter(r => r.jumlah_pinjaman > 0).length;
       const message = totalPinjaman > 0
@@ -280,6 +284,7 @@ export default function ManajemenAnggota({
       showToast(error.message || 'Gagal mengimpor anggota', 'error');
     } finally {
       setIsImporting(false);
+      setImportProgress(null);
     }
   };
 
@@ -634,9 +639,14 @@ export default function ManajemenAnggota({
       <MemberMigrationModal 
         isOpen={isImportModalOpen}
         parseResult={parseResult}
-        onClose={() => setIsImportModalOpen(false)}
+        onClose={() => {
+          if (!isImporting) {
+            setIsImportModalOpen(false);
+          }
+        }}
         onConfirm={handleImportConfirm}
         isImporting={isImporting}
+        importProgress={importProgress}
       />
 
       <MemberMigrationDetailModal

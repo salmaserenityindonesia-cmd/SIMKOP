@@ -1008,6 +1008,55 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Kas Riil');
       expect(html).toContain('Rp 0');
     });
+
+    it('renders partial payment in amber text and displays detailed partial tooltip', () => {
+      const rowWithPartial: ComplianceMatrixRow[] = [
+        {
+          member_id: 'm-agus',
+          nrp: '95168420',
+          nama: 'Agus Susanto',
+          pokokLunas: true,
+          compliance: 95,
+          balances: { w: 10200000, b: 0, l: 0 },
+          months: [
+            ...Array(8).fill({
+              w: 210000,
+              b: 0,
+              l: 0,
+              bal_w: 10140000,
+              bal_b: 0,
+              bal_l: 0,
+              wajib: { status: 'paid', amount: 210000, targetAmount: 210000 },
+            }),
+            {
+              // Bulan ke-9 (September): setoran parsial Rp 60.000 dari target Rp 210.000
+              w: 60000,
+              b: 0,
+              l: 0,
+              bal_w: 10200000,
+              bal_b: 0,
+              bal_l: 0,
+              wajib: { status: 'partial', amount: 60000, targetAmount: 210000 },
+            },
+            ...Array(3).fill(null),
+          ],
+        },
+      ];
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={rowWithPartial} initialYear="2026" />
+      );
+
+      // Verify amber text for partial amount
+      expect(html).toContain('text-amber-600 font-bold');
+      expect(html).toContain('60.000');
+
+      // Verify tooltip
+      expect(html).toContain('Setoran Parsial: Rp 60.000 dari kewajiban Rp 210.000 (Kurang Rp 150.000)');
+
+      // Verify legend contains Parsial
+      expect(html).toContain('Parsial (Oranye / Amber)');
+    });
   });
 });
 

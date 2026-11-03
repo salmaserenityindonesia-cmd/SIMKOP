@@ -200,22 +200,50 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
 
 // --- Anggota CRUD ---
 
-export async function getAnggota(): Promise<Anggota[]> {
-  const { data, error } = await supabase
-    .from('anggota')
-    .select('*')
-    .order('created_at', { ascending: false });
+/**
+ * Paged query untuk memuat seluruh anggota koperasi (>1.000 anggota)
+ * tanpa terpotong batas default PostgREST (1.000 baris).
+ */
+export async function fetchAllAnggotaPaged(): Promise<Anggota[]> {
+  const PAGE_SIZE = 1000;
+  let from = 0;
+  let hasMore = true;
+  let allData: Anggota[] = [];
 
-  if (error) {
-    if (shouldFallback(error)) {
-      console.warn('Table "anggota" does not exist yet. Returning empty array.');
-      return [];
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('anggota')
+      .select('*')
+      .order('nama', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      if (shouldFallback(error)) {
+        console.warn('Table "anggota" does not exist yet. Returning empty array.');
+        return [];
+      }
+      console.error('Error fetching paged anggota:', error.message);
+      throw new Error(`Gagal mengambil data anggota: ${error.message}`);
     }
-    console.error('Error fetching anggota:', error.message);
-    throw new Error(`Gagal mengambil data anggota: ${error.message}`);
+
+    if (data && data.length > 0) {
+      allData = allData.concat(data as Anggota[]);
+      from += PAGE_SIZE;
+      if (data.length < PAGE_SIZE) {
+        hasMore = false;
+      }
+    } else {
+      hasMore = false;
+    }
   }
 
-  return data as Anggota[];
+  return allData;
+}
+
+export const fetchAnggota = fetchAllAnggotaPaged;
+
+export async function getAnggota(): Promise<Anggota[]> {
+  return fetchAllAnggotaPaged();
 }
 
 export async function addAnggota(data: Omit<Anggota, 'id' | 'created_at'>): Promise<Anggota> {
@@ -259,6 +287,278 @@ export async function deleteAnggota(id: string): Promise<void> {
     console.error(`Error deleting anggota ${id}:`, error.message);
     throw new Error(`Gagal menghapus anggota: ${error.message}`);
   }
+}
+
+// --- Mass Member Chunked Import & Auto-Provisioning Engine ---
+
+export interface ImportMembersChunkedResult {
+  totalProcessed: number;
+  successCount: number;
+  failedCount: number;
+  errors: string[];
+}
+
+export interface MemberImportInput {
+  nrp: string;
+  nama: string;
+  pangkat?: string | null;
+  bank_account_number?: string | null;
+  status?: string;
+  membership_status?: string;
+  master_thp?: number;
+  tgl_awal_anggota?: string | null;
+  created_at?: string | null;
+  jumlah_simpanan_pokok?: number;
+  jumlah_simpanan_wajib?: number;
+  jumlah_simpanan_belanja?: number;
+  jumlah_simpanan_lebaran?: number;
+  [key: string]: any;
+}
+
+/**
+ * Engine impor anggota massal dengan chunking (100 baris per batch),
+ * auto-provisioning rekening simpanan, dan inisialisasi saldo awal.
+ */
+export async function importMembersChunked(
+  parsedMemberList: MemberImportInput[],
+  onProgress?: (currentCount: number, totalCount: number) => void
+): Promise<ImportMembersChunkedResult> {
+  const result: ImportMembersChunkedResult = {
+    totalProcessed: 0,
+    successCount: 0,
+    failedCount: 0,
+    errors: [],
+  };
+
+  if (!parsedMemberList || parsedMemberList.length === 0) {
+    return result;
+  }
+
+  // 1. Ambil daftar master deposit_types (ID untuk 'POKOK', 'WAJIB', 'BELANJA', 'LEBARAN')
+  let { data: dTypes, error: dtErr } = await supabase.from('deposit_types').select('*');
+  if (dtErr) {
+    console.warn('Gagal memuat deposit_types:', dtErr.message);
+  }
+
+  if (!dTypes || dTypes.length === 0) {
+    const seeds = [
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true },
+    ];
+    try {
+      await supabase.from('deposit_types').insert(seeds);
+      const { data: refreshed } = await supabase.from('deposit_types').select('*');
+      dTypes = refreshed;
+    } catch (e: any) {
+      console.warn('Gagal seeding deposit_types:', e?.message);
+    }
+  }
+
+  const typeMap: Record<string, string> = {};
+  (dTypes || []).forEach((dt: any) => {
+    if (dt.name) typeMap[dt.name.toLowerCase()] = dt.id;
+    if (dt.code) typeMap[dt.code.toLowerCase()] = dt.id;
+  });
+
+  const keys = Object.keys(typeMap);
+  const typePokok = typeMap[keys.find(k => k.includes('pokok') || k === 'sp') || ''];
+  const typeWajib = typeMap[keys.find(k => k.includes('wajib') || k === 'sw') || ''];
+  const typeBelanja = typeMap[keys.find(k => k.includes('belanja') || k === 'sb') || ''];
+  const typeLebaran = typeMap[keys.find(k => k.includes('lebaran') || k.includes('hari raya') || k === 'sl') || ''];
+  const defaultDepositTypeIds = [typePokok, typeWajib, typeBelanja, typeLebaran].filter(Boolean);
+
+  // 2. Tentukan ukuran chunk: const CHUNK_SIZE = 100;
+  const CHUNK_SIZE = 100;
+  const totalCount = parsedMemberList.length;
+
+  // 3. Loop array anggota dalam potongan chunk:
+  for (let i = 0; i < totalCount; i += CHUNK_SIZE) {
+    const chunk = parsedMemberList.slice(i, i + CHUNK_SIZE);
+
+    try {
+      // Langkah A (Insert / Upsert Anggota):
+      const memberPayloads = chunk
+        .map((m) => {
+          let createdAt = new Date().toISOString();
+          if (m.tgl_awal_anggota && String(m.tgl_awal_anggota).trim()) {
+            const d = new Date(m.tgl_awal_anggota);
+            if (!isNaN(d.getTime())) createdAt = d.toISOString();
+          } else if (m.created_at) {
+            const d = new Date(m.created_at);
+            if (!isNaN(d.getTime())) createdAt = d.toISOString();
+          }
+
+          return {
+            nrp: String(m.nrp || '').trim(),
+            nama: String(m.nama || '').trim(),
+            pangkat: m.pangkat ? String(m.pangkat).trim() : null,
+            bank_account_number: m.bank_account_number ? String(m.bank_account_number).trim() : null,
+            status: m.status || 'aktif',
+            membership_status: m.membership_status || 'ACTIVE',
+            created_at: createdAt,
+          };
+        })
+        .filter((m) => m.nrp && m.nama);
+
+      if (memberPayloads.length === 0) {
+        result.totalProcessed += chunk.length;
+        result.failedCount += chunk.length;
+        result.errors.push(`Batch ${Math.floor(i / CHUNK_SIZE) + 1}: Data anggota tidak memiliki NRP atau Nama yang valid.`);
+        onProgress?.(result.totalProcessed, totalCount);
+        continue;
+      }
+
+      const { error: upsertErr } = await supabase
+        .from('anggota')
+        .upsert(memberPayloads, { onConflict: 'nrp' });
+
+      if (upsertErr) {
+        throw new Error(`Gagal upsert batch anggota: ${upsertErr.message}`);
+      }
+
+      // Langkah B (Ambil ID Anggota Batch Tersebut):
+      const chunkNrps = memberPayloads.map((p) => p.nrp);
+      const { data: dbMembers, error: fetchErr } = await supabase
+        .from('anggota')
+        .select('id, nrp, created_at')
+        .in('nrp', chunkNrps);
+
+      if (fetchErr || !dbMembers || dbMembers.length === 0) {
+        throw new Error(`Gagal mengambil ID anggota batch: ${fetchErr?.message || 'Data kosong'}`);
+      }
+
+      const memberIdMap = new Map<string, string>();
+      const memberCreatedMap = new Map<string, string>();
+      dbMembers.forEach((dm: any) => {
+        memberIdMap.set(dm.nrp, dm.id);
+        if (dm.created_at) memberCreatedMap.set(dm.id, dm.created_at);
+      });
+
+      const memberIds = Array.from(memberIdMap.values());
+
+      // Langkah C (Auto-Provisioning member_deposits):
+      if (defaultDepositTypeIds.length > 0 && memberIds.length > 0) {
+        const { data: existingDeposits } = await supabase
+          .from('member_deposits')
+          .select('id, member_id, deposit_type_id')
+          .in('member_id', memberIds);
+
+        const existingSet = new Set(
+          (existingDeposits || []).map((ed: any) => `${ed.member_id}_${ed.deposit_type_id}`)
+        );
+
+        const depositsToInsert: any[] = [];
+        for (const mid of memberIds) {
+          for (const dtId of defaultDepositTypeIds) {
+            if (!existingSet.has(`${mid}_${dtId}`)) {
+              depositsToInsert.push({
+                member_id: mid,
+                deposit_type_id: dtId,
+                is_terminated: false,
+              });
+            }
+          }
+        }
+
+        if (depositsToInsert.length > 0) {
+          const { error: insDepErr } = await supabase
+            .from('member_deposits')
+            .insert(depositsToInsert);
+          if (insDepErr) {
+            console.warn('Gagal provisioning member_deposits:', insDepErr.message);
+          }
+        }
+      }
+
+      // Langkah D (Inisialisasi Saldo Awal jika Ada):
+      const { data: allMemberDeposits } = await supabase
+        .from('member_deposits')
+        .select('id, member_id, deposit_type_id')
+        .in('member_id', memberIds);
+
+      const memberDepositLookup = new Map<string, string>();
+      (allMemberDeposits || []).forEach((amd: any) => {
+        memberDepositLookup.set(`${amd.member_id}_${amd.deposit_type_id}`, amd.id);
+      });
+
+      const transactionsToInsert: any[] = [];
+      for (const m of chunk) {
+        const nrpKey = String(m.nrp || '').trim();
+        const mid = memberIdMap.get(nrpKey);
+        if (!mid) continue;
+
+        const dateStr = m.tgl_awal_anggota || memberCreatedMap.get(mid) || new Date().toISOString();
+        const validDate = new Date(dateStr);
+        const safeDate = !isNaN(validDate.getTime()) ? validDate : new Date();
+
+        const depAmounts = [
+          { typeId: typePokok, amount: Number(m.jumlah_simpanan_pokok) || 0, isRoutine: false },
+          { typeId: typeWajib, amount: Number(m.jumlah_simpanan_wajib) || 0, isRoutine: true },
+          { typeId: typeBelanja, amount: Number(m.jumlah_simpanan_belanja) || 0, isRoutine: true },
+          { typeId: typeLebaran, amount: Number(m.jumlah_simpanan_lebaran) || 0, isRoutine: true },
+        ];
+
+        for (const dep of depAmounts) {
+          if (dep.typeId && dep.amount > 0) {
+            const mdId = memberDepositLookup.get(`${mid}_${dep.typeId}`);
+            if (mdId) {
+              transactionsToInsert.push({
+                member_deposit_id: mdId,
+                amount: dep.amount,
+                transaction_type: 'deposit',
+                for_month: safeDate.getMonth() + 1,
+                for_year: safeDate.getFullYear(),
+                description: dep.isRoutine ? 'Migrasi Saldo Awal (As-Is)' : 'One-Time Principal Deposit Migration',
+                created_at: safeDate.toISOString(),
+              });
+            }
+          }
+        }
+      }
+
+      // Batch insert deposit_transactions maksimal 100 per sub-batch
+      if (transactionsToInsert.length > 0) {
+        for (let t = 0; t < transactionsToInsert.length; t += 100) {
+          const txSubChunk = transactionsToInsert.slice(t, t + 100);
+          const { error: txErr } = await supabase
+            .from('deposit_transactions')
+            .insert(txSubChunk);
+          if (txErr) {
+            console.warn('Gagal insert batch deposit_transactions:', txErr.message);
+          }
+        }
+      }
+
+      result.totalProcessed += chunk.length;
+      result.successCount += chunk.length;
+    } catch (batchErr: any) {
+      result.totalProcessed += chunk.length;
+      result.failedCount += chunk.length;
+      const errorMsg = `Batch ${Math.floor(i / CHUNK_SIZE) + 1} (${chunk.length} data): ${batchErr?.message || 'Gagal'}`;
+      result.errors.push(errorMsg);
+      console.error(errorMsg, batchErr);
+    }
+
+    onProgress?.(result.totalProcessed, totalCount);
+  }
+
+  return result;
+}
+
+export const batchInsertMembers = importMembersChunked;
+
+export async function importMembersFromExcel(
+  fileOrBuffer: File | ArrayBuffer,
+  onProgress?: (currentCount: number, totalCount: number) => void
+): Promise<ImportMembersChunkedResult> {
+  const { parseMemberExcel } = await import('../utils/memberExcelParser');
+  const parseResult = await parseMemberExcel(fileOrBuffer);
+  if (parseResult.errors.length > 0 && parseResult.rows.length === 0) {
+    throw new Error(`Gagal mem-parsing file Excel: ${parseResult.errors.join(', ')}`);
+  }
+  return importMembersChunked(parseResult.rows, onProgress);
 }
 
 /**

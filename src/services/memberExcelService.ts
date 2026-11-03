@@ -293,7 +293,10 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
   return { rows, errors };
 };
 
-export const executeMigration = async (result: MemberParseResult): Promise<void> => {
+export const executeMigration = async (
+  result: MemberParseResult,
+  onProgress?: (current: number, total: number) => void
+): Promise<void> => {
   const { rows } = result;
   if (rows.length === 0) return;
 
@@ -310,6 +313,9 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
   // 2. Ambil ID Tipe Pinjaman (Fallback ke tipe default pertama)
   const { data: lTypes } = await supabase.from('loan_types').select('*').eq('is_active', true).limit(1);
   const loanTypeId = lTypes?.[0]?.id;
+
+  let processedCount = 0;
+  onProgress?.(0, rows.length);
 
   for (const row of rows) {
     try {
@@ -575,6 +581,9 @@ export const executeMigration = async (result: MemberParseResult): Promise<void>
       }
     } catch (err: any) {
       console.error(`Gagal memproses migrasi anggota NRP ${row.nrp} (${row.nama}):`, err);
+    } finally {
+      processedCount++;
+      onProgress?.(processedCount, rows.length);
     }
   }
 };

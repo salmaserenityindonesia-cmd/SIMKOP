@@ -41,7 +41,13 @@ import {
   BulkReconcileProgress,
   BulkReconcileResult
 } from '../../services/savingsMatrixService';
-import { clearTierCache } from '../../services/savingsRateService';
+import {
+  clearTierCache,
+  getRateTiers,
+  getApplicableRate,
+  SavingsRateTier,
+  DEFAULT_RATE_TIERS
+} from '../../services/savingsRateService';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 const CURRENT_MONTH = new Date().getMonth();
@@ -251,6 +257,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   
   const [data, setData] = useState<ComplianceMatrixRow[]>(initialData || []);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
+  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
   const [loading, setLoading] = useState(initialData === undefined);
   const [selectedMember, setSelectedMember] = useState<{
     id: string;
@@ -290,6 +297,11 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
   useEffect(() => {
     loadComplianceAvailableYearsData(setAvailableYears, setYear);
+    getRateTiers(undefined, false)
+      .then(tiers => {
+        if (tiers && tiers.length > 0) setRateTiers(tiers);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -335,18 +347,35 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number, row: ComplianceMatrixRow) => {
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
 
+    const yearNum = parseInt(year, 10);
+    const monthNum = monthIndex + 1;
+    const expectedRateW = getApplicableRate('WAJIB', yearNum, monthNum, rateTiers) || (targets.wajib || 200000);
+    const expectedRateB = getApplicableRate('BELANJA', yearNum, monthNum, rateTiers) || (targets.belanja || 25000);
+    const expectedRateL = getApplicableRate('LEBARAN', yearNum, monthNum, rateTiers) || (targets.lebaran || 50000);
+
     const wajibItem = monthData.wajib || {
-      status: (monthData.w > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
-      amount: monthData.w > 0 ? monthData.w : (targets.wajib || 200000),
+      status: (monthData.w > 0 ? (monthData.w < expectedRateW ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
+      amount: monthData.w > 0 ? monthData.w : expectedRateW,
+      targetAmount: expectedRateW,
     };
     const belanjaItem = monthData.belanja || {
-      status: (monthData.b > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
-      amount: monthData.b > 0 ? monthData.b : (targets.belanja || 50000),
+      status: (monthData.b > 0 ? (monthData.b < expectedRateB ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
+      amount: monthData.b > 0 ? monthData.b : expectedRateB,
+      targetAmount: expectedRateB,
     };
     const lebaranItem = monthData.lebaran || {
-      status: (monthData.l > 0 ? 'paid' : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable',
-      amount: monthData.l > 0 ? monthData.l : (targets.lebaran || 50000),
+      status: (monthData.l > 0 ? (monthData.l < expectedRateL ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
+      amount: monthData.l > 0 ? monthData.l : expectedRateL,
+      targetAmount: expectedRateL,
     };
+
+    const targetW = wajibItem.targetAmount || expectedRateW;
+    const targetB = belanjaItem.targetAmount || expectedRateB;
+    const targetL = lebaranItem.targetAmount || expectedRateL;
+
+    const isWajibPartial = wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW);
+    const isBelanjaPartial = belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB);
+    const isLebaranPartial = lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL);
 
     return (
       <div 
@@ -363,7 +392,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">wajib</span>
           <span className={
-            wajibItem.status === 'paid'
+            isWajibPartial
+              ? 'text-amber-600 font-bold'
+              : wajibItem.status === 'paid'
               ? 'text-emerald-600 font-semibold'
               : wajibItem.status === 'unpaid'
               ? 'text-rose-600 font-bold'
@@ -379,7 +410,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">belanja</span>
           <span className={
-            belanjaItem.status === 'paid'
+            isBelanjaPartial
+              ? 'text-amber-600 font-bold'
+              : belanjaItem.status === 'paid'
               ? 'text-teal-600 font-semibold'
               : belanjaItem.status === 'unpaid'
               ? 'text-rose-600 font-bold'
@@ -395,7 +428,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">lebaran</span>
           <span className={
-            lebaranItem.status === 'paid'
+            isLebaranPartial
+              ? 'text-amber-600 font-bold'
+              : lebaranItem.status === 'paid'
               ? 'text-emerald-600 font-semibold'
               : lebaranItem.status === 'unpaid'
               ? 'text-rose-600 font-bold'
@@ -408,27 +443,57 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         </div>
 
         {/* Tooltip Hover Detail */}
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
           <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{MONTHS[monthIndex]} {year}</div>
           <div className="space-y-1.5">
             <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Wajib:</span>
               <div className="text-right">
-                <div>{wajibItem.status === 'paid' ? <span className="text-emerald-400">{formatCurrency(Number(wajibItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div>
+                  {isWajibPartial ? (
+                    <span className="text-amber-400 font-medium">
+                      Setoran Parsial: Rp {Number(wajibItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetW).toLocaleString('id-ID')} (Kurang Rp {Number(targetW - Number(wajibItem.amount)).toLocaleString('id-ID')})
+                    </span>
+                  ) : wajibItem.status === 'paid' ? (
+                    <span className="text-emerald-400">{formatCurrency(Number(wajibItem.amount))}</span>
+                  ) : (
+                    <span className="text-red-400 font-medium">Belum</span>
+                  )}
+                </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_w || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
             <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Belanja:</span>
               <div className="text-right">
-                <div>{belanjaItem.status === 'paid' ? <span className="text-teal-400">{formatCurrency(Number(belanjaItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div>
+                  {isBelanjaPartial ? (
+                    <span className="text-amber-400 font-medium">
+                      Setoran Parsial: Rp {Number(belanjaItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetB).toLocaleString('id-ID')} (Kurang Rp {Number(targetB - Number(belanjaItem.amount)).toLocaleString('id-ID')})
+                    </span>
+                  ) : belanjaItem.status === 'paid' ? (
+                    <span className="text-teal-400">{formatCurrency(Number(belanjaItem.amount))}</span>
+                  ) : (
+                    <span className="text-red-400 font-medium">Belum</span>
+                  )}
+                </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_b || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
             <div className="flex justify-between items-center gap-2">
               <span>Lebaran:</span>
               <div className="text-right">
-                <div>{lebaranItem.status === 'paid' ? <span className="text-emerald-400">{formatCurrency(Number(lebaranItem.amount))}</span> : <span className="text-red-400 font-medium">Belum</span>}</div>
+                <div>
+                  {isLebaranPartial ? (
+                    <span className="text-amber-400 font-medium">
+                      Setoran Parsial: Rp {Number(lebaranItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetL).toLocaleString('id-ID')} (Kurang Rp {Number(targetL - Number(lebaranItem.amount)).toLocaleString('id-ID')})
+                    </span>
+                  ) : lebaranItem.status === 'paid' ? (
+                    <span className="text-emerald-400">{formatCurrency(Number(lebaranItem.amount))}</span>
+                  ) : (
+                    <span className="text-red-400 font-medium">Belum</span>
+                  )}
+                </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_l || 0).toLocaleString('id-ID')}</div>
               </div>
             </div>
@@ -786,6 +851,10 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
             <span className="text-slate-600">Lunas (Hijau / Teal)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>
+            <span className="text-slate-600">Parsial (Oranye / Amber)</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block"></span>

@@ -199,6 +199,39 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Selisih');
       expect(html).toContain('Kurang');
     });
+
+    it('renders partial badge and balanced status for partial remainder month (e.g. Agus Susanto Rp 60.000)', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-agus"
+          memberNrp="95168420"
+          memberName="Agus Susanto"
+          joinDate="2022-08-01"
+          onClose={vi.fn()}
+          initialLoading={false}
+          initialDbBalances={{ WAJIB: 60000 }}
+          initialCheckedMonths={{ WAJIB: ['2026-09'] }}
+          initialMonthAmounts={{ WAJIB: { '2026-09': 60000 } }}
+        />
+      );
+
+      // Verify partial badge and amount
+      expect(html).toContain('Parsial: Rp 60.000 /');
+      expect(html).toContain('partial-badge-2026-09');
+      // Verify total matches database balance: Sesuai / Seimbang
+      expect(html).toContain('Sesuai / Seimbang');
+      expect(html).toContain('60.000');
+    });
+  });
+
+  describe('calculateTotalChecked Helper with Partial Amounts', () => {
+    it('uses custom partial amounts when provided', () => {
+      const keys = ['2024-01', '2026-09'];
+      const customAmounts = new Map<string, number>([['2026-09', 60000]]);
+      const total = calculateTotalChecked(keys, 'WAJIB', DEFAULT_RATE_TIERS, customAmounts);
+      // 2024-01 is 150.000, 2026-09 is overridden with 60.000 -> 210.000
+      expect(total).toBe(210000);
+    });
   });
 
   describe('isMonthBeforeJoin Helper Logic', () => {

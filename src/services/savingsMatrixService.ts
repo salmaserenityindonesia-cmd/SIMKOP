@@ -50,6 +50,28 @@ export interface ReconcileSingleMemberResult {
   memberDepositId?: string;
   matchedKeys: string[];
   insertedCount: number;
+  allocatedTransactions?: FifoAllocatedTransaction[];
+  totalAllocated?: number;
+}
+
+export interface FifoAllocatedTransaction {
+  member_deposit_id?: string;
+  transaction_type: 'deposit';
+  amount: number;
+  for_month: number;
+  for_year: number;
+  description: string;
+  key: string;
+  applicableRate: number;
+  isPartial: boolean;
+}
+
+export interface FifoAllocationResult {
+  matchedKeys: string[];
+  allocatedTransactions: FifoAllocatedTransaction[];
+  totalAllocated: number;
+  remainingBalance: number;
+  partialTransaction?: FifoAllocatedTransaction;
 }
 
 /**
@@ -95,15 +117,26 @@ export function generateMonthGrid(
 }
 
 /**
- * Menghitung total nominal dari bulan-bulan yang tercentang
+ * Menghitung total nominal dari bulan-bulan yang tercentang.
+ * Mendukung override nominal parsial riil melalui parameter opsional customAmounts.
  */
 export function calculateTotalChecked(
   checkedKeys: Iterable<string>,
   depositTypeCode: string,
-  rateTiers: SavingsRateTier[]
+  rateTiers: SavingsRateTier[],
+  customAmounts?: Map<string, number> | Record<string, number>
 ): number {
   let total = 0;
   for (const key of checkedKeys) {
+    if (customAmounts) {
+      const customAmt = customAmounts instanceof Map
+        ? customAmounts.get(key)
+        : customAmounts[key];
+      if (typeof customAmt === 'number') {
+        total += customAmt;
+        continue;
+      }
+    }
     const [yStr, mStr] = key.split('-');
     const y = parseInt(yStr, 10);
     const m = parseInt(mStr, 10);
@@ -115,26 +148,41 @@ export function calculateTotalChecked(
 }
 
 /**
- * Algoritma FIFO: Mulai dari bulan awal yang valid (setelah tanggal bergabung),
- * centang berurutan ke bulan-bulan berikutnya dengan nominal tarif aktif periode tersebut
- * hingga total tercentang tepat menyamai saldo impor tanpa melebihi saldo.
+ * Algoritma FIFO komprehensif: Mengalokasikan target saldo ke bulan-bulan kronologis
+ * berurutan sesuai tarif aktif bertingkat.
+ * Jika terdapat sisa saldo pecahan (remainingBalance < applicableRate && remainingBalance > 0),
+ * sisa saldo tersebut dimasukkan ke slot kalender bulan berikutnya dengan status parsial
+ * sehingga total alokasi persis seimbang dengan saldo database (selisih = 0).
  */
-export function matchAutomaticFifo(
+export function calculateFifoAllocation(
   targetBalance: number,
   months: Array<{ year: number; month: number; key: string }>,
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
-  joinDate?: string | Date | null
-): string[] {
-  if (targetBalance <= 0) return [];
+  joinDate?: string | Date | null,
+  memberDepositId?: string
+): FifoAllocationResult {
+  if (targetBalance <= 0) {
+    return {
+      matchedKeys: [],
+      allocatedTransactions: [],
+      totalAllocated: 0,
+      remainingBalance: 0
+    };
+  }
 
   let remaining = targetBalance;
   const matchedKeys: string[] = [];
+  const allocatedTransactions: FifoAllocatedTransaction[] = [];
 
   // Urutkan bulan secara kronologis
   const sortedMonths = [...months].sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
 
-  for (const m of sortedMonths) {
+  let nextCandidateMonth: { year: number; month: number; key: string } | null = null;
+  let lastProcessedMonth: { year: number; month: number } | null = null;
+
+  for (let i = 0; i < sortedMonths.length; i++) {
+    const m = sortedMonths[i];
     if (isMonthBeforeJoin(m.year, m.month, joinDate)) {
       continue;
     }
@@ -142,16 +190,114 @@ export function matchAutomaticFifo(
     const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers);
     if (rate <= 0) continue;
 
+    lastProcessedMonth = { year: m.year, month: m.month };
+
     if (remaining >= rate) {
       matchedKeys.push(m.key);
+      allocatedTransactions.push({
+        member_deposit_id: memberDepositId,
+        transaction_type: 'deposit',
+        amount: rate,
+        for_month: m.month,
+        for_year: m.year,
+        description: `Setoran Matriks ${depositTypeCode} ${MONTH_NAMES[m.month - 1]} ${m.year}`,
+        key: m.key,
+        applicableRate: rate,
+        isPartial: false
+      });
       remaining -= rate;
     } else {
-      // Saldo tidak mencukupi untuk bulan penuh ini, hentikan FIFO
+      // Saldo tidak mencukupi untuk bulan penuh ini, simpan slot bulan ini untuk alokasi sisa parsial
+      nextCandidateMonth = m;
       break;
     }
   }
 
-  return matchedKeys;
+  let partialTransaction: FifoAllocatedTransaction | undefined;
+
+  // Jika masih ada sisa saldo (remaining > 0), alokasikan ke bulan urutan berikutnya sebagai setoran parsial
+  if (remaining > 0) {
+    let nextYear: number;
+    let nextMonth: number;
+    let nextKey: string;
+
+    if (nextCandidateMonth) {
+      nextYear = nextCandidateMonth.year;
+      nextMonth = nextCandidateMonth.month;
+      nextKey = nextCandidateMonth.key;
+    } else if (lastProcessedMonth) {
+      nextYear = lastProcessedMonth.month === 12 ? lastProcessedMonth.year + 1 : lastProcessedMonth.year;
+      nextMonth = lastProcessedMonth.month === 12 ? 1 : lastProcessedMonth.month + 1;
+      nextKey = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+    } else {
+      const firstValid = sortedMonths.find(m => !isMonthBeforeJoin(m.year, m.month, joinDate));
+      if (firstValid) {
+        nextYear = firstValid.year;
+        nextMonth = firstValid.month;
+        nextKey = firstValid.key;
+      } else {
+        const now = new Date();
+        nextYear = now.getFullYear();
+        nextMonth = now.getMonth() + 1;
+        nextKey = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+      }
+    }
+
+    const applicableRate = getApplicableRate(depositTypeCode, nextYear, nextMonth, rateTiers);
+
+    partialTransaction = {
+      member_deposit_id: memberDepositId,
+      transaction_type: 'deposit',
+      amount: remaining,
+      for_month: nextMonth,
+      for_year: nextYear,
+      description: 'Rekonsiliasi Otomatis (Setoran Parsial)',
+      key: nextKey,
+      applicableRate,
+      isPartial: true
+    };
+
+    allocatedTransactions.push(partialTransaction);
+    matchedKeys.push(nextKey);
+    remaining = 0;
+  }
+
+  const totalAllocated = allocatedTransactions.reduce((acc, tx) => acc + tx.amount, 0);
+
+  return {
+    matchedKeys,
+    allocatedTransactions,
+    totalAllocated,
+    remainingBalance: remaining,
+    partialTransaction
+  };
+}
+
+/**
+ * Algoritma FIFO: Mulai dari bulan awal yang valid (setelah tanggal bergabung),
+ * centang berurutan ke bulan-bulan berikutnya dengan nominal tarif aktif periode tersebut.
+ * Secara default (includePartial=true), menyertakan bulan berikutnya jika terdapat sisa saldo parsial.
+ */
+export function matchAutomaticFifo(
+  targetBalance: number,
+  months: Array<{ year: number; month: number; key: string }>,
+  depositTypeCode: string,
+  rateTiers: SavingsRateTier[],
+  joinDate?: string | Date | null,
+  options?: { includePartial?: boolean }
+): string[] {
+  const includePartial = options?.includePartial ?? true;
+  const res = calculateFifoAllocation(
+    targetBalance,
+    months,
+    depositTypeCode,
+    rateTiers,
+    joinDate
+  );
+  if (!includePartial && res.partialTransaction) {
+    return res.matchedKeys.filter(k => k !== res.partialTransaction?.key);
+  }
+  return res.matchedKeys;
 }
 
 /**
@@ -442,14 +588,16 @@ export async function reconcileSingleMemberDeposit(
   const eYear = options?.endYear ?? Math.max(2026, currentYear);
   const monthGrid = generateMonthGrid(sYear, eYear);
 
-  // 7. Hitung bulan yang tercentang menggunakan algoritma FIFO
-  const matchedKeys = matchAutomaticFifo(
+  // 7. Hitung bulan yang tercentang menggunakan algoritma FIFO (termasuk alokasi sisa saldo parsial)
+  const fifoResult = calculateFifoAllocation(
     targetBalance,
     monthGrid,
     targetType,
     rateTiers,
-    effectiveJoin
+    effectiveJoin,
+    md.id
   );
+  const matchedKeys = fifoResult.matchedKeys;
 
   // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil)
   const oldRoutineTxIds = txs
@@ -535,20 +683,14 @@ export async function reconcileSingleMemberDeposit(
   }
 
   // 10. Simpan transaksi baru untuk setiap bulan yang dicocokkan FIFO
-  const txsToInsert = matchedKeys.map(key => {
-    const [yStr, mStr] = key.split('-');
-    const y = parseInt(yStr, 10);
-    const m = parseInt(mStr, 10);
-    const rate = getApplicableRate(targetType, y, m, rateTiers);
-    return {
-      member_deposit_id: md.id,
-      amount: rate,
-      for_month: m,
-      for_year: y,
-      transaction_type: 'deposit',
-      description: `Setoran Matriks ${targetType} ${MONTH_NAMES[m - 1]} ${y}`
-    };
-  });
+  const txsToInsert = fifoResult.allocatedTransactions.map(item => ({
+    member_deposit_id: md.id,
+    amount: item.amount,
+    for_month: item.for_month,
+    for_year: item.for_year,
+    transaction_type: 'deposit',
+    description: item.description
+  }));
 
   if (txsToInsert.length > 0) {
     const { error: insErr } = await supabase
@@ -561,7 +703,9 @@ export async function reconcileSingleMemberDeposit(
     success: true,
     memberDepositId: md.id,
     matchedKeys,
-    insertedCount: txsToInsert.length
+    insertedCount: txsToInsert.length,
+    allocatedTransactions: fifoResult.allocatedTransactions,
+    totalAllocated: fifoResult.totalAllocated
   };
 }
 

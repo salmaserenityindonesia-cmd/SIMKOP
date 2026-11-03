@@ -29,8 +29,8 @@ vi.mock('../../context/FeedbackContext', () => ({
   }),
 }));
 
-vi.mock('../../services/koperasiService', () => ({
-  getAnggota: vi.fn().mockResolvedValue([
+vi.mock('../../services/koperasiService', () => {
+  const dummyMembers = [
     {
       id: 'member-1',
       nrp: '12345678',
@@ -40,10 +40,15 @@ vi.mock('../../services/koperasiService', () => ({
       master_thp: 5000000,
       bank_account_number: '1234567890',
     },
-  ]),
-  addAnggota: vi.fn(),
-  updateAnggota: vi.fn(),
-}));
+  ];
+  return {
+    getAnggota: vi.fn().mockResolvedValue(dummyMembers),
+    fetchAllAnggotaPaged: vi.fn().mockResolvedValue(dummyMembers),
+    fetchAnggota: vi.fn().mockResolvedValue(dummyMembers),
+    addAnggota: vi.fn(),
+    updateAnggota: vi.fn(),
+  };
+});
 
 vi.mock('../../services/memberExcelService', () => ({
   exportMemberTemplate: vi.fn(),
