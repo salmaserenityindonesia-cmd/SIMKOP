@@ -922,6 +922,30 @@ updated: 2026-10-30T20:50:00+07:00
 - Pengujian komponen sel di `src/pages/admin/ComplianceMatrix.test.tsx`
 - Verifikasi statis TypeScript dan production build Vite exit code 0
 
+
+
+---
+
+### Phase 53: Ekspor & Impor Matriks Buku Besar Simpanan via Excel (.xlsx) dengan Formula Validasi Selisih
+**Status:** Planned
+**Objective:** Mengimplementasikan alur kerja audit simpanan berbasis Excel (.xlsx) horizontal per jenis simpanan (Wajib, Belanja, Lebaran) dengan formula Excel dinamis (=SUM(...), selisih saldo acuan, dan status validasi SEIMBANG/KURANG/LEBIH), conditional formatting, parser impor mutasi bulanan, pembersihan transaksi lama anti double-counting, dan batch insert ke buku besar deposit_transactions.
+**Depends on:** Phase 52
+
+**Plans:**
+- [ ] Plan 53.1: Wave 1 - Excel Exporter Engine with Difference Validation Formula & Unit Tests
+- [ ] Plan 53.2: Wave 2 - Excel Importer & Ledger Mutation Processor & Unit Tests
+- [ ] Plan 53.3: Wave 3 - Toolbar UI Integration in ComplianceMatrix.tsx, Modals & Component Tests
+- [ ] Plan 53.4: Wave 4 - Static Verification, Full Vitest Suite & Production Build
+
+**Deliverables:**
+- Modul generator src/utils/savingsMatrixExporter.ts dengan formula Excel dinamis dan styling validasi selisih
+- Parser src/utils/savingsMatrixImporter.ts untuk ekstraksi mutasi bulanan dari lembar kerja Excel
+- Fungsi importSavingsMatrixLedger di src/services/complianceService.ts untuk sinkronisasi batch buku besar
+- Komponen src/components/compliance/SavingsMatrixImportModal.tsx dengan progress bar dan pratinjau parsing
+- Toolbar tombol Ekspor & Impor di src/pages/admin/ComplianceMatrix.tsx
+- Suite pengujian unit dan komponen lengkap di src/utils/*.test.ts, src/services/*.test.ts, dan src/pages/admin/*.test.tsx
+- Verifikasi statis TypeScript dan production build Vite exit code 0
+
 ---
 
 ## Wave Execution Plan
@@ -967,6 +991,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 37 | Phase 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan |
 | 38 | Phase 51 | Bulk Auto-Reconcile Matriks Simpanan |
 | 39 | Phase 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris |
+| 40 | Phase 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) |
 
 ---
 
@@ -1026,6 +1051,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan | ✅ | 4/4 | 100% |
 | 51 | Bulk Auto-Reconcile Matriks Simpanan | ✅ | 3/3 | 100% |
 | 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
+| 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ⏳ | 0/4 | 0% |
 
 ---
 
@@ -1085,5 +1111,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 50 | 2026-11-02 | 2026-11-02 | 1 day |
 | 51 | 2026-11-02 | 2026-11-02 | 1 day |
 | 52 | 2026-11-02 | 2026-11-02 | 1 day |
+| 53 | 2026-11-03 | — | — |
 
 

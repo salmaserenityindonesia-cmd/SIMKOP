@@ -1,17 +1,17 @@
 ## Current Position
-- **Phase**: 52 (Refactor Tampilan Sel Matriks Kepatuhan Simpanan Menjadi 3 Sub-Baris: Wajib, Belanja, Lebaran)
-- **Task**: Phase verification complete
-- **Status**: Complete & Verified (6/6 must-haves verified)
+- **Phase**: 53 (Ekspor & Impor Matriks Buku Besar Simpanan via Excel (.xlsx) dengan Formula Validasi Selisih)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 52 executed and independently verified across 3 plans:
-- Plan 52.1: Data contract alignment in `src/services/complianceService.ts`. Introduced `SavingsSubItem`, `MonthSavingsCell`, and extended `ComplianceMonthData` to map `wajib`, `belanja`, and `lebaran` status (`paid` vs `unpaid`) and amounts per month. Extended `src/services/complianceService.test.ts` (18 unit tests passing 100%). Commits: `f0f3be74`, `bce8473b`.
-- Plan 52.2: Multi-row cell UI in `src/pages/admin/ComplianceMatrix.tsx`. Refactored month cell into 3-row vertical layout with color indicators (`text-emerald-600` for paid wajib/lebaran, `text-teal-600` for paid belanja, `text-rose-600` for unpaid, and `-` in slate-400 for not applicable). Widened month column `min-w-[95px] md:min-w-[105px]`. Enabled direct cell click to open `SavingsLedgerMatrixModal`. Updated legend footer. Extended `src/pages/admin/ComplianceMatrix.test.tsx` (23 tests passing 100%). Commits: `845277f5`, `5d375b3e`.
-- Plan 52.3: Full static TypeScript verification (`tsc --noEmit`), full Vitest suite run (37 test files, 410 tests passing 100%), and production build verification (`npm run build`) with exit code 0. Commits: `c4f8c1b9`, `33728fc1`.
-- Independent verifier passed 6/6 must-haves with report at `.gsd/phases/52/VERIFICATION.md`.
+Phase 53 successfully planned across 4 atomic plans:
+- Plan 53.1: Wave 1 - Excel Exporter Engine with Difference Validation Formula & Unit Tests (`src/utils/savingsMatrixExporter.ts`, `src/utils/savingsMatrixExporter.test.ts`)
+- Plan 53.2: Wave 2 - Excel Importer & Ledger Mutation Processor & Unit Tests (`src/utils/savingsMatrixImporter.ts`, `src/services/complianceService.ts`)
+- Plan 53.3: Wave 3 - Toolbar UI Integration in ComplianceMatrix.tsx, Modals & Component Tests (`src/components/compliance/SavingsMatrixImportModal.tsx`, `src/pages/admin/ComplianceMatrix.tsx`)
+- Plan 53.4: Wave 4 - Static Verification, Full Vitest Suite & Production Build (`tsc --noEmit`, `vitest run`, `npm run build`)
 
 ## Next Steps
-Phase 52 is complete. Awaiting next user request or milestone review.
+1. /execute 53
 
 ## Blockers
 - None.
@@ -19,10 +19,6 @@ Phase 52 is complete. Awaiting next user request or milestone review.
 ## Context Dump
 
 ### Decisions Made
-- **Granular Data Contract**: Mempertahankan backward-compatibility dengan properti flat (`w`, `b`, `l`, `bal_w`, `bal_b`, `bal_l`) sembari menambahkan sub-objek terstruktur `wajib`, `belanja`, `lebaran` berisi status dan nominal.
-- **3-Subrow Visual Presentation**: Setiap sel bulan menampilkan rincian:
-  * Wajib: Emerald-600 (lunas) / Rose-600 (tunggakan)
-  * Belanja: Teal-600 (lunas) / Rose-600 (tunggakan)
-  * Lebaran: Emerald-600 (lunas) / Rose-600 (tunggakan)
-- **Cell-Click Ledger Trigger**: Klik pada setiap sel bulan langsung membuka `SavingsLedgerMatrixModal` untuk anggota tersebut.
-- **Responsive Width**: Header dan sel bulan disetel ke `min-w-[95px] md:min-w-[105px]` untuk mencegah pemotongan teks atau angka nominal rupiah.
+- **Dynamic Formula & Conditional Formatting**: Lembar kerja Excel hasil ekspor menggunakan formula Excel native (`=SUM(...)`, `=[Total]-[Acuan]`, `=IF([Selisih]=0, "SEIMBANG", ...)`) dan styling conditional formatting warna hijau/merah.
+- **Double-Counting Prevention**: Impor mutasi buku besar secara otomatis membersihkan mutasi lama ('Rekonsiliasi Otomatis' / 'Import Matriks Buku Besar Excel') dan transaksi saldo awal migrasi lump-sum (`for_month IS NULL`) sebelum melakukan batch insert chunking 100 baris.
+- **Dedicated Modal UI**: Memisahkan modal impor ke `SavingsMatrixImportModal.tsx` dengan live drag-and-drop, validasi parsing, feedback visual progress bar, dan tombol ekspor per jenis simpanan pada toolbar `ComplianceMatrix.tsx`.
