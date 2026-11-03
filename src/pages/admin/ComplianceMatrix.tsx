@@ -638,7 +638,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           <table className="w-full text-sm text-left border-collapse min-w-[1200px]">
             <thead className="bg-slate-50 text-slate-600 font-medium">
               <tr>
-                <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] w-[280px]">
+                <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                   Informasi Anggota
                 </th>
                 {MONTHS.map((month, idx) => (
@@ -669,7 +669,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 </tr>
               ) : paginatedData.map((row) => (
                 <tr key={row.nrp} className="hover:bg-slate-50/50 transition-colors group/row">
-                  <td className="sticky left-0 bg-white group-hover/row:bg-slate-50/90 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                  <td className="sticky left-0 bg-white group-hover/row:bg-slate-50/90 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                     <div className="flex flex-col">
                       <button
                         onClick={() => setSelectedMember({
@@ -692,28 +692,28 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         )}
                       </div>
 
-                      <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col gap-0.5 text-[11px] font-mono select-none" data-testid={`member-net-savings-${row.nrp}`}>
-                        <div className="flex items-center justify-between text-slate-500 font-semibold text-[10px] uppercase">
-                          <span>Kas Riil Anggota</span>
-                          <span className="text-emerald-700 font-bold">
+                      <div className="mt-2 pt-2 border-t border-slate-100 flex flex-col gap-1 text-[11px] font-mono select-none whitespace-nowrap" data-testid={`member-net-savings-${row.nrp}`}>
+                        <div className="flex items-center justify-between px-2 py-0.5 rounded bg-emerald-50/70 border border-emerald-200/60 text-emerald-900">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider">Kas Riil</span>
+                          <span className="font-mono font-bold text-emerald-700 tabular-nums whitespace-nowrap">
                             Rp {Number(row.netSavings?.total || 0).toLocaleString('id-ID')}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Wajib:</span>
-                          <span className="font-semibold text-slate-800">
+                        <div className="flex items-center justify-between px-1 text-slate-600">
+                          <span className="text-slate-500">Wajib:</span>
+                          <span className="font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                             Rp {Number(row.netSavings?.wajib || 0).toLocaleString('id-ID')}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Belanja:</span>
-                          <span className="font-semibold text-slate-800">
+                        <div className="flex items-center justify-between px-1 text-slate-600">
+                          <span className="text-slate-500">Belanja:</span>
+                          <span className="font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                             Rp {Number(row.netSavings?.belanja || 0).toLocaleString('id-ID')}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-600">
-                          <span>Lebaran:</span>
-                          <span className="font-semibold text-slate-800">
+                        <div className="flex items-center justify-between px-1 text-slate-600">
+                          <span className="text-slate-500">Lebaran:</span>
+                          <span className="font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                             Rp {Number(row.netSavings?.lebaran || 0).toLocaleString('id-ID')}
                           </span>
                         </div>

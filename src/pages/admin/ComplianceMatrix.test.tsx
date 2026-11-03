@@ -865,8 +865,8 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       // Verify card container by testid
       expect(html).toContain('data-testid="member-net-savings-12345678"');
 
-      // Verify title "Kas Riil Anggota" and formatted values
-      expect(html).toContain('Kas Riil Anggota');
+      // Verify title "Kas Riil" and formatted values
+      expect(html).toContain('Kas Riil');
       expect(html).toContain('Rp 950.000');
       expect(html).toContain('Wajib:');
       expect(html).toContain('Rp 500.000');
@@ -902,7 +902,7 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       );
 
       expect(html).toContain('data-testid="member-net-savings-99999999"');
-      expect(html).toContain('Kas Riil Anggota');
+      expect(html).toContain('Kas Riil');
       expect(html).toContain('Rp 0');
     });
 
@@ -937,7 +937,7 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       );
 
       expect(html).toContain('data-testid="member-net-savings-88888888"');
-      expect(html).toContain('Kas Riil Anggota');
+      expect(html).toContain('Kas Riil');
       expect(html).toContain('Rp 0');
     });
   });
