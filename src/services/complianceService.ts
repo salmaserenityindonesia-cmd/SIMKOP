@@ -1000,6 +1000,12 @@ export async function importSavingsMatrixLedger(
       } else {
         totalInserted += chunk.length;
       }
+
+      if (onProgress) {
+        const processed = Math.min(newTransactions.length, i + chunk.length);
+        const percent = Math.round((processed / newTransactions.length) * 100);
+        onProgress({ processed, total: newTransactions.length, percent });
+      }
     }
 
     const hasFatalErrors = errors.some(e => e.startsWith('Gagal menyimpan transaksi batch'));
