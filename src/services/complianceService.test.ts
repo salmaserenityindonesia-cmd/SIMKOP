@@ -3,6 +3,7 @@ import {
   getSavingsComplianceAvailableYears,
   getComplianceMatrixData,
   matchDepositType,
+  importSavingsMatrixLedger,
   DepositTypeItem,
   SavingsSubItem,
   MonthSavingsCell,
@@ -899,4 +900,258 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
     });
   });
 });
+
+describe('complianceService - importSavingsMatrixLedger', () => {
+  const mockTypes = [
+    { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+    { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+    { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Hari Raya' },
+  ];
+
+  it('harus mengembalikan sukses langsung jika daftar mutasi kosong', async () => {
+    const res = await importSavingsMatrixLedger('WAJIB', []);
+    expect(res.success).toBe(true);
+    expect(res.totalMembers).toBe(0);
+    expect(res.totalTransactions).toBe(0);
+  });
+
+  it('harus berhasil mengimpor mutasi simpanan, membersihkan transaksi lama, dan menyimpan data baru', async () => {
+    const mockMembers = [
+      { id: 'm-1', nrp: '1001', nama: 'Budi Santoso' },
+      { id: 'm-2', nrp: '1002', nama: 'Siti Aminah' },
+    ];
+
+    const mockDeposits = [
+      { id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-wajib' },
+      { id: 'md-2', member_id: 'm-2', deposit_type_id: 'dt-wajib' },
+    ];
+
+    const mockExistingTxs = [
+      { id: 'tx-old-1', member_deposit_id: 'md-1', description: 'Rekonsiliasi Otomatis Jan 2024', for_month: 1 },
+      { id: 'tx-old-2', member_deposit_id: 'md-2', description: 'Saldo Awal Migrasi', for_month: null },
+      { id: 'tx-keep', member_deposit_id: 'md-1', description: 'Setoran Kasir POS', for_month: 2 },
+    ];
+
+    const deletedIds: string[][] = [];
+    const insertedTxs: any[][] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockDeposits, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: mockExistingTxs, error: null }),
+          }),
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockImplementation((_col: string, ids: string[]) => {
+              deletedIds.push(ids);
+              return Promise.resolve({ error: null });
+            }),
+          }),
+          insert: vi.fn().mockImplementation((batch: any[]) => {
+            insertedTxs.push(batch);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+      const mutations = [
+        { nrp: '1001', year: 2024, month: 1, amount: 150000 },
+        { nrp: '1001', year: 2024, month: 2, amount: 150000 },
+        { nrp: '1002', year: 2024, month: 1, amount: 150000 },
+        { nrp: '1002', year: 2024, month: 2, amount: 150000 },
+      ];
+
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+
+      expect(result.success).toBe(true);
+      expect(result.totalMembers).toBe(2);
+      expect(result.totalTransactions).toBe(4);
+
+      // Verifikasi penghapusan transaksi lama (hanya tx-old-1 dan tx-old-2 yang dihapus)
+      expect(deletedIds.flat()).toEqual(['tx-old-1', 'tx-old-2']);
+
+      // Verifikasi mutasi baru tersimpan dengan deskripsi benar
+      expect(insertedTxs).toHaveLength(1);
+      expect(insertedTxs[0]).toHaveLength(4);
+      expect(insertedTxs[0][0]).toMatchObject({
+        member_deposit_id: 'md-1',
+        amount: 150000,
+        for_month: 1,
+        for_year: 2024,
+        description: 'Import Matriks Buku Besar Excel',
+      });
+    });
+
+    it('harus secara otomatis membuat akun member_deposits jika belum ada untuk anggota', async () => {
+      const mockMembers = [{ id: 'm-new', nrp: '9999', nama: 'Anggota Baru' }];
+      const createdDeposits: any[] = [];
+      const insertedTxs: any[][] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: [], error: null }), // belum ada
+              }),
+            }),
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              const inserted = rows.map((r, i) => ({ id: `md-new-${i + 1}`, ...r }));
+              createdDeposits.push(...inserted);
+              return {
+                select: vi.fn().mockResolvedValue({ data: inserted, error: null }),
+              };
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              insertedTxs.push(batch);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const mutations = [
+        { nrp: '9999', year: 2024, month: 5, amount: 200000 },
+      ];
+
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+
+      expect(result.success).toBe(true);
+      expect(result.totalMembers).toBe(1);
+      expect(result.totalTransactions).toBe(1);
+      expect(createdDeposits).toHaveLength(1);
+      expect(createdDeposits[0]).toMatchObject({
+        member_id: 'm-new',
+        deposit_type_id: 'dt-wajib',
+      });
+      expect(insertedTxs[0][0].member_deposit_id).toBe('md-new-1');
+    });
+
+    it('harus membagi chunking batch insert per 100 baris untuk volume transaksi besar', async () => {
+      const mockMembers = [{ id: 'm-1', nrp: '1001', nama: 'Budi' }];
+      const mockDeposits = [{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-wajib' }];
+      const batchCalls: any[][] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: mockDeposits, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null }),
+            }),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              batchCalls.push(batch);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      // Buat 150 transaksi
+      const mutations = [];
+      for (let i = 1; i <= 150; i++) {
+        mutations.push({
+          nrp: '1001',
+          year: 2020 + Math.floor(i / 12),
+          month: (i % 12) + 1,
+          amount: 100000,
+        });
+      }
+
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+
+      expect(result.success).toBe(true);
+      expect(result.totalTransactions).toBe(150);
+      expect(batchCalls).toHaveLength(2); // 100 + 50
+      expect(batchCalls[0]).toHaveLength(100);
+      expect(batchCalls[1]).toHaveLength(50);
+    });
+
+    it('harus menangani kasus error jika tipe simpanan tidak ditemukan', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const mutations = [{ nrp: '1001', year: 2024, month: 1, amount: 150000 }];
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]).toContain('Gagal memuat tipe simpanan');
+    });
+  });
 
