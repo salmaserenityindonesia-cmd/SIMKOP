@@ -72,3 +72,4 @@ Rencana ini menyediakan solusi audit luar-jaringan (offline) yang solid berbasis
 - Unit tests untuk `importSavingsMatrixLedger` di `complianceService.ts` (memeriksa pemetaan NRP, pembersihan mutasi lama, dan batch insertion).
 - Component testing di `ComplianceMatrix.test.tsx`.
 - Type checking (`npm run typecheck`) dan full Vitest suite run (`npm test`).
+

@@ -927,15 +927,15 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 53: Ekspor & Impor Matriks Buku Besar Simpanan via Excel (.xlsx) dengan Formula Validasi Selisih
-**Status:** Planned
+**Status:** Complete
 **Objective:** Mengimplementasikan alur kerja audit simpanan berbasis Excel (.xlsx) horizontal per jenis simpanan (Wajib, Belanja, Lebaran) dengan formula Excel dinamis (=SUM(...), selisih saldo acuan, dan status validasi SEIMBANG/KURANG/LEBIH), conditional formatting, parser impor mutasi bulanan, pembersihan transaksi lama anti double-counting, dan batch insert ke buku besar deposit_transactions.
 **Depends on:** Phase 52
 
 **Plans:**
-- [ ] Plan 53.1: Wave 1 - Excel Exporter Engine with Difference Validation Formula & Unit Tests
-- [ ] Plan 53.2: Wave 2 - Excel Importer & Ledger Mutation Processor & Unit Tests
-- [ ] Plan 53.3: Wave 3 - Toolbar UI Integration in ComplianceMatrix.tsx, Modals & Component Tests
-- [ ] Plan 53.4: Wave 4 - Static Verification, Full Vitest Suite & Production Build
+- [x] Plan 53.1: Wave 1 - Excel Exporter Engine with Difference Validation Formula & Unit Tests
+- [x] Plan 53.2: Wave 2 - Excel Importer & Ledger Mutation Processor & Unit Tests
+- [x] Plan 53.3: Wave 3 - Toolbar UI Integration in ComplianceMatrix.tsx, Modals & Component Tests
+- [x] Plan 53.4: Wave 4 - Static Verification, Full Vitest Suite & Production Build
 
 **Deliverables:**
 - Modul generator src/utils/savingsMatrixExporter.ts dengan formula Excel dinamis dan styling validasi selisih
@@ -1051,7 +1051,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 50 | Pengaturan Tarif Berjenjang & Buku Besar Matriks Simpanan | ✅ | 4/4 | 100% |
 | 51 | Bulk Auto-Reconcile Matriks Simpanan | ✅ | 3/3 | 100% |
 | 52 | Refactor Tampilan Sel Matriks Kepatuhan Simpanan 3 Sub-Baris | ✅ | 3/3 | 100% |
-| 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ⏳ | 0/4 | 0% |
+| 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ✅ | 4/4 | 100% |
 
 ---
 
@@ -1111,6 +1111,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 50 | 2026-11-02 | 2026-11-02 | 1 day |
 | 51 | 2026-11-02 | 2026-11-02 | 1 day |
 | 52 | 2026-11-02 | 2026-11-02 | 1 day |
-| 53 | 2026-11-03 | — | — |
+| 53 | 2026-11-03 | 2026-11-03 | 1 day |
 
 
