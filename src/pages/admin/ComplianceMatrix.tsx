@@ -14,7 +14,9 @@ import {
   Loader2,
   Sparkles,
   Layers,
-  X
+  X,
+  ChevronDown,
+  Upload
 } from 'lucide-react';
 import {
   getComplianceMatrixData,
@@ -24,6 +26,8 @@ import {
 } from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
+import SavingsMatrixImportModal from '../../components/compliance/SavingsMatrixImportModal';
+import { exportSavingsMatrixExcel, DepositTypeKey } from '../../utils/savingsMatrixExporter';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
 import {
@@ -52,7 +56,58 @@ export interface ComplianceMatrixProps {
   initialBulkTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
   initialBulkProgress?: { processed: number; total: number; currentMemberName?: string };
   initialBulkResult?: { totalSuccess: number; totalFailed: number } | null;
+  initialShowImportModal?: boolean;
+  initialShowExportDropdown?: boolean;
+  initialIsExporting?: boolean;
 }
+
+export const handleExportSavingsMatrix = async (
+  depositType: DepositTypeKey,
+  setIsExporting: (loading: boolean) => void,
+  setShowExportDropdown: (show: boolean) => void,
+  feedback?: any
+): Promise<boolean> => {
+  setIsExporting(true);
+  setShowExportDropdown(false);
+  try {
+    await exportSavingsMatrixExcel(depositType);
+    const typeLabel =
+      depositType === 'WAJIB'
+        ? 'Simpanan Wajib'
+        : depositType === 'BELANJA'
+        ? 'Simpanan Belanja Bulanan'
+        : 'Simpanan Hari Raya (Lebaran)';
+    if (feedback?.showToast) {
+      feedback.showToast(`Matriks periksa ${typeLabel} (.xlsx) berhasil diekspor`, 'success');
+    }
+    return true;
+  } catch (err: any) {
+    console.error('Error exporting savings matrix:', err);
+    if (feedback?.showToast) {
+      feedback.showToast('Gagal mengekspor matriks simpanan: ' + (err?.message || 'Terjadi kesalahan'), 'error');
+    }
+    return false;
+  } finally {
+    setIsExporting(false);
+  }
+};
+
+export const handleImportMatrixSuccess = async (
+  year: string,
+  setLoading: (l: boolean) => void,
+  setData: (d: ComplianceMatrixRow[]) => void,
+  setTargets: (t: any) => void,
+  setTotalSetoran: (s: number) => void,
+  setShowImportModal: (show: boolean) => void,
+  feedback?: any
+): Promise<void> => {
+  clearTierCache();
+  await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
+  setShowImportModal(false);
+  if (feedback?.showToast) {
+    feedback.showToast('Buku besar berhasil disinkronkan dari file Excel', 'success');
+  }
+};
 
 export const loadComplianceAvailableYearsData = async (
   setAvailableYears: (years: number[]) => void,
@@ -155,6 +210,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialBulkTargetType,
   initialBulkProgress,
   initialBulkResult,
+  initialShowImportModal,
+  initialShowExportDropdown,
+  initialIsExporting,
 }) => {
   const currentYearStr = new Date().getFullYear().toString();
   const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
@@ -190,6 +248,10 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [bulkResult, setBulkResult] = useState<{ totalSuccess: number; totalFailed: number } | null>(
     initialBulkResult || null
   );
+
+  const [showImportModal, setShowImportModal] = useState(initialShowImportModal || false);
+  const [showExportDropdown, setShowExportDropdown] = useState(initialShowExportDropdown || false);
+  const [isExporting, setIsExporting] = useState(initialIsExporting || false);
 
   const feedback = useContext(FeedbackContext);
 
@@ -456,6 +518,92 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-end">
+          {/* Tombol Impor Matriks Hasil Audit */}
+          <button
+            type="button"
+            onClick={() => setShowImportModal(true)}
+            data-testid="import-matrix-btn"
+            title="Impor matriks simpanan hasil audit Excel untuk sinkronisasi buku besar"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-xs transition-colors cursor-pointer"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Impor Matriks Hasil Audit</span>
+          </button>
+
+          {/* Tombol Dropdown Ekspor Matriks Periksa (.xlsx) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowExportDropdown((prev) => !prev)}
+              disabled={isExporting}
+              data-testid="export-matrix-dropdown-btn"
+              title="Ekspor matriks periksa simpanan ke Excel dengan formula validasi selisih"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+              )}
+              <span>Ekspor Matriks Periksa (.xlsx)</span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-500 transition-transform ${
+                  showExportDropdown ? 'rotate-180' : ''
+                }`}
+              />
+            </button>
+
+            {showExportDropdown && (
+              <div
+                data-testid="export-matrix-menu"
+                className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-30 animate-fade-in"
+              >
+                <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-100">
+                  Pilih Jenis Simpanan
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportSavingsMatrix('WAJIB', setIsExporting, setShowExportDropdown, feedback)
+                  }
+                  data-testid="export-wajib-btn"
+                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span>Simpanan Wajib</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">
+                    SW
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportSavingsMatrix('BELANJA', setIsExporting, setShowExportDropdown, feedback)
+                  }
+                  data-testid="export-belanja-btn"
+                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span>Simpanan Belanja Bulanan</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">
+                    SB
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleExportSavingsMatrix('LEBARAN', setIsExporting, setShowExportDropdown, feedback)
+                  }
+                  data-testid="export-lebaran-btn"
+                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center justify-between transition-colors cursor-pointer"
+                >
+                  <span>Simpanan Hari Raya (Lebaran)</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">
+                    SL
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => {
               setBulkResult(null);
@@ -885,6 +1033,24 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Impor Matriks Hasil Audit */}
+      <SavingsMatrixImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={() =>
+          handleImportMatrixSuccess(
+            year,
+            setLoading,
+            setData,
+            setTargets,
+            setTotalSetoran,
+            setShowImportModal,
+            feedback
+          )
+        }
+        defaultType="WAJIB"
+      />
     </AdminLayout>
   );
 };

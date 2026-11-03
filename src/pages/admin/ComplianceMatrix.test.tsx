@@ -7,6 +7,8 @@ import {
   fetchComplianceMatrixData,
   fetchComplianceData,
   handleBulkAutoReconcile,
+  handleExportSavingsMatrix,
+  handleImportMatrixSuccess,
 } from './ComplianceMatrix';
 import {
   getSavingsComplianceAvailableYears,
@@ -15,6 +17,28 @@ import {
 } from '../../services/complianceService';
 import { bulkAutoReconcileAllMembers } from '../../services/savingsMatrixService';
 import { supabase } from '../../lib/supabaseClient';
+import { exportSavingsMatrixExcel } from '../../utils/savingsMatrixExporter';
+
+// Mock savingsMatrixExporter
+vi.mock('../../utils/savingsMatrixExporter', () => ({
+  exportSavingsMatrixExcel: vi.fn().mockResolvedValue({}),
+}));
+
+// Mock SavingsMatrixImportModal
+vi.mock('../../components/compliance/SavingsMatrixImportModal', () => ({
+  default: ({ isOpen, onClose, onSuccess, defaultType }: any) =>
+    isOpen ? (
+      <div data-testid="savings-matrix-import-modal">
+        <span data-testid="modal-default-type">{defaultType}</span>
+        <button onClick={onClose} data-testid="import-modal-close">
+          Batal
+        </button>
+        <button onClick={onSuccess} data-testid="import-modal-success">
+          Sinkronkan
+        </button>
+      </div>
+    ) : null,
+}));
 
 // Mock savingsMatrixService
 vi.mock('../../services/savingsMatrixService', () => ({
@@ -707,6 +731,122 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Total: Rp 1.400.000');
       // Pastikan progress kepatuhan 88% ditampilkan
       expect(html).toContain('88%');
+    });
+  });
+
+  describe('Phase 53: Excel Matrix Export Dropdown & Import Modal Integration', () => {
+    it('renders "Ekspor Matriks Periksa (.xlsx)" and "Impor Matriks Hasil Audit" buttons in toolbar', () => {
+      const html = renderToStaticMarkup(<ComplianceMatrix initialYear="2026" />);
+
+      expect(html).toContain('Ekspor Matriks Periksa (.xlsx)');
+      expect(html).toContain('Impor Matriks Hasil Audit');
+      expect(html).toContain('data-testid="export-matrix-dropdown-btn"');
+      expect(html).toContain('data-testid="import-matrix-btn"');
+    });
+
+    it('renders export dropdown menu with all 3 deposit types when initialShowExportDropdown is true', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialShowExportDropdown={true} />
+      );
+
+      expect(html).toContain('data-testid="export-matrix-menu"');
+      expect(html).toContain('data-testid="export-wajib-btn"');
+      expect(html).toContain('data-testid="export-belanja-btn"');
+      expect(html).toContain('data-testid="export-lebaran-btn"');
+      expect(html).toContain('Simpanan Wajib');
+      expect(html).toContain('Simpanan Belanja Bulanan');
+      expect(html).toContain('Simpanan Hari Raya (Lebaran)');
+    });
+
+    it('renders SavingsMatrixImportModal when initialShowImportModal is true', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialShowImportModal={true} />
+      );
+
+      expect(html).toContain('data-testid="savings-matrix-import-modal"');
+      expect(html).toContain('data-testid="modal-default-type"');
+      expect(html).toContain('WAJIB');
+    });
+
+    it('renders spinner icon when initialIsExporting is true', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialIsExporting={true} />
+      );
+
+      expect(html).toContain('animate-spin');
+    });
+
+    it('handleExportSavingsMatrix triggers exportSavingsMatrixExcel and shows toast feedback', async () => {
+      const setIsExporting = vi.fn();
+      const setShowExportDropdown = vi.fn();
+      const feedback = { showToast: vi.fn() };
+
+      const res = await handleExportSavingsMatrix(
+        'WAJIB',
+        setIsExporting,
+        setShowExportDropdown,
+        feedback
+      );
+
+      expect(exportSavingsMatrixExcel).toHaveBeenCalledWith('WAJIB');
+      expect(setIsExporting).toHaveBeenCalledWith(true);
+      expect(setShowExportDropdown).toHaveBeenCalledWith(false);
+      expect(feedback.showToast).toHaveBeenCalledWith(
+        'Matriks periksa Simpanan Wajib (.xlsx) berhasil diekspor',
+        'success'
+      );
+      expect(res).toBe(true);
+    });
+
+    it('handleExportSavingsMatrix handles export error gracefully and shows error toast', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      (exportSavingsMatrixExcel as any).mockRejectedValueOnce(new Error('Export failed'));
+
+      const setIsExporting = vi.fn();
+      const setShowExportDropdown = vi.fn();
+      const feedback = { showToast: vi.fn() };
+
+      const res = await handleExportSavingsMatrix(
+        'BELANJA',
+        setIsExporting,
+        setShowExportDropdown,
+        feedback
+      );
+
+      expect(setIsExporting).toHaveBeenCalledWith(false);
+      expect(feedback.showToast).toHaveBeenCalledWith(
+        'Gagal mengekspor matriks simpanan: Export failed',
+        'error'
+      );
+      expect(res).toBe(false);
+
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('handleImportMatrixSuccess re-fetches compliance data, closes modal, and shows success toast', async () => {
+      const setLoading = vi.fn();
+      const setData = vi.fn();
+      const setTargets = vi.fn();
+      const setTotalSetoran = vi.fn();
+      const setShowImportModal = vi.fn();
+      const feedback = { showToast: vi.fn() };
+
+      await handleImportMatrixSuccess(
+        '2026',
+        setLoading,
+        setData,
+        setTargets,
+        setTotalSetoran,
+        setShowImportModal,
+        feedback
+      );
+
+      expect(getComplianceMatrixData).toHaveBeenCalledWith(2026);
+      expect(setShowImportModal).toHaveBeenCalledWith(false);
+      expect(feedback.showToast).toHaveBeenCalledWith(
+        'Buku besar berhasil disinkronkan dari file Excel',
+        'success'
+      );
     });
   });
 });
