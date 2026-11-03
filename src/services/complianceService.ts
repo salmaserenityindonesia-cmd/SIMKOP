@@ -746,6 +746,12 @@ export interface ImportSavingsMatrixLedgerResult {
   errors?: string[];
 }
 
+export interface ImportSavingsMatrixProgress {
+  processed: number;
+  total: number;
+  percent: number;
+}
+
 /**
  * Menyinkronkan mutasi bulanan hasil parsing matriks simpanan Excel ke tabel deposit_transactions.
  * Membersihkan mutasi rekonsiliasi lama & saldo awal migrasi lump-sum untuk jenis simpanan tersebut
@@ -754,7 +760,8 @@ export interface ImportSavingsMatrixLedgerResult {
  */
 export async function importSavingsMatrixLedger(
   depositTypeCode: 'WAJIB' | 'BELANJA' | 'LEBARAN',
-  mutations: ParsedMonthlyDeposit[]
+  mutations: ParsedMonthlyDeposit[],
+  onProgress?: (progress: ImportSavingsMatrixProgress) => void
 ): Promise<ImportSavingsMatrixLedgerResult> {
   const errors: string[] = [];
 
