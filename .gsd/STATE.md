@@ -1,16 +1,16 @@
 ## Current Position
-- **Phase**: 56 (Ubah Urutan Grid Matriks Buku Besar Simpanan Menjadi Bulan Terbaru (Descending))
+- **Phase**: 57 (Implementasi Auto-Scroll Horisontal ke Bulan Ini pada Modal Buku Besar Matriks Simpanan)
 - **Task**: Phase verification complete
 - **Status**: Complete & Verified (6/6 must-haves verified)
 
 ## Last Session Summary
-Phase 56 executed and verified across 2 plans:
-- Plan 56.1: Reverse Month Columns to Display Latest Month First. Refactored `src/components/compliance/SavingsLedgerMatrixModal.tsx` to compute `displayMonths` in descending order (`latest month first`), mapped `displayMonths` to `<thead>` and `<tbody>`, preserved chronological order in internal calculations, and extended `generateMonthGrid` in `src/services/savingsMatrixService.ts` with optional `order` parameter. Added tests in `SavingsLedgerMatrixModal.test.tsx` and `savingsMatrixService.test.ts`. Commit: `1c7933e5`.
-- Plan 56.2: Static Verification, Full Vitest Suite & Production Build. Verified TypeScript typecheck (`tsc --noEmit` clean), full Vitest suite (43 test files, 522 tests passing 100%), and Vite production build with exit code 0.
-- Independent audit report produced at `.gsd/phases/56/VERIFICATION.md` confirming 6/6 requirements satisfied with verdict PASS.
+Phase 57 executed and verified across 2 plans:
+- Plan 57.1: Restore Ascending Grid Order & Implement Auto-Scroll to Current Month Column. Restored grid column mapping to natural chronological ascending order (`allGridMonths`) in `SavingsLedgerMatrixModal.tsx`. Attached `useRef` to `<div className="overflow-x-auto">` and the current month's header `<th>`. Implemented automatic smooth centering scroll via `useEffect` with 150ms timeout. Added visual styling (emerald ring highlight and "Bulan Ini" badge) to the active period column. Updated unit tests in `SavingsLedgerMatrixModal.test.tsx`. Commit: `605520ed`.
+- Plan 57.2: Static Analysis & Build Verification. Ran TypeScript typecheck (`tsc --noEmit` clean), full Vitest suite (43 test files, 522 tests passing 100%), and production build (`npm run build` in 934ms with exit code 0).
+- Independent audit report produced at `.gsd/phases/57/VERIFICATION.md` confirming 6/6 requirements satisfied with verdict PASS.
 
 ## Next Steps
-Phase 56 is complete. Awaiting next user request or roadmap update.
+Phase 57 is complete. Awaiting next user request or roadmap update.
 
 ## Blockers
 - None.
@@ -18,5 +18,5 @@ Phase 56 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Descending Month Order in Modal Table**: Column headers and interactive checkboxes in `SavingsLedgerMatrixModal.tsx` now render from the latest month (e.g. Des-26, Nov-26) to the oldest join month (Jan-24 / Jan-22), eliminating horizontal scrolling for current period checks.
-- **Strict FIFO Preservation**: `allGridMonths` is retained chronologically for internal calculation and FIFO balance matching in `calculateFifoAllocation`, keeping ledger mutations completely accurate.
+- **Preserved Ascending Order with Auto-Scroll**: Table grid columns flow naturally from member join date to end date, while `scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })` ensures the current month (e.g. November 2026) is automatically centered without manual horizontal scrolling.
+- **Visual Period Identification**: Column header for the active month displays an emerald highlight ring and a compact "Bulan Ini" badge, providing immediate visual recognition.

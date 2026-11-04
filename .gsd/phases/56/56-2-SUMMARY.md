@@ -18,3 +18,4 @@
 3. **Production Build**:
    - Command: `npm run build`
    - Output: Vite production build succeeded in 4.06s with exit code 0.
+

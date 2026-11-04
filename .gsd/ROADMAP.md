@@ -1002,6 +1002,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 57: Implementasi Auto-Scroll Horisontal ke Bulan Ini pada Modal Buku Besar Matriks Simpanan
+**Status:** ✅ Complete
+**Objective:** Mengembalikan urutan kronologis kolom matriks simpanan menjadi maju/Ascending (dari awal bergabung s/d terkini), dan menambahkan fungsi auto-scroll cerdas berbasis React useRef dan scrollIntoView / scrollLeft yang langsung mengarahkan tampilan layar ke kolom bulan berjalan saat modal dibuka atau saat tab berganti, disertai penanda visual ring highlight dan badge "Bulan Ini".
+**Depends on:** Phase 56
+
+**Plans:**
+- [x] Plan 57.1: Restore Ascending Grid Order & Implement Auto-Scroll to Current Month Column
+- [x] Plan 57.2: Static Analysis & Build Verification
+
+**Deliverables:**
+- Urutan kronologis kolom grid bulan pada modal buku besar kembali ke alur alami (Ascending: Jan awal s/d Des akhir)
+- Penambahan ref scrollContainerRef dan currentMonthColRef pada kontainer overflow-x-auto dan th header bulan berjalan
+- Efek auto-scroll horizontal cerdas (center view) saat modal selesai loading atau saat berganti tab
+- Highlight visual ring emerald dan badge "Bulan Ini" pada kolom periode aktif
+- Verifikasi TypeScript (tsc --noEmit), Vitest suite 100%, dan Vite production build exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1049,6 +1067,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 41 | Phase 54 | Saldo Kas Riil Anggota pada Matriks Simpanan |
 | 42 | Phase 55 | Rapikan Layout Kas Riil Anggota pada Matriks Simpanan |
 | 43 | Phase 56 | Ubah Urutan Grid Matriks Buku Besar Simpanan Menjadi Bulan Terbaru (Descending) |
+| 44 | Phase 57 | Auto-Scroll Horisontal ke Bulan Ini pada Modal Matriks Simpanan |
 
 ---
 
@@ -1112,6 +1131,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | ✅ | 3/3 | 100% |
 | 55 | Rapikan Layout Kas Riil Anggota Matriks | ✅ | 2/2 | 100% |
 | 56 | Grid Matriks Simpanan Descending Terbaru | ✅ | 2/2 | 100% |
+| 57 | Auto-Scroll ke Bulan Ini Modal Matriks Simpanan | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1175,5 +1195,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 54 | 2026-11-03 | 2026-11-03 | 1 day |
 | 55 | 2026-11-03 | 2026-11-03 | 1 day |
 | 56 | 2026-11-04 | 2026-11-04 | 1 day |
+| 57 | 2026-11-04 | 2026-11-04 | 1 day |
 
 

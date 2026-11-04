@@ -27,3 +27,4 @@
   - `src/pages/admin/ComplianceMatrix.test.tsx`: 39/39 tests passing.
 - **Full Vitest Suite**: 43 test files, 522 tests passed (100%).
 - **Production Build**: `npm run build` exited with code 0.
+
