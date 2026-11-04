@@ -984,6 +984,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 56: Ubah Urutan Grid Matriks Buku Besar Simpanan Menjadi Bulan Terbaru (Descending)
+**Status:** ✅ Complete
+**Objective:** Mengubah penyusunan dan rendering kolom grid bulan pada modal "Buku Besar Matriks Simpanan (Checkbox Grid)" di halaman `/admin/compliance-matrix` (`src/components/compliance/SavingsLedgerMatrixModal.tsx`) menjadi urutan menurun (Descending / Reverse Timeline), sehingga kolom bulan saat ini/terbaru langsung berada di posisi paling kiri depan di seluruh tab (Simpanan Wajib, Simpanan Belanja, dan Simpanan Lebaran) tanpa menggeser integritas alokasi FIFO dan kalkulasi mutasi database.
+**Depends on:** Phase 55
+
+**Plans:**
+- [x] Plan 56.1: Reverse Month Columns to Display Latest Month First
+- [x] Plan 56.2: Build & Static Analysis Verification
+
+**Deliverables:**
+- Kolom tabel grid bulan pada modal buku besar tersusun secara menurun (periode terbaru di paling kiri)
+- Penyelarasan header tabel (`<thead>`) dan baris checkbox `Setoran Rutin` (`<tbody>`)
+- Integrasi parameter opsional `order` di `generateMonthGrid` pada `src/services/savingsMatrixService.ts`
+- Unit test verifikasi urutan visual kolom di `src/components/compliance/SavingsLedgerMatrixModal.test.tsx`
+- Verifikasi statis TypeScript (`tsc --noEmit`), Vitest suite 100%, dan Vite production build exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1030,6 +1048,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 40 | Phase 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) |
 | 41 | Phase 54 | Saldo Kas Riil Anggota pada Matriks Simpanan |
 | 42 | Phase 55 | Rapikan Layout Kas Riil Anggota pada Matriks Simpanan |
+| 43 | Phase 56 | Ubah Urutan Grid Matriks Buku Besar Simpanan Menjadi Bulan Terbaru (Descending) |
 
 ---
 
@@ -1092,6 +1111,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 53 | Ekspor & Impor Matriks Simpanan via Excel (.xlsx) | ✅ | 4/4 | 100% |
 | 54 | Saldo Kas Riil Anggota pada Matriks Simpanan | ✅ | 3/3 | 100% |
 | 55 | Rapikan Layout Kas Riil Anggota Matriks | ✅ | 2/2 | 100% |
+| 56 | Grid Matriks Simpanan Descending Terbaru | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1154,5 +1174,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 53 | 2026-11-03 | 2026-11-03 | 1 day |
 | 54 | 2026-11-03 | 2026-11-03 | 1 day |
 | 55 | 2026-11-03 | 2026-11-03 | 1 day |
+| 56 | 2026-11-04 | 2026-11-04 | 1 day |
 
 
