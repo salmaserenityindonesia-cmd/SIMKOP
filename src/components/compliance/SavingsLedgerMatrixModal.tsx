@@ -158,6 +158,13 @@ export default function SavingsLedgerMatrixModal({
   // Map deposit type code -> member_deposit_id
   const [memberDepositMap, setMemberDepositMap] = useState<Record<string, string>>({});
   
+  // Saldo referensi permanen / baseline yang tidak boleh di-nol-kan saat uncheck all
+  const baselineBalancesRef = React.useRef<Record<DepositTabType, number>>({
+    WAJIB: initialDbBalances?.WAJIB ?? 0,
+    BELANJA: initialDbBalances?.BELANJA ?? 0,
+    LEBARAN: initialDbBalances?.LEBARAN ?? 0
+  });
+
   // Saldo terdaftar di database (saldo impor/migrasi) per jenis simpanan
   const [dbBalances, setDbBalances] = useState<Record<DepositTabType, number>>({
     WAJIB: initialDbBalances?.WAJIB ?? 0,
@@ -318,33 +325,46 @@ export default function SavingsLedgerMatrixModal({
 
             const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
 
-            // Cari mutasi migrasi/saldo awal
+            // Cari mutasi migrasi/saldo awal atau penampung saldo belum teralokasi
             const migrationTx = txs.find((t: any) => {
               const d = (t.description || '').toLowerCase();
-              return d.includes('migra') || d.includes('saldo awal') || d.includes('historical') || d.includes('one-time');
+              return (
+                d.includes('migra') ||
+                d.includes('saldo awal') ||
+                d.includes('historical') ||
+                d.includes('one-time') ||
+                d.includes('belum teralokasi')
+              );
             });
 
-            if (migrationTx) {
-              newDbBalances[tab] = Number(migrationTx.amount || 0);
-            } else {
-              // Jika tidak ada mutasi migrasi khusus, hitung saldo net dari transaksi
-              let net = 0;
-              for (const t of txs) {
-                const amt = Number(t.amount || 0);
-                if (t.transaction_type === 'withdrawal') net -= amt;
-                else net += amt;
-              }
-              if (net > 0 && newDbBalances[tab] === 0) {
-                newDbBalances[tab] = net;
-              }
+            let net = 0;
+            for (const t of txs) {
+              const amt = Number(t.amount || 0);
+              if (t.transaction_type === 'withdrawal') net -= amt;
+              else net += amt;
+            }
+
+            const migrationAmt = migrationTx ? Number(migrationTx.amount || 0) : 0;
+            const computedBalance = Math.max(
+              migrationAmt,
+              net,
+              baselineBalancesRef.current[tab] || 0,
+              initialDbBalances?.[tab] || 0
+            );
+
+            if (computedBalance > 0) {
+              newDbBalances[tab] = computedBalance;
+              baselineBalancesRef.current[tab] = computedBalance;
             }
 
             // Ambil bulan-bulan yang tercentang dari deposit_transactions beserta nominal riilnya
             for (const t of txs) {
               if (t.transaction_type === 'deposit' && t.for_year && t.for_month) {
                 const desc = (t.description || '').toLowerCase();
-                // Abaikan transaksi saldo awal jika nominalnya besar dan tidak mencerminkan setoran bulanan
-                const isLumpSumMigration = desc.includes('migrasi saldo awal (as-is)') && t.amount > 200000;
+                // Abaikan transaksi saldo awal/penampung belum teralokasi jika tidak mencerminkan setoran bulanan
+                const isLumpSumMigration =
+                  (desc.includes('migrasi saldo awal (as-is)') && t.amount > 200000) ||
+                  desc.includes('belum teralokasi');
                 if (!isLumpSumMigration) {
                   const key = `${t.for_year}-${String(t.for_month).padStart(2, '0')}`;
                   newCheckedMonths[tab].add(key);
@@ -469,7 +489,7 @@ export default function SavingsLedgerMatrixModal({
         await deleteQuery;
       }
 
-      // Hapus transaksi gelondongan awal migrasi (for_month IS NULL atau bertuliskan deskripsi "Saldo Awal Migrasi Sistem")
+      // Hapus transaksi gelondongan awal migrasi / penampung belum teralokasi (for_month IS NULL)
       // dari tabel deposit_transactions saat rincian bulanan dibentuk agar tidak terhitung ganda
       if (newCheckedKeys.length > 0) {
         try {
@@ -479,7 +499,7 @@ export default function SavingsLedgerMatrixModal({
             if (eqQuery && typeof eqQuery.is === 'function') {
               const isQuery = eqQuery.is('for_month', null);
               if (isQuery && typeof isQuery.ilike === 'function') {
-                await isQuery.ilike('description', '%migrasi%');
+                await isQuery.ilike('description', '%');
               } else if (isQuery && typeof isQuery.then === 'function') {
                 await isQuery;
               }
@@ -488,7 +508,7 @@ export default function SavingsLedgerMatrixModal({
             }
           }
         } catch (delBulkErr) {
-          console.warn('Gagal menghapus transaksi migrasi gelondongan di modal:', delBulkErr);
+          console.warn('Gagal menghapus transaksi migrasi/penampung di modal:', delBulkErr);
         }
       }
 
@@ -557,13 +577,15 @@ export default function SavingsLedgerMatrixModal({
 
   // Quick Action 2: Cocokkan Otomatis dengan Saldo Impor (FIFO Matching)
   const handleAutoMatchWithImportBalance = async () => {
+    const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
     setSyncing(true);
     try {
       const res = await reconcileSingleMemberDeposit(memberId, activeTab, {
         rateTiers,
         joinDate: resolvedJoinDate,
         startYear,
-        endYear
+        endYear,
+        targetBalance: currentBaseline
       });
 
       const updatedAmounts = new Map<string, number>();
@@ -594,7 +616,7 @@ export default function SavingsLedgerMatrixModal({
       console.error('Failed to auto reconcile with import balance:', err);
       // Fallback ke modal internal logic jika terjadi kegagalan
       const fifoRes = calculateFifoAllocation(
-        targetDbBalance,
+        currentBaseline,
         allGridMonths,
         activeTab,
         rateTiers,
@@ -622,8 +644,11 @@ export default function SavingsLedgerMatrixModal({
     }
   };
 
-  // Quick Action 3: Batal Centang Semua
+  // Quick Action 3: Batal Centang Semua (Preserve Baseline Balance)
   const handleUncheckAll = async () => {
+    const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
+
+    // 1. Kosongkan state centang lokal: Total Tercentang = 0
     setCheckedMonths(prev => ({
       ...prev,
       [activeTab]: new Set()
@@ -633,7 +658,70 @@ export default function SavingsLedgerMatrixModal({
       [activeTab]: new Map()
     }));
 
-    await syncBatchToDatabase([]);
+    // 2. Pertahankan Saldo Database / baselineBalance agar TIDAK BOLEH menjadi 0!
+    setDbBalances(prev => ({
+      ...prev,
+      [activeTab]: currentBaseline
+    }));
+
+    const memberDepositId = memberDepositMap[activeTab];
+    if (!memberDepositId) return;
+
+    setSyncing(true);
+    try {
+      // 3. Pada database: Hapus HANYA mutasi yang terikat pada bulan tertentu (for_month IS NOT NULL)
+      const delRoutineQuery: any = supabase
+        .from('deposit_transactions')
+        .delete()
+        .eq('member_deposit_id', memberDepositId);
+
+      if (typeof delRoutineQuery.not === 'function') {
+        await delRoutineQuery.not('for_month', 'is', null);
+      } else if (typeof delRoutineQuery.neq === 'function') {
+        await delRoutineQuery.neq('for_month', null);
+      } else if (typeof delRoutineQuery.gte === 'function') {
+        await delRoutineQuery.gte('for_year', startYear).lte('for_year', endYear);
+      } else {
+        await delRoutineQuery;
+      }
+
+      // Bersihkan penampung belum teralokasi / migrasi lama jika ada agar tidak terduplikasi
+      const delUnallocatedQuery: any = supabase
+        .from('deposit_transactions')
+        .delete()
+        .eq('member_deposit_id', memberDepositId);
+
+      if (typeof delUnallocatedQuery.is === 'function') {
+        const isQuery = delUnallocatedQuery.is('for_month', null);
+        if (isQuery && typeof isQuery.ilike === 'function') {
+          await isQuery.ilike('description', '%');
+        } else if (isQuery && typeof isQuery.then === 'function') {
+          await isQuery;
+        }
+      }
+
+      // 4. Buat satu baris transaksi penampung saldo awal (dengan for_month = NULL
+      // dan deskripsi 'Saldo Simpanan Belum Teralokasi') senilai saldo utuh anggota
+      // agar query database tetap mengembalikan saldo riil
+      if (currentBaseline > 0) {
+        await supabase.from('deposit_transactions').insert([
+          {
+            member_deposit_id: memberDepositId,
+            amount: currentBaseline,
+            for_month: null,
+            for_year: null,
+            transaction_type: 'deposit',
+            description: 'Saldo Simpanan Belum Teralokasi'
+          }
+        ]);
+      }
+
+      onSuccess?.();
+    } catch (err) {
+      console.error('Failed to uncheck all months and preserve baseline balance:', err);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   // Format tampilan tanggal bergabung
@@ -723,7 +811,10 @@ export default function SavingsLedgerMatrixModal({
               ) : (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
                   <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                  Selisih {formatCurrency(Math.abs(balanceDifference))} ({balanceDifference > 0 ? 'Lebih' : 'Kurang'})
+                  Selisih {formatCurrency(Math.abs(balanceDifference))}{' '}
+                  {totalChecked === 0 && targetDbBalance > 0
+                    ? '(Belum Dialokasikan)'
+                    : `(${balanceDifference > 0 ? 'Lebih' : 'Kurang'})`}
                 </span>
               )}
             </div>

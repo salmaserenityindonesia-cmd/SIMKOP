@@ -939,4 +939,110 @@ describe('savingsMatrixService - reconcileSingleMemberDeposit', () => {
     expect(inserted[0].amount).toBe(150000);
     expect(inserted[1].amount).toBe(150000);
   });
+
+  it('rekonsiliasi berhasil membaca baseline dari "Saldo Simpanan Belum Teralokasi" setelah uncheck all', async () => {
+    const mockDeposits = [
+      {
+        id: 'md-single-unallocated',
+        member_id: 'member-agus',
+        deposit_type_id: 'dt-wajib',
+        deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+        deposit_transactions: [
+          {
+            id: 'tx-unallocated',
+            amount: 10200000,
+            transaction_type: 'deposit',
+            for_month: null,
+            for_year: null,
+            description: 'Saldo Simpanan Belum Teralokasi'
+          }
+        ]
+      }
+    ];
+
+    const inserted: any[] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: mockDeposits, error: null })
+          })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+            error: null
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              or: vi.fn().mockResolvedValue({ data: null, error: null }),
+              is: vi.fn().mockReturnValue({
+                ilike: vi.fn().mockResolvedValue({ data: null, error: null })
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    neq: vi.fn().mockResolvedValue({ data: null, error: null })
+                  })
+                })
+              })
+            })
+          }),
+          insert: vi.fn().mockImplementation((rows: any[]) => {
+            inserted.push(...rows);
+            return Promise.resolve({ data: rows, error: null });
+          })
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const res = await reconcileSingleMemberDeposit('member-agus', 'WAJIB', {
+      rateTiers: [
+        {
+          id: 'tier-2022',
+          deposit_type_code: 'WAJIB',
+          start_year: 2022,
+          start_month: 1,
+          end_year: 2023,
+          end_month: 10,
+          monthly_rate: 200000
+        },
+        {
+          id: 'tier-2023',
+          deposit_type_code: 'WAJIB',
+          start_year: 2023,
+          start_month: 11,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 210000
+        }
+      ],
+      joinDate: '2022-08-01',
+      startYear: 2022,
+      endYear: 2026
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.totalAllocated).toBe(10200000);
+    // 15 bulan @ 200k + 34 bulan @ 210k + 1 bulan parsial @ 60k = 50 bulan
+    expect(res.matchedKeys.length).toBe(50);
+    expect(res.matchedKeys[0]).toBe('2022-08');
+    expect(res.matchedKeys[14]).toBe('2023-10');
+    expect(res.matchedKeys[15]).toBe('2023-11');
+    expect(res.matchedKeys[48]).toBe('2026-08');
+    expect(res.matchedKeys[49]).toBe('2026-09');
+
+    // Cek alokasi parsial bulan terakhir (Sep 2026)
+    const partialTx = res.allocatedTransactions?.find(t => t.key === '2026-09');
+    expect(partialTx?.isPartial).toBe(true);
+    expect(partialTx?.amount).toBe(60000);
+  });
 });

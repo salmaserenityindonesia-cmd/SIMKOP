@@ -43,6 +43,7 @@ export interface ReconcileSingleMemberOptions {
   startYear?: number;
   endYear?: number;
   memberDeposits?: any[];
+  targetBalance?: number;
 }
 
 export interface ReconcileSingleMemberResult {
@@ -554,22 +555,30 @@ export async function reconcileSingleMemberDeposit(
   const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
 
   // 5. Tentukan saldo impor/migrasi persis seperti alur modal individual
-  const migrationTx = txs.find((t: any) => {
-    const d = (t.description || '').toLowerCase();
-    return d.includes('migra') || d.includes('saldo awal') || d.includes('historical') || d.includes('one-time');
-  });
+  let targetBalance = options?.targetBalance ?? 0;
+  if (!targetBalance || targetBalance <= 0) {
+    const migrationTx = txs.find((t: any) => {
+      const d = (t.description || '').toLowerCase();
+      return (
+        d.includes('migra') ||
+        d.includes('saldo awal') ||
+        d.includes('historical') ||
+        d.includes('one-time') ||
+        d.includes('belum teralokasi')
+      );
+    });
 
-  let targetBalance = 0;
-  if (migrationTx) {
-    targetBalance = Number(migrationTx.amount || 0);
-  } else {
-    let net = 0;
-    for (const t of txs) {
-      const amt = Number(t.amount || 0);
-      if (t.transaction_type === 'withdrawal') net -= amt;
-      else net += amt;
+    if (migrationTx) {
+      targetBalance = Number(migrationTx.amount || 0);
+    } else {
+      let net = 0;
+      for (const t of txs) {
+        const amt = Number(t.amount || 0);
+        if (t.transaction_type === 'withdrawal') net -= amt;
+        else net += amt;
+      }
+      targetBalance = Math.max(0, net);
     }
-    targetBalance = Math.max(0, net);
   }
 
   if (targetBalance <= 0) {
@@ -599,12 +608,18 @@ export async function reconcileSingleMemberDeposit(
   );
   const matchedKeys = fifoResult.matchedKeys;
 
-  // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil)
+  // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil & penampung saldo awal)
   const oldRoutineTxIds = txs
     .filter((t: any) => {
       if (t.transaction_type !== 'deposit') return false;
       const desc = (t.description || '').toLowerCase();
-      if (desc.includes('migra') || desc.includes('saldo awal') || desc.includes('historical') || desc.includes('one-time')) {
+      if (
+        desc.includes('migra') ||
+        desc.includes('saldo awal') ||
+        desc.includes('historical') ||
+        desc.includes('one-time') ||
+        desc.includes('belum teralokasi')
+      ) {
         return false;
       }
       const y = t.for_year;
@@ -644,14 +659,23 @@ export async function reconcileSingleMemberDeposit(
     }
   }
 
-  // 9. Singkirkan transaksi gelondongan migrasi jika matchedKeys > 0
+  // 9. Singkirkan transaksi gelondongan migrasi / penampung belum teralokasi jika matchedKeys > 0
   if (matchedKeys.length > 0) {
     try {
       const bulkMigrationTxIds = txs
         .filter((t: any) => {
           const desc = (t.description || '').toLowerCase();
-          const isMigration = desc.includes('migra') || desc.includes('saldo awal');
-          return isMigration && (t.for_month === null || t.for_month === undefined || desc.includes('saldo awal migrasi sistem'));
+          const isBulk =
+            desc.includes('migra') ||
+            desc.includes('saldo awal') ||
+            desc.includes('belum teralokasi');
+          return (
+            isBulk &&
+            (t.for_month === null ||
+              t.for_month === undefined ||
+              desc.includes('saldo awal migrasi sistem') ||
+              desc.includes('belum teralokasi'))
+          );
         })
         .map((t: any) => t.id)
         .filter(Boolean);
@@ -693,7 +717,7 @@ export async function reconcileSingleMemberDeposit(
       const eqBuilder = delPurgeBuilder.eq('member_deposit_id', md.id);
       if (eqBuilder && typeof eqBuilder.or === 'function') {
         const { error: delErr } = await eqBuilder.or(
-          'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%'
+          'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%belum teralokasi%'
         );
         if (delErr) {
           console.warn('Peringatan saat purge transaksi buku besar lama:', delErr);

@@ -200,6 +200,28 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Kurang');
     });
 
+    it('renders "Selisih Rp 10.200.000 (Belum Dialokasikan)" when Total Tercentang is 0 but Saldo Database is Rp 10.200.000', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-agus"
+          memberNrp="95168420"
+          memberName="Agus Susanto"
+          joinDate="2022-08-01"
+          onClose={vi.fn()}
+          initialDbBalances={{ WAJIB: 10200000 }}
+          initialCheckedMonths={{ WAJIB: [] }}
+        />
+      );
+
+      // Verify Saldo Database is preserved
+      expect(html).toContain('10.200.000');
+      // Verify Total Tercentang is 0
+      expect(html).toContain('Total Tercentang:');
+      // Verify badge text
+      expect(html).toContain('Selisih');
+      expect(html).toContain('(Belum Dialokasikan)');
+    });
+
     it('renders partial badge and balanced status for partial remainder month (e.g. Agus Susanto Rp 60.000)', () => {
       const html = renderToStaticMarkup(
         <SavingsLedgerMatrixModal
@@ -407,6 +429,21 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       const delQuery = supabase.from('deposit_transactions').delete();
       expect(supabase.from).toHaveBeenCalledWith('deposit_transactions');
       expect(delQuery.eq).toBeDefined();
+    });
+
+    it('inserts placeholder transaction with description "Saldo Simpanan Belum Teralokasi" when unchecking all', async () => {
+      await supabase.from('deposit_transactions').insert([
+        {
+          member_deposit_id: 'md-wajib-1',
+          amount: 10200000,
+          for_month: null,
+          for_year: null,
+          transaction_type: 'deposit',
+          description: 'Saldo Simpanan Belum Teralokasi'
+        }
+      ]);
+
+      expect(supabase.from).toHaveBeenCalledWith('deposit_transactions');
     });
   });
 });
