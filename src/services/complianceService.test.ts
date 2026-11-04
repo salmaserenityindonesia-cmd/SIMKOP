@@ -1021,6 +1021,126 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
       expect(row.months[9]?.wajib?.status).toBe('unbilled');
       expect(row.months[10]?.wajib?.status).toBe('unbilled');
     });
+
+    it('Agus Susanto (2026) dengan saldo 10.410.000: September lunas (paid 210.000), Oktober partial 60.000, November dan Desember unbilled', async () => {
+      const agusMember = [
+        {
+          id: 'm-agus-1',
+          nama: 'Agus Susanto',
+          nrp: 'NRP-AGUS-1',
+          status: 'aktif',
+          created_at: '2022-08-01T00:00:00Z',
+          tgl_awal_anggota: '2022-08-01',
+        },
+      ];
+
+      const agusTiers = [
+        {
+          id: 't-1',
+          deposit_type_code: 'WAJIB',
+          start_year: 2022,
+          start_month: 8,
+          end_year: 2023,
+          end_month: 10,
+          monthly_rate: 200000,
+        },
+        {
+          id: 't-2',
+          deposit_type_code: 'WAJIB',
+          start_year: 2023,
+          start_month: 11,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 210000,
+        },
+      ];
+
+      // Jan s/d Sep 2026 (9 bulan @ 210.000) + Okt 2026 (1 bulan @ 60.000)
+      const transactions: any[] = [];
+      for (let mo = 1; mo <= 9; mo++) {
+        transactions.push({
+          id: `tx-agus-2026-${mo}`,
+          amount: 210000,
+          transaction_type: 'deposit',
+          for_year: 2026,
+          for_month: mo,
+          member_deposits: { member_id: 'm-agus-1', deposit_type_id: 'dt-wajib' },
+        });
+      }
+      transactions.push({
+        id: 'tx-agus-2026-oct',
+        amount: 60000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 10,
+        member_deposits: { member_id: 'm-agus-1', deposit_type_id: 'dt-wajib' },
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: agusTiers, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: agusMember, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue(Promise.resolve({ data: transactions, error: null })),
+          };
+        }
+        if (table === 'view_member_net_savings') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  member_id: 'm-agus-1',
+                  deposit_type_code: 'WAJIB',
+                  deposit_type_name: 'Simpanan Wajib',
+                  net_cash_balance: 10410000,
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0];
+
+      // Kas riil tepat Rp 10.410.000
+      expect(row.netSavings?.wajib).toBe(10410000);
+
+      // Bulan Jan s/d Sep (index 0 - 8): lunas 210.000 (status: paid)
+      for (let i = 0; i <= 8; i++) {
+        expect(row.months[i]?.wajib?.status).toBe('paid');
+        expect(row.months[i]?.wajib?.amount).toBe(210000);
+      }
+
+      // Bulan Oktober (index 9): parsial 60.000 dari kewajiban 210.000
+      expect(row.months[9]?.wajib?.status).toBe('partial');
+      expect(row.months[9]?.wajib?.amount).toBe(60000);
+      expect(row.months[9]?.wajib?.targetAmount).toBe(210000);
+
+      // Bulan November (index 10): pasca-alokasi unbilled (strip '-')
+      expect(row.months[10]?.wajib?.status).toBe('unbilled');
+    });
   });
 });
 

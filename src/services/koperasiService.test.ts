@@ -145,6 +145,12 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
 
         if (table === 'deposit_transactions') {
           return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                or: vi.fn().mockResolvedValue({ error: null }),
+                in: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
             insert: vi.fn().mockImplementation((payload: any[]) => {
               transactionInserts.push(payload);
               return Promise.resolve({ error: null });
@@ -208,6 +214,123 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         failedCount: 0,
         errors: [],
       });
+    });
+
+    it('harus membersihkan mutasi saldo awal/migrasi lama (clean overwrite) sebelum menyisipkan saldo baru saat re-import', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-sp', code: 'SP', name: 'Simpanan Pokok' },
+        { id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' },
+        { id: 'dt-sb', code: 'SB', name: 'Simpanan Belanja' },
+        { id: 'dt-sl', code: 'SL', name: 'Simpanan Lebaran' },
+      ];
+
+      const deletedAccountIds: string[] = [];
+      let deleteOrFilter = '';
+      const insertedTransactions: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }),
+          };
+        }
+
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'uuid-agus-susanto',
+                    nrp: 'NRP-AGUS',
+                    nama: 'Agus Susanto',
+                    created_at: '2022-08-01T00:00:00.000Z',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-agus-sp', member_id: 'uuid-agus-susanto', deposit_type_id: 'dt-sp' },
+                  { id: 'md-agus-sw', member_id: 'uuid-agus-susanto', deposit_type_id: 'dt-sw' },
+                  { id: 'md-agus-sb', member_id: 'uuid-agus-susanto', deposit_type_id: 'dt-sb' },
+                  { id: 'md-agus-sl', member_id: 'uuid-agus-susanto', deposit_type_id: 'dt-sl' },
+                ],
+                error: null,
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+                deletedAccountIds.push(...ids);
+                return {
+                  or: vi.fn().mockImplementation((filter: string) => {
+                    deleteOrFilter = filter;
+                    return Promise.resolve({ error: null });
+                  }),
+                };
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedTransactions.push(...payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+
+        return {};
+      });
+
+      const reImportInput: MemberImportInput[] = [
+        {
+          nrp: 'NRP-AGUS',
+          nama: 'Agus Susanto',
+          pangkat: 'Aiptu',
+          bank_account_number: '1234567890',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2022-08-01',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 10410000,
+          jumlah_simpanan_belanja: 2550000,
+          jumlah_simpanan_lebaran: 15300000,
+        },
+      ];
+
+      const res = await importMembersChunked(reImportInput);
+
+      expect(res.successCount).toBe(1);
+      expect(res.failedCount).toBe(0);
+
+      // Verifikasi bahwa transaksi lama akun dibersihkan (clean overwrite)
+      expect(deletedAccountIds).toEqual(
+        expect.arrayContaining(['md-agus-sp', 'md-agus-sw', 'md-agus-sb', 'md-agus-sl'])
+      );
+      expect(deleteOrFilter).toContain('description.ilike.%saldo awal%');
+      expect(deleteOrFilter).toContain('description.ilike.%migrasi%');
+      expect(deleteOrFilter).toContain('description.ilike.%import%');
+
+      // Verifikasi bahwa mutasi baru dimasukkan dengan nominal yang diperbarui
+      expect(insertedTransactions).toHaveLength(4);
+      const wajibTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sw');
+      expect(wajibTx?.amount).toBe(10410000);
+      const belanjaTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sb');
+      expect(belanjaTx?.amount).toBe(2550000);
+      const lebaranTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sl');
+      expect(lebaranTx?.amount).toBe(15300000);
     });
   });
 });

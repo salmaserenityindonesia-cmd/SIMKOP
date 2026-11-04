@@ -167,6 +167,69 @@ describe('savingsMatrixService - Helper Functions', () => {
     });
   });
 
+  it('calculateFifoAllocation correctly covers 10.410.000 balance for Agus Susanto: September 2026 full (210k), October 2026 partial (60k), Nov-Dec unbilled', () => {
+    const grid = generateMonthGrid(2022, 2026);
+    // Kasus Agus Susanto setelah saldo naik dari 10.200.000 menjadi 10.410.000:
+    // 15 bulan @ 200.000 (Ags 2022 - Okt 2023) = 3.000.000
+    // 35 bulan @ 210.000 (Nov 2023 - Sep 2026) = 7.350.000 (Lunas Hijau s/d Sep 2026)
+    // Sisa 60.000 dialokasikan ke Oktober 2026 sebagai Setoran Parsial (Amber)
+    // November & Desember 2026 tidak teralokasi (Unbilled)
+    const agusTiers: SavingsRateTier[] = [
+      {
+        id: 'tier-1',
+        deposit_type_code: 'WAJIB',
+        start_year: 2022,
+        start_month: 8,
+        end_year: 2023,
+        end_month: 10,
+        monthly_rate: 200000
+      },
+      {
+        id: 'tier-2',
+        deposit_type_code: 'WAJIB',
+        start_year: 2023,
+        start_month: 11,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 210000
+      }
+    ];
+
+    const result = calculateFifoAllocation(
+      10410000,
+      grid,
+      'WAJIB',
+      agusTiers,
+      '2022-08-01',
+      'md-agus'
+    );
+
+    expect(result.totalAllocated).toBe(10410000);
+    expect(result.remainingBalance).toBe(0);
+    // 15 bulan @ 200k + 35 bulan @ 210k + 1 bulan parsial @ 60k = 51 bulan
+    expect(result.matchedKeys).toHaveLength(51);
+    expect(result.matchedKeys[result.matchedKeys.length - 1]).toBe('2026-10');
+
+    // September 2026 harus lunas penuh (210.000, hijau)
+    const sepTx = result.allocatedTransactions.find((tx) => tx.key === '2026-09');
+    expect(sepTx).toBeDefined();
+    expect(sepTx?.amount).toBe(210000);
+    expect(sepTx?.isPartial).toBe(false);
+
+    // Oktober 2026 harus parsial (60.000, amber)
+    const octTx = result.allocatedTransactions.find((tx) => tx.key === '2026-10');
+    expect(octTx).toBeDefined();
+    expect(octTx?.amount).toBe(60000);
+    expect(octTx?.isPartial).toBe(true);
+    expect(result.partialTransaction).toEqual(octTx);
+
+    // November & Desember 2026 tidak boleh ada transaksi (unbilled)
+    const novTx = result.allocatedTransactions.find((tx) => tx.key === '2026-11');
+    const decTx = result.allocatedTransactions.find((tx) => tx.key === '2026-12');
+    expect(novTx).toBeUndefined();
+    expect(decTx).toBeUndefined();
+  });
+
   it('resolveDepositTypeCode identifies correct deposit codes', () => {
     expect(resolveDepositTypeCode({ code: 'WAJIB', name: 'Simpanan Wajib' })).toBe('WAJIB');
     expect(resolveDepositTypeCode({ code: 'SW', name: 'Simpanan Wajib' })).toBe('WAJIB');

@@ -483,6 +483,40 @@ export async function importMembersChunked(
         memberDepositLookup.set(`${amd.member_id}_${amd.deposit_type_id}`, amd.id);
       });
 
+      // Clean Overwrite: Dapatkan seluruh member_deposit_id milik anggota batch ini.
+      // Hapus seluruh mutasi lama anggota terkait yang berlabel 'Saldo Awal', 'migrasi', atau 'Import'
+      // untuk mencegah duplikasi saldo kas riil saat impor ulang (re-import).
+      const accountIds = (allMemberDeposits || []).map((amd: any) => amd.id).filter(Boolean);
+      if (accountIds.length > 0) {
+        for (let a = 0; a < accountIds.length; a += 100) {
+          const subAccountIds = accountIds.slice(a, a + 100);
+          const delQuery: any = supabase
+            .from('deposit_transactions')
+            .delete();
+          if (typeof delQuery?.in === 'function') {
+            const inQuery = delQuery.in('member_deposit_id', subAccountIds);
+            if (typeof inQuery?.or === 'function') {
+              const { error: delErr } = await inQuery.or(
+                'description.ilike.%saldo awal%,description.ilike.%migrasi%,description.ilike.%import%,description.ilike.%migration%'
+              );
+              if (delErr) {
+                console.warn('Gagal membersihkan mutasi saldo awal/migrasi lama:', delErr.message);
+              }
+            } else if (typeof inQuery?.in === 'function') {
+              await inQuery.in('description', [
+                'Saldo Awal Migrasi Sistem',
+                'Migrasi Saldo Awal (As-Is)',
+                'Migrasi Saldo Awal',
+                'One-Time Principal Deposit Migration',
+                'Historical Balance Migration'
+              ]);
+            } else if (typeof inQuery?.then === 'function') {
+              await inQuery;
+            }
+          }
+        }
+      }
+
       const transactionsToInsert: any[] = [];
       for (const m of chunk) {
         const nrpKey = String(m.nrp || '').trim();
