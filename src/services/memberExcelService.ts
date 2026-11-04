@@ -359,7 +359,7 @@ export const executeMigration = async (
           .in('member_deposit_id', mdIds);
 
         let errDelTx: any = null;
-        if (typeof delQuery?.or === 'function') {
+        if (typeof delQuery?.or === 'function' && typeof delQuery.then !== 'function') {
           const res = await delQuery.or('description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%migration%,description.ilike.%historical%');
           errDelTx = res?.error;
         } else if (typeof delQuery?.in === 'function' && typeof delQuery.then !== 'function') {
@@ -371,7 +371,8 @@ export const executeMigration = async (
             'Historical Balance Migration'
           ]);
           errDelTx = res?.error;
-        } else if (typeof delQuery?.then === 'function') {
+        } else {
+          // Real Supabase: Clean Overwrite mutlak seluruh mutasi rekening lama anggota
           const res = await delQuery;
           errDelTx = res?.error;
         }
@@ -382,7 +383,7 @@ export const executeMigration = async (
         }
       }
 
-      // B.2 Masukkan satu mutasi transaksi saldo migrasi baru per tipe simpanan dengan amount murni dari file Excel
+      // B.2 Masukkan satu mutasi transaksi saldo migrasi baru per tipe simpanan murni As-Is apa adanya dari Excel (tanpa alokasi bulan)
       const depositTypesNeeded = [
         { id: typePokok, amount: row.jumlah_simpanan_pokok, isRoutine: false },
         { id: typeWajib, amount: row.jumlah_simpanan_wajib, isRoutine: true },
@@ -406,7 +407,7 @@ export const executeMigration = async (
         }
         if (!mdId) continue;
 
-        // Insert Transactions
+        // Insert Transactions (Murni As-Is: for_month & for_year = null)
         const txsToInsert = [];
         const dateObj = row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota) : new Date();
         const validDate = !isNaN(dateObj.getTime()) ? dateObj : new Date();
@@ -417,19 +418,19 @@ export const executeMigration = async (
             member_deposit_id: mdId,
             amount: dt.amount,
             transaction_type: 'deposit',
-            for_month: validDate.getMonth() + 1,
-            for_year: validDate.getFullYear(),
+            for_month: null,
+            for_year: null,
             description: 'One-Time Principal Deposit Migration',
             created_at: validDate.toISOString()
           });
         } else {
-          // Rutin As-Is: Masukkan satu mutasi saldo migrasi utuh tanpa perulangan pembagian bulan
+          // Rutin As-Is: Masukkan satu mutasi saldo migrasi utuh tanpa alokasi bulan (for_month & for_year = null)
           txsToInsert.push({
             member_deposit_id: mdId,
             amount: dt.amount,
             transaction_type: 'deposit',
-            for_month: validDate.getMonth() + 1,
-            for_year: validDate.getFullYear(),
+            for_month: null,
+            for_year: null,
             description: 'Migrasi Saldo Awal (As-Is)',
             created_at: validDate.toISOString()
           });
