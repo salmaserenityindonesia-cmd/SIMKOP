@@ -86,6 +86,23 @@ describe('savingsMatrixService - Helper Functions', () => {
     });
   });
 
+  it('generateMonthGrid supports descending order from newest to oldest', () => {
+    const descGrid = generateMonthGrid(2024, 2025, 'desc');
+    expect(descGrid).toHaveLength(24);
+    expect(descGrid[0]).toEqual({
+      year: 2025,
+      month: 12,
+      label: 'Des-25',
+      key: '2025-12'
+    });
+    expect(descGrid[23]).toEqual({
+      year: 2024,
+      month: 1,
+      label: 'Jan-24',
+      key: '2024-01'
+    });
+  });
+
   it('calculateTotalChecked calculates total rate for selected keys correctly', () => {
     const keys = ['2024-01', '2024-02', '2025-11'];
     // 2024-01 = 150000, 2024-02 = 150000, 2025-11 = 200000 => total 500000

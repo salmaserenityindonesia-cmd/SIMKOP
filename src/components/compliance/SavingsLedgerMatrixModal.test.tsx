@@ -157,6 +157,32 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Tutup');
     });
 
+    it('renders grid month columns in descending order (reverse timeline: latest month first)', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-01-01"
+          onClose={vi.fn()}
+          initialLoading={false}
+        />
+      );
+
+      // Pastikan kolom bulan terurut secara descending (periode terbaru muncul lebih dulu daripada periode terlama)
+      const idxDes26 = html.indexOf('<div>Des-26</div>');
+      const idxNov26 = html.indexOf('<div>Nov-26</div>');
+      const idxJan24 = html.indexOf('<div>Jan-24</div>');
+
+      expect(idxDes26).toBeGreaterThan(-1);
+      expect(idxNov26).toBeGreaterThan(-1);
+      expect(idxJan24).toBeGreaterThan(-1);
+
+      // Des-26 harus muncul sebelum Nov-26, dan Nov-26 sebelum Jan-24
+      expect(idxDes26).toBeLessThan(idxNov26);
+      expect(idxNov26).toBeLessThan(idxJan24);
+    });
+
     it('renders balance comparison and balanced status when total matches database balance', () => {
       // 3.000.000 tercentang vs 3.000.000 di database
       const dummyCheckedKeys = [
@@ -276,6 +302,16 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(isMonthBeforeJoin(2024, 1, null)).toBe(false);
       expect(isMonthBeforeJoin(2024, 1, undefined)).toBe(false);
       expect(isMonthBeforeJoin(2024, 1, 'invalid-date')).toBe(false);
+    });
+
+    it('generateMonthGrid supports descending order when requested', () => {
+      const ascGrid = generateMonthGrid(2024, 2026);
+      expect(ascGrid[0].key).toBe('2024-01');
+      expect(ascGrid[ascGrid.length - 1].key).toBe('2026-12');
+
+      const descGrid = generateMonthGrid(2024, 2026, 'desc');
+      expect(descGrid[0].key).toBe('2026-12');
+      expect(descGrid[descGrid.length - 1].key).toBe('2024-01');
     });
   });
 

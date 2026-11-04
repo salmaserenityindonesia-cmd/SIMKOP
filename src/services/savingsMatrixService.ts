@@ -97,11 +97,12 @@ export function isMonthBeforeJoin(
 }
 
 /**
- * Menghasilkan daftar bulan dalam format grid terurut kronologis
+ * Menghasilkan daftar bulan dalam format grid (default terurut kronologis asc, atau desc)
  */
 export function generateMonthGrid(
   startYear: number,
-  endYear: number
+  endYear: number,
+  order: 'asc' | 'desc' = 'asc'
 ): Array<{ year: number; month: number; label: string; key: string }> {
   const list: Array<{ year: number; month: number; label: string; key: string }> = [];
   for (let y = startYear; y <= endYear; y++) {
@@ -113,6 +114,12 @@ export function generateMonthGrid(
         key: `${y}-${String(m).padStart(2, '0')}`
       });
     }
+  }
+  if (order === 'desc') {
+    return list.sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year;
+      return b.month - a.month;
+    });
   }
   return list;
 }

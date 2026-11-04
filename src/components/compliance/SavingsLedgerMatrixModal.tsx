@@ -111,11 +111,12 @@ export function isMonthBeforeJoin(
 }
 
 /**
- * Menghasilkan daftar bulan dalam format grid terurut kronologis
+ * Menghasilkan daftar bulan dalam format grid (default terurut kronologis asc, atau desc)
  */
 export function generateMonthGrid(
   startYear: number,
-  endYear: number
+  endYear: number,
+  order: 'asc' | 'desc' = 'asc'
 ): Array<{ year: number; month: number; label: string; key: string }> {
   const list: Array<{ year: number; month: number; label: string; key: string }> = [];
   for (let y = startYear; y <= endYear; y++) {
@@ -127,6 +128,12 @@ export function generateMonthGrid(
         key: `${y}-${String(m).padStart(2, '0')}`
       });
     }
+  }
+  if (order === 'desc') {
+    return list.sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year;
+      return b.month - a.month;
+    });
   }
   return list;
 }
@@ -217,6 +224,14 @@ export default function SavingsLedgerMatrixModal({
     const months = generateMonthGrid(sYear, eYear);
     return { startYear: sYear, endYear: eYear, allGridMonths: months };
   }, [resolvedJoinDate]);
+
+  // Urutkan kolom grid secara menurun (Reverse Timeline: bulan terbaru di sisi paling kiri)
+  const displayMonths = useMemo(() => {
+    return [...allGridMonths].sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year;
+      return b.month - a.month;
+    });
+  }, [allGridMonths]);
 
   // Load tiers, member deposit accounts, and existing transactions
   useEffect(() => {
@@ -922,7 +937,7 @@ export default function SavingsLedgerMatrixModal({
                       <th className="sticky left-0 bg-slate-100 z-10 py-2.5 px-3 text-left border-r border-slate-200 min-w-[130px]">
                         Tahun &amp; Item
                       </th>
-                      {allGridMonths.map(m => (
+                      {displayMonths.map(m => (
                         <th
                           key={m.key}
                           className="py-2.5 px-2 border-r border-slate-200 min-w-[76px] whitespace-nowrap"
@@ -941,7 +956,7 @@ export default function SavingsLedgerMatrixModal({
                         </div>
                       </td>
 
-                      {allGridMonths.map(m => {
+                      {displayMonths.map(m => {
                         const beforeJoin = isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
                         const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
