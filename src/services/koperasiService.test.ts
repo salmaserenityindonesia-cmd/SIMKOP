@@ -146,6 +146,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         if (table === 'deposit_transactions') {
           return {
             delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null }),
               in: vi.fn().mockReturnValue({
                 or: vi.fn().mockResolvedValue({ error: null }),
                 in: vi.fn().mockResolvedValue({ error: null }),
@@ -225,7 +226,6 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       ];
 
       const deletedAccountIds: string[] = [];
-      let deleteOrFilter = '';
       const insertedTransactions: any[] = [];
 
       (supabase.from as any).mockImplementation((table: string) => {
@@ -266,6 +266,15 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
                 ],
                 error: null,
               }),
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-agus-sp', member_id: 'uuid-agus-susanto', deposit_type: { code: 'SP' } },
+                  { id: 'md-agus-sw', member_id: 'uuid-agus-susanto', deposit_type: { code: 'SW' } },
+                  { id: 'md-agus-sb', member_id: 'uuid-agus-susanto', deposit_type: { code: 'SB' } },
+                  { id: 'md-agus-sl', member_id: 'uuid-agus-susanto', deposit_type: { code: 'SL' } },
+                ],
+                error: null,
+              }),
             }),
             insert: vi.fn().mockResolvedValue({ error: null }),
           };
@@ -274,14 +283,13 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         if (table === 'deposit_transactions') {
           return {
             delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col: string, id: string) => {
+                deletedAccountIds.push(id);
+                return Promise.resolve({ error: null });
+              }),
               in: vi.fn().mockImplementation((col: string, ids: string[]) => {
                 deletedAccountIds.push(...ids);
-                return {
-                  or: vi.fn().mockImplementation((filter: string) => {
-                    deleteOrFilter = filter;
-                    return Promise.resolve({ error: null });
-                  }),
-                };
+                return Promise.resolve({ error: null });
               }),
             }),
             insert: vi.fn().mockImplementation((payload: any[]) => {
@@ -315,22 +323,111 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(res.successCount).toBe(1);
       expect(res.failedCount).toBe(0);
 
-      // Verifikasi bahwa transaksi lama akun dibersihkan (clean overwrite)
+      // Verifikasi bahwa seluruh transaksi lama akun dibersihkan (clean overwrite)
       expect(deletedAccountIds).toEqual(
         expect.arrayContaining(['md-agus-sp', 'md-agus-sw', 'md-agus-sb', 'md-agus-sl'])
       );
-      expect(deleteOrFilter).toContain('description.ilike.%saldo awal%');
-      expect(deleteOrFilter).toContain('description.ilike.%migrasi%');
-      expect(deleteOrFilter).toContain('description.ilike.%import%');
+      expect(deletedAccountIds).toHaveLength(4);
 
-      // Verifikasi bahwa mutasi baru dimasukkan dengan nominal yang diperbarui
+      // Verifikasi bahwa mutasi baru dimasukkan dengan nominal yang diperbarui,
+      // bertipe 'deposit', berdeskripsi 'Saldo Awal Migrasi Sistem', dan for_month/for_year bernilai null
       expect(insertedTransactions).toHaveLength(4);
       const wajibTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sw');
       expect(wajibTx?.amount).toBe(10410000);
+      expect(wajibTx?.transaction_type).toBe('deposit');
+      expect(wajibTx?.description).toBe('Saldo Awal Migrasi Sistem');
+      expect(wajibTx?.for_month).toBeNull();
+      expect(wajibTx?.for_year).toBeNull();
+
       const belanjaTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sb');
       expect(belanjaTx?.amount).toBe(2550000);
+      expect(belanjaTx?.description).toBe('Saldo Awal Migrasi Sistem');
+      expect(belanjaTx?.for_month).toBeNull();
+      expect(belanjaTx?.for_year).toBeNull();
+
       const lebaranTx = insertedTransactions.find((tx) => tx.member_deposit_id === 'md-agus-sl');
       expect(lebaranTx?.amount).toBe(15300000);
+      expect(lebaranTx?.description).toBe('Saldo Awal Migrasi Sistem');
+      expect(lebaranTx?.for_month).toBeNull();
+      expect(lebaranTx?.for_year).toBeNull();
+    });
+
+    it('tidak menyisipkan deposit_transactions jika nominal simpanan kosong atau nol', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-sp', code: 'SP', name: 'Simpanan Pokok' },
+        { id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' },
+        { id: 'dt-sb', code: 'SB', name: 'Simpanan Belanja' },
+        { id: 'dt-sl', code: 'SL', name: 'Simpanan Lebaran' },
+      ];
+
+      const insertedTransactions: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'uuid-zero-member', nrp: 'NRP-ZERO', created_at: '2023-01-01' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-zero-sp', member_id: 'uuid-zero-member', deposit_type_id: 'dt-sp' },
+                  { id: 'md-zero-sw', member_id: 'uuid-zero-member', deposit_type_id: 'dt-sw' },
+                  { id: 'md-zero-sb', member_id: 'uuid-zero-member', deposit_type_id: 'dt-sb' },
+                  { id: 'md-zero-sl', member_id: 'uuid-zero-member', deposit_type_id: 'dt-sl' },
+                ],
+                error: null,
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null }),
+              in: vi.fn().mockReturnValue({
+                or: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedTransactions.push(...payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      const zeroInput: MemberImportInput[] = [
+        {
+          nrp: 'NRP-ZERO',
+          nama: 'Zero Member',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          jumlah_simpanan_pokok: 0,
+          jumlah_simpanan_wajib: 0,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+        },
+      ];
+
+      const res = await importMembersChunked(zeroInput);
+      expect(res.successCount).toBe(1);
+      expect(insertedTransactions).toHaveLength(0);
     });
   });
 });

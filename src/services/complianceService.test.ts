@@ -1265,12 +1265,10 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(result.totalSuccess).toBe(2);
       expect(result.totalFailed).toBe(0);
 
-      // Verifikasi penghapusan transaksi lama per anggota (matriks & migrasi)
-      expect(deleteCalls.length).toBeGreaterThanOrEqual(4);
-      expect(deleteCalls.some(c => c.eqVal === 'md-1' && c.ilikeVal === '%matriks%')).toBe(true);
-      expect(deleteCalls.some(c => c.eqVal === 'md-2' && c.ilikeVal === '%matriks%')).toBe(true);
-      expect(deleteCalls.some(c => c.eqVal === 'md-1' && c.ilikeVal === '%migrasi%')).toBe(true);
-      expect(deleteCalls.some(c => c.eqVal === 'md-2' && c.ilikeVal === '%migrasi%')).toBe(true);
+      // Verifikasi pembersihan transaksi lama secara ketat berbasis ID rekening (Strict Clean Overwrite)
+      expect(deleteCalls.length).toBe(2);
+      expect(deleteCalls.some(c => c.eqVal === 'md-1')).toBe(true);
+      expect(deleteCalls.some(c => c.eqVal === 'md-2')).toBe(true);
 
       // Verifikasi mutasi baru tersimpan dengan deskripsi benar
       expect(insertedTxs.flat()).toHaveLength(4);
@@ -1281,6 +1279,84 @@ describe('complianceService - importSavingsMatrixLedger', () => {
         for_year: 2024,
         description: 'Import Matriks Buku Besar Excel',
       });
+    });
+
+    it('membersihkan seluruh mutasi lama (Candra Wijaya NRP 86123249) secara tuntas berbasis ID akun tanpa filter deskripsi', async () => {
+      const candraMember = [{ id: 'm-candra', nrp: '86123249', nama: 'Candra Wijaya' }];
+      const candraDeposit = [{ id: 'md-candra-sw', member_id: 'm-candra', deposit_type_id: 'dt-wajib' }];
+
+      const deletedDepositIds: string[] = [];
+      const insertedTxs: any[][] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: candraMember, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: candraDeposit, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  // Mutasi lama centang manual ('Setoran Rutin Bulanan') & deskripsi NULL
+                  { id: 'tx-old-1', member_deposit_id: 'md-candra-sw', description: 'Setoran Rutin Bulanan', amount: 200000 },
+                  { id: 'tx-old-2', member_deposit_id: 'md-candra-sw', description: null, amount: 200000 },
+                ],
+                error: null,
+              }),
+            }),
+            delete: vi.fn().mockImplementation(() =>
+              createDeleteChain((rec) => {
+                if (rec.eqVal) deletedDepositIds.push(rec.eqVal);
+              })
+            ),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              insertedTxs.push(batch);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      // Impor mutasi baru matriks dari Excel (misal 3 bulan @ 200.000)
+      const candraMutations = [
+        { nrp: '86123249', year: 2026, month: 1, amount: 200000 },
+        { nrp: '86123249', year: 2026, month: 2, amount: 200000 },
+        { nrp: '86123249', year: 2026, month: 3, amount: 200000 },
+      ];
+
+      const result = await importSavingsMatrixLedger('WAJIB', candraMutations);
+
+      expect(result.success).toBe(true);
+      expect(result.totalMembers).toBe(1);
+      expect(result.totalTransactions).toBe(3);
+
+      // Verifikasi: Akun deposit Candra Wijaya dipurge secara tegas dan bersih berbasis eq('member_deposit_id', 'md-candra-sw')
+      expect(deletedDepositIds).toEqual(['md-candra-sw']);
+
+      // Verifikasi: Mutasi baru disisipkan bersih tanpa duplikasi saldo
+      const flattenedInserted = insertedTxs.flat();
+      expect(flattenedInserted).toHaveLength(3);
+      const totalNewAmount = flattenedInserted.reduce((sum, tx) => sum + tx.amount, 0);
+      expect(totalNewAmount).toBe(600000); // 3 x 200.000 = 600.000, tidak berlipat ganda
     });
 
     it('harus secara otomatis membuat akun member_deposits jika belum ada untuk anggota', async () => {
@@ -1511,7 +1587,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(mutations.length).toBe(1112);
 
       const batchInsertSizes: number[] = [];
-      const deletedDescriptions: string[] = [];
+      const deletedMemberDepositIds: string[] = [];
 
       (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'deposit_types') {
@@ -1542,12 +1618,7 @@ describe('complianceService - importSavingsMatrixLedger', () => {
           return {
             delete: vi.fn().mockImplementation(() =>
               createDeleteChain((rec) => {
-                if (rec.ilikeVal) deletedDescriptions.push(rec.ilikeVal);
-                if (rec.orVal) {
-                  deletedDescriptions.push(rec.orVal);
-                  if (rec.orVal.includes('%saldo awal%')) deletedDescriptions.push('%saldo awal%');
-                  if (rec.orVal.includes('%matriks%')) deletedDescriptions.push('%matriks%');
-                }
+                if (rec.eqVal) deletedMemberDepositIds.push(rec.eqVal);
               })
             ),
             insert: vi.fn().mockImplementation((batch: any[]) => {
@@ -1575,9 +1646,10 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       const totalInsertedRows = batchInsertSizes.reduce((a, b) => a + b, 0);
       expect(totalInsertedRows).toBe(1112);
 
-      // Verifikasi pembersihan 'Saldo Awal' dan 'matriks' terpanggil
-      expect(deletedDescriptions).toContain('%saldo awal%');
-      expect(deletedDescriptions).toContain('%matriks%');
+      // Verifikasi pembersihan ketat seluruh akun simpanan anggota (Strict Clean Overwrite)
+      expect(deletedMemberDepositIds.length).toBe(29);
+      expect(deletedMemberDepositIds).toContain('md-1');
+      expect(deletedMemberDepositIds).toContain('md-29');
     });
 
     it('fetchAllPaged harus mengambil seluruh data multi-halaman melewati batas 1.000 PostgREST', async () => {

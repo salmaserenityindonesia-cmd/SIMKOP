@@ -1376,40 +1376,16 @@ export async function importSavingsMatrixLedger(
           throw new Error(`Akun rekening simpanan tidak ditemukan untuk anggota ${currentMemberName}`);
         }
 
-        // a. Bersihkan seluruh transaksi ledger migrasi/rekonsiliasi lama pada akun deposit ini
-        const delBuilder: any = supabase
+        // Hapus seluruh mutasi lama milik akun simpanan ini untuk memastikan data baru bersih (Strict Clean Overwrite)
+        const { error: delErr } = await supabase
           .from('deposit_transactions')
           .delete()
           .eq('member_deposit_id', depositAccountId);
 
-        if (typeof delBuilder.or === 'function') {
-          const { error: delErr } = await delBuilder.or(
-            'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%'
-          );
-          if (delErr) throw delErr;
+        if (delErr) {
+          console.error(`Gagal menghapus mutasi lama untuk deposit ID ${depositAccountId}:`, delErr);
+          throw delErr;
         }
-
-        // b. Bersihkan transaksi rekonsiliasi lama & impor matriks milik anggota tersebut:
-        await supabase
-          .from('deposit_transactions')
-          .delete()
-          .eq('member_deposit_id', depositAccountId)
-          .ilike('description', '%matriks%');
-
-        // c. Hapus mutasi lama yang memuat deskripsi 'Saldo Awal' agar tidak menumpuk:
-        await supabase
-          .from('deposit_transactions')
-          .delete()
-          .eq('member_deposit_id', depositAccountId)
-          .ilike('description', '%saldo awal%');
-
-        // d. Hapus transaksi saldo awal migrasi gelondongan (for_month IS NULL) yang deskripsinya memuat kata 'migrasi'
-        await supabase
-          .from('deposit_transactions')
-          .delete()
-          .eq('member_deposit_id', depositAccountId)
-          .is('for_month', null)
-          .ilike('description', '%migrasi%');
 
         // d. Kumpulkan mutasi bulanan milik anggota ini yang memiliki amount > 0
         const memberMutations = validMutations.filter(

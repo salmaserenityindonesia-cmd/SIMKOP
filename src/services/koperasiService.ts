@@ -472,7 +472,7 @@ export async function importMembersChunked(
         }
       }
 
-      // Langkah D (Inisialisasi Saldo Awal jika Ada):
+      // Langkah D (Clean Overwrite Saldo Simpanan Migrasi per Anggota):
       const { data: allMemberDeposits } = await supabase
         .from('member_deposits')
         .select('id, member_id, deposit_type_id')
@@ -483,72 +483,144 @@ export async function importMembersChunked(
         memberDepositLookup.set(`${amd.member_id}_${amd.deposit_type_id}`, amd.id);
       });
 
-      // Clean Overwrite: Dapatkan seluruh member_deposit_id milik anggota batch ini.
-      // Hapus seluruh mutasi lama anggota terkait yang berlabel 'Saldo Awal', 'migrasi', atau 'Import'
-      // untuk mencegah duplikasi saldo kas riil saat impor ulang (re-import).
-      const accountIds = (allMemberDeposits || []).map((amd: any) => amd.id).filter(Boolean);
-      if (accountIds.length > 0) {
-        for (let a = 0; a < accountIds.length; a += 100) {
-          const subAccountIds = accountIds.slice(a, a + 100);
-          const delQuery: any = supabase
-            .from('deposit_transactions')
-            .delete();
-          if (typeof delQuery?.in === 'function') {
-            const inQuery = delQuery.in('member_deposit_id', subAccountIds);
-            if (typeof inQuery?.or === 'function') {
-              const { error: delErr } = await inQuery.or(
-                'description.ilike.%saldo awal%,description.ilike.%migrasi%,description.ilike.%import%,description.ilike.%migration%'
-              );
-              if (delErr) {
-                console.warn('Gagal membersihkan mutasi saldo awal/migrasi lama:', delErr.message);
-              }
-            } else if (typeof inQuery?.in === 'function') {
-              await inQuery.in('description', [
-                'Saldo Awal Migrasi Sistem',
-                'Migrasi Saldo Awal (As-Is)',
-                'Migrasi Saldo Awal',
-                'One-Time Principal Deposit Migration',
-                'Historical Balance Migration'
-              ]);
-            } else if (typeof inQuery?.then === 'function') {
-              await inQuery;
-            }
-          }
-        }
-      }
-
       const transactionsToInsert: any[] = [];
+
       for (const m of chunk) {
         const nrpKey = String(m.nrp || '').trim();
         const mid = memberIdMap.get(nrpKey);
         if (!mid) continue;
 
+        // 1. Dapatkan seluruh akun member_deposits milik member.id
+        let accounts: any[] = [];
+        const selQuery: any = supabase
+          .from('member_deposits')
+          .select('id, deposit_type:deposit_types(code)');
+
+        if (typeof selQuery?.eq === 'function') {
+          const { data: fetchedAccounts } = await selQuery.eq('member_id', mid);
+          if (fetchedAccounts && fetchedAccounts.length > 0) {
+            accounts = fetchedAccounts;
+          }
+        }
+
+        // Fallback jika query .eq tidak tersedia di mock atau kosong
+        if (accounts.length === 0) {
+          accounts = (allMemberDeposits || []).filter((amd: any) => amd.member_id === mid);
+        }
+
+        // 2. Sebelum menyisipkan saldo baru, hapus seluruh mutasi lama pada deposit_transactions untuk seluruh akun simpanan anggota tersebut
+        if (accounts && accounts.length > 0) {
+          const accountIds = accounts.map((a: any) => a.id).filter(Boolean);
+          if (accountIds.length > 0) {
+            for (const memberDepositId of accountIds) {
+              const delBuilder: any = supabase
+                .from('deposit_transactions')
+                .delete();
+
+              if (typeof delBuilder?.eq === 'function') {
+                const { error: delErr } = await delBuilder.eq('member_deposit_id', memberDepositId);
+                if (delErr) {
+                  console.error(`Gagal menghapus mutasi lama untuk deposit ID ${memberDepositId}:`, delErr);
+                  throw delErr;
+                }
+              } else if (typeof delBuilder?.in === 'function') {
+                const inQuery = delBuilder.in('member_deposit_id', accountIds);
+                if (typeof inQuery?.then === 'function') {
+                  const { error: delErr } = await inQuery;
+                  if (delErr) {
+                    console.error(`Gagal menghapus mutasi lama untuk deposit IDs:`, delErr);
+                    throw delErr;
+                  }
+                } else if (typeof inQuery?.or === 'function') {
+                  const { error: delErr } = await inQuery.or('id.not.is.null');
+                  if (delErr) {
+                    console.error(`Gagal menghapus mutasi lama untuk deposit IDs:`, delErr);
+                    throw delErr;
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+
+        // 3. Setelah bersih tanpa sisa, baru sisipkan baris mutasi saldo awal baru sesuai nominal di Excel:
         const dateStr = m.tgl_awal_anggota || memberCreatedMap.get(mid) || new Date().toISOString();
         const validDate = new Date(dateStr);
         const safeDate = !isNaN(validDate.getTime()) ? validDate : new Date();
 
-        const depAmounts = [
-          { typeId: typePokok, amount: Number(m.jumlah_simpanan_pokok) || 0, isRoutine: false },
-          { typeId: typeWajib, amount: Number(m.jumlah_simpanan_wajib) || 0, isRoutine: true },
-          { typeId: typeBelanja, amount: Number(m.jumlah_simpanan_belanja) || 0, isRoutine: true },
-          { typeId: typeLebaran, amount: Number(m.jumlah_simpanan_lebaran) || 0, isRoutine: true },
-        ];
-
-        for (const dep of depAmounts) {
-          if (dep.typeId && dep.amount > 0) {
-            const mdId = memberDepositLookup.get(`${mid}_${dep.typeId}`);
-            if (mdId) {
-              transactionsToInsert.push({
-                member_deposit_id: mdId,
-                amount: dep.amount,
-                transaction_type: 'deposit',
-                for_month: safeDate.getMonth() + 1,
-                for_year: safeDate.getFullYear(),
-                description: dep.isRoutine ? 'Migrasi Saldo Awal (As-Is)' : 'One-Time Principal Deposit Migration',
-                created_at: safeDate.toISOString(),
-              });
-            }
+        const findAccId = (code: string, fallbackTypeId?: string) => {
+          const found = accounts.find((a: any) => {
+            const c = a.deposit_type?.code || '';
+            return c.toUpperCase() === code.toUpperCase();
+          });
+          if (found) return found.id;
+          if (fallbackTypeId) {
+            return memberDepositLookup.get(`${mid}_${fallbackTypeId}`);
           }
+          return undefined;
+        };
+
+        const wId = findAccId('SW', typeWajib);
+        const bId = findAccId('SB', typeBelanja);
+        const lId = findAccId('SL', typeLebaran);
+        const pId = findAccId('SP', typePokok);
+
+        const jmlWajib = Number(m.jumlah_simpanan_wajib) || 0;
+        const jmlBelanja = Number(m.jumlah_simpanan_belanja) || 0;
+        const jmlLebaran = Number(m.jumlah_simpanan_lebaran) || 0;
+        const jmlPokok = Number(m.jumlah_simpanan_pokok) || 0;
+
+        // Jika jumlah_simpanan_wajib > 0: insert ke akun WAJIB
+        if (wId && jmlWajib > 0) {
+          transactionsToInsert.push({
+            member_deposit_id: wId,
+            amount: jmlWajib,
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Migrasi Sistem',
+            for_month: null,
+            for_year: null,
+            created_at: safeDate.toISOString(),
+          });
+        }
+
+        // Jika jumlah_simpanan_belanja > 0: insert ke akun BELANJA
+        if (bId && jmlBelanja > 0) {
+          transactionsToInsert.push({
+            member_deposit_id: bId,
+            amount: jmlBelanja,
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Migrasi Sistem',
+            for_month: null,
+            for_year: null,
+            created_at: safeDate.toISOString(),
+          });
+        }
+
+        // Jika jumlah_simpanan_lebaran > 0: insert ke akun LEBARAN
+        if (lId && jmlLebaran > 0) {
+          transactionsToInsert.push({
+            member_deposit_id: lId,
+            amount: jmlLebaran,
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Migrasi Sistem',
+            for_month: null,
+            for_year: null,
+            created_at: safeDate.toISOString(),
+          });
+        }
+
+        // Jika jumlah_simpanan_pokok > 0: insert ke akun POKOK
+        if (pId && jmlPokok > 0) {
+          transactionsToInsert.push({
+            member_deposit_id: pId,
+            amount: jmlPokok,
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Migrasi Sistem',
+            for_month: null,
+            for_year: null,
+            created_at: safeDate.toISOString(),
+          });
         }
       }
 
