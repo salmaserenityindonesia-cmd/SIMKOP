@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   CheckCircle2,
@@ -225,13 +225,30 @@ export default function SavingsLedgerMatrixModal({
     return { startYear: sYear, endYear: eYear, allGridMonths: months };
   }, [resolvedJoinDate]);
 
-  // Urutkan kolom grid secara menurun (Reverse Timeline: bulan terbaru di sisi paling kiri)
-  const displayMonths = useMemo(() => {
-    return [...allGridMonths].sort((a, b) => {
-      if (b.year !== a.year) return b.year - a.year;
-      return b.month - a.month;
-    });
-  }, [allGridMonths]);
+  // Penanda waktu bulan berjalan untuk auto-scroll dan penanda visual
+  const today = useMemo(() => new Date(), []);
+  const currentCalYear = today.getFullYear();
+  const currentCalMonth = today.getMonth() + 1; // 1 - 12
+
+  // Reference React untuk kontainer scroll tabel dan kolom bulan berjalan
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const currentMonthColRef = useRef<HTMLTableHeaderCellElement | null>(null);
+
+  // Auto-scroll ke kolom bulan berjalan saat modal selesai dimuat atau saat tab aktif berganti
+  useEffect(() => {
+    if (!loading) {
+      const timer = setTimeout(() => {
+        if (currentMonthColRef.current) {
+          currentMonthColRef.current.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'center'
+          });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, activeTab]);
 
   // Load tiers, member deposit accounts, and existing transactions
   useEffect(() => {
@@ -930,21 +947,37 @@ export default function SavingsLedgerMatrixModal({
               </div>
 
               {/* Table Grid Horizontal */}
-              <div className="overflow-x-auto">
+              <div ref={scrollContainerRef} className="overflow-x-auto">
                 <table className="w-full text-xs text-center border-collapse">
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                       <th className="sticky left-0 bg-slate-100 z-10 py-2.5 px-3 text-left border-r border-slate-200 min-w-[130px]">
                         Tahun &amp; Item
                       </th>
-                      {displayMonths.map(m => (
-                        <th
-                          key={m.key}
-                          className="py-2.5 px-2 border-r border-slate-200 min-w-[76px] whitespace-nowrap"
-                        >
-                          <div>{m.label}</div>
-                        </th>
-                      ))}
+                      {allGridMonths.map(m => {
+                        const isCurrentMonth = m.year === currentCalYear && m.month === currentCalMonth;
+                        return (
+                          <th
+                            key={m.key}
+                            ref={isCurrentMonth ? currentMonthColRef : null}
+                            data-testid={isCurrentMonth ? 'current-month-col' : undefined}
+                            className={`py-2.5 px-2 border-r border-slate-200 min-w-[76px] whitespace-nowrap transition-colors ${
+                              isCurrentMonth
+                                ? 'bg-emerald-50/80 ring-2 ring-inset ring-emerald-500 font-extrabold text-emerald-950'
+                                : ''
+                            }`}
+                          >
+                            <div className="flex flex-col items-center justify-center gap-0.5">
+                              <div>{m.label}</div>
+                              {isCurrentMonth && (
+                                <span className="inline-block px-1 py-0.2 text-[9px] font-bold rounded bg-emerald-600 text-white uppercase tracking-wider">
+                                  Bulan Ini
+                                </span>
+                              )}
+                            </div>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
@@ -956,7 +989,7 @@ export default function SavingsLedgerMatrixModal({
                         </div>
                       </td>
 
-                      {displayMonths.map(m => {
+                      {allGridMonths.map(m => {
                         const beforeJoin = isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
                         const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
@@ -968,12 +1001,15 @@ export default function SavingsLedgerMatrixModal({
                         const badgeLabel = isPartial
                           ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} / ${Number(rate).toLocaleString('id-ID')}`
                           : formatRateBadge(rate);
+                        const isCurrentMonth = m.year === currentCalYear && m.month === currentCalMonth;
 
                         if (beforeJoin) {
                           return (
                             <td
                               key={m.key}
-                              className="py-3 px-1 border-r border-b border-slate-100 bg-slate-50 text-slate-300 font-mono text-sm align-middle select-none"
+                              className={`py-3 px-1 border-r border-b border-slate-100 bg-slate-50 text-slate-300 font-mono text-sm align-middle select-none ${
+                                isCurrentMonth ? 'ring-1 ring-inset ring-emerald-400/30' : ''
+                              }`}
                               title="Sebelum tanggal bergabung anggota"
                             >
                               -
@@ -985,10 +1021,14 @@ export default function SavingsLedgerMatrixModal({
                           <td
                             key={m.key}
                             className={`py-3 px-1 border-r border-b border-slate-100 align-middle transition-colors ${
+                              isCurrentMonth ? 'ring-1 ring-inset ring-emerald-400/40' : ''
+                            } ${
                               isPartial
                                 ? 'bg-amber-50/50'
                                 : isChecked
                                 ? 'bg-emerald-50/40'
+                                : isCurrentMonth
+                                ? 'bg-emerald-50/20'
                                 : 'bg-white'
                             }`}
                           >

@@ -157,7 +157,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Tutup');
     });
 
-    it('renders grid month columns in descending order (reverse timeline: latest month first)', () => {
+    it('renders grid month columns in chronological (ascending) order and highlights current month', () => {
       const html = renderToStaticMarkup(
         <SavingsLedgerMatrixModal
           memberId="m-123"
@@ -169,18 +169,22 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
         />
       );
 
-      // Pastikan kolom bulan terurut secara descending (periode terbaru muncul lebih dulu daripada periode terlama)
-      const idxDes26 = html.indexOf('<div>Des-26</div>');
-      const idxNov26 = html.indexOf('<div>Nov-26</div>');
+      // Pastikan kolom bulan terurut secara kronologis maju (periode awal muncul lebih dulu)
       const idxJan24 = html.indexOf('<div>Jan-24</div>');
+      const idxNov26 = html.indexOf('<div>Nov-26</div>');
+      const idxDes26 = html.indexOf('<div>Des-26</div>');
 
-      expect(idxDes26).toBeGreaterThan(-1);
-      expect(idxNov26).toBeGreaterThan(-1);
       expect(idxJan24).toBeGreaterThan(-1);
+      expect(idxNov26).toBeGreaterThan(-1);
+      expect(idxDes26).toBeGreaterThan(-1);
 
-      // Des-26 harus muncul sebelum Nov-26, dan Nov-26 sebelum Jan-24
-      expect(idxDes26).toBeLessThan(idxNov26);
-      expect(idxNov26).toBeLessThan(idxJan24);
+      // Jan-24 harus muncul sebelum Nov-26, dan Nov-26 sebelum Des-26
+      expect(idxJan24).toBeLessThan(idxNov26);
+      expect(idxNov26).toBeLessThan(idxDes26);
+
+      // Pastikan terdapat penanda "Bulan Ini" dan testid "current-month-col"
+      expect(html).toContain('Bulan Ini');
+      expect(html).toContain('data-testid="current-month-col"');
     });
 
     it('renders balance comparison and balanced status when total matches database balance', () => {
