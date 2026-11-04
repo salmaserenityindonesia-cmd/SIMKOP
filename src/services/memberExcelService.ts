@@ -341,10 +341,10 @@ export const executeMigration = async (
       const memberId = upsertedMember.id;
 
       // B. Setup Member Deposits & Transactions (Timpa Mutlak / Exact Replacement Overwrite)
-      // B.1 Hapus mutasi migrasi lama pada deposit_transactions untuk seluruh member_deposits milik memberId
+      // B.1 Hapus seluruh mutasi lama pada deposit_transactions untuk seluruh member_deposits milik memberId
       const { data: existingDeposits, error: errFetchDeposits } = await supabase
         .from('member_deposits')
-        .select('id')
+        .select('id, deposit_type:deposit_types(code)')
         .eq('member_id', memberId);
 
       if (errFetchDeposits) {
@@ -353,24 +353,32 @@ export const executeMigration = async (
 
       if (existingDeposits && existingDeposits.length > 0) {
         const mdIds = existingDeposits.map((d: any) => d.id);
-        const delQuery = supabase
+        const delQuery: any = supabase
           .from('deposit_transactions')
           .delete()
           .in('member_deposit_id', mdIds);
 
-        // Hapus seluruh mutasi migrasi lama tanpa toleransi sisa (pola komprehensif)
-        const { error: errDelTx } = typeof (delQuery as any).or === 'function'
-          ? await (delQuery as any).or('description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%migration%,description.ilike.%historical%')
-          : await (delQuery as any).in('description', [
-              'Saldo Awal Migrasi Sistem',
-              'Migrasi Saldo Awal (As-Is)',
-              'Migrasi Saldo Awal',
-              'One-Time Principal Deposit Migration',
-              'Historical Balance Migration'
-            ]);
+        let errDelTx: any = null;
+        if (typeof delQuery?.or === 'function') {
+          const res = await delQuery.or('description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%migration%,description.ilike.%historical%');
+          errDelTx = res?.error;
+        } else if (typeof delQuery?.in === 'function' && typeof delQuery.then !== 'function') {
+          const res = await delQuery.in('description', [
+            'Saldo Awal Migrasi Sistem',
+            'Migrasi Saldo Awal (As-Is)',
+            'Migrasi Saldo Awal',
+            'One-Time Principal Deposit Migration',
+            'Historical Balance Migration'
+          ]);
+          errDelTx = res?.error;
+        } else if (typeof delQuery?.then === 'function') {
+          const res = await delQuery;
+          errDelTx = res?.error;
+        }
 
         if (errDelTx) {
-          console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${row.nrp}:`, errDelTx.message);
+          console.error(`Gagal membersihkan mutasi lama anggota ${row.nama}:`, errDelTx);
+          throw errDelTx;
         }
       }
 

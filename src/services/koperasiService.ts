@@ -490,7 +490,7 @@ export async function importMembersChunked(
         const mid = memberIdMap.get(nrpKey);
         if (!mid) continue;
 
-        // 1. Dapatkan seluruh akun member_deposits milik member.id
+        // 1. Ambil seluruh ID rekening dari public.member_deposits milik member.id
         let accounts: any[] = [];
         const selQuery: any = supabase
           .from('member_deposits')
@@ -508,27 +508,18 @@ export async function importMembersChunked(
           accounts = (allMemberDeposits || []).filter((amd: any) => amd.member_id === mid);
         }
 
-        // 2. Sebelum membuat transaksi saldo awal baru, bersihkan transaksi saldo migrasi terdahulu (Clean Overwrite):
+        // 2. HAPUS seluruh transaksi pada public.deposit_transactions yang terikat pada seluruh ID rekening anggota tersebut:
         if (accounts && accounts.length > 0) {
           const accountIds = accounts.map((a: any) => a.id).filter(Boolean);
           if (accountIds.length > 0) {
-            const delQuery: any = supabase
+            const { error: delErr } = await supabase
               .from('deposit_transactions')
               .delete()
               .in('member_deposit_id', accountIds);
 
-            if (typeof delQuery?.or === 'function') {
-              const { error: delErr } = await delQuery.or(
-                'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
-              );
-              if (delErr) {
-                console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${m.nrp}:`, delErr.message);
-              }
-            } else if (typeof delQuery?.then === 'function') {
-              const { error: delErr } = await delQuery;
-              if (delErr) {
-                console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${m.nrp}:`, delErr.message);
-              }
+            if (delErr) {
+              console.error(`Gagal membersihkan mutasi lama anggota ${m.nama}:`, delErr);
+              throw delErr;
             }
           }
         }
@@ -643,6 +634,8 @@ export async function importMembersChunked(
 }
 
 export const batchInsertMembers = importMembersChunked;
+export const processBatchMemberMigration = importMembersChunked;
+export const executeMemberMigration = importMembersFromExcel;
 
 export async function importMembersFromExcel(
   fileOrBuffer: File | ArrayBuffer,

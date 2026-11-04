@@ -290,12 +290,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
               }),
               in: vi.fn().mockImplementation((col: string, ids: string[]) => {
                 deletedAccountIds.push(...ids);
-                const queryObj: any = Promise.resolve({ error: null });
-                queryObj.or = vi.fn().mockImplementation((filter: string) => {
-                  deletedFilters.push(filter);
-                  return Promise.resolve({ error: null });
-                });
-                return queryObj;
+                return Promise.resolve({ error: null });
               }),
             }),
             insert: vi.fn().mockImplementation((payload: any[]) => {
@@ -334,9 +329,6 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         expect.arrayContaining(['md-agus-sp', 'md-agus-sw', 'md-agus-sb', 'md-agus-sl'])
       );
       expect(deletedAccountIds).toHaveLength(4);
-      expect(deletedFilters).toContain(
-        'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
-      );
 
       // Verifikasi bahwa mutasi baru dimasukkan dengan nominal yang diperbarui,
       // bertipe 'deposit', berdeskripsi 'Saldo Awal Migrasi Sistem', dan for_month/for_year bernilai null
@@ -430,12 +422,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
             delete: vi.fn().mockReturnValue({
               in: vi.fn().mockImplementation((col: string, ids: string[]) => {
                 deletedAccountIds.push(...ids);
-                return {
-                  or: vi.fn().mockImplementation((filter: string) => {
-                    deletedFilters.push(filter);
-                    return Promise.resolve({ error: null });
-                  }),
-                };
+                return Promise.resolve({ error: null });
               }),
             }),
             insert: vi.fn().mockImplementation((payload: any[]) => {
@@ -467,13 +454,11 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(res.successCount).toBe(1);
       expect(res.failedCount).toBe(0);
 
-      // Verifikasi bahwa mutasi migrasi lama dibersihkan dengan filter yang tepat
+      // Verifikasi bahwa mutasi lama dibersihkan pada level ID rekening anggota
       expect(deletedAccountIds).toEqual(
         expect.arrayContaining(['md-eko-sp', 'md-eko-sw', 'md-eko-sb', 'md-eko-sl'])
       );
-      expect(deletedFilters).toContain(
-        'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
-      );
+      expect(deletedAccountIds).toHaveLength(4);
 
       // Verifikasi transaksi simpanan wajib tetap Rp 4.200.000 (tidak menjadi 8.400.000)
       const wajibTxs = insertedTransactions.filter((tx) => tx.member_deposit_id === 'md-eko-sw');
