@@ -4,6 +4,14 @@
  */
 import { supabase } from '../lib/supabaseClient';
 import type { ParsedMonthlyDeposit } from '../utils/savingsMatrixImporter';
+import {
+  SavingsRateTier,
+  getRateTiers,
+  getApplicableTierRate
+} from './savingsRateService';
+
+export { getApplicableTierRate } from './savingsRateService';
+export { reconcileMemberSavingsDeposit, autoReconcileSavingsLedger } from './savingsMatrixService';
 
 export interface DepositTypeItem {
   id: string;
@@ -340,7 +348,7 @@ export async function getSavingsComplianceAvailableYears(
 
 
 export interface SavingsSubItem {
-  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial';
+  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled';
   amount: number;
   targetAmount?: number;
 }
@@ -391,6 +399,7 @@ export interface ComplianceMatrixResult {
     belanja: number;
     lebaran: number;
   };
+  rateTiers?: SavingsRateTier[];
 }
 
 /**
@@ -641,7 +650,7 @@ export async function getComplianceMatrixData(
 
     const hasExplicitMonth =
       tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month));
-    const isLumpSumAmount = Number(tx.amount) > 200000;
+    const isLumpSumAmount = Number(tx.amount) > 210000;
 
     return (
       isMigrationDesc &&
@@ -734,6 +743,50 @@ export async function getComplianceMatrixData(
     });
   }
 
+  // Ambil data master tarif berjenjang dari savings_rate_tiers
+  let rateTiers: SavingsRateTier[] = [];
+  try {
+    const { data: tiersData, error: tiersErr } = await supabase
+      .from('savings_rate_tiers')
+      .select('*')
+      .order('start_year', { ascending: true })
+      .order('start_month', { ascending: true });
+    if (!tiersErr && tiersData && tiersData.length > 0) {
+      rateTiers = tiersData;
+    } else {
+      rateTiers = await getRateTiers(undefined, false);
+    }
+  } catch {
+    try {
+      rateTiers = await getRateTiers(undefined, false);
+    } catch {
+      rateTiers = [];
+    }
+  }
+
+  // Deteksi bulan yang sudah memiliki setoran rutin / terbit tagihan di koperasi
+  const billedMonthsW = new Set<number>();
+  const billedMonthsB = new Set<number>();
+  const billedMonthsL = new Set<number>();
+
+  if (transactions) {
+    transactions.forEach((tx: any) => {
+      const { memberId: mId, depositTypeId: tId } = parseTxInfo(tx);
+      if (!mId) return;
+      const isBulk = isBulkMigrationTx(tx);
+      const isRoutineMonthly = tx.for_month !== null && tx.for_month !== undefined && !isBulk;
+      const txYear = Number(tx.for_year) || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
+      const rawM = Number(tx.for_month);
+      const txMonth = rawM >= 1 && rawM <= 12 ? rawM - 1 : rawM;
+
+      if (txYear === year && tx.transaction_type === 'deposit' && isRoutineMonthly && txMonth >= 0 && txMonth < 12) {
+        if (wajibTypeIds.has(tId) || tId === wajibId) billedMonthsW.add(txMonth);
+        if (belanjaTypeIds.has(tId) || tId === belanjaId) billedMonthsB.add(txMonth);
+        if (lebaranTypeIds.has(tId) || tId === lebaranId) billedMonthsL.add(txMonth);
+      }
+    });
+  }
+
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
 
@@ -752,6 +805,55 @@ export async function getComplianceMatrixData(
     const joinDate = joinDateStr ? new Date(joinDateStr) : new Date(0);
     const joinMonth = isNaN(joinDate.getMonth()) ? 0 : joinDate.getMonth();
     const joinYear = isNaN(joinDate.getFullYear()) ? currentYear : joinDate.getFullYear();
+
+    // Deteksi transaksi dan status sisa parsial anggota pada tahun ini
+    let lastPaidMonthW = -1;
+    let hasPartialW = false;
+    let partialMonthW = -1;
+
+    let lastPaidMonthB = -1;
+    let hasPartialB = false;
+    let partialMonthB = -1;
+
+    let lastPaidMonthL = -1;
+    let hasPartialL = false;
+    let partialMonthL = -1;
+
+    for (let k = 0; k < 12; k++) {
+      const pk = paymentsByMember[m.id]?.[k];
+      if (pk) {
+        if (pk.w > 0) {
+          lastPaidMonthW = k;
+          const rateW = rateTiers.length > 0
+            ? getApplicableTierRate(rateTiers, 'WAJIB', year, k + 1)
+            : targetWajib;
+          if (pk.w < rateW) {
+            hasPartialW = true;
+            partialMonthW = k;
+          }
+        }
+        if (pk.b > 0) {
+          lastPaidMonthB = k;
+          const rateB = rateTiers.length > 0
+            ? getApplicableTierRate(rateTiers, 'BELANJA', year, k + 1)
+            : targetBelanja;
+          if (pk.b < rateB) {
+            hasPartialB = true;
+            partialMonthB = k;
+          }
+        }
+        if (pk.l > 0) {
+          lastPaidMonthL = k;
+          const rateL = rateTiers.length > 0
+            ? getApplicableTierRate(rateTiers, 'LEBARAN', year, k + 1)
+            : targetLebaran;
+          if (pk.l < rateL) {
+            hasPartialL = true;
+            partialMonthL = k;
+          }
+        }
+      }
+    }
 
     for (let i = 0; i < 12; i++) {
       // Jika bulan sebelum tanggal anggota bergabung atau bulan di masa depan
@@ -790,17 +892,102 @@ export async function getComplianceMatrixData(
           }
         }
 
+        // Resolusi tarif dinamis berjenjang untuk bulan i (1-indexed: i + 1)
+        const applicableTariffW = rateTiers.length > 0
+          ? getApplicableTierRate(rateTiers, 'WAJIB', year, i + 1)
+          : targetWajib;
+        const applicableTariffB = rateTiers.length > 0
+          ? getApplicableTierRate(rateTiers, 'BELANJA', year, i + 1)
+          : targetBelanja;
+        const applicableTariffL = rateTiers.length > 0
+          ? getApplicableTierRate(rateTiers, 'LEBARAN', year, i + 1)
+          : targetLebaran;
+
+        // Evaluasi status bulan untuk WAJIB
+        const isPostAllocationW = hasPartialW && i > partialMonthW;
+        const isUnbilledW = isPostAllocationW || (year >= currentYear && i > lastPaidMonthW && (!billedMonthsW.has(i) || i >= currentMonth));
+        let statusW: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let amtW = p.w;
+
+        if (p.w >= applicableTariffW) {
+          statusW = 'paid';
+          amtW = p.w;
+        } else if (p.w > 0) {
+          statusW = 'partial';
+          amtW = p.w;
+        } else if (isBeforeJoin) {
+          statusW = 'not_applicable';
+          amtW = 0;
+        } else if (isUnbilledW) {
+          statusW = 'unbilled';
+          amtW = 0;
+        } else {
+          statusW = 'unpaid';
+          amtW = applicableTariffW;
+        }
+
         const wajibItem: SavingsSubItem = {
-          status: p.w > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
-          amount: p.w > 0 ? p.w : isBeforeJoin ? 0 : targetWajib,
+          status: statusW,
+          amount: amtW,
+          ...(statusW === 'partial' ? { targetAmount: applicableTariffW } : {}),
         };
+
+        // Evaluasi status bulan untuk BELANJA
+        const isPostAllocationB = hasPartialB && i > partialMonthB;
+        const isUnbilledB = isPostAllocationB || (year >= currentYear && i > lastPaidMonthB && (!billedMonthsB.has(i) || i >= currentMonth));
+        let statusB: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let amtB = p.b;
+
+        if (p.b >= applicableTariffB) {
+          statusB = 'paid';
+          amtB = p.b;
+        } else if (p.b > 0) {
+          statusB = 'partial';
+          amtB = p.b;
+        } else if (isBeforeJoin) {
+          statusB = 'not_applicable';
+          amtB = 0;
+        } else if (isUnbilledB) {
+          statusB = 'unbilled';
+          amtB = 0;
+        } else {
+          statusB = 'unpaid';
+          amtB = applicableTariffB;
+        }
+
         const belanjaItem: SavingsSubItem = {
-          status: p.b > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
-          amount: p.b > 0 ? p.b : isBeforeJoin ? 0 : targetBelanja,
+          status: statusB,
+          amount: amtB,
+          ...(statusB === 'partial' ? { targetAmount: applicableTariffB } : {}),
         };
+
+        // Evaluasi status bulan untuk LEBARAN
+        const isPostAllocationL = hasPartialL && i > partialMonthL;
+        const isUnbilledL = isPostAllocationL || (year >= currentYear && i > lastPaidMonthL && (!billedMonthsL.has(i) || i >= currentMonth));
+        let statusL: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let amtL = p.l;
+
+        if (p.l >= applicableTariffL) {
+          statusL = 'paid';
+          amtL = p.l;
+        } else if (p.l > 0) {
+          statusL = 'partial';
+          amtL = p.l;
+        } else if (isBeforeJoin) {
+          statusL = 'not_applicable';
+          amtL = 0;
+        } else if (isUnbilledL) {
+          statusL = 'unbilled';
+          amtL = 0;
+        } else {
+          statusL = 'unpaid';
+          amtL = applicableTariffL;
+        }
+
         const lebaranItem: SavingsSubItem = {
-          status: p.l > 0 ? 'paid' : isBeforeJoin ? 'not_applicable' : 'unpaid',
-          amount: p.l > 0 ? p.l : isBeforeJoin ? 0 : targetLebaran,
+          status: statusL,
+          amount: amtL,
+          ...(statusL === 'partial' ? { targetAmount: applicableTariffL } : {}),
         };
 
         monthsData.push({
@@ -813,15 +1000,15 @@ export async function getComplianceMatrixData(
           lebaran: lebaranItem,
         });
 
-        if (wajibItem.status !== 'not_applicable') {
+        if (wajibItem.status !== 'not_applicable' && wajibItem.status !== 'unbilled') {
           expectedCount += 1;
           if (wajibItem.status === 'paid') paidCount += 1;
         }
-        if (belanjaItem.status !== 'not_applicable') {
+        if (belanjaItem.status !== 'not_applicable' && belanjaItem.status !== 'unbilled') {
           expectedCount += 1;
           if (belanjaItem.status === 'paid') paidCount += 1;
         }
-        if (lebaranItem.status !== 'not_applicable') {
+        if (lebaranItem.status !== 'not_applicable' && lebaranItem.status !== 'unbilled') {
           expectedCount += 1;
           if (lebaranItem.status === 'paid') paidCount += 1;
         }
@@ -884,6 +1071,7 @@ export async function getComplianceMatrixData(
       belanja: targetBelanja,
       lebaran: targetLebaran,
     },
+    rateTiers,
   };
 }
 
@@ -1188,21 +1376,34 @@ export async function importSavingsMatrixLedger(
           throw new Error(`Akun rekening simpanan tidak ditemukan untuk anggota ${currentMemberName}`);
         }
 
-        // a. Bersihkan transaksi rekonsiliasi lama & impor matriks milik anggota tersebut:
+        // a. Bersihkan seluruh transaksi ledger migrasi/rekonsiliasi lama pada akun deposit ini
+        const delBuilder: any = supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', depositAccountId);
+
+        if (typeof delBuilder.or === 'function') {
+          const { error: delErr } = await delBuilder.or(
+            'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%'
+          );
+          if (delErr) throw delErr;
+        }
+
+        // b. Bersihkan transaksi rekonsiliasi lama & impor matriks milik anggota tersebut:
         await supabase
           .from('deposit_transactions')
           .delete()
           .eq('member_deposit_id', depositAccountId)
           .ilike('description', '%matriks%');
 
-        // b. Hapus mutasi lama yang memuat deskripsi 'Saldo Awal' agar tidak menumpuk:
+        // c. Hapus mutasi lama yang memuat deskripsi 'Saldo Awal' agar tidak menumpuk:
         await supabase
           .from('deposit_transactions')
           .delete()
           .eq('member_deposit_id', depositAccountId)
           .ilike('description', '%saldo awal%');
 
-        // c. Hapus transaksi saldo awal migrasi gelondongan (for_month IS NULL) yang deskripsinya memuat kata 'migrasi'
+        // d. Hapus transaksi saldo awal migrasi gelondongan (for_month IS NULL) yang deskripsinya memuat kata 'migrasi'
         await supabase
           .from('deposit_transactions')
           .delete()

@@ -682,6 +682,28 @@ export async function reconcileSingleMemberDeposit(
     }
   }
 
+  // Enforce Clean Purge per Member Deposit Account:
+  // Bersihkan seluruh transaksi ledger migrasi/rekonsiliasi lama pada akun deposit ini sebelum menyisipkan mutasi baru
+  try {
+    const delPurgeBuilder: any = supabase
+      .from('deposit_transactions')
+      .delete();
+
+    if (typeof delPurgeBuilder.eq === 'function') {
+      const eqBuilder = delPurgeBuilder.eq('member_deposit_id', md.id);
+      if (eqBuilder && typeof eqBuilder.or === 'function') {
+        const { error: delErr } = await eqBuilder.or(
+          'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%'
+        );
+        if (delErr) {
+          console.warn('Peringatan saat purge transaksi buku besar lama:', delErr);
+        }
+      }
+    }
+  } catch (purgeErr) {
+    console.warn('Exception saat purge transaksi buku besar lama:', purgeErr);
+  }
+
   // 10. Simpan transaksi baru untuk setiap bulan yang dicocokkan FIFO
   const txsToInsert = fifoResult.allocatedTransactions.map(item => ({
     member_deposit_id: md.id,
@@ -711,6 +733,7 @@ export async function reconcileSingleMemberDeposit(
 
 export const reconcileMemberSavingsDeposit = reconcileSingleMemberDeposit;
 export const autoReconcileMember = reconcileSingleMemberDeposit;
+export const autoReconcileSavingsLedger = reconcileSingleMemberDeposit;
 
 /**
  * Menjalankan rekonsiliasi otomatis saldo buku besar simpanan massal untuk seluruh anggota aktif

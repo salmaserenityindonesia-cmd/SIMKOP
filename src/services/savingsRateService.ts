@@ -375,3 +375,17 @@ export function getApplicableRate(
   const highestTier = matchingTiers[matchingTiers.length - 1];
   return highestTier.monthly_rate;
 }
+
+/**
+ * Helper pembaca tarif dinamis berdasarkan data master tiers, jenis simpanan, tahun, dan bulan.
+ * Kompatibel dengan getApplicableRate.
+ */
+export function getApplicableTierRate(
+  tiers: SavingsRateTier[] | undefined,
+  depositTypeCode: string,
+  year: number,
+  month: number
+): number {
+  return getApplicableRate(depositTypeCode, year, month, tiers);
+}
+

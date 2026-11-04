@@ -14,6 +14,7 @@ import {
   getSavingsComplianceAvailableYears,
   getComplianceMatrixData,
   ComplianceMatrixResult,
+  ComplianceMatrixRow,
 } from '../../services/complianceService';
 import { bulkAutoReconcileAllMembers } from '../../services/savingsMatrixService';
 import { supabase } from '../../lib/supabaseClient';
@@ -1056,6 +1057,122 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
 
       // Verify legend contains Parsial
       expect(html).toContain('Parsial (Oranye / Amber)');
+    });
+
+    it('Agus Susanto (2026): bulan pasca alokasi sisa parsial (Okt & Nov) berstatus unbilled dengan tanda strip "-", dan saat unpaid tampil 210.000', () => {
+      const agusRow = {
+        member_id: 'm-agus',
+        nrp: 'NRP-AGUS',
+        nama: 'Agus Susanto',
+        pokokLunas: true,
+        compliance: 90,
+        balances: { w: 10200000, b: 0, l: 0 },
+        netSavings: { wajib: 10200000, belanja: 0, lebaran: 0, total: 10200000 },
+        months: [
+          ...Array(8).fill({
+            w: 210000,
+            b: 0,
+            l: 0,
+            bal_w: 10140000,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'paid' as const, amount: 210000, targetAmount: 210000 },
+          }),
+          {
+            // Sep (index 8): parsial 60.000
+            w: 60000,
+            b: 0,
+            l: 0,
+            bal_w: 10200000,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'partial' as const, amount: 60000, targetAmount: 210000 },
+          },
+          {
+            // Okt (index 9): pasca-alokasi unbilled
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 10200000,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'unbilled' as const, amount: 0, targetAmount: 210000 },
+          },
+          {
+            // Nov (index 10): pasca-alokasi unbilled
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 10200000,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'unbilled' as const, amount: 0, targetAmount: 210000 },
+          },
+          null // Des
+        ],
+      };
+
+      const mockTiers = [
+        {
+          id: 'tier-1',
+          deposit_type_code: 'WAJIB',
+          start_year: 2022,
+          start_month: 8,
+          end_year: 2023,
+          end_month: 10,
+          monthly_rate: 200000,
+        },
+        {
+          id: 'tier-2',
+          deposit_type_code: 'WAJIB',
+          start_year: 2023,
+          start_month: 11,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 210000,
+        },
+      ];
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[agusRow]} initialYear="2026" />
+      );
+
+      // Verifikasi Kas Riil Agus Susanto tepat Rp 10.200.000 (tidak ganda 20.400.000)
+      expect(html).toContain('10.200.000');
+      expect(html).not.toContain('20.400.000');
+
+      // Verifikasi September 2026 berstatus partial dengan nominal 60.000
+      expect(html).toContain('text-amber-600 font-bold');
+      expect(html).toContain('60.000');
+
+      // Verifikasi Oktober & November berstatus unbilled dengan strip netral text-slate-300
+      expect(html).toContain('text-slate-300 font-normal');
+      expect(html).toContain('Belum Terbit Tagihan');
+
+      // Verifikasi jika disimulasikan unpaid / menunggak: muncul nominal 210.000 bukan 200.000
+      const rowWithSimulatedArrears = {
+        ...agusRow,
+        months: [
+          ...agusRow.months.slice(0, 9),
+          {
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 10200000,
+            bal_b: 0,
+            bal_l: 0,
+            wajib: { status: 'unpaid' as const, amount: 210000, targetAmount: 210000 },
+          },
+          ...agusRow.months.slice(10),
+        ],
+      };
+
+      const htmlArrears = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithSimulatedArrears]} initialYear="2026" />
+      );
+
+      expect(htmlArrears).toContain('text-rose-600 font-bold');
+      expect(htmlArrears).toContain('210.000');
     });
   });
 });

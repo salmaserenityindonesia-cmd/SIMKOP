@@ -45,6 +45,7 @@ import {
   clearTierCache,
   getRateTiers,
   getApplicableRate,
+  getApplicableTierRate,
   SavingsRateTier,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
@@ -192,8 +193,9 @@ export const fetchComplianceMatrixData = async (
   setLoading: (l: boolean) => void,
   setData: (d: ComplianceMatrixRow[]) => void,
   setTargets: (t: any) => void,
-  setTotalSetoran: (s: number) => void
-): Promise<{ rows: ComplianceMatrixRow[]; targets?: any; totalSetoran: number } | null> => {
+  setTotalSetoran: (s: number) => void,
+  setRateTiers?: (r: SavingsRateTier[]) => void
+): Promise<{ rows: ComplianceMatrixRow[]; targets?: any; totalSetoran: number; rateTiers?: SavingsRateTier[] } | null> => {
   setLoading(true);
   try {
     const yearNum = typeof targetYear === 'string' ? parseInt(targetYear, 10) : targetYear;
@@ -201,6 +203,9 @@ export const fetchComplianceMatrixData = async (
     setData(matrixData.rows || []);
     if (matrixData.targets) {
       setTargets(matrixData.targets);
+    }
+    if (setRateTiers && matrixData.rateTiers && matrixData.rateTiers.length > 0) {
+      setRateTiers(matrixData.rateTiers);
     }
     
     // Fetch total setoran
@@ -217,7 +222,7 @@ export const fetchComplianceMatrixData = async (
       });
     }
     setTotalSetoran(sum);
-    return { rows: matrixData.rows || [], targets: matrixData.targets, totalSetoran: sum };
+    return { rows: matrixData.rows || [], targets: matrixData.targets, totalSetoran: sum, rateTiers: matrixData.rateTiers };
   } catch (err) {
     console.error('Failed to fetch compliance matrix', err);
     return null;
@@ -287,7 +292,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
   const handleReloadAfterBulk = async () => {
     clearTierCache();
-    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
+    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
     setShowConfirmBulkModal(false);
     setBulkResult(null);
     if (feedback?.showToast) {
@@ -305,7 +310,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   }, []);
 
   useEffect(() => {
-    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
     if (onYearChange) {
       onYearChange(year);
     }
@@ -349,33 +354,55 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
     const yearNum = parseInt(year, 10);
     const monthNum = monthIndex + 1;
-    const expectedRateW = getApplicableRate('WAJIB', yearNum, monthNum, rateTiers) || (targets.wajib || 200000);
-    const expectedRateB = getApplicableRate('BELANJA', yearNum, monthNum, rateTiers) || (targets.belanja || 25000);
-    const expectedRateL = getApplicableRate('LEBARAN', yearNum, monthNum, rateTiers) || (targets.lebaran || 50000);
+    const applicableTariffW = getApplicableTierRate(rateTiers, 'WAJIB', yearNum, monthNum) || (targets.wajib || 210000);
+    const applicableTariffB = getApplicableTierRate(rateTiers, 'BELANJA', yearNum, monthNum) || (targets.belanja || 25000);
+    const applicableTariffL = getApplicableTierRate(rateTiers, 'LEBARAN', yearNum, monthNum) || (targets.lebaran || 50000);
+
+    const targetW = monthData.wajib?.targetAmount || applicableTariffW;
+    const targetB = monthData.belanja?.targetAmount || applicableTariffB;
+    const targetL = monthData.lebaran?.targetAmount || applicableTariffL;
+
+    // Evaluasi fallback jika baris bulan belum memiliki sub-item eksplisit
+    let fallbackStatusW: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' = 'unpaid';
+    if (monthData.w >= targetW) fallbackStatusW = 'paid';
+    else if (monthData.w > 0) fallbackStatusW = 'partial';
+    else {
+      let lastPosIdxW = -1;
+      let hasPartialInRowW = false;
+      row.months.forEach((m, idx) => {
+        if (m && m.w > 0) {
+          lastPosIdxW = idx;
+          if (m.w < targetW || m.wajib?.status === 'partial') hasPartialInRowW = true;
+        }
+      });
+      if ((hasPartialInRowW || lastPosIdxW >= 0) && monthIndex > lastPosIdxW && lastPosIdxW !== -1) {
+        fallbackStatusW = 'unbilled';
+      }
+    }
 
     const wajibItem = monthData.wajib || {
-      status: (monthData.w > 0 ? (monthData.w < expectedRateW ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
-      amount: monthData.w > 0 ? monthData.w : expectedRateW,
-      targetAmount: expectedRateW,
+      status: fallbackStatusW,
+      amount: monthData.w > 0 ? monthData.w : fallbackStatusW === 'unpaid' ? targetW : 0,
+      targetAmount: targetW,
     };
     const belanjaItem = monthData.belanja || {
-      status: (monthData.b > 0 ? (monthData.b < expectedRateB ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
-      amount: monthData.b > 0 ? monthData.b : expectedRateB,
-      targetAmount: expectedRateB,
+      status: (monthData.b > 0 ? (monthData.b < targetB ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled',
+      amount: monthData.b > 0 ? monthData.b : targetB,
+      targetAmount: targetB,
     };
     const lebaranItem = monthData.lebaran || {
-      status: (monthData.l > 0 ? (monthData.l < expectedRateL ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial',
-      amount: monthData.l > 0 ? monthData.l : expectedRateL,
-      targetAmount: expectedRateL,
+      status: (monthData.l > 0 ? (monthData.l < targetL ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled',
+      amount: monthData.l > 0 ? monthData.l : targetL,
+      targetAmount: targetL,
     };
 
-    const targetW = wajibItem.targetAmount || expectedRateW;
-    const targetB = belanjaItem.targetAmount || expectedRateB;
-    const targetL = lebaranItem.targetAmount || expectedRateL;
+    const isWajibUnbilled = wajibItem.status === 'unbilled' || wajibItem.status === 'not_applicable';
+    const isBelanjaUnbilled = belanjaItem.status === 'unbilled' || belanjaItem.status === 'not_applicable';
+    const isLebaranUnbilled = lebaranItem.status === 'unbilled' || lebaranItem.status === 'not_applicable';
 
-    const isWajibPartial = wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW);
-    const isBelanjaPartial = belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB);
-    const isLebaranPartial = lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL);
+    const isWajibPartial = !isWajibUnbilled && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
+    const isBelanjaPartial = !isBelanjaUnbilled && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
+    const isLebaranPartial = !isLebaranUnbilled && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
 
     return (
       <div 
@@ -392,7 +419,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">wajib</span>
           <span className={
-            isWajibPartial
+            isWajibUnbilled
+              ? 'text-slate-300 font-normal'
+              : isWajibPartial
               ? 'text-amber-600 font-bold'
               : wajibItem.status === 'paid'
               ? 'text-emerald-600 font-semibold'
@@ -400,9 +429,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {wajibItem.status === 'not_applicable'
+            {isWajibUnbilled
               ? '-'
-              : Number(wajibItem.amount).toLocaleString('id-ID')}
+              : Number(wajibItem.amount || targetW).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -410,7 +439,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">belanja</span>
           <span className={
-            isBelanjaPartial
+            isBelanjaUnbilled
+              ? 'text-slate-300 font-normal'
+              : isBelanjaPartial
               ? 'text-amber-600 font-bold'
               : belanjaItem.status === 'paid'
               ? 'text-teal-600 font-semibold'
@@ -418,9 +449,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {belanjaItem.status === 'not_applicable'
+            {isBelanjaUnbilled
               ? '-'
-              : Number(belanjaItem.amount).toLocaleString('id-ID')}
+              : Number(belanjaItem.amount || targetB).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -428,7 +459,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">lebaran</span>
           <span className={
-            isLebaranPartial
+            isLebaranUnbilled
+              ? 'text-slate-300 font-normal'
+              : isLebaranPartial
               ? 'text-amber-600 font-bold'
               : lebaranItem.status === 'paid'
               ? 'text-emerald-600 font-semibold'
@@ -436,9 +469,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {lebaranItem.status === 'not_applicable'
+            {isLebaranUnbilled
               ? '-'
-              : Number(lebaranItem.amount).toLocaleString('id-ID')}
+              : Number(lebaranItem.amount || targetL).toLocaleString('id-ID')}
           </span>
         </div>
 
@@ -450,7 +483,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Wajib:</span>
               <div className="text-right">
                 <div>
-                  {isWajibPartial ? (
+                  {isWajibUnbilled ? (
+                    <span className="text-slate-400">{wajibItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                  ) : isWajibPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(wajibItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetW).toLocaleString('id-ID')} (Kurang Rp {Number(targetW - Number(wajibItem.amount)).toLocaleString('id-ID')})
                     </span>
@@ -467,7 +502,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Belanja:</span>
               <div className="text-right">
                 <div>
-                  {isBelanjaPartial ? (
+                  {isBelanjaUnbilled ? (
+                    <span className="text-slate-400">{belanjaItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                  ) : isBelanjaPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(belanjaItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetB).toLocaleString('id-ID')} (Kurang Rp {Number(targetB - Number(belanjaItem.amount)).toLocaleString('id-ID')})
                     </span>
@@ -484,7 +521,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Lebaran:</span>
               <div className="text-right">
                 <div>
-                  {isLebaranPartial ? (
+                  {isLebaranUnbilled ? (
+                    <span className="text-slate-400">{lebaranItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                  ) : isLebaranPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(lebaranItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetL).toLocaleString('id-ID')} (Kurang Rp {Number(targetL - Number(lebaranItem.amount)).toLocaleString('id-ID')})
                     </span>
@@ -915,7 +954,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           joinDate={selectedMember.joinDate}
           onClose={() => setSelectedMember(null)}
           onSuccess={() => {
-            fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran);
+            fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
           }}
         />
       )}
@@ -1136,7 +1175,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         setBulkResult,
                         async () => {
                           clearTierCache();
-                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran);
+                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
                         }
                       );
                     }}
