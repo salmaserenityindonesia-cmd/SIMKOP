@@ -226,6 +226,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       ];
 
       const deletedAccountIds: string[] = [];
+      const deletedFilters: string[] = [];
       const insertedTransactions: any[] = [];
 
       (supabase.from as any).mockImplementation((table: string) => {
@@ -289,7 +290,12 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
               }),
               in: vi.fn().mockImplementation((col: string, ids: string[]) => {
                 deletedAccountIds.push(...ids);
-                return Promise.resolve({ error: null });
+                const queryObj: any = Promise.resolve({ error: null });
+                queryObj.or = vi.fn().mockImplementation((filter: string) => {
+                  deletedFilters.push(filter);
+                  return Promise.resolve({ error: null });
+                });
+                return queryObj;
               }),
             }),
             insert: vi.fn().mockImplementation((payload: any[]) => {
@@ -328,6 +334,9 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         expect.arrayContaining(['md-agus-sp', 'md-agus-sw', 'md-agus-sb', 'md-agus-sl'])
       );
       expect(deletedAccountIds).toHaveLength(4);
+      expect(deletedFilters).toContain(
+        'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
+      );
 
       // Verifikasi bahwa mutasi baru dimasukkan dengan nominal yang diperbarui,
       // bertipe 'deposit', berdeskripsi 'Saldo Awal Migrasi Sistem', dan for_month/for_year bernilai null
@@ -350,6 +359,129 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(lebaranTx?.description).toBe('Saldo Awal Migrasi Sistem');
       expect(lebaranTx?.for_month).toBeNull();
       expect(lebaranTx?.for_year).toBeNull();
+    });
+
+    it('harus menerapkan Clean Overwrite pada re-import anggota (Kasus Eko Setiawan - NRP 89113210) agar saldo simpanan tidak bertambah ganda', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-sp', code: 'SP', name: 'Simpanan Pokok' },
+        { id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' },
+        { id: 'dt-sb', code: 'SB', name: 'Simpanan Belanja' },
+        { id: 'dt-sl', code: 'SL', name: 'Simpanan Lebaran' },
+      ];
+
+      const deletedAccountIds: string[] = [];
+      const deletedFilters: string[] = [];
+      const insertedTransactions: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }),
+          };
+        }
+
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'uuid-eko-setiawan',
+                    nrp: '89113210',
+                    nama: 'Eko Setiawan',
+                    created_at: '2023-01-01T00:00:00.000Z',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-eko-sp', member_id: 'uuid-eko-setiawan', deposit_type_id: 'dt-sp' },
+                  { id: 'md-eko-sw', member_id: 'uuid-eko-setiawan', deposit_type_id: 'dt-sw' },
+                  { id: 'md-eko-sb', member_id: 'uuid-eko-setiawan', deposit_type_id: 'dt-sb' },
+                  { id: 'md-eko-sl', member_id: 'uuid-eko-setiawan', deposit_type_id: 'dt-sl' },
+                ],
+                error: null,
+              }),
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-eko-sp', member_id: 'uuid-eko-setiawan', deposit_type: { code: 'SP' } },
+                  { id: 'md-eko-sw', member_id: 'uuid-eko-setiawan', deposit_type: { code: 'SW' } },
+                  { id: 'md-eko-sb', member_id: 'uuid-eko-setiawan', deposit_type: { code: 'SB' } },
+                  { id: 'md-eko-sl', member_id: 'uuid-eko-setiawan', deposit_type: { code: 'SL' } },
+                ],
+                error: null,
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((col: string, ids: string[]) => {
+                deletedAccountIds.push(...ids);
+                return {
+                  or: vi.fn().mockImplementation((filter: string) => {
+                    deletedFilters.push(filter);
+                    return Promise.resolve({ error: null });
+                  }),
+                };
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedTransactions.push(...payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+
+        return {};
+      });
+
+      const ekoInput: MemberImportInput[] = [
+        {
+          nrp: '89113210',
+          nama: 'Eko Setiawan',
+          pangkat: 'Bripka',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 4200000,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+        },
+      ];
+
+      const res = await importMembersChunked(ekoInput);
+
+      expect(res.successCount).toBe(1);
+      expect(res.failedCount).toBe(0);
+
+      // Verifikasi bahwa mutasi migrasi lama dibersihkan dengan filter yang tepat
+      expect(deletedAccountIds).toEqual(
+        expect.arrayContaining(['md-eko-sp', 'md-eko-sw', 'md-eko-sb', 'md-eko-sl'])
+      );
+      expect(deletedFilters).toContain(
+        'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
+      );
+
+      // Verifikasi transaksi simpanan wajib tetap Rp 4.200.000 (tidak menjadi 8.400.000)
+      const wajibTxs = insertedTransactions.filter((tx) => tx.member_deposit_id === 'md-eko-sw');
+      expect(wajibTxs).toHaveLength(1);
+      expect(wajibTxs[0].amount).toBe(4200000);
+      expect(wajibTxs[0].transaction_type).toBe('deposit');
+      expect(wajibTxs[0].description).toBe('Saldo Awal Migrasi Sistem');
+      expect(wajibTxs[0].for_month).toBeNull();
     });
 
     it('tidak menyisipkan deposit_transactions jika nominal simpanan kosong atau nol', async () => {

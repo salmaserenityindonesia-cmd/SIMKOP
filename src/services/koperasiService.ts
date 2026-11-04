@@ -508,37 +508,26 @@ export async function importMembersChunked(
           accounts = (allMemberDeposits || []).filter((amd: any) => amd.member_id === mid);
         }
 
-        // 2. Sebelum menyisipkan saldo baru, hapus seluruh mutasi lama pada deposit_transactions untuk seluruh akun simpanan anggota tersebut
+        // 2. Sebelum membuat transaksi saldo awal baru, bersihkan transaksi saldo migrasi terdahulu (Clean Overwrite):
         if (accounts && accounts.length > 0) {
           const accountIds = accounts.map((a: any) => a.id).filter(Boolean);
           if (accountIds.length > 0) {
-            for (const memberDepositId of accountIds) {
-              const delBuilder: any = supabase
-                .from('deposit_transactions')
-                .delete();
+            const delQuery: any = supabase
+              .from('deposit_transactions')
+              .delete()
+              .in('member_deposit_id', accountIds);
 
-              if (typeof delBuilder?.eq === 'function') {
-                const { error: delErr } = await delBuilder.eq('member_deposit_id', memberDepositId);
-                if (delErr) {
-                  console.error(`Gagal menghapus mutasi lama untuk deposit ID ${memberDepositId}:`, delErr);
-                  throw delErr;
-                }
-              } else if (typeof delBuilder?.in === 'function') {
-                const inQuery = delBuilder.in('member_deposit_id', accountIds);
-                if (typeof inQuery?.then === 'function') {
-                  const { error: delErr } = await inQuery;
-                  if (delErr) {
-                    console.error(`Gagal menghapus mutasi lama untuk deposit IDs:`, delErr);
-                    throw delErr;
-                  }
-                } else if (typeof inQuery?.or === 'function') {
-                  const { error: delErr } = await inQuery.or('id.not.is.null');
-                  if (delErr) {
-                    console.error(`Gagal menghapus mutasi lama untuk deposit IDs:`, delErr);
-                    throw delErr;
-                  }
-                }
-                break;
+            if (typeof delQuery?.or === 'function') {
+              const { error: delErr } = await delQuery.or(
+                'description.ilike.%migrasi%,description.ilike.%saldo awal%,for_month.is.null'
+              );
+              if (delErr) {
+                console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${m.nrp}:`, delErr.message);
+              }
+            } else if (typeof delQuery?.then === 'function') {
+              const { error: delErr } = await delQuery;
+              if (delErr) {
+                console.warn(`Gagal membersihkan mutasi migrasi lama untuk member ${m.nrp}:`, delErr.message);
               }
             }
           }
