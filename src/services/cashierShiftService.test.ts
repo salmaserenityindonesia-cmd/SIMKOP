@@ -399,6 +399,114 @@ describe('cashierShiftService', () => {
       expect(summary.expectedCash).toBe(69000); // 50k + 19k
       expect(summary.transactionCount).toBe(1);
     });
+
+    it('should protect cash drawer: pure paid_deposit transactions must not inflate cashSales or expectedCash', async () => {
+      const mockSales = [
+        {
+          id: 's-deposit-only',
+          paid_cash: 0,
+          paid_deposit: 85000,
+          paid_credit: 0,
+          total_amount: 85000,
+          payment_scheme: 'split',
+          sale_status: 'completed'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'shift-deposit-guard',
+                    initial_cash: 150000,
+                    status: 'open'
+                  },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: mockSales,
+                error: null
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const summary = await getShiftSalesSummary('shift-deposit-guard');
+
+      expect(summary.initialCash).toBe(150000);
+      expect(summary.cashSales).toBe(0);
+      expect(summary.depositSales).toBe(85000);
+      expect(summary.nonCashSales).toBe(85000);
+      expect(summary.totalSales).toBe(85000);
+      expect(summary.expectedCash).toBe(150000); // physical drawer remains identical to initialCash!
+      expect(summary.transactionCount).toBe(1);
+    });
+
+    it('should isolate deposit from cash on split payment: only actual cash portion enters drawer', async () => {
+      const mockSales = [
+        {
+          id: 's-split-deposit-cash',
+          paid_cash: 35000,
+          paid_deposit: 65000,
+          paid_credit: 0,
+          total_amount: 100000,
+          payment_scheme: 'split',
+          sale_status: 'completed'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'shift-split-guard',
+                    initial_cash: 200000,
+                    status: 'open'
+                  },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: mockSales,
+                error: null
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const summary = await getShiftSalesSummary('shift-split-guard');
+
+      expect(summary.initialCash).toBe(200000);
+      expect(summary.cashSales).toBe(35000);
+      expect(summary.depositSales).toBe(65000);
+      expect(summary.nonCashSales).toBe(65000);
+      expect(summary.totalSales).toBe(100000);
+      expect(summary.expectedCash).toBe(235000); // 200k + 35k
+      expect(summary.transactionCount).toBe(1);
+    });
   });
 
   describe('closeShift', () => {
@@ -687,6 +795,90 @@ describe('cashierShiftService', () => {
       expect(closed.difference).toBe(0);
       expect(mockStorage[ACTIVE_SHIFT_STORAGE_KEY]).toBeUndefined();
       expect(mockStorage[SHIFT_HISTORY_STORAGE_KEY]).toContain('shift-offline-close');
+    });
+
+    it('should not record paid_deposit in cash_flow during closeShift, keeping drawer cash strictly segregated', async () => {
+      const activeShift = {
+        id: 'shift-deposit-reconciliation',
+        cashier_id: 'cashier-1',
+        shift_number: 'SHF-DEP-RECON-01',
+        opened_at: '2026-10-28T08:00:00Z',
+        initial_cash: 100000,
+        status: 'open'
+      };
+      mockStorage[ACTIVE_SHIFT_STORAGE_KEY] = JSON.stringify(activeShift);
+
+      const mockCashFlowInserts: any[] = [];
+      const mockUpdate = vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ error: null })
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: activeShift, error: null })
+              })
+            }),
+            update: mockUpdate
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  // Sale 1: pure deposit 50k
+                  { id: 's1', paid_cash: 0, paid_deposit: 50000, paid_credit: 0, total_amount: 50000, status: 'completed' },
+                  // Sale 2: split deposit 30k + cash 20k
+                  { id: 's2', paid_cash: 20000, paid_deposit: 30000, paid_credit: 0, total_amount: 50000, status: 'completed' }
+                ],
+                error: null
+              })
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((payload) => {
+              mockCashFlowInserts.push(payload);
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      // Total sales = 100,000 (80k deposit + 20k cash).
+      // expectedCash = initialCash(100k) + cashSales(20k) = 120,000.
+      // actualCash = 120,000 (cashier count matches physical cash).
+      const closed = await closeShift({
+        shiftId: 'shift-deposit-reconciliation',
+        actualCash: 120000,
+        notes: 'Shift dengan simpanan belanja'
+      });
+
+      expect(closed.status).toBe('closed');
+      expect(closed.cash_sales).toBe(20000); // Only cash sales, NOT 100k!
+      expect(closed.expected_cash).toBe(120000); // 100k modal + 20k cash
+      expect(closed.actual_cash).toBe(120000);
+      expect(closed.difference).toBe(0);
+
+      // Verify cash_flow: only PENGEMBALIAN_MODAL_KASIR (100k) and PENJUALAN_KASIR_TUNAI (20k)
+      expect(mockCashFlowInserts).toHaveLength(2);
+      expect(mockCashFlowInserts).toEqual([
+        expect.objectContaining({
+          direction: 'in',
+          amount: 100000,
+          category: 'PENGEMBALIAN_MODAL_KASIR'
+        }),
+        expect.objectContaining({
+          direction: 'in',
+          amount: 20000,
+          category: 'PENJUALAN_KASIR_TUNAI'
+        })
+      ]);
     });
   });
 

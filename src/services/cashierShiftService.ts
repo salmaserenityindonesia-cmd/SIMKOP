@@ -524,8 +524,8 @@ export async function getShiftSalesSummary(
 
     // Jika paid_cash > 0, uang fisik yang masuk ke kasir adalah nominal belanja tunai riil (setelah dipotong kembalian)
     if (c > 0) {
-      c = maxCashPortion > 0 ? Math.min(c, maxCashPortion) : c;
-    } else if (s.payment_scheme === 'cash' || (!d && !cr && tot > 0)) {
+      c = Math.min(c, maxCashPortion);
+    } else if (!d && !cr && (s.payment_scheme === 'cash' || tot > 0)) {
       c = tot;
     }
 
