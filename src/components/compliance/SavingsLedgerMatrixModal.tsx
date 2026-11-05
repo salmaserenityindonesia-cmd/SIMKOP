@@ -6,6 +6,12 @@ import {
   CheckSquare,
   Square,
   RotateCcw,
+  FileText,
+  History,
+  AlertTriangle,
+  Receipt,
+  CreditCard,
+  Trash2,
   Calendar,
   User,
   ShieldCheck,
@@ -22,11 +28,17 @@ import {
   reconcileSingleMemberDeposit,
   calculateTotalChecked,
   calculateFifoAllocation,
-  matchAutomaticFifo
+  matchAutomaticFifo,
+  saveMonthDepositWithEvidence,
+  cancelMonthDepositWithReason,
+  getMonthAuditHistory,
+  CheckMonthPayload,
+  MonthAuditHistoryItem
 } from '../../services/savingsMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 
 export type DepositTabType = 'WAJIB' | 'BELANJA' | 'LEBARAN';
+export type { MonthAuditHistoryItem, CheckMonthPayload };
 
 export interface SavingsLedgerMatrixModalProps {
   memberId: string;
@@ -40,6 +52,13 @@ export interface SavingsLedgerMatrixModalProps {
   initialCheckedMonths?: Partial<Record<DepositTabType, string[]>>;
   initialMonthAmounts?: Partial<Record<DepositTabType, Record<string, number> | Map<string, number>>>;
   initialLoading?: boolean;
+  initialEvidenceModalOpen?: boolean;
+  initialSelectedCellForEvidence?: { year: number; month: number; label: string; rate: number } | null;
+  initialUncheckModalOpen?: boolean;
+  initialSelectedCellForUncheck?: { year: number; month: number; label: string; key: string } | null;
+  initialHistoryModalOpen?: boolean;
+  initialSelectedCellForHistory?: { year: number; month: number; label: string } | null;
+  initialAuditHistory?: MonthAuditHistoryItem[];
 }
 
 export const MONTH_NAMES = [
@@ -155,12 +174,54 @@ export default function SavingsLedgerMatrixModal({
   initialDbBalances,
   initialCheckedMonths,
   initialMonthAmounts,
-  initialLoading
+  initialLoading,
+  initialEvidenceModalOpen,
+  initialSelectedCellForEvidence,
+  initialUncheckModalOpen,
+  initialSelectedCellForUncheck,
+  initialHistoryModalOpen,
+  initialSelectedCellForHistory,
+  initialAuditHistory
 }: SavingsLedgerMatrixModalProps) {
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
   const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
+
+  // State Dialog Bukti Setoran
+  const [evidenceModalOpen, setEvidenceModalOpen] = useState(initialEvidenceModalOpen ?? false);
+  const [selectedCellForEvidence, setSelectedCellForEvidence] = useState<{
+    year: number;
+    month: number;
+    label: string;
+    rate: number;
+  } | null>(initialSelectedCellForEvidence ?? null);
+  const [evidenceAmount, setEvidenceAmount] = useState<number>(initialSelectedCellForEvidence?.rate ?? 0);
+  const [evidenceReferenceNo, setEvidenceReferenceNo] = useState<string>('');
+  const [evidencePaymentMethod, setEvidencePaymentMethod] = useState<string>('tunai');
+  const [evidenceNotes, setEvidenceNotes] = useState<string>('');
+  const [savingEvidence, setSavingEvidence] = useState(false);
+
+  // State Dialog Konfirmasi Pembatalan (Uncheck)
+  const [uncheckModalOpen, setUncheckModalOpen] = useState(initialUncheckModalOpen ?? false);
+  const [selectedCellForUncheck, setSelectedCellForUncheck] = useState<{
+    year: number;
+    month: number;
+    label: string;
+    key: string;
+  } | null>(initialSelectedCellForUncheck ?? null);
+  const [uncheckReason, setUncheckReason] = useState('');
+  const [unchecking, setUnchecking] = useState(false);
+
+  // State Modal Riwayat Audit
+  const [historyModalOpen, setHistoryModalOpen] = useState(initialHistoryModalOpen ?? false);
+  const [selectedCellForHistory, setSelectedCellForHistory] = useState<{
+    year: number;
+    month: number;
+    label: string;
+  } | null>(initialSelectedCellForHistory ?? null);
+  const [auditHistory, setAuditHistory] = useState<MonthAuditHistoryItem[]>(initialAuditHistory ?? []);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Map deposit type code -> member_deposit_id
   const [memberDepositMap, setMemberDepositMap] = useState<Record<string, string>>({});
@@ -438,64 +499,138 @@ export default function SavingsLedgerMatrixModal({
   const balanceDifference = totalChecked - targetDbBalance;
   const isBalanced = balanceDifference === 0;
 
-  // Handler toggle satu cell checkbox
-  const handleToggleMonth = async (year: number, month: number, key: string) => {
-    const isCurrentlyChecked = currentCheckedSet.has(key);
-    const updatedSet = new Set(currentCheckedSet);
-    const updatedAmounts = new Map(currentMonthAmounts);
-    const applicableRate = getApplicableRate(activeTab, year, month, rateTiers);
+  // Handler buka form bukti setoran
+  const handleOpenEvidenceModal = (year: number, month: number, label: string) => {
+    const rate = getApplicableRate(activeTab, year, month, rateTiers);
+    setSelectedCellForEvidence({ year, month, label, rate });
+    setEvidenceAmount(rate);
+    setEvidenceReferenceNo(`KW-${year}/${String(month).padStart(2, '0')}/${memberNrp || '01'}`);
+    setEvidencePaymentMethod('tunai');
+    setEvidenceNotes('');
+    setEvidenceModalOpen(true);
+  };
 
-    if (isCurrentlyChecked) {
-      updatedSet.delete(key);
-      updatedAmounts.delete(key);
-    } else {
-      updatedSet.add(key);
-      updatedAmounts.set(key, applicableRate);
-    }
-
-    // Optimistic UI update
-    setCheckedMonths(prev => ({
-      ...prev,
-      [activeTab]: updatedSet
-    }));
-    setMonthAmounts(prev => ({
-      ...prev,
-      [activeTab]: updatedAmounts
-    }));
-
-    // Real-time Supabase sync
+  // Handler simpan bukti setoran
+  const handleSubmitEvidence = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedCellForEvidence) return;
+    const { year, month } = selectedCellForEvidence;
+    const key = `${year}-${String(month).padStart(2, '0')}`;
     const memberDepositId = memberDepositMap[activeTab];
     if (!memberDepositId) {
       console.warn(`member_deposit_id not found for ${activeTab}`);
       return;
     }
 
+    setSavingEvidence(true);
     try {
-      if (isCurrentlyChecked) {
-        // Hapus mutasi transaksi setoran untuk bulan & tahun ini
-        await supabase
-          .from('deposit_transactions')
-          .delete()
-          .eq('member_deposit_id', memberDepositId)
-          .eq('for_month', month)
-          .eq('for_year', year)
-          .eq('transaction_type', 'deposit');
-      } else {
-        // Masukkan mutasi transaksi baru
-        await supabase
-          .from('deposit_transactions')
-          .insert([{
-            member_deposit_id: memberDepositId,
-            amount: applicableRate,
-            for_month: month,
-            for_year: year,
-            transaction_type: 'deposit',
-            description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[month - 1]} ${year}`
-          }]);
-      }
+      const amt = Number(evidenceAmount) > 0 ? Number(evidenceAmount) : selectedCellForEvidence.rate;
+      await saveMonthDepositWithEvidence({
+        memberDepositId,
+        year,
+        month,
+        amount: amt,
+        referenceNo: evidenceReferenceNo.trim() || undefined,
+        paymentMethod: evidencePaymentMethod,
+        notes: evidenceNotes.trim() || undefined,
+        description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[month - 1]} ${year}`
+      });
+
+      setCheckedMonths(prev => {
+        const nextSet = new Set(prev[activeTab] || []);
+        nextSet.add(key);
+        return { ...prev, [activeTab]: nextSet };
+      });
+      setMonthAmounts(prev => {
+        const nextMap = new Map(prev[activeTab] || []);
+        nextMap.set(key, amt);
+        return { ...prev, [activeTab]: nextMap };
+      });
+
+      setEvidenceModalOpen(false);
+      setSelectedCellForEvidence(null);
       onSuccess?.();
     } catch (err) {
-      console.error('Failed to sync checkbox toggle with database:', err);
+      console.error('Gagal menyimpan bukti setoran:', err);
+    } finally {
+      setSavingEvidence(false);
+    }
+  };
+
+  // Handler buka modal konfirmasi uncheck
+  const handleOpenUncheckModal = (year: number, month: number, label: string, key: string) => {
+    setSelectedCellForUncheck({ year, month, label, key });
+    setUncheckReason('');
+    setUncheckModalOpen(true);
+  };
+
+  // Handler konfirmasi pembatalan uncheck
+  const handleConfirmUncheck = async () => {
+    if (!selectedCellForUncheck) return;
+    if (!uncheckReason.trim()) return;
+
+    const { year, month, key } = selectedCellForUncheck;
+    const memberDepositId = memberDepositMap[activeTab];
+    if (!memberDepositId) return;
+
+    setUnchecking(true);
+    try {
+      await cancelMonthDepositWithReason(
+        memberDepositId,
+        year,
+        month,
+        uncheckReason.trim()
+      );
+
+      setCheckedMonths(prev => {
+        const nextSet = new Set(prev[activeTab] || []);
+        nextSet.delete(key);
+        return { ...prev, [activeTab]: nextSet };
+      });
+      setMonthAmounts(prev => {
+        const nextMap = new Map(prev[activeTab] || []);
+        nextMap.delete(key);
+        return { ...prev, [activeTab]: nextMap };
+      });
+
+      setUncheckModalOpen(false);
+      setSelectedCellForUncheck(null);
+      setUncheckReason('');
+      onSuccess?.();
+    } catch (err) {
+      console.error('Gagal membatalkan centang:', err);
+    } finally {
+      setUnchecking(false);
+    }
+  };
+
+  // Handler buka drawer riwayat audit
+  const handleOpenHistoryModal = async (year: number, month: number, label: string) => {
+    setSelectedCellForHistory({ year, month, label });
+    setHistoryModalOpen(true);
+    setLoadingHistory(true);
+    setAuditHistory([]);
+    try {
+      const memberDepositId = memberDepositMap[activeTab];
+      if (memberDepositId) {
+        const items = await getMonthAuditHistory(memberDepositId, year, month);
+        setAuditHistory(items);
+      }
+    } catch (err) {
+      console.error('Gagal mengambil riwayat audit bulan:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Handler toggle satu cell checkbox (buka dialog sesuai status centang saat ini)
+  const handleToggleMonth = (year: number, month: number, key: string, label?: string) => {
+    const isCurrentlyChecked = currentCheckedSet.has(key);
+    const monthLabel = label || `${MONTH_NAMES[month - 1]}-${String(year).slice(-2)}`;
+    if (isCurrentlyChecked) {
+      handleOpenUncheckModal(year, month, monthLabel, key);
+    } else {
+      handleOpenEvidenceModal(year, month, monthLabel);
     }
   };
 
@@ -1033,23 +1168,37 @@ export default function SavingsLedgerMatrixModal({
                             }`}
                           >
                             <div className="flex flex-col items-center justify-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => handleToggleMonth(m.year, m.month, m.key)}
-                                className={`w-4 h-4 rounded cursor-pointer transition-transform hover:scale-110 ${
-                                  isPartial
-                                    ? 'text-amber-600 accent-amber-600 border-amber-400 focus:ring-amber-500'
-                                    : 'text-emerald-600 accent-emerald-600 border-slate-300 focus:ring-emerald-500'
-                                }`}
-                                aria-label={`Checkbox ${m.label}`}
-                                title={
-                                  isPartial
-                                    ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} dari Rp ${Number(rate).toLocaleString('id-ID')}`
-                                    : undefined
-                                }
-                                data-testid={isPartial ? `partial-checkbox-${m.key}` : `checkbox-${m.key}`}
-                              />
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => handleToggleMonth(m.year, m.month, m.key, m.label)}
+                                  className={`w-4 h-4 rounded cursor-pointer transition-transform hover:scale-110 ${
+                                    isPartial
+                                      ? 'text-amber-600 accent-amber-600 border-amber-400 focus:ring-amber-500'
+                                      : 'text-emerald-600 accent-emerald-600 border-slate-300 focus:ring-emerald-500'
+                                  }`}
+                                  aria-label={`Checkbox ${m.label}`}
+                                  title={
+                                    isPartial
+                                      ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} dari Rp ${Number(rate).toLocaleString('id-ID')}`
+                                      : isChecked
+                                      ? `Tercentang (${m.label}). Klik untuk membatalkan setoran.`
+                                      : `Belum disetor. Klik untuk input bukti setoran (${m.label}).`
+                                  }
+                                  data-testid={isPartial ? `partial-checkbox-${m.key}` : `checkbox-${m.key}`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenHistoryModal(m.year, m.month, m.label)}
+                                  className="p-0.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded transition-colors"
+                                  title={`Riwayat Audit & Bukti (${m.label})`}
+                                  data-testid={`history-btn-${m.key}`}
+                                  aria-label={`Riwayat Audit ${m.label}`}
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                               <span
                                 className={`text-[10px] px-1.5 py-0.5 rounded border leading-none font-mono ${badgeClass} ${
                                   isPartial ? 'whitespace-nowrap shadow-2xs font-bold text-amber-900 bg-amber-100 border-amber-300' : 'font-semibold'
@@ -1089,6 +1238,342 @@ export default function SavingsLedgerMatrixModal({
         </div>
 
       </div>
+
+      {/* Modal Dialog 1: Form Bukti Setoran (Evidence Input) */}
+      {evidenceModalOpen && selectedCellForEvidence && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div data-testid="evidence-modal" className="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-600 text-white rounded-lg shadow-xs">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">Dokumentasi Bukti Setoran</h3>
+                  <p className="text-xs text-slate-500">
+                    {activeTab} • Periode {selectedCellForEvidence.label}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setEvidenceModalOpen(false);
+                  setSelectedCellForEvidence(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                data-testid="evidence-cancel-x-btn"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitEvidence} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nominal Setoran (Rp) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  data-testid="evidence-amount-input"
+                  value={evidenceAmount}
+                  onChange={e => setEvidenceAmount(Number(e.target.value))}
+                  min={1}
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors"
+                />
+                <div className="flex justify-between items-center text-[11px] text-slate-500 mt-1">
+                  <span>Tarif Standar: {formatCurrency(selectedCellForEvidence.rate)}</span>
+                  {evidenceAmount < selectedCellForEvidence.rate && evidenceAmount > 0 && (
+                    <span className="text-amber-600 font-medium">Setoran Parsial / Kurang Bayar</span>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nomor Bukti / Kwitansi <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  data-testid="evidence-ref-input"
+                  value={evidenceReferenceNo}
+                  onChange={e => setEvidenceReferenceNo(e.target.value)}
+                  placeholder="Contoh: KW-2026/11/01"
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Metode Pembayaran <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  data-testid="evidence-method-select"
+                  value={evidencePaymentMethod}
+                  onChange={e => setEvidencePaymentMethod(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white transition-colors"
+                >
+                  <option value="tunai">Tunai / Kasir</option>
+                  <option value="potong_gaji">Potong Gaji</option>
+                  <option value="transfer">Transfer Bank</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Catatan Tambahan (Opsional)
+                </label>
+                <input
+                  type="text"
+                  data-testid="evidence-notes-input"
+                  value={evidenceNotes}
+                  onChange={e => setEvidenceNotes(e.target.value)}
+                  placeholder="Keterangan transaksi atau rekonsiliasi..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEvidenceModalOpen(false);
+                    setSelectedCellForEvidence(null);
+                  }}
+                  disabled={savingEvidence}
+                  className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg transition-colors border border-slate-300"
+                  data-testid="evidence-cancel-btn"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEvidence}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                  data-testid="evidence-submit-btn"
+                >
+                  {savingEvidence && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Simpan Setoran
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog 2: Konfirmasi Pembatalan Centang (Uncheck) */}
+      {uncheckModalOpen && selectedCellForUncheck && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div data-testid="uncheck-modal" className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-rose-100 bg-rose-50/60">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-600 text-white rounded-lg shadow-xs">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">Konfirmasi Pembatalan Setoran</h3>
+                  <p className="text-xs text-rose-700 font-medium">
+                    Periode {selectedCellForUncheck.label} ({activeTab})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setUncheckModalOpen(false);
+                  setSelectedCellForUncheck(null);
+                  setUncheckReason('');
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                data-testid="uncheck-cancel-x-btn"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 leading-relaxed">
+                <strong>Perhatian:</strong> Tindakan ini akan membatalkan centang dan menghapus mutasi transaksi setoran untuk periode ini. Riwayat pembatalan akan dicatat permanen dalam <strong>Jejak Audit (Audit Logs)</strong>.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Alasan Pembatalan <span className="text-rose-500">* (Wajib diisi)</span>
+                </label>
+                <textarea
+                  data-testid="uncheck-reason-input"
+                  rows={3}
+                  value={uncheckReason}
+                  onChange={e => setUncheckReason(e.target.value)}
+                  placeholder="Jelaskan alasan pembatalan centang (misal: koreksi data salah input, pembatalan transfer, atau mutasi ganda)..."
+                  required
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-colors"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUncheckModalOpen(false);
+                    setSelectedCellForUncheck(null);
+                    setUncheckReason('');
+                  }}
+                  disabled={unchecking}
+                  className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg transition-colors border border-slate-300"
+                  data-testid="uncheck-cancel-btn"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmUncheck}
+                  disabled={!uncheckReason.trim() || unchecking}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                  data-testid="uncheck-confirm-btn"
+                >
+                  {unchecking && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Konfirmasi Pembatalan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog 3: Penampil Riwayat Audit & Bukti Setoran */}
+      {historyModalOpen && selectedCellForHistory && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div data-testid="history-modal" className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-600 text-white rounded-lg shadow-xs">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-800">Riwayat Audit &amp; Bukti Setoran</h3>
+                  <p className="text-xs text-slate-500">
+                    {activeTab} • Periode {selectedCellForHistory.label}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setHistoryModalOpen(false);
+                  setSelectedCellForHistory(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
+                data-testid="history-modal-close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto flex-1 space-y-3" data-testid="history-item-list">
+              {loadingHistory ? (
+                <div className="flex flex-col items-center justify-center py-10 space-y-2 text-slate-500">
+                  <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                  <p className="text-xs">Memuat jejak audit periode...</p>
+                </div>
+              ) : auditHistory.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  Belum ada riwayat transaksi atau jejak perubahan untuk periode ini.
+                </div>
+              ) : (
+                auditHistory.map((item, idx) => {
+                  const isDelete = item.action === 'DELETE';
+                  const isUpdate = item.action === 'UPDATE';
+                  return (
+                    <div
+                      key={item.id || idx}
+                      data-testid={`audit-item-${item.id || idx}`}
+                      className={`p-3.5 rounded-xl border text-xs transition-colors ${
+                        isDelete
+                          ? 'bg-rose-50/50 border-rose-200'
+                          : isUpdate
+                          ? 'bg-amber-50/50 border-amber-200'
+                          : 'bg-emerald-50/50 border-emerald-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              isDelete
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : isUpdate
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}
+                          >
+                            {isDelete ? 'Pembatalan' : isUpdate ? 'Penyesuaian' : 'Setoran Aktif'}
+                          </span>
+                          <span className="font-semibold text-slate-700">
+                            {item.performerName || 'Pengelola'}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-slate-400 font-mono">
+                          {new Date(item.createdAt).toLocaleString('id-ID', {
+                            dateStyle: 'medium',
+                            timeStyle: 'short'
+                          })}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-slate-600 bg-white/70 p-2.5 rounded-lg border border-slate-200/60 mb-1.5">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block">Nominal:</span>
+                          <span className="font-mono font-bold text-slate-800">
+                            {item.amount !== undefined ? formatCurrency(item.amount) : '-'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block">No. Kwitansi / Referensi:</span>
+                          <span className="font-mono font-semibold text-slate-800">
+                            {item.referenceNo || '-'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block">Metode Bayar:</span>
+                          <span className="capitalize font-medium text-slate-700">
+                            {item.paymentMethod ? item.paymentMethod.replace('_', ' ') : '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {item.notes && (
+                        <div className="mt-1 text-slate-600">
+                          <span className="text-[10px] text-slate-400 block">
+                            {isDelete ? 'Alasan Pembatalan:' : 'Catatan:'}
+                          </span>
+                          <p className="font-medium text-slate-700 italic bg-white/50 px-2 py-1 rounded border border-slate-200/50">
+                            "{item.notes}"
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setHistoryModalOpen(false);
+                  setSelectedCellForHistory(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

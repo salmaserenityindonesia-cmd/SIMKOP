@@ -486,4 +486,137 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(supabase.from).toHaveBeenCalledWith('deposit_transactions');
     });
   });
+
+  describe('Audit Evidence Documentation, Uncheck Confirmation & History Modal Tests', () => {
+    it('renders history button and audit action icons on month cells', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialLoading={false}
+        />
+      );
+
+      expect(html).toContain('history-btn-');
+      expect(html).toContain('Riwayat Audit &amp; Bukti');
+    });
+
+    it('renders evidence input modal with prefilled rate, reference no, and payment methods', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialLoading={false}
+          initialEvidenceModalOpen={true}
+          initialSelectedCellForEvidence={{
+            year: 2026,
+            month: 11,
+            label: 'Nov-26',
+            rate: 200000
+          }}
+        />
+      );
+
+      expect(html).toContain('data-testid="evidence-modal"');
+      expect(html).toContain('Dokumentasi Bukti Setoran');
+      expect(html).toContain('Periode Nov-26');
+      expect(html).toContain('data-testid="evidence-amount-input"');
+      expect(html).toContain('data-testid="evidence-ref-input"');
+      expect(html).toContain('data-testid="evidence-method-select"');
+      expect(html).toContain('data-testid="evidence-notes-input"');
+      expect(html).toContain('data-testid="evidence-submit-btn"');
+      expect(html).toContain('Tarif Standar:');
+      expect(html).toContain('200.000');
+      expect(html).toContain('Potong Gaji');
+      expect(html).toContain('Transfer Bank');
+      expect(html).toContain('Simpan Setoran');
+    });
+
+    it('renders uncheck confirmation modal requiring reason and warning about audit logs', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialUncheckModalOpen={true}
+          initialSelectedCellForUncheck={{
+            year: 2026,
+            month: 11,
+            label: 'Nov-26',
+            key: '2026-11'
+          }}
+        />
+      );
+
+      expect(html).toContain('data-testid="uncheck-modal"');
+      expect(html).toContain('Konfirmasi Pembatalan Setoran');
+      expect(html).toContain('Periode Nov-26');
+      expect(html).toContain('Jejak Audit (Audit Logs)');
+      expect(html).toContain('data-testid="uncheck-reason-input"');
+      expect(html).toContain('data-testid="uncheck-confirm-btn"');
+      expect(html).toContain('Konfirmasi Pembatalan');
+    });
+
+    it('renders audit history modal displaying chronological list of actions and performers', () => {
+      const sampleHistory = [
+        {
+          id: 'hist-1',
+          action: 'CREATE' as const,
+          amount: 200000,
+          forMonth: 11,
+          forYear: 2026,
+          referenceNo: 'KW-2026/11/01',
+          paymentMethod: 'potong_gaji',
+          notes: 'Setoran rutin November',
+          performerName: 'Admin Keuangan',
+          createdAt: '2026-11-01T10:00:00.000Z'
+        },
+        {
+          id: 'hist-2',
+          action: 'DELETE' as const,
+          amount: 200000,
+          forMonth: 11,
+          forYear: 2026,
+          referenceNo: 'KW-2026/11/01',
+          notes: 'Koreksi salah input periode',
+          performerName: 'Super Admin',
+          createdAt: '2026-11-02T14:30:00.000Z'
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialHistoryModalOpen={true}
+          initialSelectedCellForHistory={{
+            year: 2026,
+            month: 11,
+            label: 'Nov-26'
+          }}
+          initialAuditHistory={sampleHistory}
+        />
+      );
+
+      expect(html).toContain('data-testid="history-modal"');
+      expect(html).toContain('Riwayat Audit &amp; Bukti Setoran');
+      expect(html).toContain('Setoran Aktif');
+      expect(html).toContain('Pembatalan');
+      expect(html).toContain('Admin Keuangan');
+      expect(html).toContain('Super Admin');
+      expect(html).toContain('KW-2026/11/01');
+      expect(html).toContain('Koreksi salah input periode');
+    });
+  });
 });
