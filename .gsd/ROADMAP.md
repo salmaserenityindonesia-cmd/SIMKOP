@@ -1041,14 +1041,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 59: Integrasi Pembayaran Kasir POS Menggunakan Simpanan Belanja Anggota
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Mengintegrasikan saldo Simpanan Belanja anggota (deposit_types.code = 'BELANJA') sebagai metode pembayaran belanja di kasir POS (/admin/kasir). Pembayaran hanya diizinkan untuk anggota yang memiliki rekening simpanan belanja aktif dan saldo mencukupi. Setiap pembelanjaan menggunakan simpanan belanja akan langsung memotong saldo kas riil anggota secara atomik melalui RPC `process_pos_deposit_payment` dengan mencatatkan mutasi penarikan riil di `deposit_transactions` dan mengisi kolom `sales.paid_deposit`, tanpa mengacaukan perhitungan uang fisik laci kasir (Z-Report cash float).
 **Depends on:** Phase 58
 
 **Plans:**
-- [ ] Plan 59.1: Database RPC for Atomic Balance Deduction & Service Layer Integration
-- [ ] Plan 59.2: POS SplitPaymentModal Validation & Cashier Shift Reconciliation Guard
-- [ ] Plan 59.3: Static Verification, Comprehensive Test Suite & Production Build Verification
+- [x] Plan 59.1: Database RPC for Atomic Balance Deduction & Service Layer Integration
+- [x] Plan 59.2: POS SplitPaymentModal Validation & Cashier Shift Reconciliation Guard
+- [x] Plan 59.3: Static Verification, Comprehensive Test Suite & Production Build Verification
 
 **Deliverables:**
 - Berkas migrasi database `036_pos_spending_from_savings_function.sql` mendefinisikan RPC `process_pos_deposit_payment` dengan validasi anti-overdraft
@@ -1174,7 +1174,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 56 | Grid Matriks Simpanan Descending Terbaru | ✅ | 2/2 | 100% |
 | 57 | Auto-Scroll ke Bulan Ini Modal Matriks Simpanan | ✅ | 2/2 | 100% |
 | 58 | Jejak Audit & Dokumentasi Bukti Simpanan | ✅ | 3/3 | 100% |
-| 59 | Integrasi Pembayaran Simpanan Belanja di POS | ⏳ | 0/3 | 0% |
+| 59 | Integrasi Pembayaran Simpanan Belanja di POS | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1240,6 +1240,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 56 | 2026-11-04 | 2026-11-04 | 1 day |
 | 57 | 2026-11-04 | 2026-11-04 | 1 day |
 | 58 | 2026-11-05 | 2026-11-05 | 1 day |
-| 59 | 2026-11-05 | — | — |
+| 59 | 2026-11-05 | 2026-11-05 | 1 day |
 
 
