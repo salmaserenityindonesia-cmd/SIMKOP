@@ -1020,6 +1020,26 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 58: Implementasi Jejak Audit & Dokumentasi Bukti Pembayaran pada Matriks Simpanan
+**Status:** ✅ Complete
+**Objective:** Memperkuat Buku Besar Matriks Simpanan (`/admin/compliance-matrix` dan `SavingsLedgerMatrixModal.tsx`) menjadi sistem pencatatan yang akuntabel, transparan, dan dapat diaudit secara situasional. Setiap aksi penambahan, penyesuaian parsial, maupun penghapusan centang bulan mencatat metadata historis: nomor bukti/referensi (kwitansi), metode pembayaran, alasan/keterangan penyesuaian, tanggal eksekusi, serta identitas admin pelaksana (`created_by`), dilengkapi drawer/popover riwayat audit per sel dan tooltip nomor bukti pada matriks tahunan.
+**Depends on:** Phase 57
+
+**Plans:**
+- [x] Plan 58.1: Database Schema Expansion & Service Layer Support for Evidence Documentation
+- [x] Plan 58.2: Interactive Audit & Evidence Modal UI and Compliance Matrix Tooltip
+- [x] Plan 58.3: Static Analysis, Full Test Suite & Production Build Verification
+
+**Deliverables:**
+- Migrasi database `034_add_audit_and_reference_to_deposit_transactions.sql` untuk kolom bukti referensi dan trigger audit log pembatalan
+- Service layer `savingsMatrixService.ts` dengan interface `CheckMonthPayload` & fungsi `saveMonthDepositWithEvidence`, `cancelMonthDepositWithReason`, `getMonthAuditHistory`
+- Modal dialog input bukti setoran (nominal, kwitansi, metode, catatan) dan modal konfirmasi uncheck dengan input wajib alasan pada `SavingsLedgerMatrixModal.tsx`
+- Drawer / popover penampil kronologi riwayat audit per sel bulan
+- Tooltip hover nomor kwitansi dan catatan bukti pembayaran pada sel matriks di `ComplianceMatrix.tsx`
+- Verifikasi komprehensif: TypeScript typecheck, unit tests Vitest 100%, dan production build Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1068,6 +1088,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 42 | Phase 55 | Rapikan Layout Kas Riil Anggota pada Matriks Simpanan |
 | 43 | Phase 56 | Ubah Urutan Grid Matriks Buku Besar Simpanan Menjadi Bulan Terbaru (Descending) |
 | 44 | Phase 57 | Auto-Scroll Horisontal ke Bulan Ini pada Modal Matriks Simpanan |
+| 45 | Phase 58 | Jejak Audit & Dokumentasi Bukti Pembayaran Matriks Simpanan |
 
 ---
 
@@ -1132,6 +1153,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 55 | Rapikan Layout Kas Riil Anggota Matriks | ✅ | 2/2 | 100% |
 | 56 | Grid Matriks Simpanan Descending Terbaru | ✅ | 2/2 | 100% |
 | 57 | Auto-Scroll ke Bulan Ini Modal Matriks Simpanan | ✅ | 2/2 | 100% |
+| 58 | Jejak Audit & Dokumentasi Bukti Simpanan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1196,5 +1218,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 55 | 2026-11-03 | 2026-11-03 | 1 day |
 | 56 | 2026-11-04 | 2026-11-04 | 1 day |
 | 57 | 2026-11-04 | 2026-11-04 | 1 day |
+| 58 | 2026-11-05 | 2026-11-05 | 1 day |
 
 
