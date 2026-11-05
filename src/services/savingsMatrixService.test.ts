@@ -1877,5 +1877,64 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(history[0].id).toBe('log-user-reason');
       expect(history[0].notes).toBe('tidak jadi bayar');
     });
+
+    it('prioritizes manual admin cancellation reason ("salah input lagi") over default description ("Setoran Matriks WAJIB Ags 2026")', async () => {
+      const duplicateLogs = [
+        {
+          id: 'log-trigger-default-matriks',
+          table_name: 'deposit_transactions',
+          action: 'DELETE',
+          entity_id: 'md-matrix-test',
+          old_data: { for_year: 2026, for_month: 8, amount: 200000, reference_no: 'KW-02', description: 'Setoran Matriks WAJIB Ags 2026' },
+          performed_by: 'admin-1',
+          performer_name: 'Admin Utama',
+          notes: 'Setoran Matriks WAJIB Ags 2026',
+          created_at: '2026-08-15T10:00:02Z'
+        },
+        {
+          id: 'log-user-custom-reason',
+          table_name: 'deposit_transactions',
+          action: 'DELETE',
+          entity_id: 'md-matrix-test',
+          old_data: { for_year: 2026, for_month: 8, amount: 200000, reference_no: 'KW-02' },
+          performed_by: 'admin-1',
+          performer_name: 'Admin Utama',
+          notes: 'salah input lagi',
+          created_at: '2026-08-15T10:00:01Z'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [] })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: duplicateLogs })
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const history = await getMonthAuditHistory('md-matrix-test', 2026, 8);
+
+      expect(history).toHaveLength(1);
+      expect(history[0].id).toBe('log-user-custom-reason');
+      expect(history[0].notes).toBe('salah input lagi');
+    });
   });
 });

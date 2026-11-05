@@ -667,5 +667,54 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       // Kartu duplikat sistem ("Rekonsiliasi Otomatis...") harus dibuang / tidak tampil
       expect(html).not.toContain('Rekonsiliasi Otomatis (Setoran Parsial)');
     });
+
+    it('displays manual admin reason ("salah input lagi") and discards default matrix description ("Setoran Matriks WAJIB Ags 2026")', () => {
+      const duplicateHistory = [
+        {
+          id: 'del-matrix-default',
+          action: 'DELETE' as const,
+          amount: 200000,
+          forMonth: 8,
+          forYear: 2026,
+          referenceNo: 'KW-2026/08/01',
+          notes: 'Setoran Matriks WAJIB Ags 2026',
+          performerName: 'Admin Kasir',
+          createdAt: '2026-08-15T10:00:02.000Z'
+        },
+        {
+          id: 'del-user-reason-input',
+          action: 'DELETE' as const,
+          amount: 200000,
+          forMonth: 8,
+          forYear: 2026,
+          referenceNo: 'KW-2026/08/01',
+          notes: 'salah input lagi',
+          performerName: 'Admin Kasir',
+          createdAt: '2026-08-15T10:00:01.000Z'
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialHistoryModalOpen={true}
+          initialSelectedCellForHistory={{
+            year: 2026,
+            month: 8,
+            label: 'Ags-26'
+          }}
+          initialAuditHistory={duplicateHistory}
+        />
+      );
+
+      // Kartu alasan admin "salah input lagi" harus tampil
+      expect(html).toContain('salah input lagi');
+      // Teks default "Setoran Matriks WAJIB Ags 2026" tidak boleh tampil sebagai alasan pembatalan
+      expect(html).not.toContain('Setoran Matriks WAJIB Ags 2026');
+    });
   });
 });

@@ -32,6 +32,7 @@ import {
   saveMonthDepositWithEvidence,
   cancelMonthDepositWithReason,
   getMonthAuditHistory,
+  isSystemDefaultDescription,
   CheckMonthPayload,
   MonthAuditHistoryItem
 } from '../../services/savingsMatrixService';
@@ -225,21 +226,6 @@ export default function SavingsLedgerMatrixModal({
 
   // Deduplikasi cerdas untuk tampilan riwayat audit agar tidak menampilkan kartu pembatalan ganda
   const displayedAuditHistory = useMemo(() => {
-    const isSystemDefault = (text?: string): boolean => {
-      if (!text) return true;
-      const t = text.trim().toLowerCase();
-      return (
-        t.startsWith('rekonsiliasi otomatis') ||
-        t.startsWith('centang setoran rutin') ||
-        t.startsWith('penghapusan / batal centang') ||
-        t.startsWith('saldo awal') ||
-        t.includes('migrasi') ||
-        t.includes('belum teralokasi') ||
-        t.includes('setoran parsial') ||
-        t.includes('setoran rutin')
-      );
-    };
-
     return auditHistory.filter((log, idx, arr) => {
       if (log.action !== 'DELETE') return true;
       const closeSiblings = arr.filter((other, oIdx) => {
@@ -252,10 +238,15 @@ export default function SavingsLedgerMatrixModal({
 
       if (closeSiblings.length === 0) return true;
 
-      const isCurrentDefault = isSystemDefault(log.notes);
-      const hasCustomSibling = closeSiblings.some(s => !isSystemDefault(s.notes));
+      const isCurrentDefault = isSystemDefaultDescription(log.notes);
+      const hasCustomSibling = closeSiblings.some(s => !isSystemDefaultDescription(s.notes));
 
       if (isCurrentDefault && hasCustomSibling) return false;
+
+      // Jika entri saat ini memiliki alasan custom dan ada entri saudara yang default, prioritaskan entri custom ini
+      if (!isCurrentDefault && closeSiblings.some(s => isSystemDefaultDescription(s.notes))) {
+        return true;
+      }
 
       const firstMatchingIdx = arr.findIndex((other) => {
         if (other.action !== 'DELETE') return false;

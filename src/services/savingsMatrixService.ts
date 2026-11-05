@@ -1398,6 +1398,24 @@ export async function cancelMonthDepositWithReason(
       } catch (auditErr) {
         console.warn('Gagal mencatat riwayat audit pembatalan:', auditErr);
       }
+
+      // 3b. Perbarui deskripsi transaksi menjadi alasan pembatalan admin sebelum dihapus
+      // agar trigger database trg_audit_deposit_tx_delete secara otomatis menangkap alasan ini sebagai OLD.description
+      if (tx.id) {
+        try {
+          const tableRef: any = supabase.from('deposit_transactions');
+          if (typeof tableRef.update === 'function') {
+            const updBuilder = tableRef.update({
+              description: reason.trim()
+            });
+            if (typeof updBuilder.eq === 'function') {
+              await updBuilder.eq('id', tx.id);
+            }
+          }
+        } catch (updErr) {
+          console.warn('Gagal memperbarui deskripsi transaksi sebelum pembatalan:', updErr);
+        }
+      }
     }
   }
 
@@ -1417,8 +1435,59 @@ export async function cancelMonthDepositWithReason(
     }
   }
 
+  // 4b. Pastikan catatan audit log untuk transaksi yang baru dihapus memuat alasan admin
+  if (existingTxs && existingTxs.length > 0) {
+    for (const tx of existingTxs) {
+      if (tx.id) {
+        try {
+          const auditTable: any = supabase.from('audit_logs');
+          if (typeof auditTable.update === 'function') {
+            const auditUpd = auditTable.update({
+              notes: reason.trim()
+            });
+            if (typeof auditUpd.eq === 'function') {
+              const qTbl = auditUpd.eq('table_name', 'deposit_transactions');
+              if (qTbl && typeof qTbl.eq === 'function') {
+                const qRec = qTbl.eq('record_id', String(tx.id));
+                if (qRec && typeof qRec.eq === 'function') {
+                  await qRec.eq('action', 'DELETE');
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore non-critical update
+        }
+      }
+    }
+  }
+
   return { success: true, cancelledCount: existingTxs.length };
 }
+
+/**
+ * Memeriksa apakah teks keterangan/alasan merupakan deskripsi otomatis bawaan sistem
+ * (misal dari rekonsiliasi, mutasi matriks, atau fallback trigger database)
+ * dan BUKAN alasan manual yang diketik oleh admin.
+ */
+export const isSystemDefaultDescription = (text?: string | null): boolean => {
+  if (!text) return true;
+  const t = text.trim().toLowerCase();
+  return (
+    t.includes('setoran matriks') ||
+    t.includes('matriks') ||
+    t.includes('rekonsiliasi otomatis') ||
+    t.includes('centang setoran') ||
+    t.includes('penghapusan / batal centang') ||
+    t.includes('saldo awal') ||
+    t.includes('migrasi') ||
+    t.includes('belum teralokasi') ||
+    t.includes('setoran parsial') ||
+    t.includes('setoran rutin') ||
+    t === 'pembatalan / batal centang simpanan' ||
+    t === 'penghapusan / batal centang simpanan'
+  );
+};
 
 /**
  * Mengambil kronologi riwayat audit untuk sel bulan tertentu pada rekening simpanan.
@@ -1566,21 +1635,6 @@ export async function getMonthAuditHistory(
   // Deduplikasi cerdas untuk entri pembatalan (DELETE):
   // Menyingkirkan pencatatan ganda antara database trigger (yang mencatat OLD.description)
   // dan pencatatan aplikasi eksplisit (yang mencatat alasan pembatalan input admin).
-  const isSystemDefaultDescription = (text?: string): boolean => {
-    if (!text) return true;
-    const t = text.trim().toLowerCase();
-    return (
-      t.startsWith('rekonsiliasi otomatis') ||
-      t.startsWith('centang setoran rutin') ||
-      t.startsWith('penghapusan / batal centang') ||
-      t.startsWith('saldo awal') ||
-      t.includes('migrasi') ||
-      t.includes('belum teralokasi') ||
-      t.includes('setoran parsial') ||
-      t.includes('setoran rutin')
-    );
-  };
-
   const deduplicatedAuditItems = auditItems.filter((log, idx, arr) => {
     if (log.action !== 'DELETE') return true;
 
@@ -1605,6 +1659,11 @@ export async function getMonthAuditHistory(
     // Jika entri saat ini hanyalah deskripsi default/otomatis sistem dan ada entri saudara dengan alasan admin kustom, buang entri default ini
     if (isCurrentDefault && hasCustomSibling) {
       return false;
+    }
+
+    // Jika entri saat ini memiliki alasan custom dan ada entri saudara yang default, pertahankan entri custom ini
+    if (!isCurrentDefault && closeSiblings.some(s => isSystemDefaultDescription(s.notes))) {
+      return true;
     }
 
     // Jika kedua entri memiliki tipe alasan yang sama, pertahankan entri pertama
