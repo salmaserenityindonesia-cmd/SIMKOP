@@ -113,29 +113,57 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
       }
     }
 
-    // 5. If deposit used, deduct from deposit_transactions
+    // 5. If deposit used, deduct from deposit_transactions via RPC (or fallback)
     if (payload.paidDeposit > 0 && payload.memberId) {
-       // Find "Simpanan Belanja" deposit type id and member_deposit id
-       const { data: dTypes } = await supabase.from('deposit_types').select('id').ilike('name', '%belanja%');
-       const belanjaType = dTypes?.[0];
-       if (belanjaType) {
+      let rpcExecuted = false;
+      if (supabase.rpc && typeof supabase.rpc === 'function') {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('process_pos_deposit_payment', {
+          p_member_id: payload.memberId,
+          p_amount: payload.paidDeposit,
+          p_sale_id: saleId,
+          p_invoice_number: saleNumber,
+          p_cashier_id: payload.cashierId
+        });
+
+        if (rpcErr) {
+          throw new Error(rpcErr.message || 'Gagal memproses pemotongan Simpanan Belanja');
+        }
+
+        if (rpcRes && rpcRes.success === false) {
+          throw new Error(rpcRes.message || 'Saldo Simpanan Belanja tidak mencukupi');
+        }
+
+        rpcExecuted = true;
+      }
+
+      // Fallback aman untuk mock/environment tanpa RPC
+      if (!rpcExecuted) {
+        // Find "Simpanan Belanja" deposit type id and member_deposit id
+        const { data: dTypes } = await supabase.from('deposit_types').select('id').ilike('name', '%belanja%');
+        const belanjaType = dTypes?.[0];
+        if (belanjaType) {
           const { data: memberDep } = await supabase
-             .from('member_deposits')
-             .select('id')
-             .eq('member_id', payload.memberId)
-             .eq('deposit_type_id', belanjaType.id)
-             .single();
-             
+            .from('member_deposits')
+            .select('id')
+            .eq('member_id', payload.memberId)
+            .eq('deposit_type_id', belanjaType.id)
+            .single();
+
           if (memberDep) {
-             await supabase.from('deposit_transactions').insert({
-                member_deposit_id: memberDep.id,
-                transaction_date: new Date().toISOString(),
-                transaction_type: 'withdrawal',
-                amount: payload.paidDeposit,
-                notes: `Belanja Kasir - Nota #${saleNumber}`
-             });
+            await supabase.from('deposit_transactions').insert({
+              member_deposit_id: memberDep.id,
+              transaction_date: new Date().toISOString(),
+              transaction_type: 'withdrawal',
+              amount: payload.paidDeposit,
+              description: `Belanja Toko di Kasir POS (${saleNumber})`,
+              reference_no: saleNumber,
+              payment_method: 'potong_simpanan_belanja',
+              notes: `Transaksi penjualan POS ID: ${saleId || '-'}`,
+              created_by: payload.cashierId
+            });
           }
-       }
+        }
+      }
     }
 
     // 6. If cash used, insert into cash_flow

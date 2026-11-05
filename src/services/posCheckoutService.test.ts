@@ -5,7 +5,8 @@ import * as cashierShiftService from './cashierShiftService';
 
 vi.mock('../lib/supabaseClient', () => ({
   supabase: {
-    from: vi.fn()
+    from: vi.fn(),
+    rpc: vi.fn()
   }
 }));
 
@@ -209,6 +210,256 @@ describe('posCheckoutService', () => {
     expect(res.success).toBe(false);
     expect(res.error).toBe('Non-anggota hanya diperbolehkan menggunakan metode pembayaran tunai.');
     expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it('should call RPC process_pos_deposit_payment when member pays with deposit', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-deposit' },
+          error: null
+        })
+      })
+    });
+
+    const mockInsertItems = vi.fn().mockResolvedValue({ error: null });
+    const mockProductSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: { stock: 5 }, error: null })
+      })
+    });
+    const mockProductUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const mockCashFlowInsert = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: mockInsertItems };
+      if (table === 'products') return { select: mockProductSelect, update: mockProductUpdate };
+      if (table === 'cash_flow') return { insert: mockCashFlowInsert };
+      return {};
+    });
+
+    (supabase.rpc as any).mockResolvedValue({
+      data: { success: true, remaining_balance: 75000, deducted_amount: 25000 },
+      error: null
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      shiftId: 'shift-1',
+      cart: [{ id: 'prod-1', name: 'Beras 2.5kg', qty: 1, price: 25000 }],
+      subtotal: 25000,
+      discount: 0,
+      totalAmount: 25000,
+      paidCash: 0,
+      paidDeposit: 25000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(res.saleId).toBe('sale-uuid-deposit');
+    expect(supabase.rpc).toHaveBeenCalledWith('process_pos_deposit_payment', {
+      p_member_id: 'member-uuid-1',
+      p_amount: 25000,
+      p_sale_id: 'sale-uuid-deposit',
+      p_invoice_number: expect.stringMatching(/^INV-\d+$/),
+      p_cashier_id: 'cashier-1'
+    });
+    // Since paidCash is 0, cash_flow should not be inserted
+    expect(mockCashFlowInsert).not.toHaveBeenCalled();
+  });
+
+  it('should fail checkout if RPC returns insufficient balance error', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-fail' },
+          error: null
+        })
+      })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'products') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { stock: 5 }, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+        };
+      }
+      return {};
+    });
+
+    (supabase.rpc as any).mockResolvedValue({
+      data: { success: false, message: 'Saldo Simpanan Belanja tidak mencukupi (Saldo: Rp 5000, Dibutuhkan: Rp 25000)' },
+      error: null
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Beras 2.5kg', qty: 1, price: 25000 }],
+      subtotal: 25000,
+      discount: 0,
+      totalAmount: 25000,
+      paidCash: 0,
+      paidDeposit: 25000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('Saldo Simpanan Belanja tidak mencukupi (Saldo: Rp 5000, Dibutuhkan: Rp 25000)');
+  });
+
+  it('should fail checkout if RPC execution errors', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-fail-rpc' },
+          error: null
+        })
+      })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'products') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { stock: 5 }, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+        };
+      }
+      return {};
+    });
+
+    (supabase.rpc as any).mockResolvedValue({
+      data: null,
+      error: { message: 'Database connection timeout on RPC' }
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Beras 2.5kg', qty: 1, price: 25000 }],
+      subtotal: 25000,
+      discount: 0,
+      totalAmount: 25000,
+      paidCash: 0,
+      paidDeposit: 25000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('Database connection timeout on RPC');
+  });
+
+  it('should fallback to direct deposit_transactions insertion when RPC is unavailable', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-fallback' },
+          error: null
+        })
+      })
+    });
+    const mockDepositTxInsert = vi.fn().mockResolvedValue({ error: null });
+
+    const originalRpc = supabase.rpc;
+    (supabase as any).rpc = undefined;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'products') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { stock: 5 }, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            ilike: vi.fn().mockResolvedValue({
+              data: [{ id: 'dep-type-belanja-id' }],
+              error: null
+            })
+          })
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'member-dep-account-id' },
+                  error: null
+                })
+              })
+            })
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return { insert: mockDepositTxInsert };
+      }
+      return {};
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Beras 2.5kg', qty: 1, price: 25000 }],
+      subtotal: 25000,
+      discount: 0,
+      totalAmount: 25000,
+      paidCash: 0,
+      paidDeposit: 25000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(mockDepositTxInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        member_deposit_id: 'member-dep-account-id',
+        transaction_type: 'withdrawal',
+        amount: 25000,
+        payment_method: 'potong_simpanan_belanja',
+        reference_no: expect.stringMatching(/^INV-\d+$/),
+        created_by: 'cashier-1'
+      })
+    );
+
+    (supabase as any).rpc = originalRpc;
   });
 });
 
