@@ -21,7 +21,8 @@ import {
   Layers,
   X,
   ChevronDown,
-  Upload
+  Upload,
+  CheckSquare
 } from 'lucide-react';
 import {
   getComplianceMatrixData,
@@ -39,7 +40,9 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import {
   bulkAutoReconcileAllMembers,
   BulkReconcileProgress,
-  BulkReconcileResult
+  BulkReconcileResult,
+  bulkCheckAllUpToCurrentMonth,
+  BulkCheckProgress
 } from '../../services/savingsMatrixService';
 import {
   clearTierCache,
@@ -69,6 +72,11 @@ export interface ComplianceMatrixProps {
   initialBulkTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
   initialBulkProgress?: { processed: number; total: number; currentMemberName?: string };
   initialBulkResult?: { totalSuccess: number; totalFailed: number } | null;
+  initialShowCheckAllConfirmModal?: boolean;
+  initialBulkChecking?: boolean;
+  initialBulkCheckTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
+  initialBulkCheckProgress?: { current: number; total: number; currentMemberName: string };
+  initialBulkCheckSummary?: { totalSuccess: number; totalFailed: number } | null;
   initialShowImportModal?: boolean;
   initialShowExportDropdown?: boolean;
   initialIsExporting?: boolean;
@@ -188,6 +196,32 @@ export const handleBulkAutoReconcile = async (
   }
 };
 
+export const handleBulkCheckAllUpToNow = async (
+  targetType: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL',
+  setIsBulkChecking: (loading: boolean) => void,
+  setBulkCheckProgress: (prog: { current: number; total: number; currentMemberName: string }) => void,
+  setBulkCheckSummary: (res: { totalSuccess: number; totalFailed: number } | null) => void,
+  onComplete?: () => void
+): Promise<{ totalSuccess: number; totalFailed: number } | null> => {
+  setIsBulkChecking(true);
+  setBulkCheckProgress({ current: 0, total: 0, currentMemberName: '' });
+  setBulkCheckSummary(null);
+  try {
+    const res = await bulkCheckAllUpToCurrentMonth(targetType, (p) => {
+      setBulkCheckProgress(p);
+    });
+    setBulkCheckSummary(res);
+    if (onComplete) onComplete();
+    return res;
+  } catch (err) {
+    console.error('Bulk check-all error:', err);
+    setBulkCheckSummary({ totalSuccess: 0, totalFailed: 1 });
+    return null;
+  } finally {
+    setIsBulkChecking(false);
+  }
+};
+
 export const fetchComplianceMatrixData = async (
   targetYear: number | string,
   setLoading: (l: boolean) => void,
@@ -244,6 +278,11 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialBulkTargetType,
   initialBulkProgress,
   initialBulkResult,
+  initialShowCheckAllConfirmModal,
+  initialBulkChecking,
+  initialBulkCheckTargetType,
+  initialBulkCheckProgress,
+  initialBulkCheckSummary,
   initialShowImportModal,
   initialShowExportDropdown,
   initialIsExporting,
@@ -284,6 +323,18 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     initialBulkResult || null
   );
 
+  const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(initialShowCheckAllConfirmModal || false);
+  const [isBulkChecking, setIsBulkChecking] = useState(initialBulkChecking || false);
+  const [bulkCheckTargetType, setBulkCheckTargetType] = useState<'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL'>(
+    initialBulkCheckTargetType || 'ALL'
+  );
+  const [bulkCheckProgress, setBulkCheckProgress] = useState<{ current: number; total: number; currentMemberName: string }>(
+    initialBulkCheckProgress || { current: 0, total: 0, currentMemberName: '' }
+  );
+  const [bulkCheckSummary, setBulkCheckSummary] = useState<{ totalSuccess: number; totalFailed: number } | null>(
+    initialBulkCheckSummary || null
+  );
+
   const [showImportModal, setShowImportModal] = useState(initialShowImportModal || false);
   const [showExportDropdown, setShowExportDropdown] = useState(initialShowExportDropdown || false);
   const [isExporting, setIsExporting] = useState(initialIsExporting || false);
@@ -295,6 +346,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
     setShowConfirmBulkModal(false);
     setBulkResult(null);
+    if (feedback?.showToast) {
+      feedback.showToast('Data matriks berhasil disinkronisasi', 'success');
+    }
+  };
+
+  const handleReloadAfterBulkCheck = async () => {
+    clearTierCache();
+    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+    setShowCheckAllConfirmModal(false);
+    setBulkCheckSummary(null);
     if (feedback?.showToast) {
       feedback.showToast('Data matriks berhasil disinkronisasi', 'success');
     }
@@ -494,6 +555,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                   ) : (
                     <span className="text-red-400 font-medium">Belum</span>
                   )}
+                  {wajibItem.reference_no && (
+                    <div className="text-[10px] text-emerald-300 font-mono mt-0.5" data-testid="tooltip-ref-wajib">
+                      Bukti: {wajibItem.reference_no}
+                      {wajibItem.notes && <span className="text-slate-300 block text-[9px] font-sans italic">"{wajibItem.notes}"</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_w || 0).toLocaleString('id-ID')}</div>
               </div>
@@ -513,6 +580,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                   ) : (
                     <span className="text-red-400 font-medium">Belum</span>
                   )}
+                  {belanjaItem.reference_no && (
+                    <div className="text-[10px] text-teal-300 font-mono mt-0.5" data-testid="tooltip-ref-belanja">
+                      Bukti: {belanjaItem.reference_no}
+                      {belanjaItem.notes && <span className="text-slate-300 block text-[9px] font-sans italic">"{belanjaItem.notes}"</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_b || 0).toLocaleString('id-ID')}</div>
               </div>
@@ -531,6 +604,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                     <span className="text-emerald-400">{formatCurrency(Number(lebaranItem.amount))}</span>
                   ) : (
                     <span className="text-red-400 font-medium">Belum</span>
+                  )}
+                  {lebaranItem.reference_no && (
+                    <div className="text-[10px] text-emerald-300 font-mono mt-0.5" data-testid="tooltip-ref-lebaran">
+                      Bukti: {lebaranItem.reference_no}
+                      {lebaranItem.notes && <span className="text-slate-300 block text-[9px] font-sans italic">"{lebaranItem.notes}"</span>}
+                    </div>
                   )}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5 font-medium border-t border-slate-700 pt-0.5">Total: Rp {Number(monthData.bal_l || 0).toLocaleString('id-ID')}</div>
@@ -733,10 +812,23 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
           <button
             onClick={() => {
+              setBulkCheckSummary(null);
+              setShowCheckAllConfirmModal(true);
+            }}
+            disabled={isBulkChecking || isBulkReconciling}
+            title="Centang lunas semua anggota dari tanggal bergabung sampai bulan ini"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <CheckSquare className="w-4 h-4 text-emerald-600" />
+            <span>Centang Semua s/d Bulan Ini</span>
+          </button>
+
+          <button
+            onClick={() => {
               setBulkResult(null);
               setShowConfirmBulkModal(true);
             }}
-            disabled={isBulkReconciling}
+            disabled={isBulkReconciling || isBulkChecking}
             title="Cocokkan otomatis saldo simpanan seluruh anggota ke buku besar bulanan"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
           >
@@ -1184,6 +1276,255 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                   >
                     <RefreshCw className="w-4 h-4" />
                     <span>Mulai Pencocokan Otomatis</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog Konfirmasi & Progress Centang Semua s/d Bulan Ini Massal */}
+      {showCheckAllConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          data-testid="bulk-check-all-modal"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <CheckSquare className={`w-5 h-5 ${isBulkChecking ? 'animate-pulse' : ''}`} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Centang Semua Anggota s/d Bulan Ini
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Tandai lunas seluruh iuran anggota aktif dari tanggal bergabung s/d sekarang
+                  </p>
+                </div>
+              </div>
+              {!isBulkChecking && (
+                <button
+                  onClick={async () => {
+                    if (bulkCheckSummary) {
+                      await handleReloadAfterBulkCheck();
+                    } else {
+                      setShowCheckAllConfirmModal(false);
+                      setBulkCheckSummary(null);
+                    }
+                  }}
+                  data-testid="close-check-all-modal-btn"
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* State 1: In Progress */}
+              {isBulkChecking && (
+                <div className="space-y-4 py-2" data-testid="bulk-check-all-in-progress">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>
+                        Memproses {bulkCheckProgress.current} dari {bulkCheckProgress.total || 0} anggota...
+                      </span>
+                    </span>
+                    <span className="text-emerald-700 font-bold">
+                      {bulkCheckProgress.total > 0
+                        ? Math.round((bulkCheckProgress.current / bulkCheckProgress.total) * 100)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+
+                  {/* Progress Bar Track */}
+                  <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-200">
+                    <div
+                      className="bg-emerald-600 h-full rounded-full transition-all duration-300 ease-out"
+                      style={{
+                        width: `${
+                          bulkCheckProgress.total > 0
+                            ? Math.min(100, Math.round((bulkCheckProgress.current / bulkCheckProgress.total) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/80 text-xs text-slate-600 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Anggota Sedang Diproses:</span>
+                      <span className="font-semibold text-slate-800" data-testid="bulk-check-all-current-member">
+                        {bulkCheckProgress.currentMemberName || 'Menginisialisasi antrean...'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* State 2: Completed Result */}
+              {!isBulkChecking && bulkCheckSummary !== null && (
+                <div className="py-2 text-center space-y-4" data-testid="bulk-check-all-result">
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-slate-900">
+                      Centang Massal Berhasil Diselesaikan!
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Seluruh iuran anggota aktif s/d bulan ini telah diperbarui.
+                    </p>
+                  </div>
+
+                  {/* Stats Cards */}
+                  <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto text-left">
+                    <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl">
+                      <div className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider">
+                        Berhasil Diproses
+                      </div>
+                      <div className="text-lg font-black text-emerald-900">
+                        {bulkCheckSummary.totalSuccess}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                      <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
+                        Gagal
+                      </div>
+                      <div className={`text-lg font-black ${bulkCheckSummary.totalFailed > 0 ? 'text-rose-600' : 'text-slate-700'}`}>
+                        {bulkCheckSummary.totalFailed}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* State 3: Confirmation / Initial Setup */}
+              {!isBulkChecking && bulkCheckSummary === null && (
+                <div className="space-y-4" data-testid="bulk-check-all-confirmation">
+                  {/* Info Box */}
+                  <div className="flex items-start gap-3 bg-emerald-50/80 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-900">
+                    <Sparkles className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-emerald-950">
+                        Perhatian Sebelum Melakukan Centang Massal
+                      </p>
+                      <p className="text-emerald-800 leading-relaxed">
+                        Tindakan ini akan menandai <b>lunas</b> seluruh iuran bulanan dari tanggal awal bergabung masing-masing anggota aktif hingga bulan berjalan saat ini ({MONTHS[new Date().getMonth()]} {new Date().getFullYear()}).
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Type Selector */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-slate-700 block">
+                      Pilih Jenis Simpanan yang Dicentang:
+                    </label>
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        {
+                          type: 'ALL',
+                          label: 'Semua Jenis Simpanan',
+                          desc: 'Simpanan Wajib, Belanja, dan Lebaran sekaligus',
+                        },
+                        {
+                          type: 'WAJIB',
+                          label: 'Simpanan Wajib Saja',
+                          desc: 'Hanya centang lunas Simpanan Wajib (SW)',
+                        },
+                        {
+                          type: 'BELANJA',
+                          label: 'Simpanan Belanja Saja',
+                          desc: 'Hanya centang lunas Simpanan Belanja Bulanan (SB)',
+                        },
+                        {
+                          type: 'LEBARAN',
+                          label: 'Simpanan Hari Raya Saja',
+                          desc: 'Hanya centang lunas Simpanan Lebaran (SL)',
+                        },
+                      ].map((opt) => (
+                        <label
+                          key={opt.type}
+                          className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-colors ${
+                            bulkCheckTargetType === opt.type
+                              ? 'bg-emerald-50/50 border-emerald-500 ring-1 ring-emerald-500'
+                              : 'bg-white border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="bulkCheckTargetType"
+                            value={opt.type}
+                            checked={bulkCheckTargetType === opt.type}
+                            onChange={() => setBulkCheckTargetType(opt.type as any)}
+                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <div>
+                            <div className="font-semibold text-slate-900">{opt.label}</div>
+                            <div className="text-[11px] text-slate-500">{opt.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+              {/* During Execution: Progress indicator text */}
+              {isBulkChecking && (
+                <p className="text-xs text-slate-400 italic">
+                  Proses sedang berjalan, mohon tunggu...
+                </p>
+              )}
+
+              {/* After Execution: Close and Refresh Button */}
+              {!isBulkChecking && bulkCheckSummary !== null && (
+                <button
+                  onClick={handleReloadAfterBulkCheck}
+                  data-testid="complete-check-all-modal-btn"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
+                >
+                  Selesai & Muat Ulang Matriks
+                </button>
+              )}
+
+              {/* Before Execution: Cancel & Start Buttons */}
+              {!isBulkChecking && bulkCheckSummary === null && (
+                <>
+                  <button
+                    onClick={() => setShowCheckAllConfirmModal(false)}
+                    className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleBulkCheckAllUpToNow(
+                        bulkCheckTargetType,
+                        setIsBulkChecking,
+                        setBulkCheckProgress,
+                        setBulkCheckSummary,
+                        async () => {
+                          clearTierCache();
+                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+                        }
+                      );
+                    }}
+                    data-testid="start-check-all-btn"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
+                  >
+                    <CheckSquare className="w-4 h-4" />
+                    <span>Mulai Centang Semua</span>
                   </button>
                 </>
               )}

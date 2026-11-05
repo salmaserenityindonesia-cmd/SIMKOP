@@ -7,6 +7,7 @@ import {
   fetchComplianceMatrixData,
   fetchComplianceData,
   handleBulkAutoReconcile,
+  handleBulkCheckAllUpToNow,
   handleExportSavingsMatrix,
   handleImportMatrixSuccess,
 } from './ComplianceMatrix';
@@ -16,7 +17,7 @@ import {
   ComplianceMatrixResult,
   ComplianceMatrixRow,
 } from '../../services/complianceService';
-import { bulkAutoReconcileAllMembers } from '../../services/savingsMatrixService';
+import { bulkAutoReconcileAllMembers, bulkCheckAllUpToCurrentMonth } from '../../services/savingsMatrixService';
 import { supabase } from '../../lib/supabaseClient';
 import { exportSavingsMatrixExcel } from '../../utils/savingsMatrixExporter';
 
@@ -47,6 +48,11 @@ vi.mock('../../services/savingsMatrixService', () => ({
     onProgress?.({ processed: 5, total: 10, currentMemberName: 'Budi' });
     onProgress?.({ processed: 10, total: 10, currentMemberName: 'Siti' });
     return { success: true, totalMembers: 10, totalSuccess: 10, totalFailed: 0 };
+  }),
+  bulkCheckAllUpToCurrentMonth: vi.fn().mockImplementation(async (type, onProgress) => {
+    onProgress?.({ current: 5, total: 10, currentMemberName: 'Budi' });
+    onProgress?.({ current: 10, total: 10, currentMemberName: 'Siti' });
+    return { totalSuccess: 10, totalFailed: 0 };
   }),
 }));
 
@@ -557,6 +563,130 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(setIsBulkReconciling).toHaveBeenCalledWith(true);
       expect(setIsBulkReconciling).toHaveBeenLastCalledWith(false);
       expect(setBulkResult).toHaveBeenCalledWith({
+        totalSuccess: 0,
+        totalFailed: 1,
+      });
+      expect(result).toBeNull();
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+
+    it('renders toolbar button for Centang Semua s/d Bulan Ini with correct attributes', () => {
+      const html = renderToStaticMarkup(<ComplianceMatrix />);
+      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('title="Centang lunas semua anggota dari tanggal bergabung sampai bulan ini"');
+    });
+
+    it('renders bulk check-all confirmation modal with title, warning banner, and deposit type options', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialShowCheckAllConfirmModal={true} />
+      );
+
+      // Verify modal is visible
+      expect(html).toContain('data-testid="bulk-check-all-modal"');
+      expect(html).toContain('Centang Semua Anggota s/d Bulan Ini');
+      expect(html).toContain('Tandai lunas seluruh iuran anggota aktif dari tanggal bergabung s/d sekarang');
+      expect(html).toContain('data-testid="bulk-check-all-confirmation"');
+
+      // Verify deposit type radio options
+      expect(html).toContain('Semua Jenis Simpanan');
+      expect(html).toContain('Simpanan Wajib Saja');
+      expect(html).toContain('Simpanan Belanja Saja');
+      expect(html).toContain('Simpanan Hari Raya Saja');
+
+      // Verify action buttons
+      expect(html).toContain('Batal');
+      expect(html).toContain('Mulai Centang Semua');
+    });
+
+    it('renders bulk check-all modal in-progress state with progress bar, percentage, and current member name', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialShowCheckAllConfirmModal={true}
+          initialBulkChecking={true}
+          initialBulkCheckProgress={{
+            current: 80,
+            total: 100,
+            currentMemberName: 'Ahmad Dahlan',
+          }}
+        />
+      );
+
+      expect(html).toContain('data-testid="bulk-check-all-in-progress"');
+      expect(html).toContain('Memproses 80 dari 100 anggota...');
+      expect(html).toContain('80%');
+      expect(html).toContain('Ahmad Dahlan');
+      expect(html).toContain('Proses sedang berjalan, mohon tunggu...');
+    });
+
+    it('renders bulk check-all modal completion result state with success summary and reload button', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialShowCheckAllConfirmModal={true}
+          initialBulkChecking={false}
+          initialBulkCheckSummary={{
+            totalSuccess: 95,
+            totalFailed: 5,
+          }}
+        />
+      );
+
+      expect(html).toContain('data-testid="bulk-check-all-result"');
+      expect(html).toContain('Centang Massal Berhasil Diselesaikan!');
+      expect(html).toContain('95');
+      expect(html).toContain('5');
+      expect(html).toContain('Selesai &amp; Muat Ulang Matriks');
+    });
+
+    it('handleBulkCheckAllUpToNow invokes bulkCheckAllUpToCurrentMonth, tracks progress, and returns result', async () => {
+      const setIsBulkChecking = vi.fn();
+      const progressUpdates: any[] = [];
+      const setBulkCheckProgress = vi.fn((p) => progressUpdates.push(p));
+      const setBulkCheckSummary = vi.fn();
+      const onComplete = vi.fn();
+
+      const result = await handleBulkCheckAllUpToNow(
+        'ALL',
+        setIsBulkChecking,
+        setBulkCheckProgress,
+        setBulkCheckSummary,
+        onComplete
+      );
+
+      expect(bulkCheckAllUpToCurrentMonth).toHaveBeenCalledWith('ALL', expect.any(Function));
+      expect(setIsBulkChecking).toHaveBeenCalledWith(true);
+      expect(setIsBulkChecking).toHaveBeenLastCalledWith(false);
+      expect(progressUpdates).toEqual([
+        { current: 0, total: 0, currentMemberName: '' },
+        { current: 5, total: 10, currentMemberName: 'Budi' },
+        { current: 10, total: 10, currentMemberName: 'Siti' },
+      ]);
+      expect(setBulkCheckSummary).toHaveBeenCalledWith({
+        totalSuccess: 10,
+        totalFailed: 0,
+      });
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ totalSuccess: 10, totalFailed: 0 });
+    });
+
+    it('handleBulkCheckAllUpToNow handles service exceptions gracefully', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      (bulkCheckAllUpToCurrentMonth as any).mockRejectedValueOnce(new Error('Network error'));
+
+      const setIsBulkChecking = vi.fn();
+      const setBulkCheckProgress = vi.fn();
+      const setBulkCheckSummary = vi.fn();
+
+      const result = await handleBulkCheckAllUpToNow(
+        'WAJIB',
+        setIsBulkChecking,
+        setBulkCheckProgress,
+        setBulkCheckSummary
+      );
+
+      expect(setIsBulkChecking).toHaveBeenCalledWith(true);
+      expect(setIsBulkChecking).toHaveBeenLastCalledWith(false);
+      expect(setBulkCheckSummary).toHaveBeenCalledWith({
         totalSuccess: 0,
         totalFailed: 1,
       });
@@ -1173,6 +1303,71 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
 
       expect(htmlArrears).toContain('text-rose-600 font-bold');
       expect(htmlArrears).toContain('210.000');
+    });
+  });
+
+  describe('Deposit Evidence & Reference Documentation Tooltip Rendering', () => {
+    it('renders reference number and notes inside month hover tooltip when available', () => {
+      const rowWithEvidence = {
+        member_id: 'm-evidence-1',
+        nrp: '78010234',
+        nama: 'Briptu Agus Susanto',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 10200000, b: 0, l: 0 },
+        netSavings: {
+          wajib: 10200000,
+          belanja: 0,
+          lebaran: 0,
+          total: 10200000,
+        },
+        months: [
+          {
+            w: 200000,
+            b: 25000,
+            l: 50000,
+            bal_w: 200000,
+            bal_b: 25000,
+            bal_l: 50000,
+            wajib: {
+              status: 'paid' as const,
+              amount: 200000,
+              reference_no: 'KW-2026/01/01',
+              notes: 'Potong gaji bulan Januari',
+            },
+            belanja: {
+              status: 'paid' as const,
+              amount: 25000,
+              reference_no: 'TRF-SB-202601',
+              notes: 'Transfer kasir belanja',
+            },
+            lebaran: {
+              status: 'paid' as const,
+              amount: 50000,
+              reference_no: 'SL-2026/01',
+            },
+          },
+          ...Array(11).fill(null),
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithEvidence as any]} initialYear="2026" />
+      );
+
+      // Verify Wajib evidence in tooltip
+      expect(html).toContain('data-testid="tooltip-ref-wajib"');
+      expect(html).toContain('Bukti: KW-2026/01/01');
+      expect(html).toContain('Potong gaji bulan Januari');
+
+      // Verify Belanja evidence in tooltip
+      expect(html).toContain('data-testid="tooltip-ref-belanja"');
+      expect(html).toContain('Bukti: TRF-SB-202601');
+      expect(html).toContain('Transfer kasir belanja');
+
+      // Verify Lebaran evidence in tooltip
+      expect(html).toContain('data-testid="tooltip-ref-lebaran"');
+      expect(html).toContain('Bukti: SL-2026/01');
     });
   });
 });

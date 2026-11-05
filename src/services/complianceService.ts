@@ -351,6 +351,8 @@ export interface SavingsSubItem {
   status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled';
   amount: number;
   targetAmount?: number;
+  reference_no?: string;
+  notes?: string;
 }
 
 export interface MonthSavingsCell {
@@ -555,7 +557,7 @@ export async function getComplianceMatrixData(
 
   const { data: transactions } = await fetchAllPaged(
     'deposit_transactions',
-    'id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, member_deposits(member_id, deposit_type_id)'
+    'id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, reference_no, notes, member_deposits(member_id, deposit_type_id)'
   );
 
   // Helper untuk mengekstrak member_id dan deposit_type_id dari transaksi
@@ -684,7 +686,18 @@ export async function getComplianceMatrixData(
   }
 
   // Agregasi setoran bulanan dan transaksi anggota
-  const paymentsByMember: Record<string, Record<number, { w: number; b: number; l: number }>> = {};
+  interface MonthlyPaymentDetail {
+    w: number;
+    b: number;
+    l: number;
+    ref_w?: string;
+    ref_b?: string;
+    ref_l?: string;
+    notes_w?: string;
+    notes_b?: string;
+    notes_l?: string;
+  }
+  const paymentsByMember: Record<string, Record<number, MonthlyPaymentDetail>> = {};
   const memberTxs: Record<
     string,
     Array<{ year: number; month: number; type: string; amt: number; tId: string }>
@@ -735,9 +748,21 @@ export async function getComplianceMatrixData(
           if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
           if (!paymentsByMember[mId][month]) paymentsByMember[mId][month] = { w: 0, b: 0, l: 0 };
 
-          if (wajibTypeIds.has(tId) || tId === wajibId) paymentsByMember[mId][month].w += amt;
-          if (belanjaTypeIds.has(tId) || tId === belanjaId) paymentsByMember[mId][month].b += amt;
-          if (lebaranTypeIds.has(tId) || tId === lebaranId) paymentsByMember[mId][month].l += amt;
+          if (wajibTypeIds.has(tId) || tId === wajibId) {
+            paymentsByMember[mId][month].w += amt;
+            if (tx.reference_no) paymentsByMember[mId][month].ref_w = tx.reference_no;
+            if (tx.notes) paymentsByMember[mId][month].notes_w = tx.notes;
+          }
+          if (belanjaTypeIds.has(tId) || tId === belanjaId) {
+            paymentsByMember[mId][month].b += amt;
+            if (tx.reference_no) paymentsByMember[mId][month].ref_b = tx.reference_no;
+            if (tx.notes) paymentsByMember[mId][month].notes_b = tx.notes;
+          }
+          if (lebaranTypeIds.has(tId) || tId === lebaranId) {
+            paymentsByMember[mId][month].l += amt;
+            if (tx.reference_no) paymentsByMember[mId][month].ref_l = tx.reference_no;
+            if (tx.notes) paymentsByMember[mId][month].notes_l = tx.notes;
+          }
         }
       }
     });
@@ -930,6 +955,8 @@ export async function getComplianceMatrixData(
           status: statusW,
           amount: amtW,
           ...(statusW === 'partial' ? { targetAmount: applicableTariffW } : {}),
+          ...(p.ref_w ? { reference_no: p.ref_w } : {}),
+          ...(p.notes_w ? { notes: p.notes_w } : {}),
         };
 
         // Evaluasi status bulan untuk BELANJA
@@ -959,6 +986,8 @@ export async function getComplianceMatrixData(
           status: statusB,
           amount: amtB,
           ...(statusB === 'partial' ? { targetAmount: applicableTariffB } : {}),
+          ...(p.ref_b ? { reference_no: p.ref_b } : {}),
+          ...(p.notes_b ? { notes: p.notes_b } : {}),
         };
 
         // Evaluasi status bulan untuk LEBARAN
@@ -988,6 +1017,8 @@ export async function getComplianceMatrixData(
           status: statusL,
           amount: amtL,
           ...(statusL === 'partial' ? { targetAmount: applicableTariffL } : {}),
+          ...(p.ref_l ? { reference_no: p.ref_l } : {}),
+          ...(p.notes_l ? { notes: p.notes_l } : {}),
         };
 
         monthsData.push({
