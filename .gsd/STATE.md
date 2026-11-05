@@ -1,16 +1,19 @@
 ## Current Position
-- **Phase**: 58 (Implementasi Jejak Audit & Dokumentasi Bukti Pembayaran pada Matriks Simpanan)
-- **Task**: Phase execution and verification complete
-- **Status**: Complete & Verified (9/9 must-haves verified)
+- **Phase**: 59 (Integrasi Pembayaran Kasir POS Menggunakan Simpanan Belanja Anggota)
+- **Task**: Planning completed, ready for execution
+- **Status**: Planned (3 plans defined across 3 waves)
 
 ## Last Session Summary
-Phase 58 executed and verified across 3 plans:
-- **Plan 58.1**: Database Schema Expansion & Service Layer Support for Evidence Documentation. Created migration `supabase/migrations/034_add_audit_and_reference_to_deposit_transactions.sql` with columns `reference_no`, `payment_method`, `notes`, `created_by`, and automatic trigger `trg_audit_deposit_tx_delete` logging to `audit_logs`. Updated `src/services/savingsMatrixService.ts` with `CheckMonthPayload`, `MonthAuditHistoryItem`, `saveMonthDepositWithEvidence`, `cancelMonthDepositWithReason`, and `getMonthAuditHistory`. Added 7 unit tests (30/30 passed). Commits: `234bdfd9`, `d7b29530`.
-- **Plan 58.2**: Interactive Evidence Input Popover, Uncheck Confirmation Modal & Audit History Viewer in UI. Implemented modal input bukti setoran (`evidence-modal`), modal konfirmasi pembatalan dengan alasan wajib (`uncheck-modal`), and drawer/modal riwayat kronologis per sel (`history-modal`) in `SavingsLedgerMatrixModal.tsx`. Updated `complianceService.ts` and `ComplianceMatrix.tsx` tooltip to show reference numbers and notes. Added unit tests in `SavingsLedgerMatrixModal.test.tsx` (24/24 passed) and `ComplianceMatrix.test.tsx` (46/46 passed). Commits: `50983ba1`, `9c0dfe11`.
-- **Plan 58.3**: Comprehensive Static Analysis, Full Test Suite & Production Build Verification. Validated clean TypeScript typecheck (`tsc --noEmit`), full Vitest suite passing (43 test files, 544 tests passed 100%), and Vite production build succeeding cleanly (`npm run build` in 2.20s). Created independent verification report at `.gsd/phases/58/VERIFICATION.md`. Commit: `805b2367`.
+Phase 58 completed and verified. Debugging of duplicate uncheck logs and preservation of manual admin cancellation reasons resolved and verified.
+Phase 59 planned into 3 atomic plans:
+- **Plan 59.1**: Database RPC for Atomic Balance Deduction (`036_pos_spending_from_savings_function.sql`) & Service Layer Integration (`src/services/posCheckoutService.ts`).
+- **Plan 59.2**: POS SplitPaymentModal Validation & Cashier Shift Reconciliation Guard (`src/components/pos/SplitPaymentModal.tsx` & `src/services/cashierShiftService.ts`).
+- **Plan 59.3**: Static Verification, Comprehensive Test Suite & Production Build Verification (`tsc --noEmit`, Vitest, `npm run build`).
 
 ## Next Steps
-Phase 58 is complete. Awaiting next user request or roadmap update.
+Execute Plan 59.1:
+1. Buat berkas migrasi `supabase/migrations/036_pos_spending_from_savings_function.sql` untuk fungsi RPC `process_pos_deposit_payment`.
+2. Integrasikan pemanggilan RPC tersebut pada `src/services/posCheckoutService.ts` dan buat unit test di `posCheckoutService.test.ts`.
 
 ## Blockers
 - None.
@@ -18,6 +21,7 @@ Phase 58 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Sequential Migration Numbering**: Menggunakan nomor urut `034` (`034_add_audit_and_reference_to_deposit_transactions.sql`) karena nomor 032 dan 033 sudah digunakan oleh migrasi sebelumnya.
-- **Bi-Directional Audit Trail**: Tidak hanya mencatat nomor bukti dan metode pembayaran pada transaksi aktif, tetapi juga menangkap pembatalan (DELETE) secara otomatis melalui database trigger ke `audit_logs` serta pencatatan alasan pembatalan secara eksplisit.
-- **Audit Detail Accessibility**: Menyediakan tombol riwayat audit per sel bulan di modal buku besar serta tooltip hover nomor kwitansi pada matriks kepatuhan tahunan.
+- **Sequential Migration Numbering**: Menggunakan nomor urut `036` (`036_pos_spending_from_savings_function.sql`) karena nomor 033, 034, dan 035 telah digunakan pada fase sebelumnya.
+- **Atomic Balance & Anti-Overdraft Protection**: Validasi ketersediaan saldo dan penyisipan transaksi `withdrawal` dilakukan di level PostgreSQL via RPC dengan `SECURITY DEFINER` untuk mencegah race condition / overdraft.
+- **Strict Drawer Cash Separation**: Nilai `paid_deposit` hanya dicatat pada `sales.paid_deposit` dan tidak dimasukkan ke dalam `cash_sales` / `expected_cash` laci kasir agar rekonsiliasi kas fisik shift tetap akurat 100%.
+- **Responsive Cashier Safeguard**: Pada modal pembayaran kasir (`SplitPaymentModal.tsx`), input simpanan belanja dikunci jika non-anggota atau saldo nol, dilengkapi badge sisa saldo riil dan pembatasan otomatis `min(total, saldo)`.
