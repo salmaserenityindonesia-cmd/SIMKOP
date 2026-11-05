@@ -16,10 +16,41 @@ export const FULL_MONTH_NAMES = [
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
 ];
 
+export interface CheckMonthPayload {
+  memberDepositId: string;
+  month: number;
+  year: number;
+  amount: number;
+  referenceNo?: string;
+  paymentMethod?: string;
+  notes?: string;
+  description?: string;
+}
+
+export interface MonthAuditHistoryItem {
+  id: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  amount?: number;
+  forMonth: number;
+  forYear: number;
+  referenceNo?: string;
+  paymentMethod?: string;
+  notes?: string;
+  performerName?: string;
+  performerId?: string;
+  createdAt: string;
+}
+
 export interface BulkReconcileProgress {
   processed: number;
   total: number;
   currentMemberName?: string;
+}
+
+export interface BulkCheckProgress {
+  current: number;
+  total: number;
+  currentMemberName: string;
 }
 
 export interface BulkReconcileResult {
@@ -935,3 +966,607 @@ export async function bulkAutoReconcileAllMembers(
     errors: errors.length > 0 ? errors : undefined
   };
 }
+
+/**
+ * Menjalankan centang lunas massal seluruh anggota aktif dari tanggal awal bergabung
+ * masing-masing hingga bulan berjalan saat ini secara aman, bertahap, dan terlindungi dari rate limit.
+ */
+export async function bulkCheckAllUpToCurrentMonth(
+  selectedType: string = 'ALL',
+  onProgress?: (progress: BulkCheckProgress) => void
+): Promise<{ totalSuccess: number; totalFailed: number }> {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1 - 12
+
+  // 1. Ambil seluruh anggota aktif dari public.anggota
+  let membersQuery: any = supabase
+    .from('anggota')
+    .select('id, nrp, nama, created_at, status, membership_status');
+
+  let membersData: any[] = [];
+  let membersError: any = null;
+
+  if (typeof membersQuery.eq === 'function') {
+    const eqQuery = membersQuery.eq('status', 'aktif');
+    if (eqQuery && typeof eqQuery.order === 'function') {
+      const resp = await eqQuery.order('nama', { ascending: true });
+      membersData = resp.data || [];
+      membersError = resp.error;
+    } else if (eqQuery && typeof eqQuery.then === 'function') {
+      const resp = await eqQuery;
+      membersData = resp.data || [];
+      membersError = resp.error;
+    }
+  }
+
+  if ((!membersData || membersData.length === 0) && !membersError) {
+    if (typeof membersQuery.order === 'function') {
+      const resp = await membersQuery.order('nama', { ascending: true });
+      membersData = resp.data || [];
+      membersError = resp.error;
+    } else if (typeof membersQuery.then === 'function') {
+      const resp = await membersQuery;
+      membersData = resp.data || [];
+      membersError = resp.error;
+    }
+  }
+
+  if (membersError) {
+    throw new Error(`Gagal memuat data anggota: ${membersError.message || membersError}`);
+  }
+
+  const activeMembers = (membersData || []).filter((m: any) => {
+    const st = (m.status || 'aktif').toLowerCase();
+    const mst = (m.membership_status || 'ACTIVE').toUpperCase();
+    return st !== 'nonaktif' && mst !== 'RESIGNED';
+  });
+
+  if (activeMembers.length === 0) {
+    return { totalSuccess: 0, totalFailed: 0 };
+  }
+
+  // 2. Tentukan tipe simpanan yang dipilih
+  const rawType = (selectedType || 'ALL').trim();
+  const isAll = !rawType || rawType === 'ALL' || rawType.toLowerCase().includes('semua');
+  let typesToProcess: Array<'WAJIB' | 'BELANJA' | 'LEBARAN'> = [];
+  if (isAll) {
+    typesToProcess = ['WAJIB', 'BELANJA', 'LEBARAN'];
+  } else {
+    const resolved = resolveDepositTypeCode(rawType);
+    if (resolved) {
+      typesToProcess = [resolved];
+    } else {
+      const codeUpper = rawType.toUpperCase();
+      if (codeUpper === 'SW' || codeUpper === 'WAJIB') typesToProcess = ['WAJIB'];
+      else if (codeUpper === 'SB' || codeUpper === 'BELANJA') typesToProcess = ['BELANJA'];
+      else if (codeUpper === 'SL' || codeUpper === 'LEBARAN') typesToProcess = ['LEBARAN'];
+      else typesToProcess = [codeUpper as any];
+    }
+  }
+
+  // 3. Ambil data rekening simpanan & master tarif bertingkat
+  let depTypes: any[] = [];
+  try {
+    const { data: dtData } = await supabase
+      .from('deposit_types')
+      .select('id, code, name');
+    depTypes = dtData || [];
+  } catch (err) {
+    console.warn('Gagal memuat deposit_types:', err);
+  }
+
+  let rateTiers: SavingsRateTier[] = [];
+  try {
+    rateTiers = await getRateTiers(undefined, false);
+  } catch (err) {
+    console.warn('Gagal memuat rate tiers via getRateTiers:', err);
+  }
+
+  if (!rateTiers || rateTiers.length === 0) {
+    try {
+      const { data: tiers } = await supabase
+        .from('savings_rate_tiers')
+        .select('*')
+        .order('start_year', { ascending: true })
+        .order('start_month', { ascending: true });
+      if (tiers && tiers.length > 0) {
+        rateTiers = tiers as any;
+      }
+    } catch (err) {
+      console.warn('Gagal query savings_rate_tiers langsung:', err);
+    }
+  }
+
+  if (!rateTiers || rateTiers.length === 0) {
+    rateTiers = DEFAULT_RATE_TIERS;
+  }
+
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  const BATCH_MEMBER_SIZE = 25;
+
+  // 4. Iterasi bertahap per anggota
+  for (let m = 0; m < activeMembers.length; m++) {
+    const member = activeMembers[m];
+    if (onProgress) {
+      onProgress({
+        current: m + 1,
+        total: activeMembers.length,
+        currentMemberName: member.nama || member.nrp || 'Anggota',
+      });
+    }
+
+    try {
+      const parsedJoin = new Date(member.created_at || '2022-01-01');
+      const joinDate = isNaN(parsedJoin.getTime()) ? new Date('2022-01-01') : parsedJoin;
+      const joinYear = joinDate.getFullYear();
+      const joinMonth = joinDate.getMonth() + 1;
+
+      let memberSuccessCount = 0;
+
+      for (const typeCode of typesToProcess) {
+        try {
+          const dType = depTypes.find((t: any) => {
+            const resolved = resolveDepositTypeCode(t);
+            return resolved === typeCode || (t.code && t.code.toUpperCase() === typeCode);
+          });
+          if (!dType) continue;
+
+          // Pastikan rekening simpanan tersedia
+          let memberDepositId: string | null = null;
+          const checkQuery: any = supabase.from('member_deposits').select('id');
+          if (typeof checkQuery.eq === 'function') {
+            const eqQuery = checkQuery.eq('member_id', member.id);
+            if (eqQuery && typeof eqQuery.eq === 'function') {
+              const eqTypeQuery = eqQuery.eq('deposit_type_id', dType.id);
+              const checkRes = typeof eqTypeQuery.maybeSingle === 'function'
+                ? await eqTypeQuery.maybeSingle()
+                : await eqTypeQuery;
+              if (checkRes?.data) {
+                const row = Array.isArray(checkRes.data) ? checkRes.data[0] : checkRes.data;
+                memberDepositId = row?.id || null;
+              }
+            }
+          }
+
+          if (!memberDepositId) {
+            const tableDeposits: any = supabase.from('member_deposits');
+            if (typeof tableDeposits.insert === 'function') {
+              const insQuery = tableDeposits.insert({
+                member_id: member.id,
+                deposit_type_id: dType.id,
+                is_terminated: false
+              });
+
+              let insRes: any = null;
+              if (typeof insQuery.select === 'function') {
+                const selQuery = insQuery.select('id');
+                insRes = typeof selQuery.maybeSingle === 'function'
+                  ? await selQuery.maybeSingle()
+                  : (typeof selQuery.single === 'function' ? await selQuery.single() : await selQuery);
+              } else {
+                insRes = await insQuery;
+              }
+
+              if (insRes?.data) {
+                const row = Array.isArray(insRes.data) ? insRes.data[0] : insRes.data;
+                memberDepositId = row?.id || null;
+              }
+            }
+          }
+
+          if (!memberDepositId) {
+            console.warn(`Lewati simpanan ${typeCode} untuk ${member.nama}: akun rekening tidak dapat dibuat/ditemukan.`);
+            continue;
+          }
+
+          // Bersihkan transaksi alokasi bulanan lama
+          const delQuery: any = supabase.from('deposit_transactions').delete();
+          if (typeof delQuery.eq === 'function') {
+            const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
+            if (eqQuery && typeof eqQuery.not === 'function') {
+              await eqQuery.not('for_month', 'is', null);
+            } else if (eqQuery && typeof eqQuery.then === 'function') {
+              await eqQuery;
+            }
+          }
+
+          // Bersihkan saldo migrasi penampung belum teralokasi (for_month IS NULL) jika ada
+          try {
+            const delBulk: any = supabase.from('deposit_transactions').delete();
+            if (typeof delBulk.eq === 'function') {
+              const eqBulk = delBulk.eq('member_deposit_id', memberDepositId);
+              if (eqBulk && typeof eqBulk.is === 'function') {
+                const isBulk = eqBulk.is('for_month', null);
+                if (isBulk && typeof isBulk.then === 'function') {
+                  await isBulk;
+                }
+              }
+            }
+          } catch {
+            // ignore
+          }
+
+          // Susun mutasi baru dari bulan bergabung sampai bulan berjalan saat ini
+          const txsToInsert: any[] = [];
+          for (let y = joinYear; y <= currentYear; y++) {
+            const startM = (y === joinYear) ? joinMonth : 1;
+            const endM = (y === currentYear) ? currentMonth : 12;
+
+            for (let mon = startM; mon <= endM; mon++) {
+              const rateAmount = getApplicableRate(typeCode, y, mon, rateTiers) || 200000;
+
+              txsToInsert.push({
+                member_deposit_id: memberDepositId,
+                transaction_type: 'deposit',
+                amount: rateAmount,
+                for_month: mon,
+                for_year: y,
+                description: `Centang Setoran Rutin Matriks (${typeCode})`
+              });
+            }
+          }
+
+          // Chunking insert mutasi (max 100 rows per request)
+          const CHUNK_SIZE = 100;
+          for (let c = 0; c < txsToInsert.length; c += CHUNK_SIZE) {
+            const chunk = txsToInsert.slice(c, c + CHUNK_SIZE);
+            const { error: insErr } = await supabase.from('deposit_transactions').insert(chunk);
+            if (insErr) {
+              console.error(`Gagal insert mutasi ${typeCode} chunk untuk ${member.nama}:`, insErr);
+              throw insErr;
+            }
+          }
+
+          memberSuccessCount++;
+        } catch (typeErr) {
+          console.error(`Gagal memproses ${typeCode} untuk anggota ${member.nama}:`, typeErr);
+        }
+      }
+
+      if (memberSuccessCount > 0) {
+        totalSuccess++;
+      } else {
+        totalFailed++;
+      }
+    } catch (err) {
+      console.error(`Gagal centang massal untuk anggota ${member.nama}:`, err);
+      totalFailed++;
+    }
+
+    // Throttle jeda antar anggota agar browser responsif dan terhindar dari rate limit
+    if ((m + 1) % BATCH_MEMBER_SIZE === 0) {
+      await new Promise(resolve => setTimeout(resolve, 60));
+    }
+  }
+
+  return { totalSuccess, totalFailed };
+}
+
+/**
+ * Menyimpan pencatatan setoran bulanan individual ke deposit_transactions
+ * lengkap dengan dokumentasi bukti pembayaran (nomor referensi, metode bayar, catatan, admin pencatat).
+ */
+export async function saveMonthDepositWithEvidence(
+  payload: CheckMonthPayload
+): Promise<{ success: boolean; data?: any }> {
+  if (!payload.memberDepositId || !payload.month || !payload.year) {
+    throw new Error('memberDepositId, month, dan year wajib diisi');
+  }
+
+  // 1. Ambil admin yang sedang login
+  let currentUserId: string | null = null;
+  try {
+    if (supabase.auth && typeof supabase.auth.getUser === 'function') {
+      const { data: authData } = await supabase.auth.getUser();
+      currentUserId = authData?.user?.id || null;
+    }
+  } catch {
+    // abaikan jika tidak dalam sesi auth aktif
+  }
+
+  // 2. Bersihkan mutasi lama untuk periode (member_deposit_id, year, month) jika ada
+  try {
+    const delQuery: any = supabase.from('deposit_transactions').delete();
+    if (typeof delQuery.eq === 'function') {
+      const q1 = delQuery.eq('member_deposit_id', payload.memberDepositId);
+      if (q1 && typeof q1.eq === 'function') {
+        const q2 = q1.eq('for_year', payload.year);
+        if (q2 && typeof q2.eq === 'function') {
+          await q2.eq('for_month', payload.month);
+        } else if (q2 && typeof q2.then === 'function') {
+          await q2;
+        }
+      } else if (q1 && typeof q1.then === 'function') {
+        await q1;
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal membersihkan mutasi lama sebelum simpan bukti:', err);
+  }
+
+  // 3. Sisipkan transaksi baru dengan atribut bukti lengkap
+  const rowToInsert = {
+    member_deposit_id: payload.memberDepositId,
+    amount: payload.amount,
+    transaction_type: 'deposit',
+    for_month: payload.month,
+    for_year: payload.year,
+    description: payload.description || `Setoran Matriks Bulan ${MONTH_NAMES[payload.month - 1] || payload.month} ${payload.year}`,
+    reference_no: payload.referenceNo || null,
+    payment_method: payload.paymentMethod || 'tunai',
+    notes: payload.notes || null,
+    created_by: currentUserId
+  };
+
+  const insertQuery: any = supabase.from('deposit_transactions').insert(rowToInsert);
+  let insertedData: any = null;
+
+  if (typeof insertQuery.select === 'function') {
+    const sel = insertQuery.select();
+    const res = typeof sel.single === 'function' ? await sel.single() : await sel;
+    if (res?.error) throw res.error;
+    insertedData = res?.data;
+  } else {
+    const res = await insertQuery;
+    if (res?.error) throw res.error;
+    insertedData = res?.data;
+  }
+
+  return { success: true, data: insertedData };
+}
+
+/**
+ * Membatalkan (uncheck) setoran bulanan individual pada matriks simpanan:
+ * Mengambil transaksi aktif, mencatat audit log eksplisit ke public.audit_logs
+ * dengan alasan pembatalan dan identitas admin, lalu menghapus transaksi dari deposit_transactions.
+ */
+export async function cancelMonthDepositWithReason(
+  memberDepositId: string,
+  year: number,
+  month: number,
+  reason: string
+): Promise<{ success: boolean; cancelledCount: number }> {
+  if (!memberDepositId || !year || !month) {
+    throw new Error('memberDepositId, year, dan month wajib diisi');
+  }
+  if (!reason || reason.trim() === '') {
+    throw new Error('Alasan pembatalan wajib diisi');
+  }
+
+  // 1. Ambil transaksi yang akan dihapus
+  let existingTxs: any[] = [];
+  try {
+    const selQuery: any = supabase.from('deposit_transactions').select('*');
+    if (typeof selQuery.eq === 'function') {
+      const q1 = selQuery.eq('member_deposit_id', memberDepositId);
+      if (q1 && typeof q1.eq === 'function') {
+        const q2 = q1.eq('for_year', year);
+        if (q2 && typeof q2.eq === 'function') {
+          const res = await q2.eq('for_month', month);
+          existingTxs = res.data || [];
+        } else if (q2 && typeof q2.then === 'function') {
+          const res = await q2;
+          existingTxs = res.data || [];
+        }
+      } else if (q1 && typeof q1.then === 'function') {
+        const res = await q1;
+        existingTxs = res.data || [];
+      }
+    }
+  } catch (selErr) {
+    console.warn('Gagal memuat transaksi yang akan dibatalkan:', selErr);
+  }
+
+  // 2. Ambil admin yang sedang login
+  let currentUserId: string | null = null;
+  let currentUserName: string = 'Pengelola';
+  try {
+    if (supabase.auth && typeof supabase.auth.getUser === 'function') {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user) {
+        currentUserId = authData.user.id;
+        currentUserName =
+          authData.user.user_metadata?.nama ||
+          authData.user.user_metadata?.name ||
+          authData.user.email ||
+          'Pengelola';
+      }
+    }
+  } catch {
+    // fallback
+  }
+
+  // 3. Catat audit log eksplisit ke audit_logs untuk setiap transaksi yang dibatalkan
+  if (existingTxs && existingTxs.length > 0) {
+    for (const tx of existingTxs) {
+      try {
+        const auditPayload = {
+          table_name: 'deposit_transactions',
+          action: 'DELETE',
+          record_id: tx.id ? String(tx.id) : undefined,
+          entity_name: 'deposit_transactions',
+          entity_id: memberDepositId,
+          old_data: tx,
+          performed_by: currentUserId,
+          performer_name: currentUserName,
+          notes: reason.trim(),
+          created_at: new Date().toISOString()
+        };
+        await supabase.from('audit_logs').insert(auditPayload);
+      } catch (auditErr) {
+        console.warn('Gagal mencatat riwayat audit pembatalan:', auditErr);
+      }
+    }
+  }
+
+  // 4. Hapus transaksi dari deposit_transactions
+  const delQuery: any = supabase.from('deposit_transactions').delete();
+  if (typeof delQuery.eq === 'function') {
+    const q1 = delQuery.eq('member_deposit_id', memberDepositId);
+    if (q1 && typeof q1.eq === 'function') {
+      const q2 = q1.eq('for_year', year);
+      if (q2 && typeof q2.eq === 'function') {
+        const delRes = await q2.eq('for_month', month);
+        if (delRes?.error) throw delRes.error;
+      } else if (q2 && typeof q2.then === 'function') {
+        const delRes = await q2;
+        if (delRes?.error) throw delRes.error;
+      }
+    }
+  }
+
+  return { success: true, cancelledCount: existingTxs.length };
+}
+
+/**
+ * Mengambil kronologi riwayat audit untuk sel bulan tertentu pada rekening simpanan.
+ * Menggabungkan mutasi aktif dari deposit_transactions (status CREATE/aktif)
+ * dengan log pembatalan atau perubahan dari tabel public.audit_logs (status DELETE/UPDATE),
+ * diurutkan secara kronologis dari yang terbaru ke terlama.
+ */
+export async function getMonthAuditHistory(
+  memberDepositId: string,
+  year: number,
+  month: number
+): Promise<MonthAuditHistoryItem[]> {
+  if (!memberDepositId || !year || !month) {
+    return [];
+  }
+
+  // 1. Ambil transaksi aktif dari deposit_transactions
+  let activeTxs: any[] = [];
+  try {
+    const selTx: any = supabase.from('deposit_transactions').select('*');
+    if (typeof selTx.eq === 'function') {
+      const q1 = selTx.eq('member_deposit_id', memberDepositId);
+      if (q1 && typeof q1.eq === 'function') {
+        const q2 = q1.eq('for_year', year);
+        if (q2 && typeof q2.eq === 'function') {
+          const res = await q2.eq('for_month', month);
+          activeTxs = res.data || [];
+        } else if (q2 && typeof q2.then === 'function') {
+          const res = await q2;
+          activeTxs = res.data || [];
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal mengambil transaksi aktif untuk riwayat audit:', err);
+  }
+
+  // 2. Ambil catatan audit_logs terkait deposit_transactions dan memberDepositId
+  let auditLogs: any[] = [];
+  try {
+    const selAudit: any = supabase.from('audit_logs').select('*');
+    if (typeof selAudit.eq === 'function') {
+      const q1 = selAudit.eq('table_name', 'deposit_transactions');
+      if (q1 && typeof q1.eq === 'function') {
+        const q2 = q1.eq('entity_id', memberDepositId);
+        let res: any;
+        if (q2 && typeof q2.order === 'function') {
+          res = await q2.order('created_at', { ascending: false });
+        } else if (q2 && typeof q2.then === 'function') {
+          res = await q2;
+        } else {
+          res = await q2;
+        }
+        auditLogs = res?.data || [];
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal mengambil audit_logs untuk riwayat audit:', err);
+  }
+
+  // Filter audit logs yang relevan dengan for_year dan for_month ini
+  const matchingLogs = (auditLogs || []).filter((log: any) => {
+    const oldD = log.old_data || {};
+    const newD = log.new_data || {};
+    const logMonth = oldD.for_month ?? newD.for_month;
+    const logYear = oldD.for_year ?? newD.for_year;
+    return Number(logMonth) === Number(month) && Number(logYear) === Number(year);
+  });
+
+  // 3. Kumpulkan user IDs untuk lookup nama pengelola jika belum ada nama eksplisit
+  const userIdsToLookup = new Set<string>();
+  activeTxs.forEach((tx: any) => {
+    if (tx.created_by) userIdsToLookup.add(tx.created_by);
+  });
+  matchingLogs.forEach((log: any) => {
+    if (log.performed_by && !log.performer_name) {
+      userIdsToLookup.add(log.performed_by);
+    }
+  });
+
+  const performerNames = new Map<string, string>();
+  if (userIdsToLookup.size > 0) {
+    try {
+      const pengelolaQuery: any = supabase.from('pengelola').select('id, nama');
+      if (typeof pengelolaQuery.in === 'function') {
+        const { data: pList } = await pengelolaQuery.in('id', Array.from(userIdsToLookup));
+        (pList || []).forEach((p: any) => {
+          if (p.id && p.nama) performerNames.set(p.id, p.nama);
+        });
+      }
+    } catch {
+      // abaikan jika tabel pengelola tidak tersedia di mock
+    }
+  }
+
+  // 4. Petakan transaksi aktif ke MonthAuditHistoryItem
+  const activeItems: MonthAuditHistoryItem[] = activeTxs.map((tx: any) => {
+    const performer =
+      (tx.created_by ? performerNames.get(tx.created_by) : undefined) ||
+      tx.performer_name ||
+      'Pengelola';
+
+    return {
+      id: String(tx.id),
+      action: 'CREATE',
+      amount: tx.amount ? Number(tx.amount) : undefined,
+      forMonth: Number(tx.for_month),
+      forYear: Number(tx.for_year),
+      referenceNo: tx.reference_no || undefined,
+      paymentMethod: tx.payment_method || undefined,
+      notes: tx.notes || tx.description || undefined,
+      performerName: performer,
+      performerId: tx.created_by || undefined,
+      createdAt: tx.created_at || new Date().toISOString()
+    };
+  });
+
+  // 5. Petakan catatan audit log ke MonthAuditHistoryItem
+  const auditItems: MonthAuditHistoryItem[] = matchingLogs.map((log: any) => {
+    const oldD = log.old_data || {};
+    const newD = log.new_data || {};
+    const amt = oldD.amount ?? newD.amount;
+    const refNo = oldD.reference_no ?? newD.reference_no;
+    const payMethod = oldD.payment_method ?? newD.payment_method;
+    const performer =
+      log.performer_name ||
+      (log.performed_by ? performerNames.get(log.performed_by) : undefined) ||
+      'Pengelola';
+
+    return {
+      id: String(log.id),
+      action: (log.action || 'DELETE') as 'CREATE' | 'UPDATE' | 'DELETE',
+      amount: amt !== undefined && amt !== null ? Number(amt) : undefined,
+      forMonth: Number(oldD.for_month ?? newD.for_month ?? month),
+      forYear: Number(oldD.for_year ?? newD.for_year ?? year),
+      referenceNo: refNo || undefined,
+      paymentMethod: payMethod || undefined,
+      notes: log.notes || oldD.notes || oldD.description || undefined,
+      performerName: performer,
+      performerId: log.performed_by || undefined,
+      createdAt: log.created_at || new Date().toISOString()
+    };
+  });
+
+  // 6. Gabungkan dan urutkan descending berdasarkan waktu (terbaru lebih dulu)
+  const allItems = [...activeItems, ...auditItems];
+  allItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  return allItems;
+}
+

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  bulkCheckAllUpToCurrentMonth,
   bulkAutoReconcileAllMembers,
   reconcileSingleMemberDeposit,
   generateMonthGrid,
@@ -8,7 +9,12 @@ import {
   isMonthBeforeJoin,
   calculateTotalChecked,
   resolveDepositTypeCode,
-  MONTH_NAMES
+  MONTH_NAMES,
+  saveMonthDepositWithEvidence,
+  cancelMonthDepositWithReason,
+  getMonthAuditHistory,
+  CheckMonthPayload,
+  MonthAuditHistoryItem
 } from './savingsMatrixService';
 import { supabase } from '../lib/supabaseClient';
 import * as savingsRateService from './savingsRateService';
@@ -16,7 +22,10 @@ import { SavingsRateTier } from './savingsRateService';
 
 vi.mock('../lib/supabaseClient', () => ({
   supabase: {
-    from: vi.fn()
+    from: vi.fn(),
+    auth: {
+      getUser: vi.fn().mockResolvedValue({ data: { user: null } })
+    }
   }
 }));
 
@@ -1124,5 +1133,685 @@ describe('savingsMatrixService - reconcileSingleMemberDeposit', () => {
     const partialTx = res.allocatedTransactions?.find(t => t.key === '2026-09');
     expect(partialTx?.isPartial).toBe(true);
     expect(partialTx?.amount).toBe(60000);
+  });
+
+  describe('bulkCheckAllUpToCurrentMonth', () => {
+    it('returns 0 success and 0 failed if there are no active members', async () => {
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: [], error: null })
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await bulkCheckAllUpToCurrentMonth('WAJIB');
+      expect(res).toEqual({ totalSuccess: 0, totalFailed: 0 });
+    });
+
+    it('processes active members, inserts transactions and reports progress', async () => {
+      const insertedRows: any[] = [];
+      const progressUpdates: any[] = [];
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'mem-1', nrp: '101', nama: 'Budi Test', created_at: '2026-09-01', status: 'aktif' }
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }
+              ],
+              error: null
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'tier-1',
+                      deposit_type_code: 'WAJIB',
+                      start_year: 2024,
+                      start_month: 1,
+                      end_year: null,
+                      end_month: null,
+                      monthly_rate: 200000
+                    }
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: 'dep-acc-1' },
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                not: vi.fn().mockResolvedValue({ error: null }),
+                is: vi.fn().mockResolvedValue({ error: null })
+              })
+            }),
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedRows.push(...rows);
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await bulkCheckAllUpToCurrentMonth('WAJIB', (p) => {
+        progressUpdates.push(p);
+      });
+
+      expect(res.totalSuccess).toBe(1);
+      expect(res.totalFailed).toBe(0);
+      expect(progressUpdates.length).toBe(1);
+      expect(progressUpdates[0].currentMemberName).toBe('Budi Test');
+      expect(insertedRows.length).toBeGreaterThan(0);
+      expect(insertedRows[0].member_deposit_id).toBe('dep-acc-1');
+      expect(insertedRows[0].transaction_type).toBe('deposit');
+      expect(insertedRows[0].description).toContain('Centang Setoran Rutin Matriks');
+    });
+
+    it('provisions missing member_deposits account without account_number and completes bulk check', async () => {
+      let createdDepositPayload: any = null;
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              expect(cols).not.toContain('tgl_awal_anggota');
+              return {
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'mem-new', nrp: '102', nama: 'Siti Baru', created_at: '2026-10-01', status: 'aktif' }
+                    ],
+                    error: null
+                  })
+                })
+              };
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }
+              ],
+              error: null
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                })
+              })
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              createdDepositPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'created-dep-1' }, error: null }),
+                  single: vi.fn().mockResolvedValue({ data: { id: 'created-dep-1' }, error: null })
+                })
+              };
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                not: vi.fn().mockResolvedValue({ error: null }),
+                is: vi.fn().mockResolvedValue({ error: null })
+              })
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await bulkCheckAllUpToCurrentMonth('WAJIB');
+      expect(res.totalSuccess).toBe(1);
+      expect(res.totalFailed).toBe(0);
+      expect(createdDepositPayload).not.toBeNull();
+      expect(createdDepositPayload.member_id).toBe('mem-new');
+      expect(createdDepositPayload.deposit_type_id).toBe('dt-wajib');
+      expect(createdDepositPayload).not.toHaveProperty('account_number');
+    });
+
+    it('isolates errors per deposit type and continues processing successfully', async () => {
+      let insertCount = 0;
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'mem-partial', nrp: '103', nama: 'Rudi', created_at: '2026-10-01', status: 'aktif' }
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+                { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' }
+              ],
+              error: null
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: [], error: null })
+              })
+            })
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                  if (val === 'dt-wajib') {
+                    return { maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'dep-wajib' }, error: null }) };
+                  }
+                  // Simulate failure on Belanja
+                  return { maybeSingle: vi.fn().mockRejectedValue(new Error('Belanja account error')) };
+                })
+              })
+            }))
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                not: vi.fn().mockResolvedValue({ error: null }),
+                is: vi.fn().mockResolvedValue({ error: null })
+              })
+            }),
+            insert: vi.fn().mockImplementation(() => {
+              insertCount++;
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await bulkCheckAllUpToCurrentMonth('ALL');
+      expect(res.totalSuccess).toBe(1);
+      expect(res.totalFailed).toBe(0);
+      expect(insertCount).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('saveMonthDepositWithEvidence', () => {
+    it('throws error when required fields are missing', async () => {
+      await expect(
+        saveMonthDepositWithEvidence({
+          memberDepositId: '',
+          month: 1,
+          year: 2026,
+          amount: 200000
+        })
+      ).rejects.toThrow('memberDepositId, month, dan year wajib diisi');
+
+      await expect(
+        saveMonthDepositWithEvidence({
+          memberDepositId: 'md-1',
+          month: 0,
+          year: 2026,
+          amount: 200000
+        })
+      ).rejects.toThrow('memberDepositId, month, dan year wajib diisi');
+
+      await expect(
+        saveMonthDepositWithEvidence({
+          memberDepositId: 'md-1',
+          month: 5,
+          year: 0,
+          amount: 200000
+        })
+      ).rejects.toThrow('memberDepositId, month, dan year wajib diisi');
+    });
+
+    it('cleans existing transaction and inserts new one with complete evidence metadata', async () => {
+      let deletedYear: number | null = null;
+      let deletedMonth: number | null = null;
+      let insertedPayload: any = null;
+
+      vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'admin-user-uuid',
+            email: 'admin@simkop.id',
+            user_metadata: { nama: 'Super Admin' }
+          } as any
+        },
+        error: null
+      });
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col1, val1) => ({
+                eq: vi.fn().mockImplementation((col2, val2) => {
+                  deletedYear = val2;
+                  return {
+                    eq: vi.fn().mockImplementation((col3, val3) => {
+                      deletedMonth = val3;
+                      return Promise.resolve({ error: null });
+                    })
+                  };
+                })
+              }))
+            }),
+            insert: vi.fn().mockImplementation((row: any) => {
+              insertedPayload = row;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'tx-new-123', ...row },
+                    error: null
+                  })
+                })
+              };
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const payload: CheckMonthPayload = {
+        memberDepositId: 'md-agus',
+        month: 5,
+        year: 2026,
+        amount: 200000,
+        referenceNo: 'KW-2026/05/001',
+        paymentMethod: 'transfer',
+        notes: 'Bukti transfer BCA via m-Banking',
+        description: 'Setoran Matriks Mei 2026'
+      };
+
+      const result = await saveMonthDepositWithEvidence(payload);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+      expect(result.data.id).toBe('tx-new-123');
+      expect(deletedYear).toBe(2026);
+      expect(deletedMonth).toBe(5);
+
+      expect(insertedPayload).toMatchObject({
+        member_deposit_id: 'md-agus',
+        amount: 200000,
+        transaction_type: 'deposit',
+        for_month: 5,
+        for_year: 2026,
+        reference_no: 'KW-2026/05/001',
+        payment_method: 'transfer',
+        notes: 'Bukti transfer BCA via m-Banking',
+        description: 'Setoran Matriks Mei 2026',
+        created_by: 'admin-user-uuid'
+      });
+    });
+
+    it('uses sensible defaults for optional fields and handles unauthenticated session', async () => {
+      let insertedPayload: any = null;
+
+      vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
+        data: { user: null },
+        error: null
+      });
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ error: null })
+                })
+              })
+            }),
+            insert: vi.fn().mockImplementation((row: any) => {
+              insertedPayload = row;
+              return Promise.resolve({ data: row, error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      const result = await saveMonthDepositWithEvidence({
+        memberDepositId: 'md-defaults',
+        month: 2,
+        year: 2026,
+        amount: 150000
+      });
+
+      expect(result.success).toBe(true);
+      expect(insertedPayload).toMatchObject({
+        member_deposit_id: 'md-defaults',
+        amount: 150000,
+        transaction_type: 'deposit',
+        for_month: 2,
+        for_year: 2026,
+        payment_method: 'tunai',
+        reference_no: null,
+        notes: null,
+        created_by: null
+      });
+      expect(insertedPayload.description).toContain('Setoran Matriks Bulan Feb 2026');
+    });
+  });
+
+  describe('cancelMonthDepositWithReason', () => {
+    it('throws error when validation fails', async () => {
+      await expect(
+        cancelMonthDepositWithReason('', 2026, 5, 'Salah centang')
+      ).rejects.toThrow('memberDepositId, year, dan month wajib diisi');
+
+      await expect(
+        cancelMonthDepositWithReason('md-1', 0, 5, 'Salah centang')
+      ).rejects.toThrow('memberDepositId, year, dan month wajib diisi');
+
+      await expect(
+        cancelMonthDepositWithReason('md-1', 2026, 0, 'Salah centang')
+      ).rejects.toThrow('memberDepositId, year, dan month wajib diisi');
+
+      await expect(
+        cancelMonthDepositWithReason('md-1', 2026, 5, '')
+      ).rejects.toThrow('Alasan pembatalan wajib diisi');
+
+      await expect(
+        cancelMonthDepositWithReason('md-1', 2026, 5, '   ')
+      ).rejects.toThrow('Alasan pembatalan wajib diisi');
+    });
+
+    it('captures existing transaction, logs explicit DELETE audit trail, and deletes row', async () => {
+      const existingTx = {
+        id: 'tx-to-delete-1',
+        member_deposit_id: 'md-test',
+        amount: 200000,
+        for_month: 6,
+        for_year: 2026,
+        reference_no: 'KW-006',
+        description: 'Setoran Matriks Jun 2026'
+      };
+
+      let auditPayload: any = null;
+      let deleteCalled = false;
+
+      vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'admin-canceller',
+            email: 'admin@simkop.id',
+            user_metadata: { nama: 'Pengelola Audit' }
+          } as any
+        },
+        error: null
+      });
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [existingTx], error: null })
+                })
+              })
+            }),
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockImplementation(() => {
+                    deleteCalled = true;
+                    return Promise.resolve({ error: null });
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any) => {
+              auditPayload = payload;
+              return Promise.resolve({ data: payload, error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await cancelMonthDepositWithReason(
+        'md-test',
+        2026,
+        6,
+        'Koreksi pembukuan: anggota belum melunasi iuran ini'
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.cancelledCount).toBe(1);
+      expect(deleteCalled).toBe(true);
+
+      expect(auditPayload).toMatchObject({
+        table_name: 'deposit_transactions',
+        action: 'DELETE',
+        record_id: 'tx-to-delete-1',
+        entity_name: 'deposit_transactions',
+        entity_id: 'md-test',
+        old_data: existingTx,
+        performed_by: 'admin-canceller',
+        performer_name: 'Pengelola Audit',
+        notes: 'Koreksi pembukuan: anggota belum melunasi iuran ini'
+      });
+      expect(auditPayload.created_at).toBeDefined();
+    });
+  });
+
+  describe('getMonthAuditHistory', () => {
+    it('returns empty array when arguments are missing', async () => {
+      expect(await getMonthAuditHistory('', 2026, 5)).toEqual([]);
+      expect(await getMonthAuditHistory('md-1', 0, 5)).toEqual([]);
+      expect(await getMonthAuditHistory('md-1', 2026, 0)).toEqual([]);
+    });
+
+    it('aggregates active transactions and audit logs in descending chronological order', async () => {
+      const activeTx = {
+        id: 'tx-active-1',
+        member_deposit_id: 'md-history',
+        amount: 200000,
+        for_month: 7,
+        for_year: 2026,
+        reference_no: 'KW-2026/07/99',
+        payment_method: 'potong_gaji',
+        notes: 'Pencatatan setoran via payroll',
+        created_by: 'user-pengelola-1',
+        created_at: '2026-07-10T14:00:00Z'
+      };
+
+      const auditLog1 = {
+        id: 'log-delete-1',
+        table_name: 'deposit_transactions',
+        action: 'DELETE',
+        entity_id: 'md-history',
+        old_data: {
+          id: 'tx-old-cancelled',
+          member_deposit_id: 'md-history',
+          amount: 200000,
+          for_month: 7,
+          for_year: 2026,
+          reference_no: 'KW-OLD-01',
+          payment_method: 'tunai'
+        },
+        performed_by: 'user-pengelola-2',
+        performer_name: 'Bambang Audit',
+        notes: 'Batal karena dobel input manual',
+        created_at: '2026-07-08T10:00:00Z'
+      };
+
+      // Unrelated audit log (different month)
+      const auditLogUnrelated = {
+        id: 'log-unrelated',
+        table_name: 'deposit_transactions',
+        action: 'DELETE',
+        entity_id: 'md-history',
+        old_data: {
+          for_month: 8,
+          for_year: 2026
+        },
+        created_at: '2026-08-01T10:00:00Z'
+      };
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [activeTx], error: null })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [auditLogUnrelated, auditLog1],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'user-pengelola-1', nama: 'Siti Bendahara' }],
+                error: null
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const history = await getMonthAuditHistory('md-history', 2026, 7);
+
+      expect(history).toHaveLength(2);
+
+      // Latest first (2026-07-10 > 2026-07-08)
+      expect(history[0]).toEqual({
+        id: 'tx-active-1',
+        action: 'CREATE',
+        amount: 200000,
+        forMonth: 7,
+        forYear: 2026,
+        referenceNo: 'KW-2026/07/99',
+        paymentMethod: 'potong_gaji',
+        notes: 'Pencatatan setoran via payroll',
+        performerName: 'Siti Bendahara',
+        performerId: 'user-pengelola-1',
+        createdAt: '2026-07-10T14:00:00Z'
+      });
+
+      expect(history[1]).toEqual({
+        id: 'log-delete-1',
+        action: 'DELETE',
+        amount: 200000,
+        forMonth: 7,
+        forYear: 2026,
+        referenceNo: 'KW-OLD-01',
+        paymentMethod: 'tunai',
+        notes: 'Batal karena dobel input manual',
+        performerName: 'Bambang Audit',
+        performerId: 'user-pengelola-2',
+        createdAt: '2026-07-08T10:00:00Z'
+      });
+    });
   });
 });
