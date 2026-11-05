@@ -172,3 +172,4 @@ Membangun fondasi database berupa RPC aman `process_pos_deposit_payment` untuk v
 - [ ] Berkas migrasi `036_pos_spending_from_savings_function.sql` terdefinisi dengan validasi saldo dan pencatatan mutasi penarikan.
 - [ ] `posCheckoutService.ts` memanggil RPC `process_pos_deposit_payment` saat `paidDeposit > 0`.
 - [ ] Rangkaian unit test di `posCheckoutService.test.ts` lulus 100%.
+

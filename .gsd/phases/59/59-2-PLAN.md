@@ -90,3 +90,4 @@ Menyempurnakan antarmuka modal pembayaran kasir (`SplitPaymentModal.tsx`) dengan
 - [ ] Input dibatasi otomatis ke `min(total, saldo)`.
 - [ ] Pembayaran simpanan belanja tidak masuk ke kas fisik laci kasir di `cashierShiftService.ts`.
 - [ ] Unit tests di `SplitPaymentModal.test.tsx` dan `cashierShiftService.test.ts` lulus 100%.
+

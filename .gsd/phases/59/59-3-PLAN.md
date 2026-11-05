@@ -47,3 +47,4 @@ Melakukan static type checking (`tsc --noEmit`), menjalankan seluruh rangkaian u
 - [ ] Seluruh unit test terkait lulus 100%.
 - [ ] Vite production build selesai dengan exit code 0.
 - [ ] Laporan `VERIFICATION.md` mencatat bukti empiris pengujian.
+
