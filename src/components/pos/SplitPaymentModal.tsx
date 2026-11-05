@@ -11,7 +11,23 @@ export interface MemberInfo {
   member_number?: string;
 }
 
-interface Props {
+export function clampDepositInput(
+  inputValue: string | number,
+  total: number,
+  belanjaBalance?: number | null,
+  isNonMember?: boolean
+): string {
+  if (isNonMember) return '0';
+  const numericVal = Number(inputValue) || 0;
+  if (numericVal <= 0) return '';
+  const maxAllowed = belanjaBalance !== undefined && belanjaBalance !== null
+    ? Math.min(total, Math.max(0, belanjaBalance))
+    : total;
+  const clamped = Math.min(numericVal, maxAllowed);
+  return clamped > 0 ? clamped.toString() : '';
+}
+
+export interface SplitPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   cart: any[];
@@ -20,6 +36,7 @@ interface Props {
   selectedMember?: MemberInfo | null;
   isNonMember?: boolean;
   initialMethod?: string;
+  initialFinancials?: any;
   onConfirm: (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => void;
 }
 
@@ -32,15 +49,16 @@ export default function SplitPaymentModal({
   selectedMember,
   isNonMember: propIsNonMember,
   initialMethod = 'Tunai',
+  initialFinancials = null,
   onConfirm
-}: Props) {
+}: SplitPaymentModalProps) {
   const effectiveMemberId = selectedMember?.id || memberId || null;
   const isNonMember = propIsNonMember ?? !effectiveMemberId;
   const [paidCash, setPaidCash] = useState<string>('');
   const [paidDeposit, setPaidDeposit] = useState<string>('');
   const [paidCredit, setPaidCredit] = useState<string>('');
   
-  const [financials, setFinancials] = useState<any>(null);
+  const [financials, setFinancials] = useState<any>(initialFinancials);
   const cashInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,7 +82,9 @@ export default function SplitPaymentModal({
         setPaidCredit('');
       }
 
-      if (effectiveMemberId) {
+      if (initialFinancials) {
+        setFinancials(initialFinancials);
+      } else if (effectiveMemberId) {
         import('../../services/posCreditService').then(s => {
           s.getMemberFinancials(effectiveMemberId).then(setFinancials);
         });
@@ -81,7 +101,7 @@ export default function SplitPaymentModal({
       }, 50);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, effectiveMemberId, isNonMember, total, initialMethod]);
+  }, [isOpen, effectiveMemberId, isNonMember, total, initialMethod, initialFinancials]);
 
   if (!isOpen) return null;
 
@@ -237,15 +257,20 @@ export default function SplitPaymentModal({
             {/* Input Simpanan */}
             <div className={isNonMember ? "opacity-60" : ""}>
               <div className="flex justify-between items-center text-sm font-semibold text-on-surface mb-1.5">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span>Potong Simpanan Belanja</span>
                   {isNonMember && (
                     <span className="text-[10px] bg-surface-variant text-on-surface-variant px-1.5 py-0.5 rounded font-medium border border-outline-variant/40">
                       Khusus Anggota
                     </span>
                   )}
+                  {financials && !isNonMember && (
+                    <span className="text-xs font-mono font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      Saldo Tersedia: Rp {Number(financials.belanjaBalance || 0).toLocaleString('id-ID')}
+                    </span>
+                  )}
                 </div>
-                {!isNonMember && financials && (
+                {!isNonMember && financials && financials.belanjaBalance > 0 && (
                   <button 
                     type="button"
                     onClick={() => setPaidDeposit(Math.min(total, financials.belanjaBalance).toString())}
@@ -257,22 +282,31 @@ export default function SplitPaymentModal({
               </div>
               <input 
                 type="number" 
-                disabled={isNonMember}
+                disabled={isNonMember || !financials || financials.belanjaBalance <= 0}
                 readOnly={isNonMember}
                 value={isNonMember ? 0 : paidDeposit}
-                onChange={e => !isNonMember && setPaidDeposit(e.target.value)}
+                onChange={e => {
+                  if (isNonMember) return;
+                  const maxAllowed = financials ? Math.min(total, Math.max(0, financials.belanjaBalance)) : total;
+                  const val = Math.min(Number(e.target.value) || 0, maxAllowed);
+                  setPaidDeposit(val > 0 ? val.toString() : '');
+                }}
                 placeholder="Rp 0"
                 className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
-                  isNonMember 
+                  (isNonMember || !financials || financials.belanjaBalance <= 0)
                     ? 'bg-surface-container-high/50 border-outline-variant/40 text-on-surface-variant/60 cursor-not-allowed select-none' 
                     : 'border-outline-variant bg-surface'
                 }`}
               />
-              {isNonMember && (
+              {isNonMember ? (
                 <p className="text-[11px] text-on-surface-variant/70 mt-1 italic">
                   * Tidak tersedia untuk Non-Anggota
                 </p>
-              )}
+              ) : (!financials || financials.belanjaBalance <= 0) ? (
+                <p className="text-[11px] text-on-surface-variant/70 mt-1 italic">
+                  * Saldo simpanan belanja Rp 0 atau belum tersedia
+                </p>
+              ) : null}
             </div>
 
             {/* Input Bon */}
