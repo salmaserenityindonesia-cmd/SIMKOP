@@ -618,5 +618,54 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('KW-2026/11/01');
       expect(html).toContain('Koreksi salah input periode');
     });
+
+    it('deduplicates duplicate cancellation logs so only one card with custom reason is rendered', () => {
+      const duplicateHistory = [
+        {
+          id: 'del-user-1',
+          action: 'DELETE' as const,
+          amount: 200000,
+          forMonth: 9,
+          forYear: 2026,
+          referenceNo: 'KW-2026/09/01',
+          notes: 'tidak jadi bayar',
+          performerName: 'Admin Kasir',
+          createdAt: '2026-09-15T10:00:02.000Z'
+        },
+        {
+          id: 'del-trigger-dup',
+          action: 'DELETE' as const,
+          amount: 200000,
+          forMonth: 9,
+          forYear: 2026,
+          referenceNo: 'KW-2026/09/01',
+          notes: 'Rekonsiliasi Otomatis (Setoran Parsial)',
+          performerName: 'Admin Kasir',
+          createdAt: '2026-09-15T10:00:01.000Z'
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-123"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-03-01"
+          onClose={vi.fn()}
+          initialHistoryModalOpen={true}
+          initialSelectedCellForHistory={{
+            year: 2026,
+            month: 9,
+            label: 'Sep-26'
+          }}
+          initialAuditHistory={duplicateHistory}
+        />
+      );
+
+      // Kartu dengan alasan admin ("tidak jadi bayar") harus tampil
+      expect(html).toContain('tidak jadi bayar');
+      // Kartu duplikat sistem ("Rekonsiliasi Otomatis...") harus dibuang / tidak tampil
+      expect(html).not.toContain('Rekonsiliasi Otomatis (Setoran Parsial)');
+    });
   });
 });

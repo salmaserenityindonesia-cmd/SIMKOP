@@ -18,6 +18,17 @@ CREATE OR REPLACE FUNCTION public.log_deposit_transaction_changes()
 RETURNS TRIGGER AS $$
 BEGIN
   IF (TG_OP = 'DELETE') THEN
+    -- Mencegah pencatatan ganda jika log pembatalan telah dicatat oleh aplikasi dalam rentang 10 detik terakhir
+    IF EXISTS (
+      SELECT 1 FROM public.audit_logs 
+      WHERE table_name = 'deposit_transactions' 
+        AND action = 'DELETE' 
+        AND record_id = OLD.id::text 
+        AND created_at >= (NOW() - INTERVAL '10 seconds')
+    ) THEN
+      RETURN OLD;
+    END IF;
+
     INSERT INTO public.audit_logs (
       table_name,
       action,

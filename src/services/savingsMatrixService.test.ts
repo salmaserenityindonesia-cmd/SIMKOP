@@ -1813,5 +1813,69 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
         createdAt: '2026-07-08T10:00:00Z'
       });
     });
+
+    it('deduplicates duplicate cancellation logs between trigger default and user custom reason', async () => {
+      // Skenario:
+      // Log 1: Dihasilkan oleh trigger database dengan OLD.description "Rekonsiliasi Otomatis (Setoran Parsial)"
+      // Log 2: Dihasilkan oleh modal frontend dengan alasan kustom admin "tidak jadi bayar"
+      // Keduanya terjadi dalam selisih beberapa milidetik pada transaksi yang sama
+      const duplicateLogs = [
+        {
+          id: 'log-user-reason',
+          table_name: 'deposit_transactions',
+          action: 'DELETE',
+          entity_id: 'md-dup',
+          old_data: { for_year: 2026, for_month: 9, amount: 200000, reference_no: 'KW-01' },
+          performed_by: 'admin-1',
+          performer_name: 'Admin Utama',
+          notes: 'tidak jadi bayar',
+          created_at: '2026-09-15T10:00:02Z'
+        },
+        {
+          id: 'log-trigger-default',
+          table_name: 'deposit_transactions',
+          action: 'DELETE',
+          entity_id: 'md-dup',
+          old_data: { for_year: 2026, for_month: 9, amount: 200000, reference_no: 'KW-01', description: 'Rekonsiliasi Otomatis (Setoran Parsial)' },
+          performed_by: 'admin-1',
+          performer_name: 'Admin Utama',
+          notes: 'Rekonsiliasi Otomatis (Setoran Parsial)',
+          created_at: '2026-09-15T10:00:01Z'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [] })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: duplicateLogs })
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const history = await getMonthAuditHistory('md-dup', 2026, 9);
+
+      // Hanya boleh ada 1 log, yaitu yang memuat alasan kustom admin ("tidak jadi bayar")
+      expect(history).toHaveLength(1);
+      expect(history[0].id).toBe('log-user-reason');
+      expect(history[0].notes).toBe('tidak jadi bayar');
+    });
   });
 });

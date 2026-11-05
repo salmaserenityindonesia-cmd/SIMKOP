@@ -1563,8 +1563,68 @@ export async function getMonthAuditHistory(
     };
   });
 
+  // Deduplikasi cerdas untuk entri pembatalan (DELETE):
+  // Menyingkirkan pencatatan ganda antara database trigger (yang mencatat OLD.description)
+  // dan pencatatan aplikasi eksplisit (yang mencatat alasan pembatalan input admin).
+  const isSystemDefaultDescription = (text?: string): boolean => {
+    if (!text) return true;
+    const t = text.trim().toLowerCase();
+    return (
+      t.startsWith('rekonsiliasi otomatis') ||
+      t.startsWith('centang setoran rutin') ||
+      t.startsWith('penghapusan / batal centang') ||
+      t.startsWith('saldo awal') ||
+      t.includes('migrasi') ||
+      t.includes('belum teralokasi') ||
+      t.includes('setoran parsial') ||
+      t.includes('setoran rutin')
+    );
+  };
+
+  const deduplicatedAuditItems = auditItems.filter((log, idx, arr) => {
+    if (log.action !== 'DELETE') return true;
+
+    // Cari apakah ada entri pembatalan lain untuk periode/transaksi yang sama dalam selisih waktu <= 10 detik
+    const closeSiblings = arr.filter((other, oIdx) => {
+      if (oIdx === idx || other.action !== 'DELETE') return false;
+      const timeDiff = Math.abs(
+        new Date(other.createdAt).getTime() - new Date(log.createdAt).getTime()
+      );
+      return (
+        timeDiff <= 10000 &&
+        other.forMonth === log.forMonth &&
+        other.forYear === log.forYear
+      );
+    });
+
+    if (closeSiblings.length === 0) return true;
+
+    const isCurrentDefault = isSystemDefaultDescription(log.notes);
+    const hasCustomSibling = closeSiblings.some(s => !isSystemDefaultDescription(s.notes));
+
+    // Jika entri saat ini hanyalah deskripsi default/otomatis sistem dan ada entri saudara dengan alasan admin kustom, buang entri default ini
+    if (isCurrentDefault && hasCustomSibling) {
+      return false;
+    }
+
+    // Jika kedua entri memiliki tipe alasan yang sama, pertahankan entri pertama
+    const firstMatchingIdx = arr.findIndex((other) => {
+      if (other.action !== 'DELETE') return false;
+      const timeDiff = Math.abs(
+        new Date(other.createdAt).getTime() - new Date(log.createdAt).getTime()
+      );
+      return (
+        timeDiff <= 10000 &&
+        other.forMonth === log.forMonth &&
+        other.forYear === log.forYear
+      );
+    });
+
+    return idx === firstMatchingIdx;
+  });
+
   // 6. Gabungkan dan urutkan descending berdasarkan waktu (terbaru lebih dulu)
-  const allItems = [...activeItems, ...auditItems];
+  const allItems = [...activeItems, ...deduplicatedAuditItems];
   allItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   return allItems;

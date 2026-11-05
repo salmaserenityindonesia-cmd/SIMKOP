@@ -223,6 +223,52 @@ export default function SavingsLedgerMatrixModal({
   const [auditHistory, setAuditHistory] = useState<MonthAuditHistoryItem[]>(initialAuditHistory ?? []);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Deduplikasi cerdas untuk tampilan riwayat audit agar tidak menampilkan kartu pembatalan ganda
+  const displayedAuditHistory = useMemo(() => {
+    const isSystemDefault = (text?: string): boolean => {
+      if (!text) return true;
+      const t = text.trim().toLowerCase();
+      return (
+        t.startsWith('rekonsiliasi otomatis') ||
+        t.startsWith('centang setoran rutin') ||
+        t.startsWith('penghapusan / batal centang') ||
+        t.startsWith('saldo awal') ||
+        t.includes('migrasi') ||
+        t.includes('belum teralokasi') ||
+        t.includes('setoran parsial') ||
+        t.includes('setoran rutin')
+      );
+    };
+
+    return auditHistory.filter((log, idx, arr) => {
+      if (log.action !== 'DELETE') return true;
+      const closeSiblings = arr.filter((other, oIdx) => {
+        if (oIdx === idx || other.action !== 'DELETE') return false;
+        const timeDiff = Math.abs(
+          new Date(other.createdAt).getTime() - new Date(log.createdAt).getTime()
+        );
+        return timeDiff <= 10000 && other.forMonth === log.forMonth && other.forYear === log.forYear;
+      });
+
+      if (closeSiblings.length === 0) return true;
+
+      const isCurrentDefault = isSystemDefault(log.notes);
+      const hasCustomSibling = closeSiblings.some(s => !isSystemDefault(s.notes));
+
+      if (isCurrentDefault && hasCustomSibling) return false;
+
+      const firstMatchingIdx = arr.findIndex((other) => {
+        if (other.action !== 'DELETE') return false;
+        const timeDiff = Math.abs(
+          new Date(other.createdAt).getTime() - new Date(log.createdAt).getTime()
+        );
+        return timeDiff <= 10000 && other.forMonth === log.forMonth && other.forYear === log.forYear;
+      });
+
+      return idx === firstMatchingIdx;
+    });
+  }, [auditHistory]);
+
   // Map deposit type code -> member_deposit_id
   const [memberDepositMap, setMemberDepositMap] = useState<Record<string, string>>({});
   
@@ -1476,12 +1522,12 @@ export default function SavingsLedgerMatrixModal({
                   <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
                   <p className="text-xs">Memuat jejak audit periode...</p>
                 </div>
-              ) : auditHistory.length === 0 ? (
+              ) : displayedAuditHistory.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 text-xs">
                   Belum ada riwayat transaksi atau jejak perubahan untuk periode ini.
                 </div>
               ) : (
-                auditHistory.map((item, idx) => {
+                displayedAuditHistory.map((item, idx) => {
                   const isDelete = item.action === 'DELETE';
                   const isUpdate = item.action === 'UPDATE';
                   return (
