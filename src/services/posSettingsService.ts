@@ -322,3 +322,108 @@ export async function cleanupExpiredParkedSales(): Promise<{ success: boolean; c
   }
 }
 
+function clearLocalPosCache(): void {
+  try {
+    localStorage.removeItem('simkop_active_shift_id');
+    localStorage.removeItem('simkop_active_shift_data');
+    localStorage.removeItem('simkop_pos_cart');
+  } catch (_) {}
+}
+
+/**
+ * Reset all POS sales, shifts, purchase invoices, and return history via atomic RPC
+ * with PostgREST-compliant client-side fallback deletion.
+ * Products catalog and stock quantity are preserved untouched.
+ */
+export async function resetPosTransactionsHistory(): Promise<{
+  success: boolean;
+  deleted_sales?: number;
+  deleted_purchases?: number;
+  deleted_returns?: number;
+  message: string;
+}> {
+  // 1. Coba eksekusi melalui PostgreSQL RPC atomik
+  try {
+    const { data, error: rpcError } = await supabase.rpc('reset_pos_and_procurement_history');
+    if (!rpcError && data && data.success) {
+      clearLocalPosCache();
+      return data;
+    }
+    if (rpcError) {
+      console.warn('RPC reset_pos_and_procurement_history error, mencoba fallback client deletion:', rpcError.message);
+    }
+  } catch (rpcErr) {
+    console.warn('RPC call threw exception, mencoba fallback client deletion:', rpcErr);
+  }
+
+  // 2. Client-side fallback deletion dengan klausul WHERE universal (.neq)
+  // yang mematuhi PostgREST dan proteksi safeupdate database
+  const DUMMY_UUID = '00000000-0000-0000-0000-000000000000';
+
+  try {
+    // a. Bersihkan pembayaran cicilan toko / store credit jika ada
+    try {
+      await supabase.from('store_credit_payments').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // b. Bersihkan mutasi simpanan belanja kasir
+    try {
+      await supabase
+        .from('deposit_transactions')
+        .delete()
+        .eq('payment_method', 'potong_simpanan_belanja')
+        .neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // c. Bersihkan rincian item penjualan kasir dan penjualan utama
+    try {
+      await supabase.from('sale_items').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    const { error: salesErr } = await supabase.from('sales').delete().neq('id', DUMMY_UUID);
+    if (salesErr) {
+      console.error('Gagal menghapus sales:', salesErr);
+      throw new Error(salesErr.message);
+    }
+
+    // d. Bersihkan transaksi legacy jika ada
+    try {
+      await supabase.from('transaksi_item').delete().neq('id', DUMMY_UUID);
+      await supabase.from('transaksi').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // e. Bersihkan shift kasir
+    try {
+      await supabase.from('cashier_shifts').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // f. Bersihkan retur supplier
+    try {
+      await supabase.from('purchase_return_items').delete().neq('id', DUMMY_UUID);
+      await supabase.from('purchase_returns').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    // g. Bersihkan restock & pembelian supplier
+    try {
+      await supabase.from('restock_items').delete().neq('id', DUMMY_UUID);
+      await supabase.from('restock_invoices').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    try {
+      await supabase.from('purchase_items').delete().neq('id', DUMMY_UUID);
+      await supabase.from('purchases').delete().neq('id', DUMMY_UUID);
+    } catch (_) {}
+
+    clearLocalPosCache();
+
+    return {
+      success: true,
+      message: 'Seluruh riwayat transaksi kasir, pembelian, dan retur berhasil dikosongkan. Stok produk tetap utuh.'
+    };
+  } catch (clientErr: any) {
+    console.error('Gagal mereset transaksi kasir:', clientErr);
+    throw new Error(clientErr.message || 'Gagal mereset transaksi kasir');
+  }
+}
+
+

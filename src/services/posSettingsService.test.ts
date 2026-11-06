@@ -6,6 +6,7 @@ import {
   clearSettingsCache,
   isPosSettingsMigratedInSupabase,
   cleanupExpiredParkedSales,
+  resetPosTransactionsHistory,
   DEFAULT_POS_SETTINGS,
   POS_SETTINGS_STORAGE_KEY
 } from './posSettingsService';
@@ -327,6 +328,70 @@ describe('posSettingsService', () => {
     const result = await cleanupExpiredParkedSales();
     expect(result.success).toBe(true);
     expect(result.cleanedCount).toBe(1);
+  });
+
+  describe('resetPosTransactionsHistory', () => {
+    it('should call reset_pos_and_procurement_history RPC and clear active shift localStorage', async () => {
+      const mockResult = {
+        success: true,
+        deleted_sales: 10,
+        deleted_purchases: 5,
+        deleted_returns: 2,
+        message: 'Seluruh riwayat penjualan, shift kasir, pembelian, dan retur barang berhasil dikosongkan. Stok barang tetap utuh.'
+      };
+
+      vi.mocked(supabase.rpc).mockResolvedValueOnce({
+        data: mockResult,
+        error: null
+      } as any);
+
+      localStorageMock.setItem('simkop_active_shift_id', 'shift-123');
+      localStorageMock.setItem('simkop_active_shift_data', JSON.stringify({ id: 'shift-123' }));
+
+      const result = await resetPosTransactionsHistory();
+
+      expect(supabase.rpc).toHaveBeenCalledWith('reset_pos_and_procurement_history');
+      expect(result).toEqual(mockResult);
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('simkop_active_shift_id');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('simkop_active_shift_data');
+    });
+
+    it('should fallback to client-side deletion when RPC fails', async () => {
+      vi.mocked(supabase.rpc).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'RPC not found' }
+      } as any);
+
+      const mockDeleteChain = {
+        delete: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockResolvedValue({ error: null })
+      };
+
+      vi.mocked(supabase.from).mockReturnValue(mockDeleteChain as any);
+
+      const result = await resetPosTransactionsHistory();
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('berhasil dikosongkan');
+    });
+
+    it('should throw an error when both RPC and client-side deletion fail', async () => {
+      vi.mocked(supabase.rpc).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'RPC not found' }
+      } as any);
+
+      const mockDeleteChain = {
+        delete: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        neq: vi.fn().mockResolvedValue({ error: { message: 'Permission denied on sales table' } })
+      };
+
+      vi.mocked(supabase.from).mockReturnValue(mockDeleteChain as any);
+
+      await expect(resetPosTransactionsHistory()).rejects.toThrow('Permission denied on sales table');
+    });
   });
 });
 

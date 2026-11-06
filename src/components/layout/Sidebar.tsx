@@ -25,6 +25,8 @@ import {
   SlidersHorizontal,
   RotateCcw,
   ArrowLeftRight,
+  ShoppingBag,
+  CreditCard,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -57,6 +59,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
       { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
       { label: 'Laporan Mutasi Barang', icon: ArrowLeftRight, href: '/admin/laporan-mutasi' },
+      { label: 'Buku Besar Bon Toko', icon: CreditCard, href: '/admin/buku-besar-bon-toko' },
     ],
   },
   {
@@ -70,6 +73,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Approval Pinjaman', icon: CheckSquare, href: '/admin/approval', adminOnly: true },
       { label: 'Matriks Simpanan', icon: Grid, href: '/admin/compliance-matrix' },
       { label: 'Matriks Pinjaman', icon: BarChart, href: '/admin/loan-matrix' },
+      { label: 'Buku Besar Belanja', icon: ShoppingBag, href: '/admin/buku-besar-belanja' },
     ],
   },
   {

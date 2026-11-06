@@ -6,6 +6,7 @@ import {
   updatePosSettings,
   cleanupExpiredParkedSales,
   isPosSettingsMigratedInSupabase,
+  resetPosTransactionsHistory,
   POSSettings,
   DEFAULT_POS_SETTINGS
 } from '../../services/posSettingsService';
@@ -23,7 +24,9 @@ import {
   ShieldAlert,
   Info,
   Percent,
-  Printer
+  Printer,
+  Trash2,
+  X
 } from 'lucide-react';
 
 export default function PengaturanKasir() {
@@ -35,6 +38,9 @@ export default function PengaturanKasir() {
   const [isSaving, setIsSaving] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
   const [isLocalOnly, setIsLocalOnly] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -139,6 +145,21 @@ export default function PengaturanKasir() {
       showToast(err.message || 'Gagal memproses pembersihan stok', 'error');
     } finally {
       setIsCleaning(false);
+    }
+  };
+
+  const handleResetTransactions = async () => {
+    if (confirmText !== 'RESET TRANSAKSI KASIR') return;
+    setIsResetting(true);
+    try {
+      const res = await resetPosTransactionsHistory();
+      showToast(res.message || 'Seluruh riwayat transaksi kasir, pembelian, dan retur berhasil dibersihkan. Stok produk tetap utuh.', 'success');
+      setIsResetModalOpen(false);
+      setConfirmText('');
+    } catch (err: any) {
+      showToast(err.message || 'Gagal mengosongkan riwayat transaksi', 'error');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -494,6 +515,40 @@ export default function PengaturanKasir() {
                 </button>
               </div>
             </form>
+
+            {/* Danger Zone / Reset Transaksi Toko */}
+            <div className="border border-slate-800 bg-slate-900 rounded-2xl p-6 shadow-md space-y-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-400" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-white tracking-tight">
+                    Zona Berbahaya: Kosongkan Riwayat Transaksi Kasir & Toko
+                  </h3>
+                  <p className="mt-1 text-sm font-normal text-slate-300 leading-relaxed">
+                    Menghapus seluruh rekaman penjualan kasir (POS), sesi shift kasir, faktur pembelian, dan retur supplier. <strong className="font-semibold text-rose-300">Stok produk di inventori tetap utuh dan tidak akan terhapus atau ter-restock.</strong> Tindakan ini tidak dapat dibatalkan.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-t border-slate-800">
+                <div className="text-xs text-slate-400 font-medium">
+                  Gunakan fitur ini untuk mereset riwayat pengujian transaksi toko kasir.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmText('');
+                    setIsResetModalOpen(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs sm:text-sm shadow-xs transition-colors cursor-pointer shrink-0"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Kosongkan Riwayat Transaksi Toko</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Sidebar / Info Panels */}
@@ -572,6 +627,97 @@ export default function PengaturanKasir() {
           </div>
         </div>
       </div>
+
+      {/* Modal Konfirmasi Hapus Transaksi Kasir */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-white">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+                  <AlertTriangle className="w-5 h-5 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm sm:text-base text-white">
+                    Konfirmasi Penghapusan Seluruh Riwayat Transaksi Kasir
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Tindakan ini menghapus data transaksi secara permanen
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isResetting && setIsResetModalOpen(false)}
+                disabled={isResetting}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4 bg-slate-900">
+              <div className="p-4 rounded-xl bg-slate-950 border border-rose-500/40 text-xs text-slate-300 space-y-2.5">
+                <p className="font-bold text-rose-400 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                  Peringatan Penting:
+                </p>
+                <ul className="list-disc pl-5 space-y-1.5 text-slate-300">
+                  <li>Seluruh riwayat <strong className="text-white font-semibold">penjualan kasir (sales & item)</strong> akan dihapus permanen.</li>
+                  <li>Riwayat <strong className="text-white font-semibold">sesi shift kasir</strong> dan mutasi kasir dikosongkan.</li>
+                  <li>Faktur <strong className="text-white font-semibold">pembelian supplier</strong> dan <strong className="text-white font-semibold">retur barang</strong> akan dihapus.</li>
+                  <li>Mutasi pemotongan <strong className="text-white font-semibold">Simpanan Belanja</strong> kasir direset agar saldo kembali utuh.</li>
+                  <li className="font-semibold text-emerald-400">
+                    Katalog master produk & stok inventori TIDAK DIUBAH (stok tetap utuh apa adanya).
+                  </li>
+                </ul>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-200">
+                  Ketik <span className="font-mono bg-slate-800 border border-slate-700 text-rose-400 px-2 py-0.5 rounded font-bold">RESET TRANSAKSI KASIR</span> untuk melanjutkan:
+                </label>
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  disabled={isResetting}
+                  placeholder="RESET TRANSAKSI KASIR"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-700 bg-slate-950 text-white placeholder-slate-500 text-xs sm:text-sm font-medium focus:outline-hidden focus:ring-2 focus:ring-rose-500 focus:border-rose-500 disabled:opacity-50"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                disabled={isResetting}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-300 hover:text-white hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleResetTransactions}
+                disabled={confirmText !== 'RESET TRANSAKSI KASIR' || isResetting}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:bg-slate-800 disabled:text-slate-500 disabled:border disabled:border-slate-700 text-white font-semibold text-xs transition-colors disabled:cursor-not-allowed shadow-md cursor-pointer"
+              >
+                {isResetting ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                <span>{isResetting ? 'Mengosongkan Transaksi...' : 'Ya, Hapus Semua Transaksi'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

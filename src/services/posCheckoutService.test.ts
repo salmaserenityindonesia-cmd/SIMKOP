@@ -461,5 +461,99 @@ describe('posCheckoutService', () => {
 
     (supabase as any).rpc = originalRpc;
   });
+
+  it('should gracefully fallback to direct insertion when RPC function is not installed in database (PGRST202)', async () => {
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-pgrst202' },
+          error: null
+        })
+      })
+    });
+    const mockDepositTxInsert = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.rpc as any).mockResolvedValue({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find the function public.process_pos_deposit_payment in the schema cache'
+      }
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'products') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { stock: 5 }, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            ilike: vi.fn().mockResolvedValue({
+              data: [{ id: 'dep-type-belanja-id' }],
+              error: null
+            })
+          })
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'member-dep-account-id' },
+                  error: null
+                }),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'member-dep-account-id' },
+                  error: null
+                })
+              })
+            })
+          })
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return { insert: mockDepositTxInsert };
+      }
+      return {};
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      cart: [{ id: 'prod-1', name: 'Beras 2.5kg', qty: 1, price: 21000 }],
+      subtotal: 21000,
+      discount: 0,
+      totalAmount: 21000,
+      paidCash: 0,
+      paidDeposit: 21000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(mockDepositTxInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        member_deposit_id: 'member-dep-account-id',
+        transaction_type: 'withdrawal',
+        amount: 21000,
+        payment_method: 'potong_simpanan_belanja',
+        reference_no: expect.stringMatching(/^INV-\d+$/),
+        created_by: 'cashier-1'
+      })
+    );
+  });
 });
 

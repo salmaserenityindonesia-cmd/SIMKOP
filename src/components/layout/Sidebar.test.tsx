@@ -42,6 +42,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       'Pengaturan Kasir',
       'Laporan Retail & Stok',
       'Laporan Mutasi Barang',
+      'Buku Besar Bon Toko',
     ]);
 
     expect(items.map((i) => i.href)).toEqual([
@@ -53,6 +54,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       '/admin/pengaturan-kasir',
       '/admin/laporan-retail',
       '/admin/laporan-mutasi',
+      '/admin/buku-besar-bon-toko',
     ]);
   });
 
@@ -70,6 +72,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       'Approval Pinjaman',
       'Matriks Simpanan',
       'Matriks Pinjaman',
+      'Buku Besar Belanja',
     ]);
   });
 

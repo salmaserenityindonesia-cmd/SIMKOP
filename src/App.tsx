@@ -21,6 +21,8 @@ import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
 import { LoanMatrix } from './pages/admin/LoanMatrix';
+import BukuBesarBelanja from './pages/admin/BukuBesarBelanja';
+import BukuBesarBonToko from './pages/admin/BukuBesarBonToko';
 import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
@@ -220,6 +222,24 @@ export default function App() {
           element={
             <ProtectedRoute>
               <LoanMatrix />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/buku-besar-belanja" 
+          element={
+            <ProtectedRoute>
+              <BukuBesarBelanja />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/buku-besar-bon-toko" 
+          element={
+            <ProtectedRoute>
+              <BukuBesarBonToko />
             </ProtectedRoute>
           } 
         />

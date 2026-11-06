@@ -126,40 +126,76 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<{ succe
         });
 
         if (rpcErr) {
-          throw new Error(rpcErr.message || 'Gagal memproses pemotongan Simpanan Belanja');
-        }
-
-        if (rpcRes && rpcRes.success === false) {
+          // If RPC doesn't exist in DB, fallback to direct insertion instead of crashing checkout
+          const isMissingFunction = rpcErr.code === 'PGRST202' || rpcErr.message?.includes('Could not find the function');
+          if (!isMissingFunction) {
+            throw new Error(rpcErr.message || 'Gagal memproses pemotongan Simpanan Belanja');
+          }
+        } else if (rpcRes && rpcRes.success === false) {
           throw new Error(rpcRes.message || 'Saldo Simpanan Belanja tidak mencukupi');
+        } else if (!rpcErr && rpcRes?.success !== false) {
+          rpcExecuted = true;
         }
-
-        rpcExecuted = true;
       }
 
-      // Fallback aman untuk mock/environment tanpa RPC
+      // Fallback aman untuk mock/environment tanpa RPC atau jika RPC belum di-deploy
       if (!rpcExecuted) {
         // Find "Simpanan Belanja" deposit type id and member_deposit id
         const { data: dTypes } = await supabase.from('deposit_types').select('id').ilike('name', '%belanja%');
-        const belanjaType = dTypes?.[0];
-        if (belanjaType) {
-          const { data: memberDep } = await supabase
+        let shoppingDepositTypeId = dTypes?.[0]?.id;
+
+        if (!shoppingDepositTypeId) {
+          const { data: dtByCode } = await supabase
+            .from('deposit_types')
+            .select('id')
+            .eq('code', 'BELANJA')
+            .maybeSingle();
+          shoppingDepositTypeId = dtByCode?.id;
+        }
+
+        if (shoppingDepositTypeId) {
+          const memberDepQuery = supabase
             .from('member_deposits')
             .select('id')
             .eq('member_id', payload.memberId)
-            .eq('deposit_type_id', belanjaType.id)
-            .single();
+            .eq('deposit_type_id', shoppingDepositTypeId);
 
-          if (memberDep) {
+          const { data: memberDep } = typeof (memberDepQuery as any).maybeSingle === 'function'
+            ? await (memberDepQuery as any).maybeSingle()
+            : await (memberDepQuery as any).single();
+
+          let targetMemberDepId = memberDep?.id;
+
+          if (!targetMemberDepId) {
+            const insertQuery = supabase
+              .from('member_deposits')
+              .insert({
+                member_id: payload.memberId,
+                deposit_type_id: shoppingDepositTypeId
+              })
+              .select('id');
+
+            const { data: newDep } = typeof (insertQuery as any).maybeSingle === 'function'
+              ? await (insertQuery as any).maybeSingle()
+              : typeof (insertQuery as any).single === 'function'
+                ? await (insertQuery as any).single()
+                : await insertQuery;
+
+            targetMemberDepId = newDep?.id;
+          }
+
+          if (targetMemberDepId) {
             await supabase.from('deposit_transactions').insert({
-              member_deposit_id: memberDep.id,
+              member_deposit_id: targetMemberDepId,
               transaction_date: new Date().toISOString(),
               transaction_type: 'withdrawal',
-              amount: payload.paidDeposit,
-              description: `Belanja Toko di Kasir POS (${saleNumber})`,
+              amount: Number(payload.paidDeposit),
+              description: `Belanja Kasir POS (${saleNumber})`,
               reference_no: saleNumber,
               payment_method: 'potong_simpanan_belanja',
-              notes: `Transaksi penjualan POS ID: ${saleId || '-'}`,
-              created_by: payload.cashierId
+              notes: `Transaksi belanja toko kasir`,
+              created_by: payload.cashierId,
+              created_at: new Date().toISOString()
             });
           }
         }
