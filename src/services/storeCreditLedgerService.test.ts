@@ -217,7 +217,7 @@ describe('storeCreditLedgerService', () => {
   });
 
   describe('settleStoreCredit', () => {
-    it('menyimpan pembayaran cicilan ke store_credit_payments dan mencatat cash_flow untuk pembayaran tunai', async () => {
+    it('menyimpan pembayaran cicilan ke store_credit_payments dengan skema valid (tanpa member_id) dan mencatat cash_flow untuk tunai', async () => {
       const mockInsertPayment = vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
           single: vi.fn().mockResolvedValue({ data: { id: 'new-pay-uuid' }, error: null })
@@ -227,7 +227,28 @@ describe('storeCreditLedgerService', () => {
 
       (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'store_credit_payments') {
-          return { insert: mockInsertPayment };
+          return {
+            insert: mockInsertPayment,
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'sale-1', paid_credit: 50000, sale_status: 'completed', created_at: '2026-11-01' }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
         }
         if (table === 'cash_flow') {
           return { insert: mockInsertCashFlow };
@@ -237,6 +258,7 @@ describe('storeCreditLedgerService', () => {
 
       const res = await settleStoreCredit({
         memberId: 'm-1',
+        saleId: 'sale-1',
         amount: 50000,
         paymentMethod: 'tunai',
         referenceNo: 'KWITANSI-01',
@@ -246,14 +268,19 @@ describe('storeCreditLedgerService', () => {
       expect(res.success).toBe(true);
       expect(res.paymentId).toBe('new-pay-uuid');
 
-      expect(mockInsertPayment).toHaveBeenCalledWith(
+      const insertArg = mockInsertPayment.mock.calls[0][0];
+      expect(insertArg).toEqual(
         expect.objectContaining({
-          member_id: 'm-1',
+          sale_id: 'sale-1',
           amount: 50000,
-          payment_method: 'tunai',
-          reference_no: 'KWITANSI-01'
+          receipt_number: 'KWITANSI-01',
+          notes: expect.stringContaining('Bayar lunas kasir')
         })
       );
+      // Memastikan kolom member_id TIDAK disertakan dalam payload
+      expect(insertArg).not.toHaveProperty('member_id');
+      expect(insertArg).toHaveProperty('payment_date');
+      expect(insertArg).toHaveProperty('created_at');
 
       expect(mockInsertCashFlow).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -263,6 +290,68 @@ describe('storeCreditLedgerService', () => {
           reference_id: 'new-pay-uuid'
         })
       );
+    });
+
+    it('mendukung pelunasan global per anggota dengan alokasi FIFO ke nota sales tertua', async () => {
+      const insertedRows: any[] = [];
+      const mockInsertPayment = vi.fn().mockImplementation((payload) => {
+        insertedRows.push(payload);
+        return {
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: { id: `pay-${insertedRows.length}` }, error: null })
+          })
+        };
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'sale-oldest', paid_credit: 20000, sale_status: 'completed', created_at: '2026-11-01' },
+                      { id: 'sale-newest', paid_credit: 50000, sale_status: 'completed', created_at: '2026-11-03' }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            }),
+            insert: mockInsertPayment
+          };
+        }
+        return {};
+      });
+
+      // Bayar Rp 35.000 global (harus alokasikan 20k ke oldest, 15k ke newest)
+      const res = await settleStoreCredit({
+        memberId: 'm-1',
+        amount: 35000,
+        paymentMethod: 'potong_gaji',
+        referenceNo: 'BYR-GLOBAL'
+      });
+
+      expect(res.success).toBe(true);
+      expect(insertedRows).toHaveLength(2);
+
+      // Baris 1: sale-oldest (20.000)
+      expect(insertedRows[0].sale_id).toBe('sale-oldest');
+      expect(insertedRows[0].amount).toBe(20000);
+      expect(insertedRows[0]).not.toHaveProperty('member_id');
+
+      // Baris 2: sale-newest (15.000)
+      expect(insertedRows[1].sale_id).toBe('sale-newest');
+      expect(insertedRows[1].amount).toBe(15000);
+      expect(insertedRows[1]).not.toHaveProperty('member_id');
     });
 
     it('gagal jika nominal pembayaran nol atau negatif', async () => {
@@ -286,8 +375,8 @@ describe('storeCreditLedgerService', () => {
               eq: vi.fn().mockReturnValue({
                 gt: vi.fn().mockResolvedValue({
                   data: [
-                    { paid_credit: 120000, sale_status: 'completed' },
-                    { paid_credit: 80000, sale_status: 'completed' }
+                    { id: 'sale-1', paid_credit: 120000, sale_status: 'completed' },
+                    { id: 'sale-2', paid_credit: 80000, sale_status: 'completed' }
                   ],
                   error: null
                 })
@@ -298,6 +387,10 @@ describe('storeCreditLedgerService', () => {
         if (table === 'store_credit_payments') {
           return {
             select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ sale_id: 'sale-1', amount: 75000 }],
+                error: null
+              }),
               eq: vi.fn().mockResolvedValue({
                 data: [{ amount: 75000 }],
                 error: null
@@ -321,8 +414,8 @@ describe('storeCreditLedgerService', () => {
             select: vi.fn().mockReturnValue({
               gt: vi.fn().mockResolvedValue({
                 data: [
-                  { member_id: 'm-1', paid_credit: 100000, sale_status: 'completed' },
-                  { member_id: 'm-2', paid_credit: 50000, sale_status: 'completed' }
+                  { id: 'sale-m1', member_id: 'm-1', paid_credit: 100000, sale_status: 'completed' },
+                  { id: 'sale-m2', member_id: 'm-2', paid_credit: 50000, sale_status: 'completed' }
                 ],
                 error: null
               })
@@ -333,7 +426,7 @@ describe('storeCreditLedgerService', () => {
           return {
             select: vi.fn().mockResolvedValue({
               data: [
-                { member_id: 'm-2', amount: 50000 } // m-2 lunas
+                { sale_id: 'sale-m2', member_id: 'm-2', amount: 50000 } // m-2 lunas
               ],
               error: null
             })

@@ -82,7 +82,7 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
     try {
       const { data: rawPayments, error: payError } = await supabase
         .from('store_credit_payments')
-        .select('id, member_id, amount');
+        .select('id, sale_id, amount');
 
       if (!payError && rawPayments) {
         payments = rawPayments;
@@ -93,6 +93,7 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
 
     let totalCreditSales = 0;
     const memberDebtMap = new Map<string, number>();
+    const saleMemberMap = new Map<string, string>();
 
     validSales.forEach((s: any) => {
       const amt = sanitizeNumber(s.paid_credit);
@@ -100,6 +101,7 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
       if (s.member_id) {
         const cur = memberDebtMap.get(s.member_id) || 0;
         memberDebtMap.set(s.member_id, cur + amt);
+        if (s.id) saleMemberMap.set(s.id, s.member_id);
       }
     });
 
@@ -107,9 +109,10 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
     payments.forEach((p: any) => {
       const amt = sanitizeNumber(p.amount);
       totalPaid += amt;
-      if (p.member_id) {
-        const cur = memberDebtMap.get(p.member_id) || 0;
-        memberDebtMap.set(p.member_id, cur - amt);
+      const mId = (p.sale_id && saleMemberMap.get(p.sale_id)) || p.member_id;
+      if (mId) {
+        const cur = memberDebtMap.get(mId) || 0;
+        memberDebtMap.set(mId, cur - amt);
       }
     });
 
@@ -167,29 +170,63 @@ export async function getStoreCreditLedger(
       (!s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')
     );
 
+    const saleMap = new Map<string, any>();
+    validSales.forEach((s: any) => {
+      if (s.id) saleMap.set(s.id, s);
+    });
+
     // 2. Kueri data pelunasan dari store_credit_payments
+    const validSaleIds = validSales.map((s: any) => s.id).filter(Boolean);
     let paymentsQuery: any = supabase
       .from('store_credit_payments')
-      .select('id, sale_id, member_id, amount, payment_method, payment_date, reference_no, notes, received_by, created_at');
+      .select('id, sale_id, amount, payment_date, receipt_number, notes, created_by, created_at');
 
-    if (filters?.memberId && paymentsQuery && typeof paymentsQuery.eq === 'function') {
-      paymentsQuery = paymentsQuery.eq('member_id', filters.memberId);
+    if (filters?.memberId && validSaleIds.length > 0 && paymentsQuery && typeof paymentsQuery.in === 'function') {
+      paymentsQuery = paymentsQuery.in('sale_id', validSaleIds);
     }
 
     let rawPayments: any[] = [];
     try {
-      const { data: pData, error: pError } = await paymentsQuery;
-      if (!pError && pData) {
-        rawPayments = pData;
+      if (!filters?.memberId || validSaleIds.length > 0) {
+        const { data: pData, error: pError } = await paymentsQuery;
+        if (!pError && pData) {
+          rawPayments = pData;
+        }
       }
     } catch {
       rawPayments = [];
     }
 
-    const validPayments = rawPayments.filter((p: any) =>
-      Number(p.amount) > 0 &&
-      (!filters?.memberId || p.member_id === filters.memberId)
-    );
+    const validPayments = rawPayments
+      .map((p: any) => {
+        const linkedSale = saleMap.get(p.sale_id);
+        const memberId = linkedSale?.member_id || p.member_id || '';
+        const refNo = p.receipt_number || p.reference_no || `BYR-${p.id.slice(0, 8)}`;
+        const cashierId = p.created_by || p.received_by;
+        let method = p.payment_method;
+        if (!method && p.notes) {
+          const match = p.notes.match(/^\[(.*?)\]/);
+          if (match) {
+            const m = match[1].toLowerCase();
+            if (m.includes('tunai')) method = 'tunai';
+            else if (m.includes('transfer')) method = 'transfer';
+            else if (m.includes('potong')) method = 'potong_gaji';
+          }
+        }
+        if (!method) method = 'potong_gaji';
+
+        return {
+          ...p,
+          member_id: memberId,
+          reference_no: refNo,
+          received_by: cashierId,
+          payment_method: method
+        };
+      })
+      .filter((p: any) =>
+        Number(p.amount) > 0 &&
+        (!filters?.memberId || p.member_id === filters.memberId)
+      );
 
     // 3. Kumpulkan seluruh member_id dan cashier/received_by id
     const memberIdSet = new Set<string>();
@@ -472,32 +509,149 @@ export async function settleStoreCredit(
       return { success: false, error: 'Nominal pelunasan harus lebih dari Rp 0.' };
     }
 
-    const refNo = payload.referenceNo || `BYR-${Date.now()}`;
+    const refNo = payload.referenceNo || `BYR-${Date.now().toString().slice(-6)}`;
     const paymentMethod = payload.paymentMethod || 'potong_gaji';
+    const methodLabel =
+      paymentMethod === 'tunai'
+        ? 'Tunai'
+        : paymentMethod === 'transfer'
+        ? 'Transfer'
+        : 'Potong Gaji';
 
-    // 1. Simpan ke tabel store_credit_payments
-    const insertPayload: any = {
-      member_id: payload.memberId,
-      sale_id: payload.saleId || null,
-      amount: amount,
-      payment_method: paymentMethod,
-      reference_no: refNo,
-      notes: payload.notes || `Pelunasan Bon Toko (${paymentMethod})`,
-      received_by: payload.receivedBy || null,
-      payment_date: new Date().toISOString()
-    };
-
-    const { data: newPayment, error: insertError } = await supabase
-      .from('store_credit_payments')
-      .insert(insertPayload)
-      .select('id')
-      .single();
-
-    if (insertError) {
-      throw insertError;
+    // Ambil user ID pengelola/kasir saat ini untuk audit created_by
+    let currentUserId = payload.receivedBy || null;
+    if (!currentUserId) {
+      try {
+        if (supabase.auth && typeof supabase.auth.getUser === 'function') {
+          const { data: authData } = await supabase.auth.getUser();
+          currentUserId = authData?.user?.id || null;
+        }
+      } catch {
+        currentUserId = null;
+      }
     }
 
-    const paymentId = newPayment?.id;
+    // Tentukan alokasi nota sales (spesifik atau FIFO)
+    let allocations: { saleId: string; amount: number }[] = [];
+
+    if (payload.saleId) {
+      allocations = [{ saleId: payload.saleId, amount }];
+    } else {
+      // Pelunasan global: cari nota sales milik anggota dengan paid_credit > 0 urut FIFO (terlama)
+      let salesQuery: any = supabase
+        .from('sales')
+        .select('id, paid_credit, created_at, sale_status')
+        .eq('member_id', payload.memberId);
+
+      if (salesQuery && typeof salesQuery.gt === 'function') {
+        salesQuery = salesQuery.gt('paid_credit', 0);
+      }
+      if (salesQuery && typeof salesQuery.order === 'function') {
+        salesQuery = salesQuery.order('created_at', { ascending: true });
+      }
+
+      const { data: memberSales, error: salesError } = await salesQuery;
+      if (salesError) {
+        console.warn('Gagal memuat penjualan bon anggota:', salesError.message);
+      }
+
+      const validSales = (memberSales || []).filter(
+        (s: any) =>
+          Number(s.paid_credit) > 0 &&
+          (!s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')
+      );
+
+      if (validSales.length === 0) {
+        return { success: false, error: 'Tidak ditemukan transaksi bon terbuka untuk anggota ini.' };
+      }
+
+      const saleIds = validSales.map((s: any) => s.id).filter(Boolean);
+
+      // Kueri pembayaran yang sudah ada untuk nota-nota ini
+      let existingPayments: any[] = [];
+      try {
+        let pQuery: any = supabase
+          .from('store_credit_payments')
+          .select('sale_id, amount');
+
+        if (saleIds.length > 0 && pQuery && typeof pQuery.in === 'function') {
+          pQuery = pQuery.in('sale_id', saleIds);
+        }
+        const { data: pData } = await pQuery;
+        existingPayments = pData || [];
+      } catch {
+        existingPayments = [];
+      }
+
+      const salePaidMap = new Map<string, number>();
+      existingPayments.forEach((p: any) => {
+        if (p.sale_id) {
+          const cur = salePaidMap.get(p.sale_id) || 0;
+          salePaidMap.set(p.sale_id, cur + sanitizeNumber(p.amount));
+        }
+      });
+
+      // Hitung sisa utang per nota yang terbuka
+      const openSales: { id: string; remainingDebt: number }[] = [];
+      for (const s of validSales) {
+        const bon = sanitizeNumber(s.paid_credit);
+        const paid = salePaidMap.get(s.id) || 0;
+        const remaining = Math.max(0, bon - paid);
+        if (remaining > 0) {
+          openSales.push({ id: s.id, remainingDebt: remaining });
+        }
+      }
+
+      if (openSales.length === 0) {
+        openSales.push({ id: validSales[validSales.length - 1].id, remainingDebt: amount });
+      }
+
+      let unallocated = amount;
+      for (let i = 0; i < openSales.length; i++) {
+        if (unallocated <= 0) break;
+        const s = openSales[i];
+        const isLast = i === openSales.length - 1;
+        const payThis = isLast ? unallocated : Math.min(unallocated, s.remainingDebt);
+        allocations.push({
+          saleId: s.id,
+          amount: payThis
+        });
+        unallocated -= payThis;
+      }
+    }
+
+    // 1. Simpan ke tabel store_credit_payments (HANYA kolom yang sah sesuai skema: sale_id, amount, payment_date, receipt_number, notes, created_by, created_at)
+    let firstPaymentId: string | undefined;
+
+    for (let i = 0; i < allocations.length; i++) {
+      const alloc = allocations[i];
+      const itemRefNo = allocations.length > 1 ? `${refNo}-${i + 1}` : refNo;
+      const formattedNotes = `[${methodLabel}] ${payload.notes || 'Pelunasan Bon Toko'}`.trim();
+
+      const insertPayload = {
+        sale_id: alloc.saleId,
+        amount: Number(alloc.amount),
+        payment_date: new Date().toISOString().split('T')[0],
+        receipt_number: itemRefNo || null,
+        notes: formattedNotes,
+        created_by: currentUserId || null,
+        created_at: new Date().toISOString()
+      };
+
+      const { data: newPayment, error: insertError } = await supabase
+        .from('store_credit_payments')
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      if (!firstPaymentId && newPayment?.id) {
+        firstPaymentId = newPayment.id;
+      }
+    }
 
     // 2. Jika metode pembayaran tunai kasir, catat arus kas masuk ke cash_flow
     if (paymentMethod === 'tunai') {
@@ -506,7 +660,7 @@ export async function settleStoreCredit(
           direction: 'in',
           amount: amount,
           category: 'pelunasan_bon_toko',
-          reference_id: paymentId,
+          reference_id: firstPaymentId,
           notes: `Penerimaan Pelunasan Bon Toko (#${refNo})`
         });
       } catch (cfErr) {
@@ -514,7 +668,7 @@ export async function settleStoreCredit(
       }
     }
 
-    return { success: true, paymentId };
+    return { success: true, paymentId: firstPaymentId };
   } catch (err: any) {
     console.error('Error settleStoreCredit:', err);
     return { success: false, error: err.message || 'Gagal menyimpan pelunasan bon toko.' };
@@ -531,19 +685,30 @@ export async function getMemberActiveDebt(memberId: string): Promise<number> {
     // Hitung total belanja bon
     const { data: sales } = await supabase
       .from('sales')
-      .select('paid_credit, sale_status')
+      .select('id, paid_credit, sale_status')
       .eq('member_id', memberId)
       .gt('paid_credit', 0);
 
-    const totalSales = (sales || [])
-      .filter((s: any) => !s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')
-      .reduce((acc: number, s: any) => acc + sanitizeNumber(s.paid_credit), 0);
+    const validSales = (sales || [])
+      .filter((s: any) => !s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success');
 
-    // Hitung total pelunasan
-    const { data: payments } = await supabase
+    const totalSales = validSales.reduce((acc: number, s: any) => acc + sanitizeNumber(s.paid_credit), 0);
+    const saleIds = validSales.map((s: any) => s.id).filter(Boolean);
+
+    if (saleIds.length === 0) return 0;
+
+    // Hitung total pelunasan untuk nota belanja bon anggota ini
+    let paymentsQuery: any = supabase
       .from('store_credit_payments')
-      .select('amount')
-      .eq('member_id', memberId);
+      .select('amount, sale_id');
+
+    if (paymentsQuery && typeof paymentsQuery.in === 'function') {
+      paymentsQuery = paymentsQuery.in('sale_id', saleIds);
+    } else if (paymentsQuery && typeof paymentsQuery.eq === 'function') {
+      paymentsQuery = paymentsQuery.eq('sale_id', saleIds[0]);
+    }
+
+    const { data: payments } = await paymentsQuery;
 
     const totalPaid = (payments || []).reduce(
       (acc: number, p: any) => acc + sanitizeNumber(p.amount),
@@ -564,26 +729,29 @@ export async function getMembersWithDebt(): Promise<{ id: string; nama: string; 
   try {
     const { data: rawSales } = await supabase
       .from('sales')
-      .select('member_id, paid_credit, sale_status')
+      .select('id, member_id, paid_credit, sale_status')
       .gt('paid_credit', 0);
 
     const memberDebtMap = new Map<string, number>();
+    const saleMemberMap = new Map<string, string>();
 
     (rawSales || []).forEach((s: any) => {
       if (s.member_id && (!s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')) {
         const cur = memberDebtMap.get(s.member_id) || 0;
         memberDebtMap.set(s.member_id, cur + sanitizeNumber(s.paid_credit));
+        if (s.id) saleMemberMap.set(s.id, s.member_id);
       }
     });
 
     const { data: rawPayments } = await supabase
       .from('store_credit_payments')
-      .select('member_id, amount');
+      .select('sale_id, amount');
 
     (rawPayments || []).forEach((p: any) => {
-      if (p.member_id) {
-        const cur = memberDebtMap.get(p.member_id) || 0;
-        memberDebtMap.set(p.member_id, Math.max(0, cur - sanitizeNumber(p.amount)));
+      const mId = (p.sale_id && saleMemberMap.get(p.sale_id)) || p.member_id;
+      if (mId) {
+        const cur = memberDebtMap.get(mId) || 0;
+        memberDebtMap.set(mId, Math.max(0, cur - sanitizeNumber(p.amount)));
       }
     });
 

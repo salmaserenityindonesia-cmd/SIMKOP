@@ -150,7 +150,7 @@ export default function BayarBonModal({
       });
 
       if (res.success) {
-        showToast('Pelunasan bon toko berhasil disimpan.', 'success');
+        showToast(`Pelunasan bon sebesar ${formatCurrency(numericAmount)} berhasil dicatat.`, 'success');
         onSuccess();
         onClose();
       } else {
