@@ -1,11 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, LogOut } from 'lucide-react';
 import { openShift, CashierShift } from '../../services/cashierShiftService';
 import { useFeedback } from '../../context/FeedbackContext';
+import { supabase } from '../../lib/supabaseClient';
 
 interface BukaKasirModalProps {
   isOpen: boolean;
   cashierId?: string | null;
   cashierName?: string;
+  userRole?: string;
+  isAdmin?: boolean;
   onSuccess: (shift: CashierShift) => void;
   canCancel?: boolean;
   onClose?: () => void;
@@ -17,15 +22,75 @@ export default function BukaKasirModal({
   isOpen,
   cashierId,
   cashierName = 'Kasir POS',
+  userRole,
+  isAdmin: propIsAdmin,
   onSuccess,
   canCancel = false,
   onClose,
 }: BukaKasirModalProps) {
+  const navigate = useNavigate();
   const { showToast } = useFeedback();
   const [initialCash, setInitialCash] = useState<number>(100000);
   const [notes, setNotes] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [internalIsAdmin, setInternalIsAdmin] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
+
+  const handleOperatorLogout = async () => {
+    try {
+      setIsLoggingOut(true);
+      localStorage.removeItem('simkop_active_shift_id');
+      localStorage.removeItem('simkop_active_shift_data');
+      localStorage.removeItem('simkop_pos_cart');
+      await supabase.auth.signOut();
+      navigate('/login');
+    } catch (error) {
+      console.error('Gagal logout kasir:', error);
+      navigate('/login');
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
+  useEffect(() => {
+    if (propIsAdmin !== undefined) {
+      setInternalIsAdmin(propIsAdmin);
+      return;
+    }
+    if (userRole) {
+      setInternalIsAdmin(userRole === 'admin');
+      return;
+    }
+
+    let isMounted = true;
+    async function checkAdminRole() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        if (user.app_metadata?.role === 'admin') {
+          if (isMounted) setInternalIsAdmin(true);
+          return;
+        }
+        const { data: pengelola } = await supabase
+          .from('pengelola')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+        if (isMounted && pengelola?.role === 'admin') {
+          setInternalIsAdmin(true);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    checkAdminRole();
+    return () => {
+      isMounted = false;
+    };
+  }, [propIsAdmin, userRole, cashierId]);
+
+  const effectiveIsAdmin = propIsAdmin !== undefined ? propIsAdmin : (userRole ? userRole === 'admin' : internalIsAdmin);
 
   if (!isOpen) return null;
 
@@ -102,15 +167,37 @@ export default function BukaKasirModal({
               </p>
             </div>
           </div>
-          {canCancel && onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-surface-container-lowest/70 hover:text-surface-container-lowest p-1 rounded-lg transition-colors"
-            >
-              <span className="material-symbols-outlined text-xl">close</span>
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            {!effectiveIsAdmin && (
+              <button
+                type="button"
+                onClick={handleOperatorLogout}
+                disabled={isLoggingOut}
+                title="Keluar (Logout)"
+                aria-label="Keluar Akun"
+                className="text-surface-container-lowest/80 hover:text-surface-container-lowest hover:bg-white/10 px-2 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-xs border border-white/20"
+              >
+                <LogOut className="w-3.5 h-3.5 text-rose-200" />
+                <span className="text-[11px] font-medium text-white">Keluar Akun</span>
+              </button>
+            )}
+            {(canCancel || effectiveIsAdmin) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (effectiveIsAdmin) {
+                    navigate('/admin');
+                  } else if (onClose) {
+                    onClose();
+                  }
+                }}
+                title={effectiveIsAdmin ? "Kembali ke Dashboard" : "Tutup"}
+                className="text-surface-container-lowest/70 hover:text-surface-container-lowest p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-xl">close</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Info Petugas & Waktu */}
@@ -211,34 +298,59 @@ export default function BukaKasirModal({
           </div>
 
           {/* Action Buttons */}
-          <div className="pt-2 flex items-center justify-end gap-3">
-            {canCancel && onClose && (
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={loading}
-                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-medium text-xs transition"
-              >
-                Batal
-              </button>
-            )}
-            <button
-              type="submit"
-              disabled={loading || initialCash < 0 || isNaN(initialCash)}
-              className="flex-1 sm:flex-none sm:min-w-[200px] py-2.5 px-6 rounded-xl bg-primary hover:bg-primary-container text-white font-title-sm text-sm font-semibold shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition active:scale-98"
-            >
-              {loading ? (
-                <>
-                  <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  <span>Membuka Shift...</span>
-                </>
+          <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div>
+              {effectiveIsAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => navigate('/admin')}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-sm transition-colors cursor-pointer shadow-sm"
+                >
+                  <ArrowLeft className="w-4 h-4 text-slate-600" />
+                  <span>Kembali ke Dashboard</span>
+                </button>
               ) : (
-                <>
-                  <span className="material-symbols-outlined text-lg">check_circle</span>
-                  <span>Mulai Operasional Kasir</span>
-                </>
+                <button
+                  type="button"
+                  onClick={handleOperatorLogout}
+                  disabled={isLoggingOut}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  <LogOut className="w-4 h-4 text-rose-600" />
+                  <span>{isLoggingOut ? 'Mengeluarkan...' : 'Keluar (Logout)'}</span>
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5">
+              {canCancel && onClose && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={loading || isLoggingOut}
+                  className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-medium text-xs sm:text-sm transition cursor-pointer"
+                >
+                  Batal
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={loading || isLoggingOut || initialCash < 0 || isNaN(initialCash)}
+                className="flex-1 sm:flex-none sm:min-w-[200px] py-2.5 px-6 rounded-xl bg-primary hover:bg-primary-container text-white font-title-sm text-sm font-semibold shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition active:scale-98 cursor-pointer"
+              >
+                {loading ? (
+                  <>
+                    <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <span>Membuka Shift...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-lg">check_circle</span>
+                    <span>Mulai Operasional Kasir</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </div>

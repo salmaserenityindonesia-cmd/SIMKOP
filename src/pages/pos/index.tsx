@@ -47,7 +47,7 @@ export default function POSPage() {
 
   // Shift & Cashier State
   const [activeShift, setActiveShift] = useState<CashierShift | null>(null);
-  const [currentCashier, setCurrentCashier] = useState<{ id: string; nama?: string } | null>(null);
+  const [currentCashier, setCurrentCashier] = useState<{ id: string; nama?: string; role?: string } | null>(null);
 
   const [modals, setModals] = useState({
     qty: false,
@@ -81,19 +81,23 @@ export default function POSPage() {
     async function initSession() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        let cashierInfo = {
+        let cashierInfo: { id: string; nama: string; role?: string } = {
           id: user?.id || '00000000-0000-0000-0000-000000000000',
           nama: 'Kasir POS',
+          role: user?.app_metadata?.role || 'operator',
         };
 
         if (user?.id) {
           const { data: pengelola } = await supabase
             .from('pengelola')
-            .select('id, nama')
+            .select('id, nama, role')
             .eq('id', user.id)
             .single();
+          const effectiveRole = pengelola?.role || user.app_metadata?.role || 'operator';
           if (pengelola?.nama) {
-            cashierInfo = { id: pengelola.id, nama: pengelola.nama };
+            cashierInfo = { id: pengelola.id, nama: pengelola.nama, role: effectiveRole };
+          } else {
+            cashierInfo.role = effectiveRole;
           }
         }
         setCurrentCashier(cashierInfo);
@@ -529,6 +533,8 @@ export default function POSPage() {
         isOpen={modals.bukaKasir}
         cashierId={currentCashier?.id}
         cashierName={currentCashier?.nama || 'Kasir POS'}
+        userRole={currentCashier?.role}
+        isAdmin={currentCashier?.role === 'admin'}
         canCancel={activeShift !== null}
         onClose={() => setModals(m => ({ ...m, bukaKasir: false }))}
         onSuccess={(shift) => {
