@@ -1091,7 +1091,19 @@ export async function bulkAutoReconcileLoans(
   // 1. Ambil seluruh data pinjaman aktif
   let loanQuery: any = supabase
     .from('loans')
-    .select('id, loan_number, principal_amount, sisa_pinjaman, jumlah_terangsur, status, member:anggota(id, nrp, nama)');
+    .select(`
+      id,
+      loan_number,
+      principal_amount,
+      amount,
+      notes,
+      status,
+      member:anggota (
+        id,
+        nrp,
+        nama
+      )
+    `);
 
   if (typeof loanQuery.in === 'function') {
     loanQuery = loanQuery.in('status', ['active', 'approved']);
@@ -1136,14 +1148,7 @@ export async function bulkAutoReconcileLoans(
 
     try {
       // Hitung saldo acuan terangsur hasil migrasi/impor
-      let repaidAvailable = 0;
-      if (loan.jumlah_terangsur != null && !isNaN(Number(loan.jumlah_terangsur)) && Number(loan.jumlah_terangsur) > 0) {
-        repaidAvailable = Math.round(Number(loan.jumlah_terangsur));
-      } else {
-        const principal = Number(loan.principal_amount || 0);
-        const sisa = Number(loan.sisa_pinjaman || 0);
-        repaidAvailable = Math.max(0, principal - sisa);
-      }
+      let repaidAvailable = getImportedRepaidBalance(loan);
 
       // Ambil jadwal angsuran pinjaman terurut berdasarkan periode
       let schQuery: any = supabase
@@ -1160,6 +1165,14 @@ export async function bulkAutoReconcileLoans(
 
       if (schErr || !schedules) {
         throw new Error(`Gagal memuat jadwal untuk ${loan.loan_number || loan.id}: ${schErr?.message}`);
+      }
+
+      // Jika saldo dari catatan impor 0, gunakan akumulasi paid_amount dari jadwal jika ada
+      if (repaidAvailable === 0 && schedules.length > 0) {
+        const schedulePaid = schedules.reduce((acc: number, s: any) => acc + Number(s.paid_amount || 0), 0);
+        if (schedulePaid > 0) {
+          repaidAvailable = schedulePaid;
+        }
       }
 
       // Bersihkan repayment lama bertipe rekonsiliasi
@@ -1227,8 +1240,20 @@ export async function bulkAutoReconcileLoans(
         const CHUNK = 50;
         for (let c = 0; c < repaymentsToInsert.length; c += CHUNK) {
           const chunk = repaymentsToInsert.slice(c, c + CHUNK);
-          const { error: insErr } = await supabase.from('loan_repayments').insert(chunk);
-          if (insErr) throw insErr;
+          let { error: insErr } = await supabase.from('loan_repayments').insert(chunk);
+          if (insErr) {
+            // Fallback jika skema database tidak mendukung kolom tambahan
+            const fallbackChunk = chunk.map((r: any) => ({
+              loan_id: r.loan_id,
+              schedule_id: r.schedule_id,
+              amount_paid: r.amount_paid,
+              payment_method: r.payment_method,
+              payment_date: r.payment_date,
+              notes: r.notes,
+            }));
+            const { error: retryErr } = await supabase.from('loan_repayments').insert(fallbackChunk);
+            if (retryErr) throw retryErr;
+          }
         }
       }
 
