@@ -1,12 +1,68 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, Filter, CheckCircle2, AlertCircle, XCircle, Clock, CalendarDays, TrendingUp, Eye } from 'lucide-react';
+import { Search, Download, Filter, CheckCircle2, XCircle, CalendarDays, TrendingUp, Eye } from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
-import { getLoanMatrix, getLoanMatrixAvailableYears, LoanMatrixSummary } from '../../services/loanMatrixService';
+import {
+  getLoanMatrix,
+  getLoanMatrixAvailableYears,
+  LoanMatrixSummary,
+  MonthLoanCell,
+} from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import * as ExcelJS from 'exceljs';
 import AdminLayout from '../../components/layout/AdminLayout';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+
+export const formatAmount = (num?: number | null): string => {
+  if (!num || num === 0) return '-';
+  return Number(num).toLocaleString('id-ID');
+};
+
+export interface CellBadgeInfo {
+  text: string;
+  className: string;
+  statusLabel: string;
+}
+
+export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
+  const normStatus = (cell?.status || '').toUpperCase();
+  switch (normStatus) {
+    case 'PAID':
+    case 'FINISHED':
+      return {
+        text: formatAmount(cell.paidAmount || cell.targetAmount),
+        className: 'text-emerald-700 bg-emerald-50 border border-emerald-200 font-semibold',
+        statusLabel: 'Lunas',
+      };
+    case 'PARTIAL':
+      return {
+        text: formatAmount(cell.paidAmount),
+        className: 'text-amber-700 bg-amber-50 border border-amber-200 font-semibold',
+        statusLabel: 'Parsial',
+      };
+    case 'UNPAID':
+      return {
+        text: formatAmount(cell.targetAmount),
+        className: 'text-rose-700 bg-rose-50 border border-rose-200 font-bold',
+        statusLabel: 'Menunggak',
+      };
+    case 'PROJECTED':
+    case 'PROJECTION':
+      return {
+        text: formatAmount(cell.targetAmount),
+        className: 'text-slate-400 bg-slate-50 border border-dashed border-slate-200 font-normal',
+        statusLabel: 'Proyeksi',
+      };
+    case 'NONE':
+    case 'NOT_APPLICABLE':
+    default:
+      return {
+        text: '-',
+        className: 'text-slate-300 font-normal',
+        statusLabel: 'Di Luar Masa Tenor',
+      };
+  }
+};
 
 export interface LoanMatrixProps {
   initialYear?: number;
@@ -136,28 +192,6 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
     link.click();
   };
 
-  const getCellClasses = (status: string) => {
-    switch (status) {
-      case 'PAID': 
-      case 'FINISHED': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
-      case 'PARTIAL': return 'bg-amber-50 text-amber-600 border-amber-200';
-      case 'UNPAID': return 'bg-rose-50 text-rose-600 border-rose-200';
-      case 'PROJECTED': return 'bg-slate-50 text-slate-500 border-slate-200 border-dashed';
-      default: return 'bg-white border-slate-100';
-    }
-  };
-
-  const getCellIcon = (status: string) => {
-    switch (status) {
-      case 'PAID': 
-      case 'FINISHED': return <CheckCircle2 className="w-5 h-5" />;
-      case 'PARTIAL': return <AlertCircle className="w-5 h-5" />;
-      case 'UNPAID': return <XCircle className="w-5 h-5" />;
-      case 'PROJECTED': return <Clock className="w-5 h-5" />;
-      default: return null;
-    }
-  };
-
   return (
     <AdminLayout>
     <div className="space-y-6">
@@ -257,6 +291,31 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         </div>
       </div>
 
+      {/* Status Legend */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-4 text-xs">
+        <span className="font-semibold text-slate-700">Keterangan Status:</span>
+        <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-emerald-700 bg-emerald-50 border border-emerald-200 font-mono font-semibold">100.000</span>
+          <span className="text-slate-600">Lunas</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-amber-700 bg-amber-50 border border-amber-200 font-mono font-semibold">50.000</span>
+          <span className="text-slate-600">Parsial</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-rose-700 bg-rose-50 border border-rose-200 font-mono font-bold">100.000</span>
+          <span className="text-slate-600">Menunggak</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-slate-400 bg-slate-50 border border-dashed border-slate-200 font-mono font-normal">100.000</span>
+          <span className="text-slate-600">Proyeksi</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-slate-300 font-mono font-normal">-</span>
+          <span className="text-slate-600">Di Luar Masa Tenor</span>
+        </div>
+      </div>
+
       {/* Matrix Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto max-h-[600px]">
@@ -265,7 +324,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               <tr>
                 <th className="px-4 py-3 sticky left-0 bg-slate-50 z-30 min-w-[250px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Anggota</th>
                 {MONTHS.map(m => (
-                  <th key={m} className="px-4 py-3 text-center min-w-[100px] border-l border-slate-200">{m}</th>
+                  <th key={m} className="px-3 py-3 text-center min-w-[110px] border-l border-slate-200">{m}</th>
                 ))}
                 <th className="px-4 py-3 text-center border-l border-slate-200">Kepatuhan YTD</th>
                 <th className="px-4 py-3 text-center sticky right-0 bg-slate-50 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] z-30">Aksi</th>
@@ -298,48 +357,60 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                     {Array.from({length: 12}, (_, i) => i + 1).map(m => {
                       const cell = member.months[m];
                       return (
-                        <td key={m} className={`px-2 py-2 border-l border-slate-100 text-center relative group`}>
-                          {cell.status !== 'NONE' ? (
-                            <div className={`w-10 h-10 mx-auto rounded-lg border flex items-center justify-center cursor-help transition-all ${getCellClasses(cell.status)}`}>
-                              {getCellIcon(cell.status)}
-                              
-                              {/* Tooltip */}
-                              <div className="opacity-0 invisible group-hover:opacity-100 group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50 transition-all">
-                                <div className="font-semibold mb-1 border-b border-slate-600 pb-1">
-                                  No: {cell.loanNumber}
+                        <td key={m} className="px-2 py-2 border-l border-slate-100 text-center">
+                          {(() => {
+                            const badge = getCellBadge(cell);
+                            const normStatus = (cell?.status || '').toUpperCase();
+                            if (normStatus === 'NONE' || normStatus === 'NOT_APPLICABLE' || !cell) {
+                              return (
+                                <div className="w-full py-1.5 text-center text-slate-300 font-normal select-none">
+                                  -
                                 </div>
-                                <div className="flex justify-between mt-1">
-                                  <span className="text-slate-300">Status:</span>
-                                  <span>{cell.status}</span>
+                              );
+                            }
+                            return (
+                              <div className="relative group cursor-help">
+                                <div className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}`}>
+                                  {badge.text}
                                 </div>
-                                <div className="flex justify-between mt-1">
-                                  <span className="text-slate-300">Tenor:</span>
-                                  <span>{cell.periodNumber} / {cell.tenor}</span>
-                                </div>
-                                <div className="flex justify-between mt-1">
-                                  <span className="text-slate-300">Target:</span>
-                                  <span>{formatCurrency(cell.targetAmount)}</span>
-                                </div>
-                                <div className="flex justify-between mt-1 text-emerald-400">
-                                  <span>Terbayar:</span>
-                                  <span>{formatCurrency(cell.paidAmount)}</span>
-                                </div>
-                                {cell.remainingBalance !== undefined && (
-                                  <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
-                                    <span>Sisa Angsuran:</span>
-                                    <span>{formatCurrency(cell.remainingBalance)}</span>
+                                {/* Rich Tooltip */}
+                                <div className="opacity-0 invisible group-hover:opacity-100 group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50 transition-all pointer-events-none">
+                                  <div className="font-semibold mb-1 border-b border-slate-600 pb-1">
+                                    No: {cell.loanNumber || '-'}
                                   </div>
-                                )}
-                                
-                                {/* Pointer arrow */}
-                                <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
+                                  <div className="flex justify-between mt-1">
+                                    <span className="text-slate-300">Status:</span>
+                                    <span className="font-medium">{badge.statusLabel}</span>
+                                  </div>
+                                  <div className="flex justify-between mt-1">
+                                    <span className="text-slate-300">Tenor:</span>
+                                    <span>{cell.periodNumber ? `${cell.periodNumber} / ${cell.tenor}` : '-'}</span>
+                                  </div>
+                                  {cell.dueDate && (
+                                    <div className="flex justify-between mt-1 text-slate-300">
+                                      <span>Jatuh Tempo:</span>
+                                      <span>{cell.dueDate}</span>
+                                    </div>
+                                  )}
+                                  <div className="flex justify-between mt-1">
+                                    <span className="text-slate-300">Target:</span>
+                                    <span>Rp {formatAmount(cell.targetAmount)}</span>
+                                  </div>
+                                  <div className="flex justify-between mt-1 text-emerald-400">
+                                    <span>Terbayar:</span>
+                                    <span>Rp {formatAmount(cell.paidAmount)}</span>
+                                  </div>
+                                  {cell.remainingBalance !== undefined && (
+                                    <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
+                                      <span>Sisa Angsuran:</span>
+                                      <span>Rp {formatAmount(cell.remainingBalance)}</span>
+                                    </div>
+                                  )}
+                                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="w-10 h-10 mx-auto rounded-lg border border-transparent flex items-center justify-center">
-                              <span className="text-slate-300">-</span>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </td>
                       );
                     })}
