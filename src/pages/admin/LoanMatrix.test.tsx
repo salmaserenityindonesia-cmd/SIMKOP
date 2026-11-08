@@ -555,5 +555,92 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
       expect(html).toContain('disabled:opacity-50');
     });
+
+    it('renders the bulk check button with initial state ready to trigger confirmation dialog', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('data-testid="bulk-check-all-btn"');
+    });
+
+    it('renders bulk reconcile button with proper styling, title, and initial ready state', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+      expect(html).toContain('data-testid="bulk-reconcile-btn"');
+      expect(html).toContain('bg-emerald-600');
+      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+    });
+  });
+
+  describe('Relocation of Action Buttons to Filter Toolbar Row (Phase 64)', () => {
+    it('ensures page header is clean without action buttons or any button elements', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+
+      // Find the header segment (from page title to KPI cards container)
+      const headerStartIndex = html.indexOf('Matriks Proyeksi &amp; Kepatuhan Pinjaman');
+      const kpiStartIndex = html.indexOf('Kepatuhan YTD');
+      expect(headerStartIndex).toBeGreaterThan(-1);
+      expect(kpiStartIndex).toBeGreaterThan(headerStartIndex);
+
+      const headerSlice = html.slice(headerStartIndex, kpiStartIndex);
+
+      // Header must contain breadcrumb
+      expect(headerSlice).toContain('SIMKOP / Simpan Pinjam / Matriks Pinjaman');
+
+      // Header must NOT contain action buttons or any button
+      expect(headerSlice).not.toContain('<button');
+      expect(headerSlice).not.toContain('bulk-check-all-btn');
+      expect(headerSlice).not.toContain('bulk-reconcile-btn');
+      expect(headerSlice).not.toContain('export-excel-btn');
+      expect(headerSlice).not.toContain('Export Excel');
+      expect(headerSlice).not.toContain('Centang Semua s/d Bulan Ini');
+      expect(headerSlice).not.toContain('Cocokkan Otomatis');
+    });
+
+    it('renders all three action buttons inside the filter toolbar container alongside year selector', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+
+      // Find the filter toolbar segment (between Filter Toolbar container and Status Legend)
+      const toolbarStartIndex = html.indexOf('Cari NRP atau Nama...');
+      const legendStartIndex = html.indexOf('Keterangan Status:');
+      expect(toolbarStartIndex).toBeGreaterThan(-1);
+      expect(legendStartIndex).toBeGreaterThan(toolbarStartIndex);
+
+      const toolbarSlice = html.slice(toolbarStartIndex, legendStartIndex);
+
+      // Verify presence of all key components within the toolbar
+      expect(toolbarSlice).toContain('Cari NRP atau Nama...');
+      expect(toolbarSlice).toContain('Semua Status');
+      expect(toolbarSlice).toContain('data-testid="bulk-check-all-btn"');
+      expect(toolbarSlice).toContain('Centang Semua s/d Bulan Ini');
+      expect(toolbarSlice).toContain('data-testid="bulk-reconcile-btn"');
+      expect(toolbarSlice).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+      expect(toolbarSlice).toContain('data-testid="export-excel-btn"');
+      expect(toolbarSlice).toContain('Export Excel');
+      expect(toolbarSlice).toContain('Tahun:');
+
+      // Verify chronological / DOM ordering in toolbar:
+      // Search -> Status Filter -> Bulk Check -> Bulk Reconcile -> Export Excel -> Year Selector
+      const searchPos = toolbarSlice.indexOf('Cari NRP atau Nama...');
+      const filterPos = toolbarSlice.indexOf('Semua Status');
+      const checkAllPos = toolbarSlice.indexOf('data-testid="bulk-check-all-btn"');
+      const reconcilePos = toolbarSlice.indexOf('data-testid="bulk-reconcile-btn"');
+      const exportPos = toolbarSlice.indexOf('data-testid="export-excel-btn"');
+      const yearPos = toolbarSlice.indexOf('Tahun:');
+
+      expect(searchPos).toBeLessThan(filterPos);
+      expect(filterPos).toBeLessThan(checkAllPos);
+      expect(checkAllPos).toBeLessThan(reconcilePos);
+      expect(reconcilePos).toBeLessThan(exportPos);
+      expect(exportPos).toBeLessThan(yearPos);
+    });
+
+    it('renders visual separator and proper styling for export excel button in filter toolbar', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+
+      // Visual divider between action buttons and year dropdown
+      expect(html).toContain('h-6 w-px bg-slate-200 hidden sm:block mx-1');
+
+      // Export excel button styling
+      expect(html).toContain('bg-slate-700 hover:bg-slate-800');
+    });
   });
 });
