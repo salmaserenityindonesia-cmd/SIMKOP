@@ -497,6 +497,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           memberNrp={selectedLoan.nrp}
           memberName={selectedLoan.nama}
           onClose={() => setSelectedLoan(null)}
+          onSuccess={() => fetchLoanMatrixData(year, setLoading, setData)}
         />
       )}
     </div>
