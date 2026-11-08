@@ -311,3 +311,475 @@ export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
     return [currentYear];
   }
 };
+
+export const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+  'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'
+];
+
+export interface LoanGridPeriod {
+  id: string;
+  loanId: string;
+  periodNumber: number;
+  dueDate: string;
+  targetAmount: number;
+  paidAmount: number;
+  status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED';
+  label: string; // e.g. "Bulan 1 [Jul-26]"
+  isCurrentMonth: boolean;
+  repayments: Array<{
+    id: string;
+    amountPaid: number;
+    paymentDate: string;
+    paymentMethod: string;
+    notes: string | null;
+  }>;
+}
+
+export interface LoanInteractiveGridSummary {
+  loanId: string;
+  loanNumber: string;
+  memberId: string;
+  memberName: string;
+  memberNrp: string;
+  principalAmount: number;
+  tenor: number;
+  monthlyTarget: number;
+  disbursedAt: string | null;
+  totalPaid: number;
+  sisaPinjaman: number;
+  isBalanced: boolean;
+  periods: LoanGridPeriod[];
+}
+
+export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanInteractiveGridSummary> => {
+  const { data: loan, error: loanErr } = await supabase
+    .from('loans')
+    .select(`
+      id,
+      loan_number,
+      principal_amount,
+      amount,
+      tenor,
+      monthly_target,
+      disbursed_at,
+      status,
+      member:anggota (
+        id,
+        nama,
+        nrp
+      )
+    `)
+    .eq('id', loanId)
+    .single();
+
+  if (loanErr || !loan) {
+    console.error('Error fetching loan for interactive grid:', loanErr);
+    throw loanErr || new Error(`Pinjaman dengan ID ${loanId} tidak ditemukan`);
+  }
+
+  const { data: schedules, error: schedErr } = await supabase
+    .from('loan_schedules')
+    .select('*')
+    .eq('loan_id', loanId)
+    .order('period_number', { ascending: true });
+
+  if (schedErr) {
+    console.error('Error fetching schedules for interactive grid:', schedErr);
+    throw schedErr;
+  }
+
+  const { data: repayments, error: repayErr } = await supabase
+    .from('loan_repayments')
+    .select('*')
+    .eq('loan_id', loanId)
+    .order('payment_date', { ascending: true });
+
+  if (repayErr) {
+    console.error('Error fetching repayments for interactive grid:', repayErr);
+    throw repayErr;
+  }
+
+  const principalAmount = Number(loan.principal_amount || loan.amount || 0);
+  const tenor = Number(loan.tenor || 0);
+  const monthlyTarget = Number(loan.monthly_target || 0);
+
+  const totalPaidFromRepayments = (repayments || []).reduce(
+    (sum: number, r: any) => sum + Number(r.amount_paid || 0),
+    0
+  );
+  const totalPaidFromSchedules = (schedules || []).reduce(
+    (sum: number, s: any) => sum + Number(s.paid_amount || 0),
+    0
+  );
+  const totalPaid = Math.max(totalPaidFromRepayments, totalPaidFromSchedules);
+
+  const sisaPinjaman = Math.max(0, principalAmount - totalPaid);
+  const isBalanced = totalPaid >= principalAmount;
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  const todayStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  const periods: LoanGridPeriod[] = (schedules || []).map((sched: any) => {
+    const d = new Date(sched.due_date);
+    const sYear = d.getFullYear();
+    const sMonth = d.getMonth() + 1;
+    const isCurrentMonth = sYear === currentYear && sMonth === currentMonth;
+
+    const targetAmount = Number(sched.target_amount || 0);
+    const paidAmount = Number(sched.paid_amount || 0);
+
+    let status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED';
+    if (paidAmount >= targetAmount && targetAmount > 0) {
+      status = 'PAID';
+    } else if (paidAmount > 0) {
+      status = 'PARTIAL';
+    } else if (sched.due_date > todayStr) {
+      status = 'PROJECTED';
+    } else {
+      status = 'UNPAID';
+    }
+
+    const monthName = MONTH_NAMES[sMonth - 1] || 'Bln';
+    const yearShort = String(sYear).slice(-2);
+    const label = `Bulan ${sched.period_number} [${monthName}-${yearShort}]`;
+
+    const schedRepayments = (repayments || [])
+      .filter((r: any) => r.schedule_id === sched.id)
+      .map((r: any) => ({
+        id: r.id,
+        amountPaid: Number(r.amount_paid || 0),
+        paymentDate: r.payment_date,
+        paymentMethod: r.payment_method || 'transfer',
+        notes: r.notes || null
+      }));
+
+    return {
+      id: sched.id,
+      loanId: sched.loan_id,
+      periodNumber: Number(sched.period_number),
+      dueDate: sched.due_date,
+      targetAmount,
+      paidAmount,
+      status,
+      label,
+      isCurrentMonth,
+      repayments: schedRepayments
+    };
+  });
+
+  const member = loan.member as any;
+
+  return {
+    loanId: loan.id,
+    loanNumber: loan.loan_number || '',
+    memberId: member?.id || '',
+    memberName: member?.nama || '',
+    memberNrp: member?.nrp || '',
+    principalAmount,
+    tenor,
+    monthlyTarget,
+    disbursedAt: loan.disbursed_at || null,
+    totalPaid,
+    sisaPinjaman,
+    isBalanced,
+    periods
+  };
+};
+
+export const toggleLoanSchedulePaid = async (
+  scheduleId: string,
+  paid: boolean,
+  payload?: {
+    amount?: number;
+    receiptNo?: string;
+    notes?: string;
+    paymentMethod?: string;
+  }
+): Promise<void> => {
+  const { data: schedule, error: schedErr } = await supabase
+    .from('loan_schedules')
+    .select('*, loan:loans(id, status, principal_amount, amount)')
+    .eq('id', scheduleId)
+    .single();
+
+  if (schedErr || !schedule) {
+    console.error('Error fetching schedule to toggle:', schedErr);
+    throw schedErr || new Error(`Jadwal pinjaman ${scheduleId} tidak ditemukan`);
+  }
+
+  const loanId = schedule.loan_id;
+
+  if (paid) {
+    const payAmount = payload?.amount !== undefined ? payload.amount : Number(schedule.target_amount || 0);
+    const notesDetail = [
+      payload?.receiptNo ? `Kwitansi: ${payload.receiptNo}` : '',
+      payload?.notes || ''
+    ].filter(Boolean).join(' - ') || 'Pelunasan Angsuran Pinjaman';
+
+    const { error: repayErr } = await supabase.from('loan_repayments').insert({
+      loan_id: loanId,
+      schedule_id: scheduleId,
+      amount_paid: payAmount,
+      payment_date: new Date().toISOString(),
+      payment_method: payload?.paymentMethod || 'transfer',
+      notes: notesDetail
+    });
+
+    if (repayErr) {
+      console.error('Error inserting loan repayment:', repayErr);
+      throw repayErr;
+    }
+
+    const newStatus = payAmount >= Number(schedule.target_amount) ? 'paid' : (payAmount > 0 ? 'partial' : 'unpaid');
+    const { error: updateSchedErr } = await supabase
+      .from('loan_schedules')
+      .update({
+        paid_amount: payAmount,
+        status: newStatus
+      })
+      .eq('id', scheduleId);
+
+    if (updateSchedErr) {
+      console.error('Error updating loan schedule:', updateSchedErr);
+      throw updateSchedErr;
+    }
+
+    // Check if all schedules for this loan are now paid
+    const { data: allSchedules } = await supabase
+      .from('loan_schedules')
+      .select('id, status, paid_amount, target_amount')
+      .eq('loan_id', loanId);
+
+    const allPaid = (allSchedules || []).length > 0 && (allSchedules || []).every((s: any) =>
+      s.id === scheduleId ? (newStatus === 'paid') : (s.status === 'paid' || Number(s.paid_amount) >= Number(s.target_amount))
+    );
+
+    if (allPaid) {
+      await supabase.from('loans').update({ status: 'completed' }).eq('id', loanId);
+    }
+  } else {
+    // Uncheck / cancel payment
+    const { error: deleteRepayErr } = await supabase
+      .from('loan_repayments')
+      .delete()
+      .eq('schedule_id', scheduleId);
+
+    if (deleteRepayErr) {
+      console.error('Error deleting loan repayment:', deleteRepayErr);
+      throw deleteRepayErr;
+    }
+
+    const { error: resetSchedErr } = await supabase
+      .from('loan_schedules')
+      .update({
+        paid_amount: 0,
+        status: 'unpaid'
+      })
+      .eq('id', scheduleId);
+
+    if (resetSchedErr) {
+      console.error('Error resetting loan schedule:', resetSchedErr);
+      throw resetSchedErr;
+    }
+
+    // Check loan status to revert if completed
+    let isCompleted = schedule.loan?.status === 'completed';
+    if (!schedule.loan) {
+      const { data: currentLoan } = await supabase.from('loans').select('status').eq('id', loanId).single();
+      isCompleted = currentLoan?.status === 'completed';
+    }
+
+    if (isCompleted) {
+      await supabase.from('loans').update({ status: 'active' }).eq('id', loanId);
+    }
+  }
+};
+
+export const autoReconcileLoanInstallments = async (
+  loanId: string,
+  totalPaidAvailable: number
+): Promise<{ reconciledCount: number; remainingAmount: number }> => {
+  const { data: schedules, error: schedErr } = await supabase
+    .from('loan_schedules')
+    .select('*')
+    .eq('loan_id', loanId)
+    .order('period_number', { ascending: true });
+
+  if (schedErr) {
+    console.error('Error fetching schedules for reconcile:', schedErr);
+    throw schedErr;
+  }
+
+  // Delete existing repayments for this loan
+  const { error: delErr } = await supabase
+    .from('loan_repayments')
+    .delete()
+    .eq('loan_id', loanId);
+
+  if (delErr) {
+    console.error('Error deleting existing loan repayments for reconcile:', delErr);
+    throw delErr;
+  }
+
+  let remaining = Math.max(0, totalPaidAvailable);
+  const repaymentsToInsert: any[] = [];
+  const scheduleUpdates: Array<{ id: string; paid_amount: number; status: string }> = [];
+
+  for (const sched of (schedules || [])) {
+    const target = Number(sched.target_amount || 0);
+    if (remaining <= 0) {
+      scheduleUpdates.push({ id: sched.id, paid_amount: 0, status: 'unpaid' });
+    } else if (remaining >= target) {
+      remaining -= target;
+      scheduleUpdates.push({ id: sched.id, paid_amount: target, status: 'paid' });
+      repaymentsToInsert.push({
+        loan_id: loanId,
+        schedule_id: sched.id,
+        amount_paid: target,
+        payment_date: new Date().toISOString(),
+        payment_method: 'reconcile_fifo',
+        notes: `Rekonsiliasi FIFO Angsuran Periode ${sched.period_number}`
+      });
+    } else {
+      const partialAmount = remaining;
+      remaining = 0;
+      scheduleUpdates.push({ id: sched.id, paid_amount: partialAmount, status: 'partial' });
+      repaymentsToInsert.push({
+        loan_id: loanId,
+        schedule_id: sched.id,
+        amount_paid: partialAmount,
+        payment_date: new Date().toISOString(),
+        payment_method: 'reconcile_fifo',
+        notes: `Rekonsiliasi FIFO Parsial Angsuran Periode ${sched.period_number}`
+      });
+    }
+  }
+
+  for (const update of scheduleUpdates) {
+    await supabase
+      .from('loan_schedules')
+      .update({ paid_amount: update.paid_amount, status: update.status })
+      .eq('id', update.id);
+  }
+
+  if (repaymentsToInsert.length > 0) {
+    const { error: insErr } = await supabase.from('loan_repayments').insert(repaymentsToInsert);
+    if (insErr) {
+      console.error('Error inserting repayments for reconcile:', insErr);
+      throw insErr;
+    }
+  }
+
+  const allPaid = scheduleUpdates.length > 0 && scheduleUpdates.every(s => s.status === 'paid');
+  await supabase.from('loans').update({ status: allPaid ? 'completed' : 'active' }).eq('id', loanId);
+
+  return {
+    reconciledCount: scheduleUpdates.filter(s => s.status === 'paid').length,
+    remainingAmount: remaining
+  };
+};
+
+export const checkAllLoanUpToCurrentMonth = async (
+  loanId: string
+): Promise<{ checkedCount: number }> => {
+  const now = new Date();
+  const endOfCurrentMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const endOfCurrentMonthStr = `${endOfCurrentMonth.getFullYear()}-${String(endOfCurrentMonth.getMonth() + 1).padStart(2, '0')}-${String(endOfCurrentMonth.getDate()).padStart(2, '0')}`;
+
+  const { data: schedules, error: schedErr } = await supabase
+    .from('loan_schedules')
+    .select('*')
+    .eq('loan_id', loanId)
+    .order('period_number', { ascending: true });
+
+  if (schedErr) {
+    console.error('Error fetching schedules for checkAllLoanUpToCurrentMonth:', schedErr);
+    throw schedErr;
+  }
+
+  let checkedCount = 0;
+  const targetSchedules = (schedules || []).filter((s: any) => s.due_date <= endOfCurrentMonthStr);
+
+  for (const sched of targetSchedules) {
+    const targetAmount = Number(sched.target_amount || 0);
+    const paidAmount = Number(sched.paid_amount || 0);
+
+    if (sched.status !== 'paid' || paidAmount < targetAmount) {
+      await supabase.from('loan_repayments').delete().eq('schedule_id', sched.id);
+
+      await supabase.from('loan_repayments').insert({
+        loan_id: loanId,
+        schedule_id: sched.id,
+        amount_paid: targetAmount,
+        payment_date: new Date().toISOString(),
+        payment_method: 'auto_check',
+        notes: `Pelunasan Otomatis Angsuran Periode ${sched.period_number} (s/d Bulan Berjalan)`
+      });
+
+      await supabase
+        .from('loan_schedules')
+        .update({
+          paid_amount: targetAmount,
+          status: 'paid'
+        })
+        .eq('id', sched.id);
+
+      checkedCount++;
+    }
+  }
+
+  // Check if all schedules for this loan are now paid
+  const { data: allSchedules } = await supabase
+    .from('loan_schedules')
+    .select('status, paid_amount, target_amount')
+    .eq('loan_id', loanId);
+
+  const allPaid = (allSchedules || []).length > 0 && (allSchedules || []).every(
+    (s: any) => s.status === 'paid' || Number(s.paid_amount) >= Number(s.target_amount)
+  );
+
+  if (allPaid) {
+    await supabase.from('loans').update({ status: 'completed' }).eq('id', loanId);
+  }
+
+  return { checkedCount };
+};
+
+export const uncheckAllLoanSchedules = async (loanId: string): Promise<void> => {
+  const { error: delErr } = await supabase
+    .from('loan_repayments')
+    .delete()
+    .eq('loan_id', loanId);
+
+  if (delErr) {
+    console.error('Error deleting loan repayments:', delErr);
+    throw delErr;
+  }
+
+  const { error: updErr } = await supabase
+    .from('loan_schedules')
+    .update({
+      paid_amount: 0,
+      status: 'unpaid'
+    })
+    .eq('loan_id', loanId);
+
+  if (updErr) {
+    console.error('Error resetting loan schedules:', updErr);
+    throw updErr;
+  }
+
+  const { error: loanErr } = await supabase
+    .from('loans')
+    .update({ status: 'active' })
+    .eq('id', loanId);
+
+  if (loanErr) {
+    console.error('Error resetting loan status:', loanErr);
+    throw loanErr;
+  }
+};
+
