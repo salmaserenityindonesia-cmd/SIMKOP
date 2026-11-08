@@ -1151,6 +1151,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 65: Tabel Data Gaji & Rekening dengan Autocompletion & Pagination di /admin/import-gaji
+**Status:** ⏳ In Progress
+**Objective:** Menambahkan visibilitas master data gaji (Take Home Pay) dan nomor rekening bank anggota yang tersimpan di database pada halaman Import Gaji & Rekening (`/admin/import-gaji`), dilengkapi dengan Search Box berkemampuan Autocompletion (pencarian NRP & Nama, dukungan navigasi keyboard), kontrol pagination fleksibel (10/25/50/100 baris per halaman), serta auto-refetch setelah proses impor berkas rekonsiliasi.
+**Depends on:** Phase 64, Phase 10
+
+**Plans:**
+- [ ] Plan 65.1: Reusable MemberSearchAutocomplete Component & Member Salary Fetch Service
+- [ ] Plan 65.2: Salary & Account Data Table, Autocomplete Search Toolbar, and Pagination Controls on /admin/import-gaji
+
+**Deliverables:**
+- Komponen `src/components/common/MemberSearchAutocomplete.tsx` dengan dukungan keyboard navigation (`ArrowDown`, `ArrowUp`, `Enter`, `Escape`) dan filter pencarian instan
+- Unit test komprehensif `src/components/common/MemberSearchAutocomplete.test.tsx`
+- Service query paged data gaji & rekening `fetchMembersSalaryAndAccounts` di `src/services/salaryImportService.ts` beserta unit test `src/services/salaryImportService.test.ts`
+- Tampilan tabel responsif di bawah formulir upload pada `src/pages/admin/SalaryImport.tsx` lengkap dengan badge status rekening, pagination switcher, dan auto-refetch
+- Verifikasi static typecheck `tsc --noEmit` dan production build pass
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1204,6 +1222,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 47 | Phase 60 | Tampilan Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman |
 | 48 | Phase 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan |
 | 49 | Phase 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian |
+| 50 | Phase 65 | Tabel Data Gaji & Rekening dengan Autocompletion dan Pagination di /admin/import-gaji |
 
 ---
 
@@ -1275,6 +1294,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 62 | Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan | ✅ | 2/2 | 100% |
 | 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian | ✅ | 2/2 | 100% |
+| 65 | Tabel Data Gaji & Rekening dengan Autocompletion & Pagination | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -1346,5 +1366,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 62 | 2026-11-08 | 2026-11-08 | 1 day |
 | 63 | 2026-11-08 | 2026-11-08 | 1 day |
 | 64 | 2026-11-08 | 2026-11-08 | 1 day |
+| 65 | 2026-11-08 | — | — |
 
 

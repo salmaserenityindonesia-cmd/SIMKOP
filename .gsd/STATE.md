@@ -1,23 +1,21 @@
 ## Current Position
-- **Phase**: 64 (Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian)
-- **Task**: Phase Execution Complete & Verified (2 plans completed across 2 waves)
-- **Status**: ✅ Complete & Verified
+- **Phase**: 65 (Tabel Data Gaji & Rekening dengan Autocompletion & Pagination di /admin/import-gaji)
+- **Task**: Planning Complete (2 plans created across 2 waves)
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 64 executed and verified across 2 plans:
-- **Plan 64.1**: Relocate Action Buttons to Filter Toolbar Row (`src/pages/admin/LoanMatrix.tsx`, `src/pages/admin/LoanMatrix.test.tsx`) (Wave 1)
-  - Bersihkan header atas sehingga hanya menampilkan judul "Matriks Proyeksi & Kepatuhan Pinjaman" dan breadcrumb teks.
-  - Pindahkan tombol `[Centang Semua s/d Bulan Ini]`, `[Cocokkan Otomatis dengan Saldo Terangsur]`, dan `[Export Excel]` ke dalam kontainer toolbar filter tabel, tersusun rapi berdampingan di antara filter status dropdown dan pemilih tahun.
-  - Preservasi seluruh testid (`bulk-check-all-btn`, `bulk-reconcile-btn`, `export-excel-btn`), atribut disabled, tooltip title, dan event handlers.
-  - Tambahkan unit testing komprehensif di `LoanMatrix.test.tsx` untuk memverifikasi struktur tata letak baru dan kelengkapan tombol di toolbar filter. Commits: `02c77e36`, `940a694c`.
-- **Plan 64.2**: Static Verification, Full Vitest Suite & Production Build Verification (Wave 2)
-  - Strict TypeScript check (`tsc --noEmit`): 0 error, exit code 0.
-  - Vitest test suite validation: 50 test files passed, 642 tests passed (100% pass).
-  - Production build verification: `npm run build` completed cleanly in 3.65s (2269 modules transformed). Commits: `c4a6285b`, `3a249201`.
-- **Independent Verification**: Verified by `gsd-verifier` (`VERIFICATION.md`), 7/7 must-haves passed.
+Phase 65 planned with 2 atomic plans:
+- **Plan 65.1**: Reusable MemberSearchAutocomplete Component & Member Salary Fetch Service (Wave 1)
+  - Membangun `MemberSearchAutocomplete.tsx` dengan dukungan keyboard navigation (`ArrowDown`, `ArrowUp`, `Enter`, `Escape`), helper murni `filterMembers` & `calculateNextMemberHighlightedIndex`, serta unit test `MemberSearchAutocomplete.test.tsx`.
+  - Menambahkan fungsi kueri data paged anggota `fetchMembersSalaryAndAccounts` di `src/services/salaryImportService.ts` untuk memuat data tanpa limitasi PostgREST 1000 item, beserta unit test `salaryImportService.test.ts`.
+- **Plan 65.2**: Salary & Account Data Table, Autocomplete Search Toolbar, and Pagination Controls on /admin/import-gaji (Wave 2)
+  - Mengintegrasikan tabel master data gaji (Take Home Pay) & rekening bank anggota di `src/pages/admin/SalaryImport.tsx` (rute `/admin/import-gaji`).
+  - Menambahkan toolbar autocompletion search box, kontrol pagination fleksibel (10, 25, 50, 100 per halaman), badge status rekening (Lengkap vs Belum Ada Rekening), dan auto-refetch setelah konfirmasi impor file rekonsiliasi sukses.
+  - Verifikasi menyeluruh: strict type check (`tsc --noEmit`), Vitest suite, dan produksi build Vite (`npm run build`).
 
 ## Next Steps
-Phase 64 is complete. Awaiting next user request or roadmap update.
+1. Execute Plan 65.1: `MemberSearchAutocomplete` component, `salaryImportService` query, and unit tests.
+2. Execute Plan 65.2: UI Table integration in `SalaryImport.tsx`, pagination controls, and full build verification.
 
 ## Blockers
 - None.
@@ -25,5 +23,6 @@ Phase 64 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Bilah Kontrol Terintegrasi**: Memindahkan toolbar aksi pinjaman dari header ke dalam kotak filter tabel mendekatkan kontrol aksi massal dengan grid data yang dimanipulasi, sekaligus menghemat ruang vertikal dan menjaga estetika antarmuka.
-- **Preservasi Test IDs & Handlers**: Seluruh `data-testid`, state loading, title tooltip, dan handler aksi dipertahankan 100% tanpa perubahan perilaku.
+- **File Halaman Terkait**: Berkas rute `/admin/import-gaji` adalah `src/pages/admin/SalaryImport.tsx` (bukan `ImportGajiRekening.tsx`).
+- **Paginasi Tanpa Truncation**: Menggunakan loop kueri paged (batch 1000) pada `fetchMembersSalaryAndAccounts` seperti halnya `fetchAllAnggotaPaged` agar seluruh data anggota termuat akurat ke memori UI.
+- **Keyboard Navigation Standard**: Menjaga konsistensi arsitektur komponen autocompletion seperti `ProductSearchAutocomplete.tsx` untuk aksesibilitas keyboard dan UX responsif.
