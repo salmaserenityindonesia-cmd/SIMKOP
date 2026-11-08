@@ -1134,6 +1134,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 64: Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian
+**Status:** ✅ Complete
+**Objective:** Memindahkan kelompok tombol aksi utama Matriks Pinjaman (`[☑ Centang Semua s/d Bulan Ini]`, `[🔄 Cocokkan Otomatis dengan Saldo Terangsur]`, dan `[📥 Export Excel]`) dari header atas halaman ke dalam bilah toolbar kontrol filter dan pencarian di `src/pages/admin/LoanMatrix.tsx`, bersanding sejajar di antara filter dropdown dan pemilih tahun.
+**Depends on:** Phase 63
+
+**Plans:**
+- [x] Plan 64.1: Relocate Action Buttons to Filter Toolbar Row
+- [x] Plan 64.2: Static Verification, Full Vitest Suite & Production Build Verification
+
+**Deliverables:**
+- Header atas yang bersih dan rapi hanya berisi judul dan breadcrumb
+- Toolbar filter tabel terintegrasi dengan pencarian, status filter, 3 tombol aksi, dan pemilih tahun
+- Unit & component tests di `LoanMatrix.test.tsx`
+- Static verification dan production build pass
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1186,6 +1203,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 46 | Phase 59 | Integrasi Pembayaran Kasir POS Menggunakan Simpanan Belanja |
 | 47 | Phase 60 | Tampilan Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman |
 | 48 | Phase 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan |
+| 49 | Phase 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian |
 
 ---
 
@@ -1256,6 +1274,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 61 | Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan) | ✅ | 3/3 | 100% |
 | 62 | Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan | ✅ | 2/2 | 100% |
+| 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1326,5 +1345,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 61 | 2026-11-08 | 2026-11-08 | 1 day |
 | 62 | 2026-11-08 | 2026-11-08 | 1 day |
 | 63 | 2026-11-08 | 2026-11-08 | 1 day |
+| 64 | 2026-11-08 | 2026-11-08 | 1 day |
 
 

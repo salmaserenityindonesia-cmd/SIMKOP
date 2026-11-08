@@ -1,24 +1,23 @@
 ## Current Position
-- **Phase**: 63 (Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan)
+- **Phase**: 64 (Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian)
 - **Task**: Phase Execution Complete & Verified (2 plans completed across 2 waves)
 - **Status**: ✅ Complete & Verified
 
 ## Last Session Summary
-Phase 63 executed and verified across 2 plans:
-- **Plan 63.1**: Auto-Populate Remaining Balance & Service Payment Accumulation Engine (`src/components/loans/LoanScheduleModal.tsx`, `src/services/loanMatrixService.ts`, `src/services/loanService.ts`) (Wave 1)
-  - Auto-fill remaining installment deficit (`Math.max(0, target - paid)`) when opening repayment modal on partial status.
-  - Auto-generate default notes `"Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-[bulan]"`.
-  - Set default payment method to `'potong_gaji'` and generate clean receipt number.
-  - Upgrade `toggleLoanSchedulePaid` to accumulate paid amount (`currentPaid + payAmount`) so paying the deficit marks installment as fully `paid`.
-  - Added unit test suite and component tests in `LoanScheduleModal.test.tsx` and `loanMatrixService.test.ts`. Commits: `840ed2d5`, `4c41caad`.
-- **Plan 63.2**: Static Verification, Vitest Suite & Production Build Verification (Wave 2)
-  - Strict TypeScript check: `tsc --noEmit` exit code 0 (0 error).
-  - Vitest test suite validation: 50 test files passed, 638 tests passed (100% pass).
-  - Production build verification: `npm run build` completed cleanly in 3.65s (2269 modules transformed). Commits: `4f37f8f9`, `24e43a74`.
+Phase 64 executed and verified across 2 plans:
+- **Plan 64.1**: Relocate Action Buttons to Filter Toolbar Row (`src/pages/admin/LoanMatrix.tsx`, `src/pages/admin/LoanMatrix.test.tsx`) (Wave 1)
+  - Bersihkan header atas sehingga hanya menampilkan judul "Matriks Proyeksi & Kepatuhan Pinjaman" dan breadcrumb teks.
+  - Pindahkan tombol `[Centang Semua s/d Bulan Ini]`, `[Cocokkan Otomatis dengan Saldo Terangsur]`, dan `[Export Excel]` ke dalam kontainer toolbar filter tabel, tersusun rapi berdampingan di antara filter status dropdown dan pemilih tahun.
+  - Preservasi seluruh testid (`bulk-check-all-btn`, `bulk-reconcile-btn`, `export-excel-btn`), atribut disabled, tooltip title, dan event handlers.
+  - Tambahkan unit testing komprehensif di `LoanMatrix.test.tsx` untuk memverifikasi struktur tata letak baru dan kelengkapan tombol di toolbar filter. Commits: `02c77e36`, `940a694c`.
+- **Plan 64.2**: Static Verification, Full Vitest Suite & Production Build Verification (Wave 2)
+  - Strict TypeScript check (`tsc --noEmit`): 0 error, exit code 0.
+  - Vitest test suite validation: 50 test files passed, 642 tests passed (100% pass).
+  - Production build verification: `npm run build` completed cleanly in 3.65s (2269 modules transformed). Commits: `c4a6285b`, `3a249201`.
 - **Independent Verification**: Verified by `gsd-verifier` (`VERIFICATION.md`), 7/7 must-haves passed.
 
 ## Next Steps
-Phase 63 is complete. Awaiting next user request or roadmap update.
+Phase 64 is complete. Awaiting next user request or roadmap update.
 
 ## Blockers
 - None.
@@ -26,47 +25,5 @@ Phase 63 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Incremental Deficit Accumulation**: Pelunasan selisih (misal Rp 7 pada sisa Rp 277.778 vs Rp 277.771) dihitung otomatis dan saat disubmit diakumulasikan ke `paid_amount` pada `loan_schedules`, sehingga status berubah menjadi lunas (`paid`) dan `loan_repayments` mencatat setoran riil Rp 7.
-- **Intelligent Default Notes**: Mengisi catatan bukti otomatis khusus untuk pelunasan selisih pembulatan, mempermudah admin agar cukup klik "Simpan & Lunas".
-
-## Blockers
-- None.
-
-## Context Dump
-
-### Decisions Made
-- **Interactive Checkbox Matrix for Loans**: Mengganti tabel vertikal paginasi statis dengan grid horizontal scrollable yang menampilkan setiap periode tenor (Bulan 1 s/d N), ring hijau dan badge `BULAN INI` pada bulan berjalan, serta status warna (emerald lunas, amber parsial, rose menunggak, slate putus-putus proyeksi).
-- **FIFO Auto-Reconciliation Engine**: Memperluas `loanMatrixService.ts` untuk menyediakan rekonsiliasi otomatis bertingkat (FIFO) dana pinjaman yang telah disetorkan, mendukung pelunasan penuh dan sisa parsial secara presisi.
-- **Backward-Compatible Modal Wrapper**: Menjaga kompatibilitas dengan mempertahankan `src/components/members/LoanLedgerModal.tsx` sebagai wrapper transparan yang memanggil `LoanScheduleModal.tsx`, sehingga seluruh titik integrasi di aplikasi langsung menikmati antarmuka matriks interaktif tanpa refactoring berisiko.
-
-Phase 60 executed and verified across 3 plans:
-- **Plan 60.1**: Align Monthly Cell Data Contract in loanMatrixService.ts (Wave 1)
-  - Enriched `LoanMatrixMonth` interface with `year?: number` and `dueDate?: string`
-  - Exported `MonthLoanCell` type alias for backward-compatible consumption
-  - Populated schedule year & due date during matrix transformation
-  - Unit tests: 8/8 passed in `src/services/loanMatrixService.test.ts`. Commits: `b2ee1a0a`, `797bd966`.
-- **Plan 60.2**: Render Colored Numeric Installments and Status Legend in LoanMatrix.tsx (Wave 2)
-  - Implemented `formatAmount` and `getCellBadge` helper functions
-  - Replaced checkmark icons in monthly cells with dynamic badge numbers
-  - Applied status-specific styling: emerald (lunas), amber (parsial), rose (menunggak), slate dashed (proyeksi), slate-300 (di luar masa pinjaman)
-  - Added status legend (Keterangan Status) on the Loan Matrix page
-  - Unit tests: 17/17 passed in `src/pages/admin/LoanMatrix.test.tsx`. Commits: `3bab6ac2`, `2d206fae`.
-- **Plan 60.3**: Static Verification, Vitest Suite & Production Build Verification (Wave 3)
-  - TypeScript strict typecheck (`tsc --noEmit`): clean exit code 0
-  - Full Vitest suite run: 49 test files passed, 612 tests passed (100% pass)
-  - Vite production bundle build (`npm run build`): 2268 modules transformed in 1.09s. Commits: `a6f678b4`, `32cc6613`.
-- **Independent Verification**: Verified by `gsd-verifier` (`VERIFICATION.md`), 5/5 must-haves passed.
-
-## Next Steps
-Phase 60 is complete. Awaiting next user request or roadmap update.
-
-## Blockers
-- None.
-
-## Context Dump
-
-### Decisions Made
-- **Backward-Compatible Data Contract**: Tetap mempertahankan properti eksisting (`targetAmount`, `paidAmount`, `status`) pada `LoanMatrixMonth` sekaligus mengekspor `MonthLoanCell` agar tidak memutus kode konsumsi yang sudah ada.
-- **Dynamic Numeric Badges**: Menggantikan rendering checklist ikonik (`CheckCircle2`, dll.) dengan nominal angka berformat ribuan Indonesia (`toLocaleString('id-ID')`) dan tipografi `font-mono` untuk memudahkan pembacaan di tabel matriks.
-- **Unified Status Palette**: Menggunakan emerald-700/50 untuk Lunas, amber-700/50 untuk Parsial, rose-700/50 untuk Menunggak, dan slate-400/50 bergaris putus-putus untuk Proyeksi bulan depan.
-- **Status Legend Placement**: Menampilkan legenda status di atas tabel matriks pinjaman untuk memandu pengguna mengenali makna warna secara cepat.
+- **Bilah Kontrol Terintegrasi**: Memindahkan toolbar aksi pinjaman dari header ke dalam kotak filter tabel mendekatkan kontrol aksi massal dengan grid data yang dimanipulasi, sekaligus menghemat ruang vertikal dan menjaga estetika antarmuka.
+- **Preservasi Test IDs & Handlers**: Seluruh `data-testid`, state loading, title tooltip, dan handler aksi dipertahankan 100% tanpa perubahan perilaku.
