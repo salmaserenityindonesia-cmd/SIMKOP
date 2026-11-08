@@ -32,6 +32,13 @@ export interface LoanRepayment {
   notes: string | null;
 }
 
+export const calculateRemainingInstallmentDeficit = (
+  targetAmount: number,
+  paidAmount: number
+): number => {
+  return Math.max(0, Number(targetAmount || 0) - Number(paidAmount || 0));
+};
+
 export const loanService = {
   async getPendingLoans() {
     const { data, error } = await supabase

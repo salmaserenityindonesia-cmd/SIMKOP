@@ -23,6 +23,7 @@ import {
   checkAllLoanUpToCurrentMonth,
   autoReconcileLoanInstallments,
   uncheckAllLoanSchedules,
+  calculateRemainingInstallmentDeficit,
   LoanInteractiveGridSummary,
   LoanGridPeriod,
   MONTH_NAMES,
@@ -267,11 +268,18 @@ export default function LoanScheduleModal({
     } else {
       // Buka modal bukti pelunasan
       setSelectedPeriodForEvidence(period);
-      const remainingTarget = Math.max(0, period.targetAmount - period.paidAmount);
-      setEvidenceAmount(remainingTarget > 0 ? remainingTarget : period.targetAmount);
+      const target = Number(period.targetAmount || 0);
+      const paid = Number(period.paidAmount || 0);
+      const remainingDeficit = calculateRemainingInstallmentDeficit(target, paid);
+      const defaultNominal = remainingDeficit > 0 ? remainingDeficit : target;
+      setEvidenceAmount(defaultNominal);
       setEvidenceReceiptNo(`KW-PINJ/${data?.loanNumber || '01'}/B${period.periodNumber}`);
       setEvidencePaymentMethod('potong_gaji');
-      setEvidenceNotes('');
+      if (remainingDeficit > 0 && paid > 0) {
+        setEvidenceNotes(`Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-${period.periodNumber}`);
+      } else {
+        setEvidenceNotes('');
+      }
       setEvidenceModalOpen(true);
     }
   };
@@ -697,6 +705,20 @@ export default function LoanScheduleModal({
                 <p className="text-[11px] text-slate-400 mt-1">
                   Target angsuran periode ini: {formatCurrency(selectedPeriodForEvidence.targetAmount)}
                 </p>
+                {selectedPeriodForEvidence.paidAmount > 0 && (
+                  <p
+                    data-testid="evidence-deficit-info"
+                    className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200/60 rounded px-2.5 py-1.5 mt-1.5 flex items-center justify-between"
+                  >
+                    <span>
+                      Sudah terbayar: {formatCurrency(selectedPeriodForEvidence.paidAmount)}
+                    </span>
+                    <span className="text-amber-400">|</span>
+                    <span>
+                      Sisa kekurangan: {formatCurrency(calculateRemainingInstallmentDeficit(selectedPeriodForEvidence.targetAmount, selectedPeriodForEvidence.paidAmount))}
+                    </span>
+                  </p>
+                )}
               </div>
 
               <div>

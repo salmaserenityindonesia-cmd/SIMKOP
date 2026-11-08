@@ -524,6 +524,13 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
   };
 };
 
+export const calculateRemainingInstallmentDeficit = (
+  targetAmount: number,
+  paidAmount: number
+): number => {
+  return Math.max(0, Number(targetAmount || 0) - Number(paidAmount || 0));
+};
+
 export const toggleLoanSchedulePaid = async (
   scheduleId: string,
   paid: boolean,
@@ -568,11 +575,16 @@ export const toggleLoanSchedulePaid = async (
       throw repayErr;
     }
 
-    const newStatus = payAmount >= Number(schedule.target_amount) ? 'paid' : (payAmount > 0 ? 'partial' : 'unpaid');
+    const currentPaid = Number(schedule.paid_amount || 0);
+    const newPaidAmount = Math.min(
+      Number(schedule.target_amount || 0),
+      currentPaid + payAmount
+    );
+    const newStatus = newPaidAmount >= Number(schedule.target_amount) ? 'paid' : (newPaidAmount > 0 ? 'partial' : 'unpaid');
     const { error: updateSchedErr } = await supabase
       .from('loan_schedules')
       .update({
-        paid_amount: payAmount,
+        paid_amount: newPaidAmount,
         status: newStatus
       })
       .eq('id', scheduleId);
