@@ -1114,6 +1114,26 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 63: Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan
+**Status:** ✅ Complete
+**Objective:** Mengotomatisasi pengisian nominal kekurangan angsuran (auto-populate deficit amount) pada modal "Dokumentasi Bukti Pelunasan Angsuran" di Buku Bantu Angsuran Pinjaman (LoanScheduleModal / LoanLedgerModal) ketika status angsuran parsial, melengkapi nomor kwitansi, catatan keterangan default ("Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-[bulan]"), serta memperbarui engine akumulasi pembayaran di loanMatrixService agar melunasi sisa kekurangan secara tepat menjadi status lunas (PAID).
+**Depends on:** Phase 62
+
+**Plans:**
+- [x] Plan 63.1: Auto-Populate Remaining Balance & Service Payment Accumulation Engine
+- [x] Plan 63.2: Static Verification, Vitest Suite & Production Build Verification
+
+**Deliverables:**
+- Helper kalkulasi sisa angsuran `calculateRemainingInstallmentDeficit` di service pinjaman
+- Auto-populate nominal sisa kekurangan pada form input "Nominal Pembayaran (Rp)" di `LoanScheduleModal.tsx`
+- Auto-generate catatan keterangan default untuk pelunasan selisih pembulatan
+- Default metode pembayaran terpilih `'potong_gaji'` dan nomor kwitansi rapi
+- Engine akumulasi `toggleLoanSchedulePaid` pada `src/services/loanMatrixService.ts` yang mengakumulasikan pembayaran sebelumnya sehingga sisa pelunasan mengubah status jadwal menjadi lunas (`paid`)
+- Unit testing di `LoanScheduleModal.test.tsx` dan `loanMatrixService.test.ts`
+- Static verification dan production build
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1165,6 +1185,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 45 | Phase 58 | Jejak Audit & Dokumentasi Bukti Pembayaran Matriks Simpanan |
 | 46 | Phase 59 | Integrasi Pembayaran Kasir POS Menggunakan Simpanan Belanja |
 | 47 | Phase 60 | Tampilan Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman |
+| 48 | Phase 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan |
 
 ---
 
@@ -1234,6 +1255,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 60 | Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 61 | Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan) | ✅ | 3/3 | 100% |
 | 62 | Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman | ✅ | 3/3 | 100% |
+| 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1303,5 +1325,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 60 | 2026-11-08 | 2026-11-08 | 1 day |
 | 61 | 2026-11-08 | 2026-11-08 | 1 day |
 | 62 | 2026-11-08 | 2026-11-08 | 1 day |
+| 63 | 2026-11-08 | 2026-11-08 | 1 day |
 
 

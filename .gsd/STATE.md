@@ -1,26 +1,24 @@
 ## Current Position
-- **Phase**: 62 (Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman)
-- **Task**: Phase Execution Complete & Verified (3 plans completed across 3 waves)
+- **Phase**: 63 (Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan)
+- **Task**: Phase Execution Complete & Verified (2 plans completed across 2 waves)
 - **Status**: ✅ Complete & Verified
 
 ## Last Session Summary
-Phase 62 executed and verified across 3 plans:
-- **Plan 62.1**: Data Contract & Cumulative Paid Calculation Engine (`src/services/loanMatrixService.ts`) (Wave 1)
-  - Extended `LoanMatrixMonth` interface with `cumulativePaidAmount?: number`.
-  - Implemented chronological running accumulation `loanCumulativePaid[loan.id]` in `getLoanMatrix` across all loan schedules sorted by `due_date: ascending`.
-  - Added and exported `getCumulativePaidUpToMonth` helper utility function.
-  - Added unit test suite with 6 new tests in `src/services/loanMatrixService.test.ts`. Commits: `0ae50a8d`, `56de6a85`.
-- **Plan 62.2**: Bind Cumulative Paid Amount to Popover Component & Component Tests (`src/pages/admin/LoanMatrix.tsx`) (Wave 2)
-  - Updated "Terbayar:" row in loan matrix cell hover popover to display cumulative paid amount up to the hovered month instead of single-month paid amount.
-  - Formatted currency as standard Indonesian Rupiah with thousand separator (`formatAmount`).
-  - Added component tests in `src/pages/admin/LoanMatrix.test.tsx` verifying cumulative paid amounts in tooltips. Commits: `5cd4c05a`, `bfba5c11`.
-- **Plan 62.3**: Static Analysis, Vitest Suite & Production Build Verification (Wave 3)
+Phase 63 executed and verified across 2 plans:
+- **Plan 63.1**: Auto-Populate Remaining Balance & Service Payment Accumulation Engine (`src/components/loans/LoanScheduleModal.tsx`, `src/services/loanMatrixService.ts`, `src/services/loanService.ts`) (Wave 1)
+  - Auto-fill remaining installment deficit (`Math.max(0, target - paid)`) when opening repayment modal on partial status.
+  - Auto-generate default notes `"Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-[bulan]"`.
+  - Set default payment method to `'potong_gaji'` and generate clean receipt number.
+  - Upgrade `toggleLoanSchedulePaid` to accumulate paid amount (`currentPaid + payAmount`) so paying the deficit marks installment as fully `paid`.
+  - Added unit test suite and component tests in `LoanScheduleModal.test.tsx` and `loanMatrixService.test.ts`. Commits: `840ed2d5`, `4c41caad`.
+- **Plan 63.2**: Static Verification, Vitest Suite & Production Build Verification (Wave 2)
   - Strict TypeScript check: `tsc --noEmit` exit code 0 (0 error).
-  - Targeted unit tests: 2 test files, 42 tests passed (100% pass).
-  - Production build: `npm run build` completed in 3.52s (2269 modules transformed). Commits: `bb1c5b7c`, `97d6ef74`.
+  - Vitest test suite validation: 50 test files passed, 638 tests passed (100% pass).
+  - Production build verification: `npm run build` completed cleanly in 3.65s (2269 modules transformed). Commits: `4f37f8f9`, `24e43a74`.
+- **Independent Verification**: Verified by `gsd-verifier` (`VERIFICATION.md`), 7/7 must-haves passed.
 
 ## Next Steps
-Phase 62 is complete. Awaiting next user request or roadmap update.
+Phase 63 is complete. Awaiting next user request or roadmap update.
 
 ## Blockers
 - None.
@@ -28,8 +26,8 @@ Phase 62 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Chronological Cumulative Paid Tracking**: Melacak total nominal yang telah terbayar (`sched.paid_amount`) secara urut waktu (`due_date` ascending) sejak awal pinjaman hingga bulan target, memastikan pinjaman multi-tahun (misal periode 41/42) menampilkan akumulasi seluruh pembayaran historis dengan benar.
-- **Dual Resolution Strategy**: Menyediakan nilai pre-computed `cell.cumulativePaidAmount` dari query `getLoanMatrix` serta helper fallback `getCumulativePaidUpToMonth` untuk fleksibilitas konsumsi di UI dan mock test.
+- **Incremental Deficit Accumulation**: Pelunasan selisih (misal Rp 7 pada sisa Rp 277.778 vs Rp 277.771) dihitung otomatis dan saat disubmit diakumulasikan ke `paid_amount` pada `loan_schedules`, sehingga status berubah menjadi lunas (`paid`) dan `loan_repayments` mencatat setoran riil Rp 7.
+- **Intelligent Default Notes**: Mengisi catatan bukti otomatis khusus untuk pelunasan selisih pembulatan, mempermudah admin agar cukup klik "Simpan & Lunas".
 
 ## Blockers
 - None.
