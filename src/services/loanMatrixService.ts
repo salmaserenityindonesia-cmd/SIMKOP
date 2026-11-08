@@ -7,6 +7,7 @@ export interface LoanMatrixMonth {
   status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'NONE' | 'paid' | 'partial' | 'unpaid' | 'projection' | 'not_applicable';
   targetAmount: number;
   paidAmount: number;
+  cumulativePaidAmount?: number;
   remainingBalance?: number;
   loanId?: string;
   loanNumber?: string;
@@ -108,6 +109,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   
   // To track running balance per loan
   const loanBalances: Record<string, number> = {};
+  const loanCumulativePaid: Record<string, number> = {};
 
   (schedules || []).forEach((sched: any) => {
     if (!sched.loan || !sched.loan.member) return;
@@ -126,6 +128,11 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     
     // Decrease the remaining balance by what has been paid in this schedule
     loanBalances[loan.id] -= Number(sched.paid_amount);
+
+    if (loanCumulativePaid[loan.id] === undefined) {
+      loanCumulativePaid[loan.id] = 0;
+    }
+    loanCumulativePaid[loan.id] += Number(sched.paid_amount || 0);
 
     if (!membersMap[member.id]) {
       membersMap[member.id] = {
@@ -205,6 +212,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         status: cellStatus,
         targetAmount: Number(sched.target_amount),
         paidAmount: Number(sched.paid_amount),
+        cumulativePaidAmount: loanCumulativePaid[loan.id],
         remainingBalance: Math.max(0, loanBalances[loan.id]), // Ensure it doesn't go below 0 visually
         loanId: loan.id,
         loanNumber: loan.loan_number,
@@ -250,6 +258,28 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     unpaidMembersCount: unpaidMembersSet.size,
     members: Object.values(membersMap)
   };
+};
+
+export const getCumulativePaidUpToMonth = (
+  member: LoanMatrixMember,
+  targetMonth: number,
+  targetYear?: number
+): number => {
+  if (!member || !member.months) return 0;
+  const targetCell = member.months[targetMonth];
+  if (targetCell?.cumulativePaidAmount !== undefined) {
+    return targetCell.cumulativePaidAmount;
+  }
+  // Fallback: jumlahkan paidAmount dari bulan 1 sampai targetMonth untuk loanId yang sama
+  let total = 0;
+  const targetLoanId = targetCell?.loanId;
+  for (let m = 1; m <= targetMonth; m++) {
+    const cell = member.months[m];
+    if (cell && (!targetLoanId || cell.loanId === targetLoanId)) {
+      total += Number(cell.paidAmount || 0);
+    }
+  }
+  return total;
 };
 
 export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
