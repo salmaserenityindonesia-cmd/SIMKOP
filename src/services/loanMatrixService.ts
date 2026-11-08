@@ -832,3 +832,205 @@ export const uncheckAllLoanSchedules = async (loanId: string): Promise<void> => 
   }
 };
 
+/**
+ * Dapatkan saldo terangsur awal / baseline dari data pinjaman (impor Excel / riil)
+ */
+export const getImportedRepaidBalance = (loan: any): number => {
+  if (!loan) return 0;
+  if (loan.jumlah_terangsur && Number(loan.jumlah_terangsur) > 0) {
+    return Number(loan.jumlah_terangsur);
+  }
+  const principal = Number(loan.principal_amount || loan.amount || loan.principalAmount || 0);
+  let sisa: number | null = null;
+  if (loan.sisa_pinjaman !== undefined && loan.sisa_pinjaman !== null) {
+    sisa = Number(loan.sisa_pinjaman);
+  } else if (loan.sisaPinjaman !== undefined && loan.sisaPinjaman !== null) {
+    sisa = Number(loan.sisaPinjaman);
+  } else if (loan.notes && typeof loan.notes === 'string') {
+    const match = loan.notes.match(/Sisa:\s*Rp\s*([\d\.,]+)/i);
+    if (match && match[1]) {
+      const parsed = Number(match[1].replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(parsed)) {
+        sisa = parsed;
+      }
+    }
+  }
+
+  if (sisa !== null && !isNaN(sisa)) {
+    return Math.max(0, principal - sisa);
+  }
+
+  if (loan.totalPaid && Number(loan.totalPaid) > 0) {
+    return Number(loan.totalPaid);
+  }
+
+  return 0;
+};
+
+export interface BulkLoanProgress {
+  processed: number;
+  total: number;
+  currentMemberName?: string;
+  currentLoanNumber?: string;
+}
+
+export interface BulkLoanResult {
+  totalLoans: number;
+  totalSuccess: number;
+  totalFailed: number;
+  errors?: Array<{ loanId: string; error: string }>;
+}
+
+/**
+ * Menjalankan centang lunas massal s/d bulan ini untuk seluruh pinjaman aktif
+ */
+export const bulkCheckAllLoansUpToCurrentMonth = async (
+  onProgress?: (progress: BulkLoanProgress) => void
+): Promise<BulkLoanResult> => {
+  let query: any = supabase
+    .from('loans')
+    .select(`
+      id,
+      loan_number,
+      status,
+      member:anggota (
+        id,
+        nrp,
+        nama
+      )
+    `);
+
+  if (typeof query.in === 'function') {
+    query = query.in('status', ['active', 'approved', 'draft', 'pending']);
+  }
+
+  const { data: loans, error: loansErr } = await query;
+
+  if (loansErr) {
+    console.error('Error fetching loans for bulkCheckAllLoansUpToCurrentMonth:', loansErr);
+    throw loansErr;
+  }
+
+  const loanList = loans || [];
+  const total = loanList.length;
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  const errors: Array<{ loanId: string; error: string }> = [];
+
+  for (let i = 0; i < total; i++) {
+    const loan = loanList[i];
+    const memberName = (loan.member as any)?.nama || `Pinjaman ${loan.loan_number || loan.id}`;
+
+    if (onProgress) {
+      onProgress({
+        processed: i + 1,
+        total,
+        currentMemberName: memberName,
+        currentLoanNumber: loan.loan_number || undefined,
+      });
+    }
+
+    try {
+      await checkAllLoanUpToCurrentMonth(loan.id);
+      totalSuccess++;
+    } catch (err: any) {
+      console.error(`Error checking loan ${loan.id}:`, err);
+      totalFailed++;
+      errors.push({ loanId: loan.id, error: err?.message || String(err) });
+    }
+  }
+
+  return {
+    totalLoans: total,
+    totalSuccess,
+    totalFailed,
+    errors,
+  };
+};
+
+/**
+ * Menjalankan rekonsiliasi otomatis saldo terangsur (FIFO) massal untuk seluruh pinjaman aktif
+ */
+export const bulkAutoReconcileAllLoans = async (
+  onProgress?: (progress: BulkLoanProgress) => void
+): Promise<BulkLoanResult> => {
+  let query: any = supabase
+    .from('loans')
+    .select(`
+      id,
+      loan_number,
+      principal_amount,
+      amount,
+      tenor,
+      monthly_target,
+      notes,
+      status,
+      member:anggota (
+        id,
+        nrp,
+        nama
+      )
+    `);
+
+  if (typeof query.in === 'function') {
+    query = query.in('status', ['active', 'approved', 'draft', 'pending']);
+  }
+
+  const { data: loans, error: loansErr } = await query;
+
+  if (loansErr) {
+    console.error('Error fetching loans for bulkAutoReconcileAllLoans:', loansErr);
+    throw loansErr;
+  }
+
+  const loanList = loans || [];
+  const total = loanList.length;
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  const errors: Array<{ loanId: string; error: string }> = [];
+
+  for (let i = 0; i < total; i++) {
+    const loan = loanList[i];
+    const memberName = (loan.member as any)?.nama || `Pinjaman ${loan.loan_number || loan.id}`;
+
+    if (onProgress) {
+      onProgress({
+        processed: i + 1,
+        total,
+        currentMemberName: memberName,
+        currentLoanNumber: loan.loan_number || undefined,
+      });
+    }
+
+    try {
+      let availablePaid = getImportedRepaidBalance(loan);
+      if (availablePaid === 0) {
+        let repQuery: any = supabase
+          .from('loan_repayments')
+          .select('amount_paid');
+        if (typeof repQuery.eq === 'function') {
+          repQuery = repQuery.eq('loan_id', loan.id);
+        }
+        const { data: repayments } = await repQuery;
+        const paidSum = (repayments || []).reduce((acc: number, r: any) => acc + Number(r.amount_paid || 0), 0);
+        availablePaid = paidSum;
+      }
+
+      await autoReconcileLoanInstallments(loan.id, availablePaid);
+      totalSuccess++;
+    } catch (err: any) {
+      console.error(`Error auto reconciling loan ${loan.id}:`, err);
+      totalFailed++;
+      errors.push({ loanId: loan.id, error: err?.message || String(err) });
+    }
+  }
+
+  return {
+    totalLoans: total,
+    totalSuccess,
+    totalFailed,
+    errors,
+  };
+};
+
+

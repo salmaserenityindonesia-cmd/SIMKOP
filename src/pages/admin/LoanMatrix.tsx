@@ -1,10 +1,28 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Download, Filter, CheckCircle2, XCircle, CalendarDays, TrendingUp, Eye } from 'lucide-react';
+import {
+  Search,
+  Download,
+  Filter,
+  CheckCircle2,
+  XCircle,
+  CalendarDays,
+  TrendingUp,
+  Eye,
+  CheckSquare,
+  RefreshCw,
+  X,
+  Loader2,
+  AlertTriangle,
+} from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
 import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
   getCumulativePaidUpToMonth,
+  bulkCheckAllLoansUpToCurrentMonth,
+  bulkAutoReconcileAllLoans,
+  BulkLoanProgress,
+  BulkLoanResult,
   LoanMatrixSummary,
   MonthLoanCell,
 } from '../../services/loanMatrixService';
@@ -125,6 +143,74 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const [data, setData] = useState<LoanMatrixSummary | null>(initialData ?? null);
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
 
+  // Bulk Actions State: Centang Semua s/d Bulan Ini
+  const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(false);
+  const [isBulkChecking, setIsBulkChecking] = useState(false);
+  const [bulkCheckProgress, setBulkCheckProgress] = useState<{ current: number; total: number; currentMemberName?: string }>({
+    current: 0,
+    total: 0,
+  });
+  const [bulkCheckSummary, setBulkCheckSummary] = useState<{ totalSuccess: number; totalFailed: number } | null>(null);
+
+  // Bulk Actions State: Cocokkan Otomatis dengan Saldo Terangsur
+  const [showConfirmBulkModal, setShowConfirmBulkModal] = useState(false);
+  const [isBulkReconciling, setIsBulkReconciling] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ processed: number; total: number; currentMemberName?: string }>({
+    processed: 0,
+    total: 0,
+  });
+  const [bulkResult, setBulkResult] = useState<{ totalSuccess: number; totalFailed: number } | null>(null);
+
+  const handleBulkCheckAll = async () => {
+    setIsBulkChecking(true);
+    setBulkCheckSummary(null);
+    try {
+      const res = await bulkCheckAllLoansUpToCurrentMonth((progress) => {
+        setBulkCheckProgress({
+          current: progress.processed,
+          total: progress.total,
+          currentMemberName: progress.currentMemberName,
+        });
+      });
+      setBulkCheckSummary({
+        totalSuccess: res.totalSuccess,
+        totalFailed: res.totalFailed,
+      });
+      await fetchLoanMatrixData(year, setLoading, setData);
+    } catch (err) {
+      console.error('Error during bulk check all loans:', err);
+      alert('Terjadi kesalahan saat memproses centang massal pinjaman.');
+      setShowCheckAllConfirmModal(false);
+    } finally {
+      setIsBulkChecking(false);
+    }
+  };
+
+  const handleBulkAutoReconcile = async () => {
+    setIsBulkReconciling(true);
+    setBulkResult(null);
+    try {
+      const res = await bulkAutoReconcileAllLoans((progress) => {
+        setBulkProgress({
+          processed: progress.processed,
+          total: progress.total,
+          currentMemberName: progress.currentMemberName,
+        });
+      });
+      setBulkResult({
+        totalSuccess: res.totalSuccess,
+        totalFailed: res.totalFailed,
+      });
+      await fetchLoanMatrixData(year, setLoading, setData);
+    } catch (err) {
+      console.error('Error during bulk auto reconcile loans:', err);
+      alert('Terjadi kesalahan saat mencocokkan saldo pinjaman.');
+      setShowConfirmBulkModal(false);
+    } finally {
+      setIsBulkReconciling(false);
+    }
+  };
+
   useEffect(() => {
     if (initialData !== undefined) return;
     loadAvailableYearsData(setAvailableYears, setYear);
@@ -204,15 +290,44 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   return (
     <AdminLayout>
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Matriks Proyeksi & Kepatuhan Pinjaman</h1>
           <p className="text-slate-500 mt-1">SIMKOP / Simpan Pinjam / Matriks Pinjaman</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => {
+              setBulkCheckSummary(null);
+              setShowCheckAllConfirmModal(true);
+            }}
+            disabled={isBulkChecking || isBulkReconciling}
+            title="Centang lunas seluruh pinjaman anggota dari awal tenor s/d bulan ini"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            data-testid="bulk-check-all-btn"
+          >
+            <CheckSquare className="w-4 h-4 text-emerald-600" />
+            <span>Centang Semua s/d Bulan Ini</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setBulkResult(null);
+              setShowConfirmBulkModal(true);
+            }}
+            disabled={isBulkReconciling || isBulkChecking}
+            title="Cocokkan otomatis saldo terangsur seluruh pinjaman anggota (FIFO Reconcile)"
+            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            data-testid="bulk-reconcile-btn"
+          >
+            <RefreshCw className={`w-4 h-4 ${isBulkReconciling ? 'animate-spin' : ''}`} />
+            <span>Cocokkan Otomatis dengan Saldo Terangsur</span>
+          </button>
+
           <button 
             onClick={handleExportExcel}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-xs"
+            data-testid="export-excel-btn"
           >
             <Download className="w-4 h-4" />
             Export Excel
@@ -515,6 +630,348 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           onClose={() => setSelectedLoan(null)}
           onSuccess={() => fetchLoanMatrixData(year, setLoading, setData)}
         />
+      )}
+
+      {/* Modal Dialog Konfirmasi & Progress Centang Semua s/d Bulan Ini Massal */}
+      {showCheckAllConfirmModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          data-testid="bulk-check-all-modal"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <CheckSquare className={`w-5 h-5 ${isBulkChecking ? 'animate-pulse' : ''}`} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Centang Semua Pinjaman s/d Bulan Ini
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Tandai lunas seluruh jadwal angsuran pinjaman anggota dari awal tenor s/d sekarang
+                  </p>
+                </div>
+              </div>
+              {!isBulkChecking && (
+                <button
+                  onClick={() => {
+                    setShowCheckAllConfirmModal(false);
+                    setBulkCheckSummary(null);
+                  }}
+                  data-testid="close-check-all-modal-btn"
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* State 1: In Progress */}
+              {isBulkChecking && (
+                <div className="space-y-4 py-2" data-testid="bulk-check-all-in-progress">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>
+                        Memproses {bulkCheckProgress.current} dari {bulkCheckProgress.total || 0} pinjaman...
+                      </span>
+                    </span>
+                    <span className="text-emerald-700 font-bold">
+                      {bulkCheckProgress.total > 0
+                        ? Math.round((bulkCheckProgress.current / bulkCheckProgress.total) * 100)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+
+                  {/* Progress Bar Track */}
+                  <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-200">
+                    <div
+                      className="bg-emerald-600 h-full rounded-full transition-all duration-300 ease-out"
+                      style={{
+                        width: `${
+                          bulkCheckProgress.total > 0
+                            ? Math.min(100, Math.round((bulkCheckProgress.current / bulkCheckProgress.total) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/80 text-xs text-slate-600 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Pinjaman Sedang Diproses:</span>
+                      <span className="font-semibold text-slate-800" data-testid="bulk-check-all-current-member">
+                        {bulkCheckProgress.currentMemberName || 'Menginisialisasi antrean...'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 italic text-center pt-1">
+                      Mohon tidak menutup jendela atau merefresh halaman saat pemrosesan sedang berlangsung.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* State 2: Completed Result */}
+              {!isBulkChecking && bulkCheckSummary !== null && (
+                <div className="py-2 text-center space-y-4" data-testid="bulk-check-all-result">
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-slate-900">
+                      Centang Massal Berhasil Diselesaikan!
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Seluruh jadwal angsuran pinjaman s/d bulan ini berhasil ditandai lunas.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto text-left">
+                    <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100 text-center">
+                      <div className="text-[11px] text-emerald-600 font-semibold uppercase tracking-wider">
+                        Berhasil
+                      </div>
+                      <div className="text-xl font-bold text-emerald-700 mt-0.5">
+                        {bulkCheckSummary.totalSuccess}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-center">
+                      <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+                        Gagal
+                      </div>
+                      <div className="text-xl font-bold text-slate-700 mt-0.5">
+                        {bulkCheckSummary.totalFailed}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => {
+                        setShowCheckAllConfirmModal(false);
+                        setBulkCheckSummary(null);
+                      }}
+                      className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
+                      data-testid="finish-check-all-btn"
+                    >
+                      Tutup &amp; Muat Ulang
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* State 3: Confirmation Dialog */}
+              {!isBulkChecking && bulkCheckSummary === null && (
+                <div className="space-y-4">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+                    <div className="font-semibold flex items-center gap-1.5 text-amber-950">
+                      <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>Konfirmasi Tindakan Massal</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      Aksi ini akan mencentang lunas jadwal angsuran pinjaman untuk <strong>seluruh anggota</strong> dari awal tenor pinjaman hingga bulan berjalan saat ini. Riwayat pelunasan otomatis akan dicatat untuk audit trail.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowCheckAllConfirmModal(false)}
+                      className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleBulkCheckAll}
+                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                      data-testid="confirm-check-all-btn"
+                    >
+                      <CheckSquare className="w-4 h-4" />
+                      <span>Ya, Lanjutkan Centang Semua</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Dialog Konfirmasi & Progress Rekonsiliasi Otomatis Saldo Terangsur Massal */}
+      {showConfirmBulkModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
+          data-testid="bulk-reconcile-modal"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <RefreshCw className={`w-5 h-5 ${isBulkReconciling ? 'animate-spin' : ''}`} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Cocokkan Otomatis dengan Saldo Terangsur
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Sinkronisasi saldo terangsur pinjaman seluruh anggota secara bertingkat (FIFO)
+                  </p>
+                </div>
+              </div>
+              {!isBulkReconciling && (
+                <button
+                  onClick={() => {
+                    setShowConfirmBulkModal(false);
+                    setBulkResult(null);
+                  }}
+                  data-testid="close-bulk-modal-btn"
+                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* State 1: In Progress */}
+              {isBulkReconciling && (
+                <div className="space-y-4 py-2" data-testid="bulk-reconcile-in-progress">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                      <span>
+                        Memproses {bulkProgress.processed} dari {bulkProgress.total || 0} pinjaman...
+                      </span>
+                    </span>
+                    <span className="text-emerald-700 font-bold">
+                      {bulkProgress.total > 0
+                        ? Math.round((bulkProgress.processed / bulkProgress.total) * 100)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+
+                  {/* Progress Bar Track */}
+                  <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-200">
+                    <div
+                      className="bg-emerald-600 h-full rounded-full transition-all duration-300 ease-out"
+                      style={{
+                        width: `${
+                          bulkProgress.total > 0
+                            ? Math.min(100, Math.round((bulkProgress.processed / bulkProgress.total) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/80 text-xs text-slate-600 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Pinjaman Sedang Diproses:</span>
+                      <span className="font-semibold text-slate-800" data-testid="bulk-current-member">
+                        {bulkProgress.currentMemberName || 'Menginisialisasi antrean...'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 italic text-center pt-1">
+                      Mohon tidak menutup jendela atau merefresh halaman saat rekonsiliasi sedang berlangsung.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* State 2: Completed Result */}
+              {!isBulkReconciling && bulkResult !== null && (
+                <div className="py-2 text-center space-y-4" data-testid="bulk-reconcile-result">
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-slate-900">
+                      Rekonsiliasi Selesai!
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Alokasi saldo terangsur seluruh pinjaman telah berhasil dicocokkan ke jadwal angsuran.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto text-left">
+                    <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100 text-center">
+                      <div className="text-[11px] text-emerald-600 font-semibold uppercase tracking-wider">
+                        Berhasil
+                      </div>
+                      <div className="text-xl font-bold text-emerald-700 mt-0.5">
+                        {bulkResult.totalSuccess}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-center">
+                      <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">
+                        Gagal
+                      </div>
+                      <div className="text-xl font-bold text-slate-700 mt-0.5">
+                        {bulkResult.totalFailed}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={() => {
+                        setShowConfirmBulkModal(false);
+                        setBulkResult(null);
+                      }}
+                      className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
+                      data-testid="finish-bulk-btn"
+                    >
+                      Tutup &amp; Muat Ulang
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* State 3: Confirmation Dialog */}
+              {!isBulkReconciling && bulkResult === null && (
+                <div className="space-y-4">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+                    <div className="font-semibold flex items-center gap-1.5 text-amber-950">
+                      <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+                      <span>Konfirmasi Rekonsiliasi Otomatis</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      Aksi ini akan mencocokkan saldo yang telah terangsur (dari hasil impor data atau pembayaran riil) ke jadwal angsuran secara bertingkat (FIFO) untuk <strong>seluruh pinjaman aktif</strong>. Jadwal yang tertutup saldo akan ditandai LUNAS atau PARSIAL secara presisi.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmBulkModal(false)}
+                      className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleBulkAutoReconcile}
+                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                      data-testid="confirm-bulk-reconcile-btn"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Ya, Mulai Rekonsiliasi</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </AdminLayout>

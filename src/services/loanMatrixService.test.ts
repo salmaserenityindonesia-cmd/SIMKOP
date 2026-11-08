@@ -11,7 +11,10 @@ import {
   calculateRemainingInstallmentDeficit,
   autoReconcileLoanInstallments,
   checkAllLoanUpToCurrentMonth,
-  uncheckAllLoanSchedules
+  uncheckAllLoanSchedules,
+  getImportedRepaidBalance,
+  bulkCheckAllLoansUpToCurrentMonth,
+  bulkAutoReconcileAllLoans
 } from './loanMatrixService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -1294,4 +1297,158 @@ describe('loanMatrixService - uncheckAllLoanSchedules', () => {
     });
   });
 });
+
+describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('getImportedRepaidBalance', () => {
+    it('returns jumlah_terangsur when present and > 0', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 10000000,
+        jumlah_terangsur: 5000000,
+      });
+      expect(balance).toBe(5000000);
+    });
+
+    it('calculates principal - sisa_pinjaman correctly when sisa_pinjaman is provided', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 10000000,
+        sisa_pinjaman: 3000000,
+      });
+      expect(balance).toBe(7000000);
+    });
+
+    it('extracts sisa from notes regex when sisa_pinjaman is absent', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 5000000,
+        notes: 'Impor pinjaman lama. Sisa: Rp 2.000.000',
+      });
+      expect(balance).toBe(3000000);
+    });
+
+    it('returns 0 when loan is null or has no repaid balance', () => {
+      expect(getImportedRepaidBalance(null)).toBe(0);
+      expect(getImportedRepaidBalance({})).toBe(0);
+    });
+  });
+
+  describe('bulkCheckAllLoansUpToCurrentMonth', () => {
+    it('iterates through all active loans and invokes checkAllLoanUpToCurrentMonth with progress', async () => {
+      const mockLoans = [
+        { id: 'loan-1', loan_number: 'LP-001', status: 'active', member: { id: 'm-1', nrp: '101', nama: 'Budi' } },
+        { id: 'loan-2', loan_number: 'LP-002', status: 'approved', member: { id: 'm-2', nrp: '102', nama: 'Siti' } },
+      ];
+
+      const mockSchedules = [
+        { id: 'sc-1', loan_id: 'loan-1', period_number: 1, due_date: '2026-01-10', target_amount: 500000, paid_amount: 0, status: 'unpaid' }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {};
+      });
+
+      const progressSpy = vi.fn();
+      const result = await bulkCheckAllLoansUpToCurrentMonth(progressSpy);
+
+      expect(result.totalLoans).toBe(2);
+      expect(result.totalSuccess).toBe(2);
+      expect(result.totalFailed).toBe(0);
+      expect(progressSpy).toHaveBeenCalledTimes(2);
+      expect(progressSpy).toHaveBeenLastCalledWith({
+        processed: 2,
+        total: 2,
+        currentMemberName: 'Siti',
+        currentLoanNumber: 'LP-002',
+      });
+    });
+  });
+
+  describe('bulkAutoReconcileAllLoans', () => {
+    it('iterates through all loans and reconciles using getImportedRepaidBalance', async () => {
+      const mockLoans = [
+        {
+          id: 'loan-1',
+          loan_number: 'LP-001',
+          principal_amount: 10000000,
+          jumlah_terangsur: 5000000,
+          status: 'active',
+          member: { id: 'm-1', nrp: '101', nama: 'Agus' },
+        },
+      ];
+
+      const mockSchedules = [
+        { id: 'sc-1', loan_id: 'loan-1', period_number: 1, target_amount: 2500000, paid_amount: 0, status: 'unpaid' },
+        { id: 'sc-2', loan_id: 'loan-1', period_number: 2, target_amount: 2500000, paid_amount: 0, status: 'unpaid' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {};
+      });
+
+      const progressSpy = vi.fn();
+      const result = await bulkAutoReconcileAllLoans(progressSpy);
+
+      expect(result.totalLoans).toBe(1);
+      expect(result.totalSuccess).toBe(1);
+      expect(result.totalFailed).toBe(0);
+      expect(progressSpy).toHaveBeenCalledWith({
+        processed: 1,
+        total: 1,
+        currentMemberName: 'Agus',
+        currentLoanNumber: 'LP-001',
+      });
+    });
+  });
+});
+
 

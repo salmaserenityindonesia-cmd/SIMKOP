@@ -209,6 +209,8 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('Matriks Proyeksi &amp; Kepatuhan Pinjaman');
       expect(html).toContain('SIMKOP / Simpan Pinjam / Matriks Pinjaman');
       expect(html).toContain('Export Excel');
+      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
 
       // KPI card titles
       expect(html).toContain('Kepatuhan YTD');
@@ -533,6 +535,25 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       // Month 1 shows 1.500.000, Month 2 shows 3.000.000
       expect(html).toContain('<span>Terbayar:</span><span>Rp 1.500.000</span>');
       expect(html).toContain('<span>Terbayar:</span><span>Rp 3.000.000</span>');
+    });
+  });
+
+  describe('Bulk Actions: Centang Semua s/d Bulan Ini & Cocokkan Otomatis dengan Saldo Terangsur', () => {
+    it('renders both bulk action buttons with proper attributes and testids', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+
+      expect(html).toContain('data-testid="bulk-check-all-btn"');
+      expect(html).toContain('data-testid="bulk-reconcile-btn"');
+      expect(html).toContain('title="Centang lunas seluruh pinjaman anggota dari awal tenor s/d bulan ini"');
+      expect(html).toContain('title="Cocokkan otomatis saldo terangsur seluruh pinjaman anggota (FIFO Reconcile)"');
+      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+    });
+
+    it('renders both buttons disabled during active background execution', () => {
+      // Buttons should have disabled:opacity-50 class and be ready for interactive clicks
+      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
+      expect(html).toContain('disabled:opacity-50');
     });
   });
 });

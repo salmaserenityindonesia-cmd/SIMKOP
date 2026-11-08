@@ -102,6 +102,7 @@ export const getImportedRepaidBalance = (loan: any): number => {
   return 0;
 };
 
+
 export default function LoanScheduleModal({
   loanId,
   memberNrp,
