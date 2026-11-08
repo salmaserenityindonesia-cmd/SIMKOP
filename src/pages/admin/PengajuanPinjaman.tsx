@@ -4,15 +4,127 @@ import { loanService, MIN_REMAINING_THP, calculateTHPEligibility } from '../../s
 import { supabase } from '../../lib/supabaseClient';
 import { Loader2, Plus, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
 
-export default function PengajuanPinjaman() {
-  const [anggotaList, setAnggotaList] = useState<any[]>([]);
-  const [selectedAnggota, setSelectedAnggota] = useState<string>('');
+export const formatCurrency = (val: number) => {
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val);
+};
+
+export interface SimulationPanelProps {
+  thpData: { master_thp: number; active_installments: number; remaining_thp: number } | null;
+  newInstallment: number;
+}
+
+export function SimulationPanel({ thpData, newInstallment }: SimulationPanelProps) {
+  const eligibility = thpData 
+    ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, MIN_REMAINING_THP)
+    : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
+
+  return (
+    <div className="bg-gray-50 rounded-xl border border-gray-200 p-6 sticky top-6">
+      <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <Calculator className="w-5 h-5 text-blue-600" />
+        Simulasi & Kelayakan
+      </h3>
+
+      {!thpData ? (
+        <p className="text-sm text-gray-500 text-center py-8">
+          Pilih anggota terlebih dahulu untuk melihat kelayakan THP.
+        </p>
+      ) : (
+        <div className="space-y-4 text-sm">
+          <div className="flex justify-between pb-2 border-b border-gray-200">
+            <span className="text-gray-600">Gaji Pokok (Master THP)</span>
+            <span className="font-semibold">{formatCurrency(thpData.master_thp)}</span>
+          </div>
+          <div className="flex justify-between pb-2 border-b border-gray-200 text-red-600">
+            <span>Cicilan Berjalan</span>
+            <span>- {formatCurrency(thpData.active_installments)}</span>
+          </div>
+          <div className="flex justify-between pb-2 border-b border-gray-200">
+            <span className="font-medium text-gray-700">Sisa THP Saat Ini</span>
+            <span className="font-bold text-gray-900">{formatCurrency(thpData.remaining_thp)}</span>
+          </div>
+
+          <div className="pt-4">
+            <div className="flex justify-between pb-2 border-b border-gray-200 text-orange-600 font-medium">
+              <span>Estimasi Cicilan Baru</span>
+              <span>- {formatCurrency(newInstallment)}</span>
+            </div>
+          </div>
+
+          <div className="flex justify-between py-2 text-base">
+            <span className="font-bold text-gray-900">Sisa THP Akhir</span>
+            <span className={`font-bold font-mono ${eligibility.isEligible ? 'text-green-600' : 'text-red-600'}`}>
+              {formatCurrency(eligibility.finalRemainingThp)}
+            </span>
+          </div>
+
+          {eligibility.isEligible ? (
+            <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 text-emerald-800 text-xs sm:text-sm">
+              <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-emerald-900">Memenuhi Syarat</p>
+                <p className="text-emerald-700 text-xs">
+                  Sisa THP setelah pemotongan ({formatCurrency(eligibility.finalRemainingThp)}) berada di atas batas minimum {formatCurrency(MIN_REMAINING_THP)}.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3 text-rose-700 text-xs sm:text-sm">
+              <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-rose-800">
+                  Tidak Memenuhi Syarat Batas Minimum THP
+                </p>
+                <p className="text-rose-600 leading-relaxed">
+                  Sisa THP setelah pemotongan diperkirakan hanya{' '}
+                  <strong className="font-bold text-rose-700 font-mono">
+                    {formatCurrency(eligibility.finalRemainingThp)}
+                  </strong>
+                  {' '}(kurang{' '}
+                  <strong className="font-bold text-rose-700 font-mono">
+                    {formatCurrency(eligibility.shortfall)}
+                  </strong>
+                  {' '}dari batas minimum {formatCurrency(MIN_REMAINING_THP)}).
+                </p>
+                {thpData.master_thp === 0 && (
+                  <p className="text-[11px] text-rose-500 italic mt-1.5 pt-1 border-t border-rose-200/60">
+                    * Catatan: Data Master THP anggota ini masih Rp 0 di sistem. Silakan update THP anggota terlebih dahulu melalui menu Import Gaji atau Manajemen Anggota.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface PengajuanPinjamanProps {
+  initialAnggotaList?: any[];
+  initialSelectedAnggota?: string;
+  initialThpData?: { master_thp: number; active_installments: number; remaining_thp: number } | null;
+  initialAmount?: number | '';
+  initialTenor?: number | '';
+  initialPurpose?: string;
+}
+
+export default function PengajuanPinjaman({
+  initialAnggotaList,
+  initialSelectedAnggota,
+  initialThpData,
+  initialAmount,
+  initialTenor,
+  initialPurpose
+}: PengajuanPinjamanProps = {}) {
+  const [anggotaList, setAnggotaList] = useState<any[]>(initialAnggotaList || []);
+  const [selectedAnggota, setSelectedAnggota] = useState<string>(initialSelectedAnggota || '');
   
-  const [purpose, setPurpose] = useState('');
-  const [amount, setAmount] = useState<number | ''>('');
-  const [tenor, setTenor] = useState<number | ''>('');
+  const [purpose, setPurpose] = useState(initialPurpose || '');
+  const [amount, setAmount] = useState<number | ''>(initialAmount ?? '');
+  const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
   
-  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(null);
+  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(initialThpData ?? null);
   
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,10 +155,6 @@ export default function PengajuanPinjaman() {
       console.error(err);
     }
   }
-
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val);
-  };
 
   const calculateCicilan = () => {
     if (!amount || !tenor) return 0;
@@ -185,84 +293,7 @@ export default function PengajuanPinjaman() {
         </div>
 
         <div className="lg:col-span-1">
-          <div className="bg-gray-50 rounded-xl border border-gray-200 p-6 sticky top-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-blue-600" />
-              Simulasi & Kelayakan
-            </h3>
-
-            {!thpData ? (
-              <p className="text-sm text-gray-500 text-center py-8">
-                Pilih anggota terlebih dahulu untuk melihat kelayakan THP.
-              </p>
-            ) : (
-              <div className="space-y-4 text-sm">
-                <div className="flex justify-between pb-2 border-b border-gray-200">
-                  <span className="text-gray-600">Gaji Pokok (Master THP)</span>
-                  <span className="font-semibold">{formatCurrency(thpData.master_thp)}</span>
-                </div>
-                <div className="flex justify-between pb-2 border-b border-gray-200 text-red-600">
-                  <span>Cicilan Berjalan</span>
-                  <span>- {formatCurrency(thpData.active_installments)}</span>
-                </div>
-                <div className="flex justify-between pb-2 border-b border-gray-200">
-                  <span className="font-medium text-gray-700">Sisa THP Saat Ini</span>
-                  <span className="font-bold text-gray-900">{formatCurrency(thpData.remaining_thp)}</span>
-                </div>
-
-                <div className="pt-4">
-                  <div className="flex justify-between pb-2 border-b border-gray-200 text-orange-600 font-medium">
-                    <span>Estimasi Cicilan Baru</span>
-                    <span>- {formatCurrency(calculateCicilan())}</span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between py-2 text-base">
-                  <span className="font-bold text-gray-900">Sisa THP Akhir</span>
-                  <span className={`font-bold font-mono ${eligibility.isEligible ? 'text-green-600' : 'text-red-600'}`}>
-                    {formatCurrency(eligibility.finalRemainingThp)}
-                  </span>
-                </div>
-
-                {eligibility.isEligible ? (
-                  <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 text-emerald-800 text-xs sm:text-sm">
-                    <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-semibold text-emerald-900">Memenuhi Syarat</p>
-                      <p className="text-emerald-700 text-xs">
-                        Sisa THP setelah pemotongan ({formatCurrency(eligibility.finalRemainingThp)}) berada di atas batas minimum {formatCurrency(MIN_REMAINING_THP)}.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3 text-rose-700 text-xs sm:text-sm">
-                    <AlertCircle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="font-semibold text-rose-800">
-                        Tidak Memenuhi Syarat Batas Minimum THP
-                      </p>
-                      <p className="text-rose-600 leading-relaxed">
-                        Sisa THP setelah pemotongan diperkirakan hanya{' '}
-                        <strong className="font-bold text-rose-700 font-mono">
-                          {formatCurrency(eligibility.finalRemainingThp)}
-                        </strong>
-                        {' '}(kurang{' '}
-                        <strong className="font-bold text-rose-700 font-mono">
-                          {formatCurrency(eligibility.shortfall)}
-                        </strong>
-                        {' '}dari batas minimum {formatCurrency(MIN_REMAINING_THP)}).
-                      </p>
-                      {thpData.master_thp === 0 && (
-                        <p className="text-[11px] text-rose-500 italic mt-1.5 pt-1 border-t border-rose-200/60">
-                          * Catatan: Data Master THP anggota ini masih Rp 0 di sistem. Silakan update THP anggota terlebih dahulu melalui menu Import Gaji atau Manajemen Anggota.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <SimulationPanel thpData={thpData} newInstallment={calculateCicilan()} />
         </div>
       </div>
     </AdminLayout>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loanService } from './loanService';
+import { loanService, calculateTHPEligibility, MIN_REMAINING_THP } from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -24,6 +24,145 @@ vi.mock('../lib/supabaseClient', () => {
 describe('loanService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe('calculateTHPEligibility helper', () => {
+    it('should return eligible with 0 shortfall when final remaining THP exceeds threshold', () => {
+      const result = calculateTHPEligibility(5000000, 2000000);
+      expect(result.finalRemainingThp).toBe(3000000);
+      expect(result.isEligible).toBe(true);
+      expect(result.shortfall).toBe(0);
+    });
+
+    it('should return eligible with 0 shortfall when final remaining THP exactly equals threshold', () => {
+      const result = calculateTHPEligibility(3500000, 2000000);
+      expect(result.finalRemainingThp).toBe(1500000);
+      expect(result.isEligible).toBe(true);
+      expect(result.shortfall).toBe(0);
+    });
+
+    it('should return ineligible with accurate positive shortfall when final remaining THP is below threshold', () => {
+      const result = calculateTHPEligibility(3000000, 2000000);
+      expect(result.finalRemainingThp).toBe(1000000);
+      expect(result.isEligible).toBe(false);
+      expect(result.shortfall).toBe(500000);
+    });
+
+    it('should handle negative remaining THP and calculate full shortfall including negative balance', () => {
+      const result = calculateTHPEligibility(1000000, 2000000);
+      expect(result.finalRemainingThp).toBe(-1000000);
+      expect(result.isEligible).toBe(false);
+      expect(result.shortfall).toBe(2500000);
+    });
+
+    it('should respect custom minThreshold parameter', () => {
+      const result = calculateTHPEligibility(2000000, 1000000, 2000000);
+      expect(result.finalRemainingThp).toBe(1000000);
+      expect(result.isEligible).toBe(false);
+      expect(result.shortfall).toBe(1000000);
+    });
+  });
+
+  describe('getMemberTHP - resilient multi-column binding', () => {
+    it('should read master_thp directly if present', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: 6000000, take_home_pay: 0 }, error: null })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [{ monthly_target: 1000000 }], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-1');
+      expect(res.master_thp).toBe(6000000);
+      expect(res.active_installments).toBe(1000000);
+      expect(res.remaining_thp).toBe(5000000);
+    });
+
+    it('should fallback to take_home_pay if master_thp is null or missing', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: null, take_home_pay: 4500000 }, error: null })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-2');
+      expect(res.master_thp).toBe(4500000);
+      expect(res.active_installments).toBe(0);
+      expect(res.remaining_thp).toBe(4500000);
+    });
+
+    it('should fallback to select * and salary if specific column select fails with error', async () => {
+      const mockSupabase = supabase.from as any;
+      // First select fails
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: null, error: { message: 'Column not found' } })
+          })
+        })
+      }));
+      // Fallback select '*' succeeds with salary
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { salary: 4000000 }, error: null })
+          })
+        })
+      }));
+      // active loans
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-3');
+      expect(res.master_thp).toBe(4000000);
+      expect(res.remaining_thp).toBe(4000000);
+    });
+
+    it('should fallback to 0 when no salary or thp columns are present', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { id: 'm-4' }, error: null })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-4');
+      expect(res.master_thp).toBe(0);
+      expect(res.remaining_thp).toBe(0);
+    });
   });
 
   describe('applyLoan - THP Validation', () => {
@@ -51,11 +190,11 @@ describe('loanService', () => {
 
       // Sisa THP saat ini: 5,000,000 - 2,000,000 = 3,000,000
       // Ajukan pinjaman Rp 20,000,000 tenor 10 bulan -> cicilan 2,000,000
-      // Sisa THP setelah pengajuan = 1,000,000 (Kurang dari 1,500,000)
+      // Sisa THP setelah pengajuan = 1,000,000 (Kurang dari 1,500,000, shortfall 500,000)
       
       await expect(loanService.applyLoan('member-1', 'Beli Motor', 20000000, 10))
         .rejects
-        .toThrow(/di bawah batas minimal Rp1.500.000/);
+        .toThrow(/Sisa THP setelah pemotongan \(Rp 1\.000\.000\) kurang Rp 500\.000 dari batas minimal Rp 1\.500\.000/);
     });
 
     it('should approve loan if remaining THP is sufficient', async () => {
