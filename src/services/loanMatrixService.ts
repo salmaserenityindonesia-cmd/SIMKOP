@@ -2,7 +2,9 @@ import { supabase } from '../lib/supabaseClient';
 
 export interface LoanMatrixMonth {
   month: number;
-  status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'NONE';
+  year?: number;
+  dueDate?: string;
+  status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'NONE' | 'paid' | 'partial' | 'unpaid' | 'projection' | 'not_applicable';
   targetAmount: number;
   paidAmount: number;
   remainingBalance?: number;
@@ -11,6 +13,8 @@ export interface LoanMatrixMonth {
   tenor?: number;
   periodNumber?: number;
 }
+
+export type MonthLoanCell = LoanMatrixMonth;
 
 export interface LoanMatrixMember {
   memberId: string;
@@ -138,6 +142,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       for (let i = 1; i <= 12; i++) {
         membersMap[member.id].months[i] = {
           month: i,
+          year: year,
           status: 'NONE',
           targetAmount: 0,
           paidAmount: 0
@@ -195,6 +200,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
 
       membersMap[member.id].months[month] = {
         month,
+        year: scheduleYear,
+        dueDate: sched.due_date,
         status: cellStatus,
         targetAmount: Number(sched.target_amount),
         paidAmount: Number(sched.paid_amount),
