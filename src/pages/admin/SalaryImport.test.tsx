@@ -90,4 +90,35 @@ describe('SalaryImport Page Integration', () => {
 
     expect(html).toContain('Tidak ada data anggota yang ditemukan.');
   });
+
+  it('renders fallback formatting for members without pangkat and with only master_thp', () => {
+    const customMembers = [
+      {
+        id: 'm-3',
+        nrp: '112233',
+        nama: 'Siti Rahma',
+        pangkat: null,
+        bank_account_number: '   ',
+        take_home_pay: null,
+        master_thp: 3800000,
+      },
+      {
+        id: 'm-4',
+        nrp: '445566',
+        nama: 'Dewi Lestari',
+        pangkat: '',
+        bank_account_number: undefined,
+        take_home_pay: null,
+        master_thp: null,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<SalaryImport initialMembers={customMembers} />);
+
+    expect(html).toContain('Siti Rahma');
+    expect(html).toContain('Rp 3.800.000');
+    expect(html).toContain('Belum Ada Rekening');
+    expect(html).toContain('Dewi Lestari');
+    expect(html).toContain('Menampilkan 1-2 dari 2 data');
+  });
 });
