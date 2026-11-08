@@ -14,7 +14,9 @@ import {
   uncheckAllLoanSchedules,
   getImportedRepaidBalance,
   bulkCheckAllLoansUpToCurrentMonth,
-  bulkAutoReconcileAllLoans
+  bulkAutoReconcileAllLoans,
+  bulkAutoReconcileLoans,
+  bulkAutoReconcileLoansUpToImportedBalance,
 } from './loanMatrixService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -1379,12 +1381,190 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
       expect(result.totalLoans).toBe(2);
       expect(result.totalSuccess).toBe(2);
       expect(result.totalFailed).toBe(0);
+      expect(result.successCount).toBe(2);
+      expect(result.failCount).toBe(0);
       expect(progressSpy).toHaveBeenCalledTimes(2);
       expect(progressSpy).toHaveBeenLastCalledWith({
         processed: 2,
         total: 2,
         currentMemberName: 'Siti',
         currentLoanNumber: 'LP-002',
+      });
+    });
+
+    it('inserts repayments with payment_method POTONG_GAJI, receipt_number, and created_by', async () => {
+      const mockLoans = [
+        { id: 'loan-1', loan_number: 'LP-999', status: 'active', member: { id: 'm-1', nrp: '999', nama: 'Ahmad' } },
+      ];
+      const mockSchedules = [
+        { id: 'sc-1', loan_id: 'loan-1', period_number: 1, due_date: '2026-01-15', target_amount: 300000, paid_amount: 100000, status: 'partial' },
+      ];
+
+      const repaymentInsertMock = vi.fn().mockResolvedValue({ error: null });
+      const scheduleUpdateMock = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+              }),
+            }),
+            update: scheduleUpdateMock,
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: repaymentInsertMock,
+          };
+        }
+        return {};
+      });
+
+      (supabase as any).auth = {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'admin-uuid-123' } } }),
+      };
+
+      const result = await bulkCheckAllLoansUpToCurrentMonth();
+
+      expect(result.totalSuccess).toBe(1);
+      expect(scheduleUpdateMock).toHaveBeenCalledWith({
+        paid_amount: 300000,
+        status: 'paid',
+      });
+      expect(repaymentInsertMock).toHaveBeenCalledTimes(1);
+      const insertedRows = repaymentInsertMock.mock.calls[0][0];
+      expect(insertedRows).toHaveLength(1);
+      expect(insertedRows[0]).toMatchObject({
+        loan_id: 'loan-1',
+        schedule_id: 'sc-1',
+        amount_paid: 200000, // 300000 - 100000
+        payment_method: 'POTONG_GAJI',
+        created_by: 'admin-uuid-123',
+      });
+      expect(insertedRows[0].receipt_number).toContain('KW-BULK-LP-999-B1-');
+    });
+
+    it('retries repayment insert with fallback schema when extended columns trigger schema error', async () => {
+      const mockLoans = [
+        { id: 'loan-1', loan_number: 'LP-111', status: 'active', member: { id: 'm-1', nrp: '111', nama: 'Doni' } },
+      ];
+      const mockSchedules = [
+        { id: 'sc-1', loan_id: 'loan-1', period_number: 1, due_date: '2026-02-10', target_amount: 400000, paid_amount: 0, status: 'unpaid' },
+      ];
+
+      const repaymentInsertMock = vi.fn()
+        .mockResolvedValueOnce({ error: { message: "column 'receipt_number' does not exist", code: '42703' } })
+        .mockResolvedValueOnce({ error: null });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: repaymentInsertMock,
+          };
+        }
+        return {};
+      });
+
+      const result = await bulkCheckAllLoansUpToCurrentMonth();
+
+      expect(result.totalSuccess).toBe(1);
+      expect(result.totalFailed).toBe(0);
+      expect(repaymentInsertMock).toHaveBeenCalledTimes(2);
+      // Fallback row should have standard columns without receipt_number or created_by
+      const fallbackRows = repaymentInsertMock.mock.calls[1][0];
+      expect(fallbackRows[0]).toEqual(expect.objectContaining({
+        loan_id: 'loan-1',
+        schedule_id: 'sc-1',
+        amount_paid: 400000,
+        payment_method: 'POTONG_GAJI',
+      }));
+      expect(fallbackRows[0].receipt_number).toBeUndefined();
+    });
+
+    it('isolates errors per loan and continues processing other loans', async () => {
+      const mockLoans = [
+        { id: 'loan-fail', loan_number: 'LP-ERR', status: 'active', member: { id: 'm-err', nrp: '000', nama: 'Error Member' } },
+        { id: 'loan-pass', loan_number: 'LP-OK', status: 'active', member: { id: 'm-ok', nrp: '999', nama: 'OK Member' } },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                if (val === 'loan-fail') {
+                  return {
+                    order: vi.fn().mockResolvedValue({ data: null, error: new Error('PostgREST query deadlock') }),
+                  };
+                }
+                return {
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'sc-ok', loan_id: 'loan-pass', period_number: 1, due_date: '2026-01-10', target_amount: 250000, paid_amount: 0, status: 'unpaid' }
+                    ],
+                    error: null,
+                  }),
+                };
+              }),
+            })),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {};
+      });
+
+      const result = await bulkCheckAllLoansUpToCurrentMonth();
+
+      expect(result.totalLoans).toBe(2);
+      expect(result.totalSuccess).toBe(1);
+      expect(result.totalFailed).toBe(1);
+      expect(result.successCount).toBe(1);
+      expect(result.failCount).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors?.[0]).toEqual({
+        loanId: 'loan-fail',
+        error: 'PostgREST query deadlock',
       });
     });
   });
@@ -1447,6 +1627,190 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
         currentMemberName: 'Agus',
         currentLoanNumber: 'LP-001',
       });
+    });
+  });
+
+  describe('bulkAutoReconcileLoans (Resilient FIFO Engine)', () => {
+    it('successfully reconciles loans with FIFO allocation and calls onProgress(current, total, loanNumber)', async () => {
+      const mockLoans = [
+        {
+          id: 'loan-1',
+          loan_number: 'LP-101',
+          principal_amount: 6000000,
+          jumlah_terangsur: 4000000,
+          status: 'active',
+          member: { id: 'm-1', nrp: '101', nama: 'Budi' },
+        },
+        {
+          id: 'loan-2',
+          loan_number: 'LP-102',
+          principal_amount: 5000000,
+          sisa_pinjaman: 3000000,
+          jumlah_terangsur: null,
+          status: 'active',
+          member: { id: 'm-2', nrp: '102', nama: 'Citra' },
+        },
+      ];
+
+      const schedulesMap: Record<string, any[]> = {
+        'loan-1': [
+          { id: 'sc-1', loan_id: 'loan-1', period_number: 1, target_amount: 2000000, paid_amount: 0, status: 'unpaid' },
+          { id: 'sc-2', loan_id: 'loan-1', period_number: 2, target_amount: 2000000, paid_amount: 0, status: 'unpaid' },
+          { id: 'sc-3', loan_id: 'loan-1', period_number: 3, target_amount: 2000000, paid_amount: 0, status: 'unpaid' },
+        ],
+        'loan-2': [
+          { id: 'sc-4', loan_id: 'loan-2', period_number: 1, target_amount: 1500000, paid_amount: 0, status: 'unpaid' },
+          { id: 'sc-5', loan_id: 'loan-2', period_number: 2, target_amount: 1500000, paid_amount: 0, status: 'unpaid' },
+        ],
+      };
+
+      const updatedSchedules: any[] = [];
+      const insertedRepayments: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col: string, val: string) => ({
+                order: vi.fn().mockResolvedValue({ data: schedulesMap[val] || [], error: null }),
+              })),
+            }),
+            update: vi.fn().mockImplementation((upd) => ({
+              eq: vi.fn().mockImplementation((col, id) => {
+                updatedSchedules.push({ id, ...upd });
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                or: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((rows) => {
+              insertedRepayments.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      const progressHistory: Array<{ current: number; total: number; loanNumber: string }> = [];
+      const result = await bulkAutoReconcileLoans((current, total, loanNumber) => {
+        progressHistory.push({ current, total, loanNumber });
+      });
+
+      expect(result.totalSuccess).toBe(2);
+      expect(result.totalFailed).toBe(0);
+      expect(result.errors).toEqual([]);
+      expect(progressHistory).toEqual([
+        { current: 1, total: 2, loanNumber: 'LP-101' },
+        { current: 2, total: 2, loanNumber: 'LP-102' },
+      ]);
+
+      // Loan 1 (repaid 4jt): period 1 (2jt) paid, period 2 (2jt) paid, period 3 unpaid
+      expect(updatedSchedules).toContainEqual({ id: 'sc-1', paid_amount: 2000000, status: 'paid' });
+      expect(updatedSchedules).toContainEqual({ id: 'sc-2', paid_amount: 2000000, status: 'paid' });
+      expect(updatedSchedules).toContainEqual({ id: 'sc-3', paid_amount: 0, status: 'unpaid' });
+
+      // Loan 2 (principal 5jt - sisa 3jt = 2jt): period 1 (1.5jt) paid, period 2 (500rb) partial
+      expect(updatedSchedules).toContainEqual({ id: 'sc-4', paid_amount: 1500000, status: 'paid' });
+      expect(updatedSchedules).toContainEqual({ id: 'sc-5', paid_amount: 500000, status: 'partial' });
+
+      // Verify repayment rows inserted
+      expect(insertedRepayments.length).toBe(4);
+      expect(insertedRepayments[0].payment_method).toBe('REKONSILIASI_IMPOR');
+      expect(insertedRepayments[0].receipt_number).toBe('KW-RECON-LP-101-B1');
+    });
+
+    it('isolates errors per loan and continues processing other loans', async () => {
+      const mockLoans = [
+        {
+          id: 'loan-err',
+          loan_number: 'LP-ERR',
+          principal_amount: 5000000,
+          status: 'active',
+        },
+        {
+          id: 'loan-ok',
+          loan_number: 'LP-OK',
+          principal_amount: 2000000,
+          jumlah_terangsur: 2000000,
+          status: 'active',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col: string, val: string) => ({
+                order: vi.fn().mockImplementation(() => {
+                  if (val === 'loan-err') {
+                    return Promise.reject(new Error('Schedule query timeout'));
+                  }
+                  return Promise.resolve({
+                    data: [
+                      { id: 'sc-ok-1', loan_id: 'loan-ok', period_number: 1, target_amount: 2000000, paid_amount: 0, status: 'unpaid' }
+                    ],
+                    error: null,
+                  });
+                }),
+              })),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {};
+      });
+
+      const result = await bulkAutoReconcileLoans();
+      expect(result.totalSuccess).toBe(1);
+      expect(result.totalFailed).toBe(1);
+      expect(result.errors.length).toBe(1);
+      expect(result.errors[0]).toContain('LP-ERR');
+      expect(result.errors[0]).toContain('Schedule query timeout');
+    });
+
+    it('throws error when active loans query fails', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: null, error: { message: 'Database connection failed' } }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      await expect(bulkAutoReconcileLoans()).rejects.toThrow('Database connection failed');
     });
   });
 });

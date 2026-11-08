@@ -764,7 +764,7 @@ export const checkAllLoanUpToCurrentMonth = async (
         schedule_id: sched.id,
         amount_paid: targetAmount,
         payment_date: new Date().toISOString(),
-        payment_method: 'auto_check',
+        payment_method: 'POTONG_GAJI',
         notes: `Pelunasan Otomatis Angsuran Periode ${sched.period_number} (s/d Bulan Berjalan)`
       });
 
@@ -878,7 +878,10 @@ export interface BulkLoanResult {
   totalLoans: number;
   totalSuccess: number;
   totalFailed: number;
+  successCount: number;
+  failCount: number;
   errors?: Array<{ loanId: string; error: string }>;
+  errorMessages?: string[];
 }
 
 /**
@@ -887,11 +890,23 @@ export interface BulkLoanResult {
 export const bulkCheckAllLoansUpToCurrentMonth = async (
   onProgress?: (progress: BulkLoanProgress) => void
 ): Promise<BulkLoanResult> => {
+  // 1. Tentukan tanggal acuan jatuh tempo bulan berjalan
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  const cutoffDate = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
+  const cutoffDateIso = cutoffDate.toISOString();
+  const cutoffDateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(new Date(currentYear, currentMonth, 0).getDate()).padStart(2, '0')}`;
+
+  // 2. Ambil seluruh data pinjaman aktif yang masih berjalan (status IN ('active', 'approved'))
   let query: any = supabase
     .from('loans')
     .select(`
       id,
+      member_id,
       loan_number,
+      principal_amount,
+      monthly_target,
       status,
       member:anggota (
         id,
@@ -901,21 +916,34 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
     `);
 
   if (typeof query.in === 'function') {
-    query = query.in('status', ['active', 'approved', 'draft', 'pending']);
+    query = query.in('status', ['active', 'approved']);
   }
 
-  const { data: loans, error: loansErr } = await query;
+  const { data: activeLoans, error: loanErr } = await query;
 
-  if (loansErr) {
-    console.error('Error fetching loans for bulkCheckAllLoansUpToCurrentMonth:', loansErr);
-    throw loansErr;
+  if (loanErr || !activeLoans) {
+    console.error('Error fetching loans for bulkCheckAllLoansUpToCurrentMonth:', loanErr);
+    throw loanErr || new Error('Gagal memuat pinjaman aktif');
   }
 
-  const loanList = loans || [];
+  // 3. Ambil user ID admin aktif dari supabase.auth.getUser() untuk mengisi kolom created_by
+  let currentUserId: string | null = null;
+  try {
+    if (supabase?.auth && typeof supabase.auth.getUser === 'function') {
+      const { data: userData } = await supabase.auth.getUser();
+      currentUserId = userData?.user?.id || null;
+    }
+  } catch (authErr) {
+    console.warn('Could not retrieve current user for bulk loan check:', authErr);
+  }
+
+  // 4. Eksekusi pemrosesan secara bertahap (batch loop per pinjaman)
+  const loanList = activeLoans || [];
   const total = loanList.length;
-  let totalSuccess = 0;
-  let totalFailed = 0;
+  let successCount = 0;
+  let failCount = 0;
   const errors: Array<{ loanId: string; error: string }> = [];
+  const errorMessages: string[] = [];
 
   for (let i = 0; i < total; i++) {
     const loan = loanList[i];
@@ -931,105 +959,337 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
     }
 
     try {
-      await checkAllLoanUpToCurrentMonth(loan.id);
-      totalSuccess++;
+      let schedQuery: any = supabase
+        .from('loan_schedules')
+        .select('*')
+        .eq('loan_id', loan.id);
+
+      if (typeof schedQuery.order === 'function') {
+        schedQuery = schedQuery.order('period_number', { ascending: true });
+      }
+
+      const { data: schedules, error: schedErr } = await schedQuery;
+      if (schedErr) throw schedErr;
+
+      const targetSchedules = (schedules || []).filter((s: any) => {
+        if (!s.due_date) return false;
+        const isDue = s.due_date <= cutoffDateStr || s.due_date <= cutoffDateIso;
+        const target = Number(s.target_amount || 0);
+        const paid = Number(s.paid_amount || 0);
+        const isUnpaid = s.status !== 'paid' || paid < target;
+        return isDue && isUnpaid;
+      });
+
+      const repaymentsToInsert: any[] = [];
+
+      for (const sched of targetSchedules) {
+        const targetAmount = Number(sched.target_amount || 0);
+        const paidAmount = Number(sched.paid_amount || 0);
+        const remainingAmount = targetAmount - paidAmount;
+
+        const { error: updErr } = await supabase
+          .from('loan_schedules')
+          .update({
+            paid_amount: targetAmount,
+            status: 'paid',
+          })
+          .eq('id', sched.id);
+
+        if (updErr) throw updErr;
+
+        if (remainingAmount > 0) {
+          repaymentsToInsert.push({
+            loan_id: loan.id,
+            schedule_id: sched.id,
+            amount_paid: remainingAmount,
+            payment_method: 'POTONG_GAJI',
+            payment_date: new Date().toISOString(),
+            receipt_number: `KW-BULK-${loan.loan_number || loan.id}-B${sched.period_number}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            notes: `Centang Massal Angsuran s/d Bulan ${currentMonth}/${currentYear}`,
+            created_by: currentUserId || null,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Simpan mutasi loan_repayments dalam chunk maksimal 50 baris per panggilan HTTP
+      if (repaymentsToInsert.length > 0) {
+        const CHUNK_SIZE = 50;
+        for (let c = 0; c < repaymentsToInsert.length; c += CHUNK_SIZE) {
+          const chunk = repaymentsToInsert.slice(c, c + CHUNK_SIZE);
+          let { error: insErr } = await supabase.from('loan_repayments').insert(chunk);
+          if (insErr) {
+            // Fallback if schema lacks extended fields (receipt_number, created_by, created_at)
+            const fallbackChunk = chunk.map((r: any) => ({
+              loan_id: r.loan_id,
+              schedule_id: r.schedule_id,
+              amount_paid: r.amount_paid,
+              payment_method: r.payment_method,
+              payment_date: r.payment_date,
+              notes: r.notes,
+            }));
+            const { error: retryErr } = await supabase.from('loan_repayments').insert(fallbackChunk);
+            if (retryErr) throw retryErr;
+          }
+        }
+      }
+
+      // Check if all schedules for this loan are now paid
+      let allSchedQuery: any = supabase
+        .from('loan_schedules')
+        .select('status, paid_amount, target_amount')
+        .eq('loan_id', loan.id);
+
+      if (typeof allSchedQuery?.order === 'function') {
+        allSchedQuery = allSchedQuery.order('period_number', { ascending: true });
+      }
+
+      const { data: allSchedules } = await allSchedQuery;
+      const allPaid = (allSchedules || []).length > 0 && (allSchedules || []).every(
+        (s: any) => s.status === 'paid' || Number(s.paid_amount) >= Number(s.target_amount)
+      );
+
+      if (allPaid) {
+        await supabase.from('loans').update({ status: 'completed' }).eq('id', loan.id);
+      }
+
+      successCount++;
     } catch (err: any) {
+      const errorMsg = err?.message || String(err);
       console.error(`Error checking loan ${loan.id}:`, err);
-      totalFailed++;
-      errors.push({ loanId: loan.id, error: err?.message || String(err) });
+      failCount++;
+      errors.push({ loanId: loan.id, error: errorMsg });
+      errorMessages.push(`Pinjaman ${loan.loan_number || loan.id} (${memberName}): ${errorMsg}`);
     }
   }
 
   return {
     totalLoans: total,
-    totalSuccess,
-    totalFailed,
+    totalSuccess: successCount,
+    totalFailed: failCount,
+    successCount,
+    failCount,
     errors,
+    errorMessages,
   };
 };
 
 /**
  * Menjalankan rekonsiliasi otomatis saldo terangsur (FIFO) massal untuk seluruh pinjaman aktif
  */
-export const bulkAutoReconcileAllLoans = async (
-  onProgress?: (progress: BulkLoanProgress) => void
-): Promise<BulkLoanResult> => {
-  let query: any = supabase
+export async function bulkAutoReconcileLoans(
+  onProgress?: ((current: number, total: number, loanNumber: string, progressObj?: BulkLoanProgress) => void) | ((progress: BulkLoanProgress) => void)
+): Promise<{
+  totalLoans: number;
+  totalSuccess: number;
+  totalFailed: number;
+  successCount: number;
+  failCount: number;
+  errors: string[];
+  errorMessages: string[];
+}> {
+  // 1. Ambil seluruh data pinjaman aktif
+  let loanQuery: any = supabase
     .from('loans')
-    .select(`
-      id,
-      loan_number,
-      principal_amount,
-      amount,
-      tenor,
-      monthly_target,
-      notes,
-      status,
-      member:anggota (
-        id,
-        nrp,
-        nama
-      )
-    `);
+    .select('id, loan_number, principal_amount, sisa_pinjaman, jumlah_terangsur, status, member:anggota(id, nrp, nama)');
 
-  if (typeof query.in === 'function') {
-    query = query.in('status', ['active', 'approved', 'draft', 'pending']);
+  if (typeof loanQuery.in === 'function') {
+    loanQuery = loanQuery.in('status', ['active', 'approved']);
   }
 
-  const { data: loans, error: loansErr } = await query;
+  const { data: loans, error: loanErr } = await loanQuery;
 
-  if (loansErr) {
-    console.error('Error fetching loans for bulkAutoReconcileAllLoans:', loansErr);
-    throw loansErr;
+  if (loanErr || !loans) {
+    throw new Error(loanErr?.message || 'Gagal mengambil data pinjaman aktif');
   }
 
-  const loanList = loans || [];
-  const total = loanList.length;
   let totalSuccess = 0;
   let totalFailed = 0;
-  const errors: Array<{ loanId: string; error: string }> = [];
+  const errors: string[] = [];
 
-  for (let i = 0; i < total; i++) {
-    const loan = loanList[i];
+  // 2. Iterasi per pinjaman secara sekuensial (aman dari lock & payload overflow)
+  for (let i = 0; i < loans.length; i++) {
+    const loan = loans[i];
     const memberName = (loan.member as any)?.nama || `Pinjaman ${loan.loan_number || loan.id}`;
+    const loanNumber = loan.loan_number || loan.id;
 
     if (onProgress) {
-      onProgress({
+      const progressObj: BulkLoanProgress = {
         processed: i + 1,
-        total,
+        total: loans.length,
         currentMemberName: memberName,
         currentLoanNumber: loan.loan_number || undefined,
-      });
+      };
+
+      try {
+        if (typeof onProgress === 'function') {
+          if (onProgress.length === 1) {
+            (onProgress as any)(progressObj);
+          } else {
+            (onProgress as any)(i + 1, loans.length, loanNumber, progressObj);
+          }
+        }
+      } catch (progErr) {
+        console.warn('Progress callback error:', progErr);
+      }
     }
 
     try {
-      let availablePaid = getImportedRepaidBalance(loan);
-      if (availablePaid === 0) {
-        let repQuery: any = supabase
-          .from('loan_repayments')
-          .select('amount_paid');
-        if (typeof repQuery.eq === 'function') {
-          repQuery = repQuery.eq('loan_id', loan.id);
-        }
-        const { data: repayments } = await repQuery;
-        const paidSum = (repayments || []).reduce((acc: number, r: any) => acc + Number(r.amount_paid || 0), 0);
-        availablePaid = paidSum;
+      // Hitung saldo acuan terangsur hasil migrasi/impor
+      let repaidAvailable = 0;
+      if (loan.jumlah_terangsur != null && !isNaN(Number(loan.jumlah_terangsur)) && Number(loan.jumlah_terangsur) > 0) {
+        repaidAvailable = Math.round(Number(loan.jumlah_terangsur));
+      } else {
+        const principal = Number(loan.principal_amount || 0);
+        const sisa = Number(loan.sisa_pinjaman || 0);
+        repaidAvailable = Math.max(0, principal - sisa);
       }
 
-      await autoReconcileLoanInstallments(loan.id, availablePaid);
+      // Ambil jadwal angsuran pinjaman terurut berdasarkan periode
+      let schQuery: any = supabase
+        .from('loan_schedules')
+        .select('*');
+      if (typeof schQuery.eq === 'function') {
+        schQuery = schQuery.eq('loan_id', loan.id);
+      }
+      if (schQuery && typeof schQuery.order === 'function') {
+        schQuery = schQuery.order('period_number', { ascending: true });
+      }
+
+      const { data: schedules, error: schErr } = await schQuery;
+
+      if (schErr || !schedules) {
+        throw new Error(`Gagal memuat jadwal untuk ${loan.loan_number || loan.id}: ${schErr?.message}`);
+      }
+
+      // Bersihkan repayment lama bertipe rekonsiliasi
+      let delQuery: any = supabase
+        .from('loan_repayments')
+        .delete();
+      if (typeof delQuery.eq === 'function') {
+        delQuery = delQuery.eq('loan_id', loan.id);
+      }
+      if (delQuery && typeof delQuery.or === 'function') {
+        await delQuery.or('payment_method.eq.REKONSILIASI_IMPOR,notes.ilike.%otomatis%');
+      } else {
+        await delQuery;
+      }
+
+      let remainingBalance = repaidAvailable;
+      const repaymentsToInsert: any[] = [];
+      const updatedStatuses: string[] = [];
+
+      // Alokasi FIFO ke masing-masing jadwal
+      for (const schedule of schedules) {
+        const target = Math.round(Number(schedule.target_amount || 0));
+        let paidForThisPeriod = 0;
+        let scheduleStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+
+        if (remainingBalance >= target && target > 0) {
+          paidForThisPeriod = target;
+          scheduleStatus = 'paid';
+          remainingBalance -= target;
+        } else if (remainingBalance > 0 && target > 0) {
+          paidForThisPeriod = remainingBalance;
+          scheduleStatus = 'partial';
+          remainingBalance = 0;
+        }
+
+        updatedStatuses.push(scheduleStatus);
+
+        // Update baris loan_schedules
+        let updQuery: any = supabase
+          .from('loan_schedules')
+          .update({
+            paid_amount: paidForThisPeriod,
+            status: scheduleStatus,
+          });
+        if (typeof updQuery.eq === 'function') {
+          await updQuery.eq('id', schedule.id);
+        }
+
+        if (paidForThisPeriod > 0) {
+          repaymentsToInsert.push({
+            loan_id: loan.id,
+            schedule_id: schedule.id,
+            amount_paid: paidForThisPeriod,
+            payment_date: new Date().toISOString(),
+            payment_method: 'REKONSILIASI_IMPOR',
+            receipt_number: `KW-RECON-${loan.loan_number || loan.id}-B${schedule.period_number}`,
+            notes: `Rekonsiliasi Otomatis Saldo Terangsur Bulan ke-${schedule.period_number}`,
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      // Chunk insert repayments jika ada
+      if (repaymentsToInsert.length > 0) {
+        const CHUNK = 50;
+        for (let c = 0; c < repaymentsToInsert.length; c += CHUNK) {
+          const chunk = repaymentsToInsert.slice(c, c + CHUNK);
+          const { error: insErr } = await supabase.from('loan_repayments').insert(chunk);
+          if (insErr) throw insErr;
+        }
+      }
+
+      // Update status pinjaman jika seluruh jadwal lunas
+      const isAllPaid = schedules.length > 0 && updatedStatuses.every((st) => st === 'paid');
+      let loanUpd: any = supabase
+        .from('loans')
+        .update({ status: isAllPaid ? 'completed' : 'active' });
+      if (typeof loanUpd.eq === 'function') {
+        await loanUpd.eq('id', loan.id);
+      }
+
       totalSuccess++;
     } catch (err: any) {
-      console.error(`Error auto reconciling loan ${loan.id}:`, err);
+      console.error(`Gagal mencocokkan pinjaman ${loan.loan_number || loan.id}:`, err);
       totalFailed++;
-      errors.push({ loanId: loan.id, error: err?.message || String(err) });
+      errors.push(`${loan.loan_number || loan.id}: ${err?.message || 'Error tidak diketahui'}`);
     }
   }
 
   return {
-    totalLoans: total,
+    totalLoans: loans.length,
     totalSuccess,
     totalFailed,
+    successCount: totalSuccess,
+    failCount: totalFailed,
     errors,
+    errorMessages: errors,
+  };
+}
+
+export const bulkAutoReconcileLoansUpToImportedBalance = bulkAutoReconcileLoans;
+
+export const bulkAutoReconcileAllLoans = async (
+  onProgress?: (progress: BulkLoanProgress) => void
+): Promise<BulkLoanResult> => {
+  const res = await bulkAutoReconcileLoans(
+    onProgress
+      ? (current: number, total: number, loanNumber: string, progressObj?: BulkLoanProgress) => {
+          onProgress(
+            progressObj || {
+              processed: current,
+              total,
+              currentLoanNumber: loanNumber,
+            }
+          );
+        }
+      : undefined
+  );
+
+  return {
+    totalLoans: res.totalLoans,
+    totalSuccess: res.totalSuccess,
+    totalFailed: res.totalFailed,
+    successCount: res.successCount,
+    failCount: res.failCount,
+    errors: res.errors.map((err) => {
+      const parts = err.split(':');
+      return { loanId: parts[0]?.trim() || '', error: parts.slice(1).join(':').trim() || err };
+    }),
+    errorMessages: res.errors,
   };
 };
 

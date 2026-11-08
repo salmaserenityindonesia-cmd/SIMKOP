@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
+import FeedbackContext from '../../context/FeedbackContext';
 import {
   Search,
   Download,
@@ -20,6 +21,7 @@ import {
   getLoanMatrixAvailableYears,
   getCumulativePaidUpToMonth,
   bulkCheckAllLoansUpToCurrentMonth,
+  bulkAutoReconcileLoans,
   bulkAutoReconcileAllLoans,
   BulkLoanProgress,
   BulkLoanResult,
@@ -142,10 +144,12 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const [loading, setLoading] = useState(initialData !== undefined ? false : true);
   const [data, setData] = useState<LoanMatrixSummary | null>(initialData ?? null);
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
+  const feedback = useContext(FeedbackContext);
 
   // Bulk Actions State: Centang Semua s/d Bulan Ini
   const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(false);
   const [isBulkChecking, setIsBulkChecking] = useState(false);
+  const [isProcessingBulk, setIsProcessingBulk] = useState(false);
   const [bulkCheckProgress, setBulkCheckProgress] = useState<{ current: number; total: number; currentMemberName?: string }>({
     current: 0,
     total: 0,
@@ -154,14 +158,36 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
   // Bulk Actions State: Cocokkan Otomatis dengan Saldo Terangsur
   const [showConfirmBulkModal, setShowConfirmBulkModal] = useState(false);
-  const [isBulkReconciling, setIsBulkReconciling] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{ processed: number; total: number; currentMemberName?: string }>({
-    processed: 0,
+  const [isReconcilingLoans, setIsReconcilingLoans] = useState(false);
+  const isBulkReconciling = isReconcilingLoans;
+  const [reconcileProgress, setReconcileProgress] = useState<{ current: number; total: number; loanNumber: string }>({
+    current: 0,
     total: 0,
+    loanNumber: '',
   });
   const [bulkResult, setBulkResult] = useState<{ totalSuccess: number; totalFailed: number } | null>(null);
 
+  const toast = useMemo(() => ({
+    success: (msg: string) => {
+      if (feedback?.showToast) feedback.showToast(msg, 'success');
+    },
+    warning: (msg: string) => {
+      if (feedback?.showToast) feedback.showToast(msg, 'warning');
+    },
+    error: (msg: string) => {
+      if (feedback?.showToast) {
+        feedback.showToast(msg, 'error');
+      } else {
+        alert(msg);
+      }
+    },
+    info: (msg: string) => {
+      if (feedback?.showToast) feedback.showToast(msg, 'info');
+    },
+  }), [feedback]);
+
   const handleBulkCheckAll = async () => {
+    setIsProcessingBulk(true);
     setIsBulkChecking(true);
     setBulkCheckSummary(null);
     try {
@@ -172,44 +198,77 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           currentMemberName: progress.currentMemberName,
         });
       });
+
+      const successCount = res.successCount ?? res.totalSuccess ?? 0;
+      const failCount = res.failCount ?? res.totalFailed ?? 0;
+
       setBulkCheckSummary({
-        totalSuccess: res.totalSuccess,
-        totalFailed: res.totalFailed,
+        totalSuccess: successCount,
+        totalFailed: failCount,
       });
+
+      if (failCount === 0) {
+        if (feedback?.showToast) {
+          feedback.showToast('Seluruh angsuran pinjaman s/d bulan ini berhasil dicentang lunas.', 'success');
+        }
+      } else {
+        console.warn('Rincian pinjaman yang gagal dicentang massal:', res.errors);
+        if (feedback?.showToast) {
+          feedback.showToast(
+            `Centang massal selesai: ${successCount} berhasil, ${failCount} gagal. Periksa konsol untuk rincian.`,
+            'warning'
+          );
+        }
+      }
+
       await fetchLoanMatrixData(year, setLoading, setData);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error during bulk check all loans:', err);
-      alert('Terjadi kesalahan saat memproses centang massal pinjaman.');
+      if (feedback?.showToast) {
+        feedback.showToast(
+          'Terjadi kesalahan saat memproses centang massal pinjaman: ' + (err?.message || 'Kesalahan sistem'),
+          'error'
+        );
+      } else {
+        alert('Terjadi kesalahan saat memproses centang massal pinjaman.');
+      }
       setShowCheckAllConfirmModal(false);
     } finally {
+      setIsProcessingBulk(false);
       setIsBulkChecking(false);
     }
   };
 
-  const handleBulkAutoReconcile = async () => {
-    setIsBulkReconciling(true);
-    setBulkResult(null);
+  const handleAutoReconcileAllLoans = async () => {
     try {
-      const res = await bulkAutoReconcileAllLoans((progress) => {
-        setBulkProgress({
-          processed: progress.processed,
-          total: progress.total,
-          currentMemberName: progress.currentMemberName,
-        });
+      setIsReconcilingLoans(true);
+      setBulkResult(null);
+      const result = await bulkAutoReconcileLoans((current, total, loanNumber) => {
+        setReconcileProgress({ current, total, loanNumber });
       });
+
       setBulkResult({
-        totalSuccess: res.totalSuccess,
-        totalFailed: res.totalFailed,
+        totalSuccess: result.totalSuccess,
+        totalFailed: result.totalFailed,
       });
+
+      if (result.totalFailed === 0) {
+        toast.success(`Berhasil merekonsiliasi ${result.totalSuccess} pinjaman sesuai saldo terangsur.`);
+      } else {
+        toast.warning(`Selesai: ${result.totalSuccess} berhasil, ${result.totalFailed} gagal. Cek konsol browser.`);
+      }
+
+      // Muat ulang data matriks agar seluruh sel ter-update
       await fetchLoanMatrixData(year, setLoading, setData);
-    } catch (err) {
-      console.error('Error during bulk auto reconcile loans:', err);
-      alert('Terjadi kesalahan saat mencocokkan saldo pinjaman.');
-      setShowConfirmBulkModal(false);
+    } catch (error: any) {
+      console.error('Error auto-reconcile loan:', error);
+      toast.error(`Terjadi kesalahan saat memproses rekonsiliasi: ${error?.message || 'Gagal menghubungi server'}`);
     } finally {
-      setIsBulkReconciling(false);
+      setIsReconcilingLoans(false);
     }
   };
+
+  const handleBulkAutoReconcile = handleAutoReconcileAllLoans;
 
   useEffect(() => {
     if (initialData !== undefined) return;
@@ -295,44 +354,6 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           <h1 className="text-2xl font-bold text-slate-800">Matriks Proyeksi & Kepatuhan Pinjaman</h1>
           <p className="text-slate-500 mt-1">SIMKOP / Simpan Pinjam / Matriks Pinjaman</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => {
-              setBulkCheckSummary(null);
-              setShowCheckAllConfirmModal(true);
-            }}
-            disabled={isBulkChecking || isBulkReconciling}
-            title="Centang lunas seluruh pinjaman anggota dari awal tenor s/d bulan ini"
-            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-            data-testid="bulk-check-all-btn"
-          >
-            <CheckSquare className="w-4 h-4 text-emerald-600" />
-            <span>Centang Semua s/d Bulan Ini</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setBulkResult(null);
-              setShowConfirmBulkModal(true);
-            }}
-            disabled={isBulkReconciling || isBulkChecking}
-            title="Cocokkan otomatis saldo terangsur seluruh pinjaman anggota (FIFO Reconcile)"
-            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-            data-testid="bulk-reconcile-btn"
-          >
-            <RefreshCw className={`w-4 h-4 ${isBulkReconciling ? 'animate-spin' : ''}`} />
-            <span>Cocokkan Otomatis dengan Saldo Terangsur</span>
-          </button>
-
-          <button 
-            onClick={handleExportExcel}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-xs"
-            data-testid="export-excel-btn"
-          >
-            <Download className="w-4 h-4" />
-            Export Excel
-          </button>
-        </div>
       </div>
 
       {/* KPI Cards */}
@@ -376,8 +397,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       </div>
 
       {/* Filter Toolbar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
-        <div className="flex gap-4 items-center">
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center">
+        <div className="flex flex-wrap gap-4 items-center">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
             <input 
@@ -401,17 +422,68 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             </select>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-600">Tahun:</span>
-          <select 
-            value={year}
-            onChange={e => handleYearChange(Number(e.target.value))}
-            className="border border-slate-300 rounded-lg py-2 px-3 font-semibold focus:ring-2 focus:ring-emerald-500"
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => {
+              setBulkCheckSummary(null);
+              setShowCheckAllConfirmModal(true);
+            }}
+            disabled={isProcessingBulk || isBulkChecking || isBulkReconciling}
+            title="Centang lunas seluruh pinjaman anggota dari awal tenor s/d bulan ini"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            data-testid="bulk-check-all-btn"
           >
-            {availableYears.map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+            {isProcessingBulk || isBulkChecking ? (
+              <>
+                <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                <span>Memproses centang massal...</span>
+              </>
+            ) : (
+              <>
+                <CheckSquare className="w-4 h-4 text-emerald-600" />
+                <span>Centang Semua s/d Bulan Ini</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setBulkResult(null);
+              setShowConfirmBulkModal(true);
+            }}
+            disabled={isReconcilingLoans || isBulkChecking}
+            title="Cocokkan otomatis saldo terangsur seluruh pinjaman anggota (FIFO Reconcile)"
+            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            data-testid="bulk-reconcile-btn"
+          >
+            <RefreshCw className={`w-4 h-4 ${isReconcilingLoans ? 'animate-spin' : ''}`} />
+            <span>Cocokkan Otomatis dengan Saldo Terangsur</span>
+          </button>
+
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-xs"
+            data-testid="export-excel-btn"
+          >
+            <Download className="w-4 h-4" />
+            Export Excel
+          </button>
+
+          <div className="h-6 w-px bg-slate-200 hidden sm:block mx-1" />
+
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">Tahun:</span>
+            <select 
+              value={year}
+              onChange={e => handleYearChange(Number(e.target.value))}
+              className="border border-slate-300 rounded-lg py-2 px-3 font-semibold focus:ring-2 focus:ring-emerald-500"
+            >
+              {availableYears.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -643,7 +715,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                  <CheckSquare className={`w-5 h-5 ${isBulkChecking ? 'animate-pulse' : ''}`} />
+                  <CheckSquare className={`w-5 h-5 ${isBulkChecking || isProcessingBulk ? 'animate-pulse' : ''}`} />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
@@ -654,7 +726,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   </p>
                 </div>
               </div>
-              {!isBulkChecking && (
+              {!(isBulkChecking || isProcessingBulk) && (
                 <button
                   onClick={() => {
                     setShowCheckAllConfirmModal(false);
@@ -671,7 +743,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             {/* Modal Body */}
             <div className="p-6 space-y-5">
               {/* State 1: In Progress */}
-              {isBulkChecking && (
+              {(isBulkChecking || isProcessingBulk) && (
                 <div className="space-y-4 py-2" data-testid="bulk-check-all-in-progress">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                     <span className="flex items-center gap-1.5">
@@ -717,7 +789,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               )}
 
               {/* State 2: Completed Result */}
-              {!isBulkChecking && bulkCheckSummary !== null && (
+              {!(isBulkChecking || isProcessingBulk) && bulkCheckSummary !== null && (
                 <div className="py-2 text-center space-y-4" data-testid="bulk-check-all-result">
                   <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                     <CheckCircle2 className="w-8 h-8" />
@@ -752,9 +824,10 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
                   <div className="pt-2">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         setShowCheckAllConfirmModal(false);
                         setBulkCheckSummary(null);
+                        await fetchLoanMatrixData(year, setLoading, setData);
                       }}
                       className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
                       data-testid="finish-check-all-btn"
@@ -766,7 +839,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               )}
 
               {/* State 3: Confirmation Dialog */}
-              {!isBulkChecking && bulkCheckSummary === null && (
+              {!(isBulkChecking || isProcessingBulk) && bulkCheckSummary === null && (
                 <div className="space-y-4">
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
                     <div className="font-semibold flex items-center gap-1.5 text-amber-950">
@@ -789,11 +862,21 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                     <button
                       type="button"
                       onClick={handleBulkCheckAll}
-                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                      disabled={isProcessingBulk || isBulkChecking}
+                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
                       data-testid="confirm-check-all-btn"
                     >
-                      <CheckSquare className="w-4 h-4" />
-                      <span>Ya, Lanjutkan Centang Semua</span>
+                      {isProcessingBulk || isBulkChecking ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Memproses centang massal...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckSquare className="w-4 h-4" />
+                          <span>Ya, Lanjutkan Centang Semua</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -814,7 +897,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                  <RefreshCw className={`w-5 h-5 ${isBulkReconciling ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-5 h-5 ${isReconcilingLoans ? 'animate-spin' : ''}`} />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
@@ -825,7 +908,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   </p>
                 </div>
               </div>
-              {!isBulkReconciling && (
+              {!isReconcilingLoans && (
                 <button
                   onClick={() => {
                     setShowConfirmBulkModal(false);
@@ -842,18 +925,18 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             {/* Modal Body */}
             <div className="p-6 space-y-5">
               {/* State 1: In Progress */}
-              {isBulkReconciling && (
+              {isReconcilingLoans && (
                 <div className="space-y-4 py-2" data-testid="bulk-reconcile-in-progress">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                     <span className="flex items-center gap-1.5">
                       <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
                       <span>
-                        Memproses {bulkProgress.processed} dari {bulkProgress.total || 0} pinjaman...
+                        Memproses {reconcileProgress.current} dari {reconcileProgress.total || 0} pinjaman...
                       </span>
                     </span>
                     <span className="text-emerald-700 font-bold">
-                      {bulkProgress.total > 0
-                        ? Math.round((bulkProgress.processed / bulkProgress.total) * 100)
+                      {reconcileProgress.total > 0
+                        ? Math.round((reconcileProgress.current / reconcileProgress.total) * 100)
                         : 0}
                       %
                     </span>
@@ -865,8 +948,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                       className="bg-emerald-600 h-full rounded-full transition-all duration-300 ease-out"
                       style={{
                         width: `${
-                          bulkProgress.total > 0
-                            ? Math.min(100, Math.round((bulkProgress.processed / bulkProgress.total) * 100))
+                          reconcileProgress.total > 0
+                            ? Math.min(100, Math.round((reconcileProgress.current / reconcileProgress.total) * 100))
                             : 0
                         }%`,
                       }}
@@ -877,7 +960,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500">Pinjaman Sedang Diproses:</span>
                       <span className="font-semibold text-slate-800" data-testid="bulk-current-member">
-                        {bulkProgress.currentMemberName || 'Menginisialisasi antrean...'}
+                        {reconcileProgress.loanNumber || 'Menginisialisasi antrean...'}
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 italic text-center pt-1">
@@ -888,7 +971,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               )}
 
               {/* State 2: Completed Result */}
-              {!isBulkReconciling && bulkResult !== null && (
+              {!isReconcilingLoans && bulkResult !== null && (
                 <div className="py-2 text-center space-y-4" data-testid="bulk-reconcile-result">
                   <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
                     <CheckCircle2 className="w-8 h-8" />
@@ -937,7 +1020,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               )}
 
               {/* State 3: Confirmation Dialog */}
-              {!isBulkReconciling && bulkResult === null && (
+              {!isReconcilingLoans && bulkResult === null && (
                 <div className="space-y-4">
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
                     <div className="font-semibold flex items-center gap-1.5 text-amber-950">
@@ -959,7 +1042,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={handleBulkAutoReconcile}
+                      onClick={handleAutoReconcileAllLoans}
                       className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2"
                       data-testid="confirm-bulk-reconcile-btn"
                     >
