@@ -65,6 +65,7 @@ Load these files for context:
 </task>
 
 ## Success Criteria
-- [ ] `npx tsc --noEmit` menghasilkan 0 error
-- [ ] Seluruh unit test di Vitest lulus 100%
-- [ ] `npm run build` berhasil menghasilkan bundle production (exit code 0)
+- [x] `npx tsc --noEmit` menghasilkan 0 error
+- [x] Seluruh unit test di Vitest lulus 100%
+- [x] `npm run build` berhasil menghasilkan bundle production (exit code 0)
+
