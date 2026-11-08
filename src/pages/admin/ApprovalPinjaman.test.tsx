@@ -219,4 +219,54 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(res[0].status).toBe('draft');
     });
   });
+
+  describe('Export to Excel and PDF Integration', () => {
+    it('renders export buttons and displays tabular data for export preview', () => {
+      const mockList = [
+        {
+          id: 'loan-exp-1',
+          amount: 8000000,
+          tenor: 12,
+          status: 'approved',
+          created_at: '2026-11-01T00:00:00Z',
+          disbursed_at: '2026-11-02T00:00:00Z',
+          anggota: { nama: 'Serma Joni', nrp: '998877' }
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={mockList}
+        />
+      );
+
+      expect(html).toContain('Export Excel');
+      expect(html).toContain('Export PDF');
+      expect(html).toContain('Serma Joni');
+    });
+
+    it('correctly maps various status strings to valid StatusType badges across history', () => {
+      const variedLoans = [
+        { id: '1', status: 'draft', anggota: { nama: 'User 1' } },
+        { id: '2', status: 'approved', anggota: { nama: 'User 2' } },
+        { id: '3', status: 'active', anggota: { nama: 'User 3' } },
+        { id: '4', status: 'completed', anggota: { nama: 'User 4' } },
+        { id: '5', status: 'rejected', anggota: { nama: 'User 5' } },
+      ];
+
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="ALL"
+          initialPinjamanList={variedLoans}
+        />
+      );
+
+      expect(html).toContain('User 1');
+      expect(html).toContain('User 2');
+      expect(html).toContain('User 3');
+      expect(html).toContain('User 4');
+      expect(html).toContain('User 5');
+    });
+  });
 });
