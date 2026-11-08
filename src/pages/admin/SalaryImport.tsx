@@ -1,14 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { downloadSalaryTemplate } from '../../services/salaryTemplateService';
 import { 
     parseSalaryReconciliationFile, 
     ReconciliationResult, 
-    confirmSalaryReconciliation 
+    confirmSalaryReconciliation,
+    fetchMembersSalaryAndAccounts,
+    MemberSalaryAccountItem
 } from '../../services/salaryImportService';
+import { MemberSearchAutocomplete } from '../../components/common/MemberSearchAutocomplete';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
 
-export default function SalaryImport() {
+export interface SalaryImportProps {
+  initialMembers?: MemberSalaryAccountItem[];
+}
+
+export default function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const { showConfirm } = useFeedback();
   const [file, setFile] = useState<File | null>(null);
   const [results, setResults] = useState<ReconciliationResult[]>([]);
@@ -20,8 +27,39 @@ export default function SalaryImport() {
   const [editingRowIdx, setEditingRowIdx] = useState<number | null>(null);
   const [tempAccountNumber, setTempAccountNumber] = useState<string>('');
 
+  // Pagination untuk hasil pengecekan file rekonsiliasi
+  const [reconCurrentPage, setReconCurrentPage] = useState(1);
+  const [reconItemsPerPage, setReconItemsPerPage] = useState(10);
+
+  // State master data gaji & rekening anggota
+  const [memberList, setMemberList] = useState<MemberSalaryAccountItem[]>(initialMembers || []);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMember, setSelectedMember] = useState<MemberSalaryAccountItem | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [pageSize, setPageSize] = useState(10);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+
+  const loadMembersData = async () => {
+    setIsLoadingMembers(true);
+    try {
+      const data = await fetchMembersSalaryAndAccounts();
+      setMemberList(data);
+    } catch (err: any) {
+      console.error('Failed to load member salary and accounts:', err);
+    } finally {
+      setIsLoadingMembers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!initialMembers) {
+      loadMembersData();
+    }
+  }, [initialMembers]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, pageSize]);
 
   const normalizeAccount = (acc: string | null) => (acc || '').replace(/[\s-]/g, '');
 
@@ -70,7 +108,7 @@ export default function SalaryImport() {
     try {
       const data = await parseSalaryReconciliationFile(file);
       setResults(data);
-      setCurrentPage(1);
+      setReconCurrentPage(1);
     } catch (err: any) {
       setErrorMsg('Gagal memproses file: ' + err.message);
     } finally {
@@ -92,6 +130,7 @@ export default function SalaryImport() {
       setSuccessMsg('Rekonsiliasi berhasil disimpan!');
       setResults([]);
       setFile(null);
+      await loadMembersData();
     } catch (err: any) {
       setErrorMsg('Gagal menyimpan konfirmasi: ' + err.message);
     } finally {
@@ -99,9 +138,23 @@ export default function SalaryImport() {
     }
   };
 
-  const totalItems = results.length;
-  const totalPages = Math.ceil(totalItems / itemsPerPage);
-  const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // Master anggota pagination & search filtering
+  const filteredData = memberList.filter((m) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    return (m.nama && m.nama.toLowerCase().includes(q)) || (m.nrp && m.nrp.toLowerCase().includes(q));
+  });
+
+  const totalItems = filteredData.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
+  const paginatedData = filteredData.slice(startIndex, endIndex);
+
+  // File reconciliation preview pagination
+  const totalReconItems = results.length;
+  const totalReconPages = Math.ceil(totalReconItems / reconItemsPerPage);
+  const paginatedResults = results.slice((reconCurrentPage - 1) * reconItemsPerPage, reconCurrentPage * reconItemsPerPage);
 
   return (
     <AdminLayout>
@@ -209,7 +262,7 @@ export default function SalaryImport() {
                 </thead>
                 <tbody className="divide-y divide-outline-variant/20">
                   {paginatedResults.map((r, idx) => {
-                    const actualIdx = (currentPage - 1) * itemsPerPage + idx;
+                    const actualIdx = (reconCurrentPage - 1) * reconItemsPerPage + idx;
                     return (
                     <tr key={actualIdx} className="hover:bg-surface-container-lowest/50">
                       <td className="px-4 py-3">{r.nrp}</td>
@@ -257,14 +310,14 @@ export default function SalaryImport() {
             <div className="p-4 border-t border-outline-variant/30 flex flex-col md:flex-row justify-between items-center gap-4 text-sm bg-surface-container-low/50">
               <div className="flex items-center gap-2 text-on-surface-variant">
                 <span>
-                  Menampilkan {totalItems === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
-                  {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} data
+                  Menampilkan {totalReconItems === 0 ? 0 : (reconCurrentPage - 1) * reconItemsPerPage + 1}-
+                  {Math.min(reconCurrentPage * reconItemsPerPage, totalReconItems)} dari {totalReconItems} data
                 </span>
                 <select 
-                  value={itemsPerPage}
+                  value={reconItemsPerPage}
                   onChange={(e) => {
-                    setItemsPerPage(Number(e.target.value));
-                    setCurrentPage(1);
+                    setReconItemsPerPage(Number(e.target.value));
+                    setReconCurrentPage(1);
                   }}
                   className="ml-2 border border-outline-variant rounded-md py-1 px-2 focus:outline-none focus:ring-1 focus:ring-primary bg-surface-container-lowest"
                 >
@@ -277,18 +330,18 @@ export default function SalaryImport() {
 
               <div className="flex items-center gap-1">
                 <button 
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
+                  onClick={() => setReconCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={reconCurrentPage === 1}
                   className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Prev
                 </button>
                 <span className="font-medium px-2 text-on-surface">
-                  {currentPage} / {totalPages || 1}
+                  {reconCurrentPage} / {totalReconPages || 1}
                 </span>
                 <button 
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages || totalPages === 0}
+                  onClick={() => setReconCurrentPage(p => Math.min(totalReconPages, p + 1))}
+                  disabled={reconCurrentPage === totalReconPages || totalReconPages === 0}
                   className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Next
@@ -297,6 +350,153 @@ export default function SalaryImport() {
             </div>
           </div>
         )}
+
+        {/* Daftar Data Gaji & Rekening Anggota Master Table */}
+        <div className="p-6 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 space-y-6 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-title-md font-title-md text-on-surface">
+                Daftar Data Gaji &amp; Rekening Anggota
+              </h2>
+              <p className="text-body-sm text-on-surface-variant">
+                Master data nominal Take Home Pay (THP) dan nomor rekening bank aktif untuk seluruh anggota.
+              </p>
+            </div>
+            <div className="w-full md:w-80">
+              <MemberSearchAutocomplete
+                members={memberList}
+                value={searchQuery}
+                onChange={(val) => {
+                  setSearchQuery(val);
+                  if (!val) setSelectedMember(null);
+                }}
+                onSelectMember={(item) => {
+                  setSelectedMember(item);
+                  if (item) {
+                    setSearchQuery(item.nama);
+                  }
+                }}
+                placeholder="Cari nama atau NRP anggota..."
+              />
+            </div>
+          </div>
+
+          {isLoadingMembers ? (
+            <div className="py-12 flex flex-col items-center justify-center gap-3 text-on-surface-variant">
+              <div className="w-8 h-8 border-3 border-primary/30 border-t-primary rounded-full animate-spin" />
+              <p className="text-body-sm">Memuat data gaji dan rekening anggota...</p>
+            </div>
+          ) : paginatedData.length === 0 ? (
+            <div className="py-12 text-center text-on-surface-variant border border-dashed border-outline-variant/40 rounded-xl">
+              <p className="font-medium text-body-md">Tidak ada data anggota yang ditemukan.</p>
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedMember(null);
+                  }}
+                  className="mt-2 text-sm text-primary hover:underline font-medium cursor-pointer"
+                >
+                  Reset kata kunci pencarian
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-outline-variant/30">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-surface-container-low text-on-surface-variant">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">NRP</th>
+                    <th className="px-4 py-3 font-medium">Nama Anggota</th>
+                    <th className="px-4 py-3 font-medium">Pangkat</th>
+                    <th className="px-4 py-3 font-medium">No. Rekening Bank</th>
+                    <th className="px-4 py-3 font-medium">Gaji / THP (Rp)</th>
+                    <th className="px-4 py-3 font-medium">Status Rekening</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant/20">
+                  {paginatedData.map((m) => {
+                    const hasAccount = Boolean(m.bank_account_number && m.bank_account_number.trim() !== '');
+                    const thpValue = m.take_home_pay ?? m.master_thp;
+
+                    return (
+                      <tr key={m.id || m.nrp} className="hover:bg-surface-container-lowest/50 transition-colors">
+                        <td className="px-4 py-3 font-mono text-xs text-on-surface">{m.nrp}</td>
+                        <td className="px-4 py-3 font-medium text-on-surface">{m.nama}</td>
+                        <td className="px-4 py-3 text-on-surface-variant">{m.pangkat || '-'}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-on-surface">
+                          {m.bank_account_number || '-'}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-on-surface">
+                          {thpValue !== null && thpValue !== undefined
+                            ? `Rp ${thpValue.toLocaleString('id-ID')}`
+                            : '-'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {hasAccount ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                              Lengkap
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                              Belum Ada Rekening
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Master Member Table Pagination */}
+          {totalItems > 0 && (
+            <div className="p-4 border-t border-outline-variant/30 flex flex-col md:flex-row justify-between items-center gap-4 text-sm bg-surface-container-low/50 rounded-b-xl">
+              <div className="flex items-center gap-2 text-on-surface-variant">
+                <span>
+                  Menampilkan {startIndex + 1}-{endIndex} dari {totalItems} data
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="ml-2 border border-outline-variant rounded-md py-1 px-2 focus:outline-none focus:ring-1 focus:ring-primary bg-surface-container-lowest text-xs"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
+                >
+                  Prev
+                </button>
+                <span className="font-medium px-2 text-on-surface text-xs">
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </AdminLayout>
   );
