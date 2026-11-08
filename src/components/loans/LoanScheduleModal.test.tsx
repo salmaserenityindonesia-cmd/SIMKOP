@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import LoanScheduleModal, {
   formatRateBadge,
   formatDateIndo,
+  getImportedRepaidBalance,
   LoanScheduleModalProps,
 } from './LoanScheduleModal';
 import LoanLedgerModal from '../members/LoanLedgerModal';
@@ -412,6 +413,46 @@ describe('LoanScheduleModal Component Tests', () => {
         receiptNo: 'KW-004',
         paymentMethod: 'potong_gaji',
       });
+    });
+  });
+
+  describe('getImportedRepaidBalance & Baseline Preservation Tests', () => {
+    it('returns jumlah_terangsur directly when present and > 0', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 10000000,
+        jumlah_terangsur: 8333333,
+      });
+      expect(balance).toBe(8333333);
+    });
+
+    it('calculates principal - sisa_pinjaman correctly for imported excel loans', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 10000000,
+        sisa_pinjaman: 1666667,
+      });
+      expect(balance).toBe(8333333);
+    });
+
+    it('parses sisa pinjaman from migration notes when direct column is absent', () => {
+      const balance = getImportedRepaidBalance({
+        principal_amount: 10000000,
+        notes: 'Migrasi Pinjaman Awal (Sisa: Rp 1.666.667)',
+      });
+      expect(balance).toBe(8333333);
+    });
+
+    it('falls back to totalPaid when no sisa_pinjaman is explicitly available', () => {
+      const balance = getImportedRepaidBalance({
+        principalAmount: 5000000,
+        totalPaid: 2500000,
+      });
+      expect(balance).toBe(2500000);
+    });
+
+    it('returns 0 for empty or invalid loan input', () => {
+      expect(getImportedRepaidBalance(null)).toBe(0);
+      expect(getImportedRepaidBalance({})).toBe(0);
+      expect(getImportedRepaidBalance({ principal_amount: 0, sisa_pinjaman: 0 })).toBe(0);
     });
   });
 });

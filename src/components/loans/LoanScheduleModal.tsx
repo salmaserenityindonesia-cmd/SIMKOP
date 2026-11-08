@@ -65,6 +65,41 @@ export function formatDateIndo(dateStr?: string | null): string {
   return `${d.getDate()} ${monthName} ${d.getFullYear()}`;
 }
 
+/**
+ * Dapatkan saldo terangsur awal / baseline dari data pinjaman (impor Excel)
+ */
+export const getImportedRepaidBalance = (loan: any): number => {
+  if (!loan) return 0;
+  if (loan.jumlah_terangsur && Number(loan.jumlah_terangsur) > 0) {
+    return Number(loan.jumlah_terangsur);
+  }
+  const principal = Number(loan.principal_amount || loan.amount || loan.principalAmount || 0);
+  let sisa: number | null = null;
+  if (loan.sisa_pinjaman !== undefined && loan.sisa_pinjaman !== null) {
+    sisa = Number(loan.sisa_pinjaman);
+  } else if (loan.sisaPinjaman !== undefined && loan.sisaPinjaman !== null) {
+    sisa = Number(loan.sisaPinjaman);
+  } else if (loan.notes && typeof loan.notes === 'string') {
+    const match = loan.notes.match(/Sisa:\s*Rp\s*([\d\.,]+)/i);
+    if (match && match[1]) {
+      const parsed = Number(match[1].replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(parsed)) {
+        sisa = parsed;
+      }
+    }
+  }
+
+  if (sisa !== null && !isNaN(sisa)) {
+    return Math.max(0, principal - sisa);
+  }
+
+  if (loan.totalPaid && Number(loan.totalPaid) > 0) {
+    return Number(loan.totalPaid);
+  }
+
+  return 0;
+};
+
 export default function LoanScheduleModal({
   loanId,
   memberNrp,
@@ -77,6 +112,11 @@ export default function LoanScheduleModal({
   const [data, setData] = useState<LoanInteractiveGridSummary | null>(initialData);
   const [loading, setLoading] = useState(initialLoading ?? (initialData ? false : true));
   const [syncing, setSyncing] = useState(false);
+
+  // Saldo referensi permanen / baseline saldo terangsur hasil impor yang tidak boleh di-nol-kan
+  const baselineRepaidBalanceRef = useRef<number>(
+    initialData ? getImportedRepaidBalance(initialData) : 0
+  );
 
   // Sub-modal state: Input Bukti Pelunasan / Setoran Angsuran
   const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
@@ -101,11 +141,27 @@ export default function LoanScheduleModal({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const currentMonthColRef = useRef<HTMLTableHeaderCellElement | null>(null);
 
+  // Inisialisasi baseline balance jika initialData tersedia
+  useEffect(() => {
+    if (initialData && baselineRepaidBalanceRef.current === 0) {
+      const initialBaseline = getImportedRepaidBalance(initialData);
+      if (initialBaseline > 0) {
+        baselineRepaidBalanceRef.current = initialBaseline;
+      }
+    }
+  }, [initialData]);
+
   // Fetch full data for the loan grid
   const fetchGridData = async () => {
     try {
       const summary = await getLoanInteractiveGrid(loanId);
       setData(summary);
+      if (baselineRepaidBalanceRef.current === 0) {
+        const computedBaseline = getImportedRepaidBalance(summary);
+        if (computedBaseline > 0) {
+          baselineRepaidBalanceRef.current = computedBaseline;
+        }
+      }
     } catch (err) {
       console.error('Error fetching loan interactive grid:', err);
     } finally {
@@ -116,6 +172,11 @@ export default function LoanScheduleModal({
   useEffect(() => {
     if (!initialData) {
       fetchGridData();
+    } else if (baselineRepaidBalanceRef.current === 0) {
+      const computedBaseline = getImportedRepaidBalance(initialData);
+      if (computedBaseline > 0) {
+        baselineRepaidBalanceRef.current = computedBaseline;
+      }
     }
   }, [loanId]);
 
@@ -153,7 +214,9 @@ export default function LoanScheduleModal({
   const handleAutoReconcile = async () => {
     setSyncing(true);
     try {
-      const availablePaid = data?.totalPaid ?? 0;
+      const availablePaid = baselineRepaidBalanceRef.current > 0
+        ? baselineRepaidBalanceRef.current
+        : (data?.totalPaid ?? 0);
       await autoReconcileLoanInstallments(loanId, availablePaid);
       await fetchGridData();
       onSuccess?.();
@@ -169,6 +232,22 @@ export default function LoanScheduleModal({
     setSyncing(true);
     try {
       await uncheckAllLoanSchedules(loanId);
+      // Set status lokal semua baris jadwal angsuran menjadi paid_amount = 0, status = 'UNPAID'
+      setData(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          totalPaid: 0,
+          sisaPinjaman: prev.principalAmount,
+          isBalanced: false,
+          periods: prev.periods.map(p => ({
+            ...p,
+            paidAmount: 0,
+            status: 'UNPAID',
+            repayments: []
+          }))
+        };
+      });
       await fetchGridData();
       onSuccess?.();
     } catch (err) {

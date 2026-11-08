@@ -728,9 +728,88 @@ describe('loanMatrixService - autoReconcileLoanInstallments', () => {
     });
 
     const result = await autoReconcileLoanInstallments('l-1', 2000000);
+    expect(result.success).toBe(true);
     expect(result.reconciledCount).toBe(2);
     expect(result.remainingAmount).toBe(0);
     expect(updateLoanMock).toHaveBeenCalledWith({ status: 'completed' });
+  });
+
+  it('rekonsiliasi otomatis skenario Eko Setiawan: saldo terangsur Rp 8.333.333 mengalokasikan 10 bulan lunas dan 1 bulan parsial', async () => {
+    // 12 periode @ 833.333
+    const mockSchedules = Array.from({ length: 12 }, (_, i) => ({
+      id: `sc-${i + 1}`,
+      loan_id: 'loan-eko',
+      period_number: i + 1,
+      target_amount: 833333,
+      paid_amount: 0,
+      status: 'unpaid',
+    }));
+
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    });
+    const insertRepayMock = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+            }),
+          }),
+          update: updateScheduleMock,
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          insert: insertRepayMock,
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+        };
+      }
+      return {};
+    });
+
+    // Eksekusi dengan nominal terangsur Rp 8.333.333
+    const result = await autoReconcileLoanInstallments('loan-eko', 8333333);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toBe('Alokasi angsuran berhasil dicocokkan otomatis.');
+    // 10 bulan terbayar lunas penuh (10 * 833.333 = 8.333.330)
+    expect(result.reconciledCount).toBe(10);
+    expect(result.remainingAmount).toBe(0);
+
+    // Bulan 1 s/d 10 diupdate ke paid
+    expect(updateScheduleMock).toHaveBeenCalledWith({ paid_amount: 833333, status: 'paid' });
+    // Bulan 11 diupdate ke partial (sisa 3 rupiah)
+    expect(updateScheduleMock).toHaveBeenCalledWith({ paid_amount: 3, status: 'partial' });
+    // Bulan 12 diupdate ke unpaid (0 rupiah)
+    expect(updateScheduleMock).toHaveBeenCalledWith({ paid_amount: 0, status: 'unpaid' });
+
+    // Verifikasi catatan pembayaran loan_repayments menggunakan payment_method REKONSILIASI_IMPOR
+    expect(insertRepayMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          loan_id: 'loan-eko',
+          schedule_id: 'sc-1',
+          amount_paid: 833333,
+          payment_method: 'REKONSILIASI_IMPOR',
+          notes: 'Pelunasan Otomatis Angsuran Bulan ke-1',
+        }),
+        expect.objectContaining({
+          loan_id: 'loan-eko',
+          schedule_id: 'sc-11',
+          amount_paid: 3,
+          payment_method: 'REKONSILIASI_IMPOR',
+          notes: 'Pelunasan Parsial Angsuran Bulan ke-11',
+        }),
+      ])
+    );
   });
 });
 

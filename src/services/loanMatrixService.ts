@@ -350,6 +350,9 @@ export interface LoanInteractiveGridSummary {
   sisaPinjaman: number;
   isBalanced: boolean;
   periods: LoanGridPeriod[];
+  notes?: string | null;
+  sisa_pinjaman?: number;
+  jumlah_terangsur?: number;
 }
 
 export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanInteractiveGridSummary> => {
@@ -364,6 +367,7 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
       monthly_target,
       disbursed_at,
       status,
+      notes,
       member:anggota (
         id,
         nama,
@@ -485,7 +489,8 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     totalPaid,
     sisaPinjaman,
     isBalanced,
-    periods
+    periods,
+    notes: loan.notes || null,
   };
 };
 
@@ -601,16 +606,16 @@ export const toggleLoanSchedulePaid = async (
 export const autoReconcileLoanInstallments = async (
   loanId: string,
   totalPaidAvailable: number
-): Promise<{ reconciledCount: number; remainingAmount: number }> => {
+): Promise<{ success: boolean; message: string; reconciledCount: number; remainingAmount: number }> => {
   const { data: schedules, error: schedErr } = await supabase
     .from('loan_schedules')
     .select('*')
     .eq('loan_id', loanId)
     .order('period_number', { ascending: true });
 
-  if (schedErr) {
+  if (schedErr || !schedules) {
     console.error('Error fetching schedules for reconcile:', schedErr);
-    throw schedErr;
+    throw schedErr || new Error('Gagal memuat jadwal angsuran');
   }
 
   // Delete existing repayments for this loan
@@ -624,12 +629,12 @@ export const autoReconcileLoanInstallments = async (
     throw delErr;
   }
 
-  let remaining = Math.max(0, totalPaidAvailable);
+  let remaining = Math.round(Math.max(0, Number(totalPaidAvailable) || 0));
   const repaymentsToInsert: any[] = [];
   const scheduleUpdates: Array<{ id: string; paid_amount: number; status: string }> = [];
 
   for (const sched of (schedules || [])) {
-    const target = Number(sched.target_amount || 0);
+    const target = Math.round(Number(sched.target_amount || 0));
     if (remaining <= 0) {
       scheduleUpdates.push({ id: sched.id, paid_amount: 0, status: 'unpaid' });
     } else if (remaining >= target) {
@@ -640,8 +645,8 @@ export const autoReconcileLoanInstallments = async (
         schedule_id: sched.id,
         amount_paid: target,
         payment_date: new Date().toISOString(),
-        payment_method: 'reconcile_fifo',
-        notes: `Rekonsiliasi FIFO Angsuran Periode ${sched.period_number}`
+        payment_method: 'REKONSILIASI_IMPOR',
+        notes: `Pelunasan Otomatis Angsuran Bulan ke-${sched.period_number}`
       });
     } else {
       const partialAmount = remaining;
@@ -652,8 +657,8 @@ export const autoReconcileLoanInstallments = async (
         schedule_id: sched.id,
         amount_paid: partialAmount,
         payment_date: new Date().toISOString(),
-        payment_method: 'reconcile_fifo',
-        notes: `Rekonsiliasi FIFO Parsial Angsuran Periode ${sched.period_number}`
+        payment_method: 'REKONSILIASI_IMPOR',
+        notes: `Pelunasan Parsial Angsuran Bulan ke-${sched.period_number}`
       });
     }
   }
@@ -677,6 +682,8 @@ export const autoReconcileLoanInstallments = async (
   await supabase.from('loans').update({ status: allPaid ? 'completed' : 'active' }).eq('id', loanId);
 
   return {
+    success: true,
+    message: 'Alokasi angsuran berhasil dicocokkan otomatis.',
     reconciledCount: scheduleUpdates.filter(s => s.status === 'paid').length,
     remainingAmount: remaining
   };
