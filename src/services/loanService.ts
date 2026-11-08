@@ -32,6 +32,29 @@ export interface LoanRepayment {
   notes: string | null;
 }
 
+export const MIN_REMAINING_THP = 1500000;
+
+export interface THPEligibilityResult {
+  finalRemainingThp: number;
+  isEligible: boolean;
+  shortfall: number;
+}
+
+export const calculateTHPEligibility = (
+  remainingThp: number,
+  newInstallment: number,
+  minThreshold: number = MIN_REMAINING_THP
+): THPEligibilityResult => {
+  const finalRemainingThp = Number(remainingThp || 0) - Number(newInstallment || 0);
+  const isEligible = finalRemainingThp >= minThreshold;
+  const shortfall = Math.max(0, minThreshold - finalRemainingThp);
+  return {
+    finalRemainingThp,
+    isEligible,
+    shortfall
+  };
+};
+
 export const calculateRemainingInstallmentDeficit = (
   targetAmount: number,
   paidAmount: number
@@ -80,15 +103,27 @@ export const loanService = {
   },
 
   async getMemberTHP(memberId: string): Promise<{ master_thp: number; active_installments: number; remaining_thp: number }> {
-    // 1. Get member master_thp
+    // 1. Get member master_thp with fallback
+    let memberData: any = null;
     const { data: member, error: memberError } = await supabase
       .from('anggota')
-      .select('master_thp')
+      .select('master_thp, take_home_pay')
       .eq('id', memberId)
       .single();
 
-    if (memberError) throw new Error(memberError.message);
-    const masterThp = member.master_thp || 0;
+    if (memberError) {
+      const { data: fallbackMember, error: fbError } = await supabase
+        .from('anggota')
+        .select('*')
+        .eq('id', memberId)
+        .single();
+      if (fbError) throw new Error(fbError.message);
+      memberData = fallbackMember;
+    } else {
+      memberData = member;
+    }
+
+    const masterThp = Number(memberData?.master_thp ?? memberData?.take_home_pay ?? memberData?.salary ?? 0);
 
     // 2. Get active loans
     const { data: activeLoans, error: loansError } = await supabase
@@ -109,8 +144,11 @@ export const loanService = {
     const monthlyTarget = amount / tenor;
     
     const { remaining_thp } = await this.getMemberTHP(memberId);
-    if (remaining_thp - monthlyTarget < 1500000) {
-      throw new Error(`Pengajuan ditolak: Sisa THP setelah potongan (Rp ${remaining_thp - monthlyTarget}) di bawah batas minimal Rp1.500.000.`);
+    const eligibility = calculateTHPEligibility(remaining_thp, monthlyTarget, MIN_REMAINING_THP);
+    if (!eligibility.isEligible) {
+      throw new Error(
+        `Pengajuan ditolak: Sisa THP setelah pemotongan (Rp ${eligibility.finalRemainingThp.toLocaleString('id-ID')}) kurang Rp ${eligibility.shortfall.toLocaleString('id-ID')} dari batas minimal Rp ${MIN_REMAINING_THP.toLocaleString('id-ID')}.`
+      );
     }
 
     // Fetch a default loan type to satisfy the NOT NULL constraint on loan_type_id
