@@ -1169,6 +1169,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 66: Tampilkan Nilai Perkiraan Sisa THP dan Defisit Ambang Batas pada Validasi Pengajuan Pinjaman
+**Status:** ✅ Complete
+**Objective:** Menampilkan nilai perkiraan sisa THP saat ini (`Sisa THP Akhir`) beserta nilai defisit/kekurangannya terhadap ambang batas Rp 1.500.000 pada kotak validasi kelayakan pengajuan pinjaman (`/admin/pengajuan-pinjaman`), serta menjamin ketahanan pemanggilan data `master_thp` / `take_home_pay` / `salary` anggota pemohon.
+**Depends on:** Phase 65, Phase 9
+
+**Plans:**
+- [x] Plan 66.1: Dynamic THP Deficit Validation & Resilient Member THP Data Binding
+
+**Deliverables:**
+- Penyelarasan kueri `getMemberTHP` di `src/services/loanService.ts` dengan fallback multi-kolom (`master_thp ?? take_home_pay ?? salary ?? 0`)
+- Rincian dinamis perkiraan nominal sisa THP dan defisit/kekurangan terhadap batas minimum Rp 1.500.000 di `src/pages/admin/PengajuanPinjaman.tsx`
+- Catatan kontekstual edukatif jika master THP anggota bernilai Rp 0
+- Unit tests di `src/services/loanService.test.ts` dan `src/pages/admin/PengajuanPinjaman.test.tsx`
+- Verifikasi build produksi `npm run build` dan typecheck lulus tanpa error
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1295,6 +1312,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 63 | Otomatisasi Input Nominal Pelunasan Kekurangan Angsuran pada Modal Dokumentasi Bukti Pelunasan | ✅ | 2/2 | 100% |
 | 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian | ✅ | 2/2 | 100% |
 | 65 | Tabel Data Gaji & Rekening dengan Autocompletion & Pagination | ✅ | 2/2 | 100% |
+| 66 | Tampilkan Nilai Perkiraan Sisa THP dan Defisit Ambang Batas pada Validasi Pengajuan Pinjaman | ✅ | 1/1 | 100% |
 
 ---
 
@@ -1367,5 +1385,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 63 | 2026-11-08 | 2026-11-08 | 1 day |
 | 64 | 2026-11-08 | 2026-11-08 | 1 day |
 | 65 | 2026-11-08 | 2026-11-08 | 1 day |
+| 66 | 2026-11-08 | 2026-11-08 | 1 day |
 
 
