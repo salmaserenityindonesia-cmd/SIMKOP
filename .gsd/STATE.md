@@ -1,13 +1,36 @@
 ## Current Position
 - **Phase**: 61 (Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif UX Simpanan)
-- **Task**: Planning Complete (3 plans generated across 3 waves)
-- **Status**: ⏳ Ready for Execution
+- **Task**: Phase Execution Complete & Verified (3 plans completed across 3 waves)
+- **Status**: ✅ Complete & Verified
 
 ## Last Session Summary
-Phase 61 planned:
-- **Plan 61.1**: Data Engine for Loan Repayment Grid & Reconcile (`src/services/loanMatrixService.ts`)
-- **Plan 61.2**: Redesign LoanScheduleModal into Checkbox Matrix Grid (`src/components/loans/LoanScheduleModal.tsx`, `LoanLedgerModal.tsx`, `src/pages/admin/LoanMatrix.tsx`)
-- **Plan 61.3**: Static Verification, Vitest Suite & Production Build Verification
+Phase 61 executed and verified across 3 plans:
+- **Plan 61.1**: Data Engine for Loan Repayment Grid & Reconcile (`src/services/loanMatrixService.ts`) (Wave 1)
+  - Implemented `getLoanInteractiveGrid`, `toggleLoanSchedulePaid`, `autoReconcileLoanInstallments`, `checkAllLoanUpToCurrentMonth`, and `uncheckAllLoanSchedules`.
+  - Added comprehensive test suite with 16 unit tests in `src/services/loanMatrixService.test.ts`. Commits: `863bb6fd`, `3849c16d`.
+- **Plan 61.2**: Redesign LoanScheduleModal into Checkbox Matrix Grid (Wave 2)
+  - Built `LoanScheduleModal.tsx` adopting 100% UX of `SavingsLedgerMatrixModal`: real-time balance cards, quick action toolbar (Centang s/d Bulan Ini, Cocokkan Otomatis FIFO, Batal Centang), horizontal matrix grid with status colors, auto-scroll to current month, receipt modal, uncheck confirmation dialog, and audit trail modal.
+  - Updated `LoanLedgerModal.tsx` as backward-compatible wrapper delegating to `LoanScheduleModal`.
+  - Connected live refresh `onSuccess` callback to `LoanMatrix.tsx`.
+  - Added comprehensive component tests (16 tests in `LoanScheduleModal.test.tsx`, 17 tests in `LoanMatrix.test.tsx`). Commits: `b11221cd`, `2c3501c4`.
+- **Plan 61.3**: Static Verification, Vitest Suite & Production Build Verification (Wave 3)
+  - Strict TypeScript check: `tsc --noEmit` exit code 0 (0 error).
+  - Targeted unit tests: 3 test files, 49 tests passed (100% pass).
+  - Full Vitest suite: 50 test files passed, 636 tests passed (100% pass).
+  - Production build: `npm run build` completed in 2.58s (2269 modules transformed). Commits: `5299e79b`.
+
+## Next Steps
+Phase 61 is complete. Awaiting next user request or roadmap update.
+
+## Blockers
+- None.
+
+## Context Dump
+
+### Decisions Made
+- **Interactive Checkbox Matrix for Loans**: Mengganti tabel vertikal paginasi statis dengan grid horizontal scrollable yang menampilkan setiap periode tenor (Bulan 1 s/d N), ring hijau dan badge `BULAN INI` pada bulan berjalan, serta status warna (emerald lunas, amber parsial, rose menunggak, slate putus-putus proyeksi).
+- **FIFO Auto-Reconciliation Engine**: Memperluas `loanMatrixService.ts` untuk menyediakan rekonsiliasi otomatis bertingkat (FIFO) dana pinjaman yang telah disetorkan, mendukung pelunasan penuh dan sisa parsial secara presisi.
+- **Backward-Compatible Modal Wrapper**: Menjaga kompatibilitas dengan mempertahankan `src/components/members/LoanLedgerModal.tsx` sebagai wrapper transparan yang memanggil `LoanScheduleModal.tsx`, sehingga seluruh titik integrasi di aplikasi langsung menikmati antarmuka matriks interaktif tanpa refactoring berisiko.
 
 Phase 60 executed and verified across 3 plans:
 - **Plan 60.1**: Align Monthly Cell Data Contract in loanMatrixService.ts (Wave 1)

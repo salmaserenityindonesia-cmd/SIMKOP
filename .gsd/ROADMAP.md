@@ -7,7 +7,7 @@ updated: 2026-10-30T20:50:00+07:00
 # Roadmap
 
 > **Current Phase:** 61 — Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan)
-> **Status:** ⏳ Ready for Execution
+> **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
 
@@ -1078,14 +1078,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 61: Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan)
-**Status:** ⏳ Ready for Execution
+**Status:** ✅ Complete
 **Objective:** Merombak total modal Buku Bantu Angsuran Pinjaman pada /admin/loan-matrix menjadi grid matriks interaktif yang identik dengan modal Buku Besar Matriks Simpanan (SavingsLedgerMatrixModal): kartu ringkasan real-time, bilah aksi cepat (centang s/d bulan ini, cocokkan otomatis saldo terangsur, batal centang), grid horizontal interaktif dengan auto-scroll ke bulan berjalan, pewarnaan status dinamis (Hijau, Kuning, Merah, Abu-abu), serta popover kwitansi & audit trail.
 **Depends on:** Phase 60
 
 **Plans:**
-- [ ] Plan 61.1: Data Engine for Loan Repayment Grid & Reconcile
-- [ ] Plan 61.2: Redesign LoanScheduleModal into Checkbox Matrix Grid
-- [ ] Plan 61.3: Static Verification, Vitest Suite & Production Build Verification
+- [x] Plan 61.1: Data Engine for Loan Repayment Grid & Reconcile
+- [x] Plan 61.2: Redesign LoanScheduleModal into Checkbox Matrix Grid
+- [x] Plan 61.3: Static Verification, Vitest Suite & Production Build Verification
 
 **Deliverables:**
 - Service engine fungsi pelunasan massal, FIFO reconciliation, toggle repayment, dan data fetching pada `src/services/loanMatrixService.ts`
@@ -1213,7 +1213,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 58 | Jejak Audit & Dokumentasi Bukti Simpanan | ✅ | 3/3 | 100% |
 | 59 | Integrasi Pembayaran Simpanan Belanja di POS | ✅ | 3/3 | 100% |
 | 60 | Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman | ✅ | 3/3 | 100% |
-| 61 | Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan) | ⏳ | 0/3 | 0% |
+| 61 | Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan) | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1281,6 +1281,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 58 | 2026-11-05 | 2026-11-05 | 1 day |
 | 59 | 2026-11-05 | 2026-11-05 | 1 day |
 | 60 | 2026-11-08 | 2026-11-08 | 1 day |
-| 61 | 2026-11-08 | — | — |
+| 61 | 2026-11-08 | 2026-11-08 | 1 day |
 
 
