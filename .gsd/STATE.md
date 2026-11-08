@@ -1,16 +1,28 @@
 ## Current Position
-- **Phase**: 59 (Integrasi Pembayaran Kasir POS Menggunakan Simpanan Belanja Anggota)
-- **Task**: Phase execution and verification complete
-- **Status**: Complete & Verified (7/7 must-haves verified)
+- **Phase**: 60 (Tampilan Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 59 executed and verified across 3 plans:
-- **Plan 59.1**: Database RPC for Atomic Balance Deduction & Service Layer Integration. Created migration `supabase/migrations/036_pos_spending_from_savings_function.sql` implementing PostgreSQL RPC `process_pos_deposit_payment` with anti-overdraft protection and withdrawal recording into `deposit_transactions`. Integrated RPC into `src/services/posCheckoutService.ts`. Unit tests: 8/8 passed in `posCheckoutService.test.ts`. Commits: `43dd6646`, `f27cd188`.
-- **Plan 59.2**: POS SplitPaymentModal Validation & Cashier Shift Reconciliation Guard. Added balance badge `Saldo Tersedia: Rp [nominal]`, locking when balance zero or non-member, auto-clamping `min(total, saldo)` in `src/components/pos/SplitPaymentModal.tsx`. Hardened physical cash drawer separation in `src/services/cashierShiftService.ts` ensuring `paid_deposit` never inflates `expected_cash`. Unit tests: 7/7 in `SplitPaymentModal.test.tsx` and 16/16 in `cashierShiftService.test.ts` passed. Commits: `a87f67d2`, `931c095f`.
-- **Plan 59.3**: Comprehensive Static Analysis, Full Test Suite & Production Build Verification. Validated clean TypeScript typecheck (`tsc --noEmit`), full Vitest suite passing (43 test files, 559 tests passed 100%), and Vite production build succeeding cleanly (`npm run build` in 1.01s). Created independent verification report at `.gsd/phases/59/VERIFICATION.md`. Commit: `f95689b5`.
+Phase 60 planned with 3 execution plans:
+- **Plan 60.1**: Align Monthly Cell Data Contract in loanMatrixService.ts (Wave 1)
+  - Enrich `LoanMatrixMonth` interface with `year?: number` and `dueDate?: string`
+  - Export `MonthLoanCell` type alias for backward-compatible consumption
+  - Populate schedule year & due date during matrix transformation
+  - Unit test coverage in `src/services/loanMatrixService.test.ts`
+- **Plan 60.2**: Render Colored Numeric Installments and Status Legend in LoanMatrix.tsx (Wave 2)
+  - Implement `formatAmount` and `getCellBadge` helper functions
+  - Replace checkmark icons in monthly cells with dynamic badge numbers
+  - Apply status-specific styling: emerald (lunas), amber (parsial), rose (menunggak), slate dashed (proyeksi), slate-300 (di luar masa pinjaman)
+  - Add status legend (Keterangan Status) on the Loan Matrix page
+  - Update and expand `src/pages/admin/LoanMatrix.test.tsx`
+- **Plan 60.3**: Static Verification, Vitest Suite & Production Build Verification (Wave 3)
+  - TypeScript strict typecheck (`tsc --noEmit`)
+  - Full Vitest suite run (`vitest run`)
+  - Vite production bundle build (`npm run build`)
 
 ## Next Steps
-Phase 59 is complete. Awaiting next user request or roadmap update.
+1. `/execute 60` or `/execute 60.1` — Start executing Phase 60 plans.
 
 ## Blockers
 - None.
@@ -18,7 +30,6 @@ Phase 59 is complete. Awaiting next user request or roadmap update.
 ## Context Dump
 
 ### Decisions Made
-- **Sequential Migration Numbering**: Menggunakan nomor urut `036` (`036_pos_spending_from_savings_function.sql`) karena nomor 033, 034, dan 035 telah digunakan pada fase sebelumnya.
-- **Atomic Balance & Anti-Overdraft Protection**: Validasi ketersediaan saldo dan penyisipan transaksi `withdrawal` dilakukan di level PostgreSQL via RPC dengan `SECURITY DEFINER` untuk mencegah race condition / overdraft.
-- **Strict Drawer Cash Separation**: Nilai `paid_deposit` hanya dicatat pada `sales.paid_deposit` dan tidak dimasukkan ke dalam `cash_sales` / `expected_cash` laci kasir agar rekonsiliasi kas fisik shift tetap akurat 100%.
-- **Responsive Cashier Safeguard**: Pada modal pembayaran kasir (`SplitPaymentModal.tsx`), input simpanan belanja dikunci jika non-anggota atau saldo nol, dilengkapi badge sisa saldo riil dan pembatasan otomatis `min(total, saldo)`.
+- **Backward-Compatible Data Contract**: Tetap mempertahankan properti eksisting (`targetAmount`, `paidAmount`, `status`) pada `LoanMatrixMonth` sekaligus mengekspor `MonthLoanCell` agar tidak memutus kode konsumsi yang sudah ada.
+- **Dynamic Numeric Badges**: Menggantikan rendering checklist ikonik (`CheckCircle2`, dll.) dengan nominal angka berformat ribuan Indonesia (`toLocaleString('id-ID')`) dan tipografi `font-mono` untuk memudahkan pembacaan di tabel matriks.
+- **Unified Status Palette**: Menggunakan emerald-700/50 untuk Lunas, amber-700/50 untuk Parsial, rose-700/50 untuk Menunggak, dan slate-400/50 bergaris putus-putus untuk Proyeksi bulan depan.
