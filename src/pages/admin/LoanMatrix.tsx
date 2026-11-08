@@ -4,6 +4,7 @@ import LoanLedgerModal from '../../components/members/LoanLedgerModal';
 import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
+  getCumulativePaidUpToMonth,
   LoanMatrixSummary,
   MonthLoanCell,
 } from '../../services/loanMatrixService';
@@ -396,10 +397,17 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                                     <span className="text-slate-300">Target:</span>
                                     <span>Rp {formatAmount(cell.targetAmount)}</span>
                                   </div>
-                                  <div className="flex justify-between mt-1 text-emerald-400">
-                                    <span>Terbayar:</span>
-                                    <span>Rp {formatAmount(cell.paidAmount)}</span>
-                                  </div>
+                                  {(() => {
+                                    const cumulativePaid = cell.cumulativePaidAmount !== undefined
+                                      ? cell.cumulativePaidAmount
+                                      : getCumulativePaidUpToMonth(member, m, year);
+                                    return (
+                                      <div className="flex justify-between mt-1 text-emerald-400">
+                                        <span>Terbayar:</span>
+                                        <span>Rp {formatAmount(cumulativePaid)}</span>
+                                      </div>
+                                    );
+                                  })()}
                                   {cell.remainingBalance !== undefined && (
                                     <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
                                       <span>Sisa Angsuran:</span>
