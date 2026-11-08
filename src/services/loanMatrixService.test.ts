@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getLoanMatrixAvailableYears, getLoanMatrix, MonthLoanCell, LoanMatrixMonth } from './loanMatrixService';
+import {
+  getLoanMatrixAvailableYears,
+  getLoanMatrix,
+  MonthLoanCell,
+  LoanMatrixMonth,
+  getLoanInteractiveGrid,
+  toggleLoanSchedulePaid,
+  autoReconcileLoanInstallments,
+  checkAllLoanUpToCurrentMonth,
+  uncheckAllLoanSchedules
+} from './loanMatrixService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -295,3 +305,558 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(decCell.paidAmount).toBe(0);
   });
 });
+
+describe('loanMatrixService - getLoanInteractiveGrid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('mengembalikan summary pinjaman, kalkulasi sisa saldo, dan mapping periods secara akurat', async () => {
+    const mockLoan = {
+      id: 'loan-101',
+      loan_number: 'PINJ-2026-001',
+      principal_amount: 6000000,
+      amount: 6000000,
+      tenor: 6,
+      monthly_target: 1000000,
+      disbursed_at: '2026-01-05T00:00:00.000Z',
+      status: 'active',
+      member: {
+        id: 'mem-101',
+        nama: 'Kopda Herman',
+        nrp: 'NRP-5555'
+      }
+    };
+
+    const mockSchedules = [
+      { id: 'sc-1', loan_id: 'loan-101', period_number: 1, due_date: '2026-01-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sc-2', loan_id: 'loan-101', period_number: 2, due_date: '2026-02-15', target_amount: 1000000, paid_amount: 500000, status: 'partial' },
+      { id: 'sc-3', loan_id: 'loan-101', period_number: 3, due_date: '2026-03-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-4', loan_id: 'loan-101', period_number: 4, due_date: '2026-06-10', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-5', loan_id: 'loan-101', period_number: 5, due_date: '2026-07-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-6', loan_id: 'loan-101', period_number: 6, due_date: '2026-08-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' }
+    ];
+
+    const mockRepayments = [
+      { id: 'rep-1', loan_id: 'loan-101', schedule_id: 'sc-1', amount_paid: 1000000, payment_date: '2026-01-14T10:00:00Z', payment_method: 'transfer', notes: 'Kwitansi 001' },
+      { id: 'rep-2', loan_id: 'loan-101', schedule_id: 'sc-2', amount_paid: 500000, payment_date: '2026-02-14T10:00:00Z', payment_method: 'cash', notes: 'Sebagian' }
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockLoan, error: null })
+            })
+          })
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null })
+            })
+          })
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockRepayments, error: null })
+            })
+          })
+        };
+      }
+      return {};
+    });
+
+    const result = await getLoanInteractiveGrid('loan-101');
+
+    expect(result.loanId).toBe('loan-101');
+    expect(result.loanNumber).toBe('PINJ-2026-001');
+    expect(result.memberName).toBe('Kopda Herman');
+    expect(result.memberNrp).toBe('NRP-5555');
+    expect(result.principalAmount).toBe(6000000);
+    expect(result.totalPaid).toBe(1500000);
+    expect(result.sisaPinjaman).toBe(4500000);
+    expect(result.isBalanced).toBe(false);
+    expect(result.periods).toHaveLength(6);
+
+    // Period 1: PAID
+    expect(result.periods[0].periodNumber).toBe(1);
+    expect(result.periods[0].status).toBe('PAID');
+    expect(result.periods[0].label).toBe('Bulan 1 [Jan-26]');
+    expect(result.periods[0].isCurrentMonth).toBe(false);
+    expect(result.periods[0].repayments).toHaveLength(1);
+    expect(result.periods[0].repayments[0].amountPaid).toBe(1000000);
+
+    // Period 2: PARTIAL
+    expect(result.periods[1].status).toBe('PARTIAL');
+    expect(result.periods[1].label).toBe('Bulan 2 [Feb-26]');
+    expect(result.periods[1].paidAmount).toBe(500000);
+
+    // Period 3: UNPAID (past month March 2026 vs June 2026)
+    expect(result.periods[2].status).toBe('UNPAID');
+
+    // Period 4: UNPAID (current month June 2026, past due date 10 June vs 15 June)
+    expect(result.periods[3].isCurrentMonth).toBe(true);
+    expect(result.periods[3].status).toBe('UNPAID');
+
+    // Period 5: PROJECTED (future month July 2026)
+    expect(result.periods[4].status).toBe('PROJECTED');
+    expect(result.periods[4].label).toBe('Bulan 5 [Jul-26]');
+
+    // Period 6: PROJECTED (future month August 2026)
+    expect(result.periods[5].status).toBe('PROJECTED');
+  });
+
+  it('menangani pinjaman lunas penuh dengan isBalanced true dan sisaPinjaman 0', async () => {
+    const mockLoan = {
+      id: 'loan-102',
+      loan_number: 'PINJ-2026-002',
+      principal_amount: 2000000,
+      tenor: 2,
+      monthly_target: 1000000,
+      status: 'completed',
+      member: { id: 'm-2', nama: 'Serma Joko', nrp: 'NRP-2222' }
+    };
+
+    const mockSchedules = [
+      { id: 'sc-1', loan_id: 'loan-102', period_number: 1, due_date: '2026-01-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sc-2', loan_id: 'loan-102', period_number: 2, due_date: '2026-02-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' }
+    ];
+
+    const mockRepayments = [
+      { id: 'rep-1', loan_id: 'loan-102', schedule_id: 'sc-1', amount_paid: 1000000, payment_date: '2026-01-10', payment_method: 'transfer' },
+      { id: 'rep-2', loan_id: 'loan-102', schedule_id: 'sc-2', amount_paid: 1000000, payment_date: '2026-02-10', payment_method: 'transfer' }
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockLoan, error: null })
+            })
+          })
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null })
+            })
+          })
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockRepayments, error: null })
+            })
+          })
+        };
+      }
+      return {};
+    });
+
+    const result = await getLoanInteractiveGrid('loan-102');
+    expect(result.totalPaid).toBe(2000000);
+    expect(result.sisaPinjaman).toBe(0);
+    expect(result.isBalanced).toBe(true);
+    expect(result.periods.every(p => p.status === 'PAID')).toBe(true);
+  });
+});
+
+describe('loanMatrixService - toggleLoanSchedulePaid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('melunasi jadwal pinjaman (paid = true): insert repayment, update schedule, dan update loan completed jika seluruh jadwal lunas', async () => {
+    const insertMock = vi.fn().mockResolvedValue({ error: null });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('loan:loans')) {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'sched-1',
+                      loan_id: 'loan-1',
+                      period_number: 1,
+                      target_amount: 1000000,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      loan: { id: 'loan-1', status: 'active' }
+                    },
+                    error: null
+                  })
+                })
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'sched-1', status: 'paid', paid_amount: 1000000, target_amount: 1000000 }
+                ],
+                error: null
+              })
+            };
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          insert: insertMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    await toggleLoanSchedulePaid('sched-1', true, {
+      amount: 1000000,
+      receiptNo: 'KW-123',
+      notes: 'Lunas Transfer Bank',
+      paymentMethod: 'transfer'
+    });
+
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({
+      loan_id: 'loan-1',
+      schedule_id: 'sched-1',
+      amount_paid: 1000000,
+      payment_method: 'transfer',
+      notes: 'Kwitansi: KW-123 - Lunas Transfer Bank'
+    }));
+
+    expect(updateScheduleMock).toHaveBeenCalledWith({
+      paid_amount: 1000000,
+      status: 'paid'
+    });
+
+    expect(updateLoanMock).toHaveBeenCalledWith({
+      status: 'completed'
+    });
+  });
+
+  it('membatalkan pelunasan jadwal pinjaman (paid = false): delete repayment, reset schedule, dan kembalikan loan ke active', async () => {
+    const deleteRepayMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'sched-1',
+                  loan_id: 'loan-1',
+                  target_amount: 1000000,
+                  paid_amount: 1000000,
+                  status: 'paid',
+                  loan: { id: 'loan-1', status: 'completed' }
+                },
+                error: null
+              })
+            })
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          delete: deleteRepayMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    await toggleLoanSchedulePaid('sched-1', false);
+
+    expect(deleteRepayMock).toHaveBeenCalled();
+    expect(updateScheduleMock).toHaveBeenCalledWith({
+      paid_amount: 0,
+      status: 'unpaid'
+    });
+    expect(updateLoanMock).toHaveBeenCalledWith({
+      status: 'active'
+    });
+  });
+});
+
+describe('loanMatrixService - autoReconcileLoanInstallments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('mengalokasikan saldo FIFO secara berurutan: lunas penuh di periode awal, parsial di periode sisa, nol di periode akhir', async () => {
+    const mockSchedules = [
+      { id: 'sc-1', loan_id: 'l-1', period_number: 1, target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-2', loan_id: 'l-1', period_number: 2, target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-3', loan_id: 'l-1', period_number: 3, target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+    ];
+
+    const deleteMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const insertRepayMock = vi.fn().mockResolvedValue({ error: null });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null })
+            })
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          delete: deleteMock,
+          insert: insertRepayMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    const result = await autoReconcileLoanInstallments('l-1', 2500000);
+
+    expect(deleteMock).toHaveBeenCalled();
+    expect(result.reconciledCount).toBe(2);
+    expect(result.remainingAmount).toBe(0);
+
+    expect(updateScheduleMock).toHaveBeenCalledWith({ paid_amount: 1000000, status: 'paid' });
+    expect(updateScheduleMock).toHaveBeenCalledWith({ paid_amount: 500000, status: 'partial' });
+
+    expect(insertRepayMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ schedule_id: 'sc-1', amount_paid: 1000000 }),
+        expect.objectContaining({ schedule_id: 'sc-2', amount_paid: 1000000 }),
+        expect.objectContaining({ schedule_id: 'sc-3', amount_paid: 500000 }),
+      ])
+    );
+
+    expect(updateLoanMock).toHaveBeenCalledWith({ status: 'active' });
+  });
+
+  it('mengupdate status loan ke completed bila alokasi FIFO melunasi seluruh jadwal', async () => {
+    const mockSchedules = [
+      { id: 'sc-1', loan_id: 'l-1', period_number: 1, target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-2', loan_id: 'l-1', period_number: 2, target_amount: 1000000, paid_amount: 0, status: 'unpaid' }
+    ];
+
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null })
+            })
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          delete: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          insert: vi.fn().mockResolvedValue({ error: null })
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    const result = await autoReconcileLoanInstallments('l-1', 2000000);
+    expect(result.reconciledCount).toBe(2);
+    expect(result.remainingAmount).toBe(0);
+    expect(updateLoanMock).toHaveBeenCalledWith({ status: 'completed' });
+  });
+});
+
+describe('loanMatrixService - checkAllLoanUpToCurrentMonth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('melunasi seluruh jadwal yang jatuh tempo s/d akhir bulan berjalan saat ini', async () => {
+    const mockSchedules = [
+      { id: 'sc-1', loan_id: 'l-1', period_number: 1, due_date: '2026-01-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sc-2', loan_id: 'l-1', period_number: 2, due_date: '2026-02-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-3', loan_id: 'l-1', period_number: 3, due_date: '2026-06-25', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'sc-4', loan_id: 'l-1', period_number: 4, due_date: '2026-07-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' }
+    ];
+
+    const deleteRepayMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const insertRepayMock = vi.fn().mockResolvedValue({ error: null });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === '*') {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null })
+                })
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { status: 'paid', paid_amount: 1000000, target_amount: 1000000 },
+                  { status: 'paid', paid_amount: 1000000, target_amount: 1000000 },
+                  { status: 'paid', paid_amount: 1000000, target_amount: 1000000 },
+                  { status: 'unpaid', paid_amount: 0, target_amount: 1000000 }
+                ],
+                error: null
+              })
+            };
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          delete: deleteRepayMock,
+          insert: insertRepayMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    const res = await checkAllLoanUpToCurrentMonth('l-1');
+    expect(res.checkedCount).toBe(2);
+    expect(updateScheduleMock).toHaveBeenCalledTimes(2);
+    expect(insertRepayMock).toHaveBeenCalledTimes(2);
+    expect(updateLoanMock).not.toHaveBeenCalledWith({ status: 'completed' });
+  });
+});
+
+describe('loanMatrixService - uncheckAllLoanSchedules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('mereset seluruh pelunasan pinjaman: menghapus repayments, reset schedules ke 0 unpaid, dan set loan active', async () => {
+    const deleteRepayMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_repayments') {
+        return {
+          delete: deleteRepayMock
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    await uncheckAllLoanSchedules('l-1');
+
+    expect(deleteRepayMock).toHaveBeenCalled();
+    expect(updateScheduleMock).toHaveBeenCalledWith({
+      paid_amount: 0,
+      status: 'unpaid'
+    });
+    expect(updateLoanMock).toHaveBeenCalledWith({
+      status: 'active'
+    });
+  });
+});
+
