@@ -1,26 +1,28 @@
 ## Current Position
-- **Phase**: 61 (Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif UX Simpanan)
-- **Task**: Phase Execution Complete & Verified (3 plans completed across 3 waves)
-- **Status**: ✅ Complete & Verified
-
-## Last Session Summary
-Phase 61 executed and verified across 3 plans:
-- **Plan 61.1**: Data Engine for Loan Repayment Grid & Reconcile (`src/services/loanMatrixService.ts`) (Wave 1)
-  - Implemented `getLoanInteractiveGrid`, `toggleLoanSchedulePaid`, `autoReconcileLoanInstallments`, `checkAllLoanUpToCurrentMonth`, and `uncheckAllLoanSchedules`.
-  - Added comprehensive test suite with 16 unit tests in `src/services/loanMatrixService.test.ts`. Commits: `863bb6fd`, `3849c16d`.
-- **Plan 61.2**: Redesign LoanScheduleModal into Checkbox Matrix Grid (Wave 2)
-  - Built `LoanScheduleModal.tsx` adopting 100% UX of `SavingsLedgerMatrixModal`: real-time balance cards, quick action toolbar (Centang s/d Bulan Ini, Cocokkan Otomatis FIFO, Batal Centang), horizontal matrix grid with status colors, auto-scroll to current month, receipt modal, uncheck confirmation dialog, and audit trail modal.
-  - Updated `LoanLedgerModal.tsx` as backward-compatible wrapper delegating to `LoanScheduleModal`.
-  - Connected live refresh `onSuccess` callback to `LoanMatrix.tsx`.
-  - Added comprehensive component tests (16 tests in `LoanScheduleModal.test.tsx`, 17 tests in `LoanMatrix.test.tsx`). Commits: `b11221cd`, `2c3501c4`.
-- **Plan 61.3**: Static Verification, Vitest Suite & Production Build Verification (Wave 3)
-  - Strict TypeScript check: `tsc --noEmit` exit code 0 (0 error).
-  - Targeted unit tests: 3 test files, 49 tests passed (100% pass).
-  - Full Vitest suite: 50 test files passed, 636 tests passed (100% pass).
-  - Production build: `npm run build` completed in 2.58s (2269 modules transformed). Commits: `5299e79b`.
+- **Phase**: 62 (Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman)
+- **Task**: Planning Complete (3 plans created across 3 waves)
+- **Status**: ⏳ Ready for Execution
 
 ## Next Steps
-Phase 61 is complete. Awaiting next user request or roadmap update.
+1. Execute Plan 62.1: Data Contract & Cumulative Paid Calculation Engine (`/execute 62 1`)
+2. Execute Plan 62.2: Bind Cumulative Paid Amount to Popover Component & Component Tests (`/execute 62 2`)
+3. Execute Plan 62.3: Static Analysis, Vitest Suite & Production Build Verification (`/execute 62 3`)
+
+## Last Session Summary
+Phase 62 planned with 3 atomic execution plans:
+- **Plan 62.1**: Data Contract & Cumulative Paid Calculation Engine (Wave 1)
+  - Enrich `LoanMatrixMonth` interface with `cumulativePaidAmount?: number`
+  - Maintain chronological running total in `getLoanMatrix` across all loan schedules
+  - Add & export `getCumulativePaidUpToMonth` helper function
+  - Unit tests in `src/services/loanMatrixService.test.ts`
+- **Plan 62.2**: Bind Cumulative Paid Amount to Popover Component & Component Tests (Wave 2)
+  - Bind cumulative paid to hover tooltip in `src/pages/admin/LoanMatrix.tsx` on "Terbayar:" label
+  - Maintain proper Indonesian Rupiah currency formatting (`Rp X.XXX.XXX`)
+  - Update component tests in `src/pages/admin/LoanMatrix.test.tsx`
+- **Plan 62.3**: Static Analysis, Vitest Suite & Production Build Verification (Wave 3)
+  - TypeScript strict typecheck (`tsc --noEmit`)
+  - Full Vitest suite run
+  - Vite production bundle build (`npm run build`)
 
 ## Blockers
 - None.
