@@ -126,3 +126,81 @@ export const confirmSalaryReconciliation = async (payload: FinalReconciliationPa
         throw error;
     }
 };
+
+export interface MemberSalaryAccountItem {
+  id: string;
+  nrp: string;
+  nama: string;
+  pangkat?: string | null;
+  bank_account_number?: string | null;
+  take_home_pay?: number | null;
+  master_thp?: number | null;
+  status?: string | null;
+  membership_status?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+function isFallbackError(error: any): boolean {
+  if (!error) return false;
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    error.code === '42P01' ||
+    msg.includes('schema cache') ||
+    msg.includes('does not exist') ||
+    msg.includes('fetch') ||
+    msg.includes('network') ||
+    msg.includes('failed to fetch')
+  );
+}
+
+/**
+ * Mengambil seluruh data anggota beserta gaji (take_home_pay/master_thp)
+ * dan nomor rekening dengan paginasi loop ber-batch 1000 item.
+ */
+export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccountItem[]> {
+  const PAGE_SIZE = 1000;
+  let from = 0;
+  let hasMore = true;
+  let allData: MemberSalaryAccountItem[] = [];
+
+  try {
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('anggota')
+        .select(
+          'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, status, membership_status, created_at, updated_at'
+        )
+        .order('nama', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        if (isFallbackError(error)) {
+          console.warn('Fallback error fetching anggota salary data:', error.message);
+          return [];
+        }
+        console.error('Error fetching paged member salary and accounts:', error.message);
+        throw new Error(`Gagal mengambil data gaji dan rekening anggota: ${error.message}`);
+      }
+
+      if (data && data.length > 0) {
+        allData = allData.concat(data as MemberSalaryAccountItem[]);
+        from += PAGE_SIZE;
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return allData;
+  } catch (err: any) {
+    if (isFallbackError(err)) {
+      console.warn('Graceful fallback for fetchMembersSalaryAndAccounts:', err?.message);
+      return [];
+    }
+    throw err;
+  }
+}
+
