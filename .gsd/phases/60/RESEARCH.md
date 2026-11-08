@@ -57,3 +57,4 @@ Kebutuhan pengguna:
 - Tambahkan test cases spesifik untuk verifikasi rendering angka nominal berwarna dan keberadaan legenda status.
 - Pastikan ekspor Excel tetap berfungsi dan tidak terpengaruh oleh perubahan visual UI tabel.
 - Jalankan pemeriksaan tipe `tsc --noEmit` dan `npm run build` untuk memvalidasi zero-regression.
+

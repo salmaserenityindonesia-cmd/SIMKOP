@@ -1060,14 +1060,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 60: Tampilan Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Merefaktor sel matriks bulanan pinjaman (/admin/loan-matrix) dari yang sebelumnya menampilkan ikon centang hijau menjadi tampilan angka nominal angsuran riil dengan format mata uang Indonesia dan penanda warna status dinamis (Hijau = Lunas, Kuning/Amber = Parsial, Merah = Menunggak, Abu-abu Putus-putus = Proyeksi, Strip = Di Luar Tenor), dilengkapi tooltip rincian angsuran serta legenda status visual pada halaman.
 **Depends on:** Phase 59
 
 **Plans:**
-- [ ] Plan 60.1: Align Monthly Cell Data Contract in loanMatrixService.ts
-- [ ] Plan 60.2: Render Colored Numeric Installments and Status Legend in LoanMatrix.tsx
-- [ ] Plan 60.3: Static Verification, Vitest Suite & Production Build Verification
+- [x] Plan 60.1: Align Monthly Cell Data Contract in loanMatrixService.ts
+- [x] Plan 60.2: Render Colored Numeric Installments and Status Legend in LoanMatrix.tsx
+- [x] Plan 60.3: Static Verification, Vitest Suite & Production Build Verification
 
 **Deliverables:**
 - Penambahan properti `year`, `dueDate`, dan type alias `MonthLoanCell` pada `src/services/loanMatrixService.ts`
@@ -1194,7 +1194,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 57 | Auto-Scroll ke Bulan Ini Modal Matriks Simpanan | ✅ | 2/2 | 100% |
 | 58 | Jejak Audit & Dokumentasi Bukti Simpanan | ✅ | 3/3 | 100% |
 | 59 | Integrasi Pembayaran Simpanan Belanja di POS | ✅ | 3/3 | 100% |
-| 60 | Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman | ⏳ | 0/3 | 0% |
+| 60 | Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1261,6 +1261,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 57 | 2026-11-04 | 2026-11-04 | 1 day |
 | 58 | 2026-11-05 | 2026-11-05 | 1 day |
 | 59 | 2026-11-05 | 2026-11-05 | 1 day |
-| 60 | 2026-11-08 | — | — |
+| 60 | 2026-11-08 | 2026-11-08 | 1 day |
 
 
