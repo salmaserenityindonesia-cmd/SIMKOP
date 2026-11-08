@@ -5,11 +5,14 @@ import {
   LoanMatrix,
   loadAvailableYearsData,
   fetchLoanMatrixData,
+  formatAmount,
+  getCellBadge,
 } from './LoanMatrix';
 import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
   LoanMatrixSummary,
+  MonthLoanCell,
 } from '../../services/loanMatrixService';
 
 // Mock layout
@@ -48,24 +51,25 @@ const { mockSummaryData } = vi.hoisted(() => {
       unpaidMembersCount: 2,
       members: [
         {
-          loanId: 'loan-1',
+          memberId: 'mem-1',
           nrp: '12345678',
           nama: 'Budi Santoso',
           isLoanActive: true,
+          totalLoans: 1,
           complianceYTD: 100,
           months: {
-            1: { status: 'PAID', amount: 1000000, paidAmount: 1000000 },
-            2: { status: 'PAID', amount: 1000000, paidAmount: 1000000 },
-            3: { status: 'NONE', amount: 0, paidAmount: 0 },
-            4: { status: 'NONE', amount: 0, paidAmount: 0 },
-            5: { status: 'NONE', amount: 0, paidAmount: 0 },
-            6: { status: 'NONE', amount: 0, paidAmount: 0 },
-            7: { status: 'NONE', amount: 0, paidAmount: 0 },
-            8: { status: 'NONE', amount: 0, paidAmount: 0 },
-            9: { status: 'NONE', amount: 0, paidAmount: 0 },
-            10: { status: 'NONE', amount: 0, paidAmount: 0 },
-            11: { status: 'NONE', amount: 0, paidAmount: 0 },
-            12: { status: 'NONE', amount: 0, paidAmount: 0 },
+            1: { month: 1, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000, loanId: 'loan-1', loanNumber: 'PJ-001', periodNumber: 1, tenor: 10, dueDate: '2026-01-25' },
+            2: { month: 2, status: 'PARTIAL', targetAmount: 1000000, paidAmount: 500000, remainingBalance: 500000, loanId: 'loan-1', loanNumber: 'PJ-001', periodNumber: 2, tenor: 10, dueDate: '2026-02-25' },
+            3: { month: 3, status: 'UNPAID', targetAmount: 1000000, paidAmount: 0, remainingBalance: 1000000, loanId: 'loan-1', loanNumber: 'PJ-001', periodNumber: 3, tenor: 10, dueDate: '2026-03-25' },
+            4: { month: 4, status: 'PROJECTED', targetAmount: 1000000, paidAmount: 0, loanId: 'loan-1', loanNumber: 'PJ-001', periodNumber: 4, tenor: 10, dueDate: '2026-04-25' },
+            5: { month: 5, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            6: { month: 6, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            7: { month: 7, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            8: { month: 8, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            9: { month: 9, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            10: { month: 10, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            11: { month: 11, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            12: { month: 12, status: 'NONE', targetAmount: 0, paidAmount: 0 },
           },
         },
       ],
@@ -83,8 +87,117 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
     vi.clearAllMocks();
   });
 
-  describe('Static UI Structure & Dynamic Year Options Rendering', () => {
-    it('renders page layout, KPI cards, and filter toolbar correctly', () => {
+  describe('formatAmount Helper Unit Tests', () => {
+    it('formats positive integers to Indonesian locale format', () => {
+      expect(formatAmount(1000000)).toBe('1.000.000');
+      expect(formatAmount(50000)).toBe('50.000');
+      expect(formatAmount(2500)).toBe('2.500');
+    });
+
+    it('returns "-" for 0, undefined, null, or NaN', () => {
+      expect(formatAmount(0)).toBe('-');
+      expect(formatAmount(undefined)).toBe('-');
+      expect(formatAmount(null)).toBe('-');
+      expect(formatAmount(NaN)).toBe('-');
+    });
+  });
+
+  describe('getCellBadge Helper Unit Tests', () => {
+    it('returns emerald styling and "Lunas" label for PAID and FINISHED statuses', () => {
+      const paidCell: MonthLoanCell = {
+        month: 1,
+        status: 'PAID',
+        targetAmount: 500000,
+        paidAmount: 500000,
+      };
+      const badge = getCellBadge(paidCell);
+      expect(badge.text).toBe('500.000');
+      expect(badge.className).toContain('text-emerald-700');
+      expect(badge.className).toContain('bg-emerald-50');
+      expect(badge.statusLabel).toBe('Lunas');
+
+      const finishedCell: MonthLoanCell = {
+        month: 2,
+        status: 'FINISHED',
+        targetAmount: 600000,
+        paidAmount: 600000,
+      };
+      const badgeFinished = getCellBadge(finishedCell);
+      expect(badgeFinished.text).toBe('600.000');
+      expect(badgeFinished.className).toContain('text-emerald-700');
+      expect(badgeFinished.statusLabel).toBe('Lunas');
+    });
+
+    it('returns amber styling and "Parsial" label for PARTIAL status', () => {
+      const partialCell: MonthLoanCell = {
+        month: 3,
+        status: 'PARTIAL',
+        targetAmount: 1000000,
+        paidAmount: 400000,
+      };
+      const badge = getCellBadge(partialCell);
+      expect(badge.text).toBe('400.000');
+      expect(badge.className).toContain('text-amber-700');
+      expect(badge.className).toContain('bg-amber-50');
+      expect(badge.statusLabel).toBe('Parsial');
+    });
+
+    it('returns rose styling and "Menunggak" label for UNPAID status', () => {
+      const unpaidCell: MonthLoanCell = {
+        month: 4,
+        status: 'UNPAID',
+        targetAmount: 750000,
+        paidAmount: 0,
+      };
+      const badge = getCellBadge(unpaidCell);
+      expect(badge.text).toBe('750.000');
+      expect(badge.className).toContain('text-rose-700');
+      expect(badge.className).toContain('bg-rose-50');
+      expect(badge.statusLabel).toBe('Menunggak');
+    });
+
+    it('returns slate dashed styling and "Proyeksi" label for PROJECTED status', () => {
+      const projCell: MonthLoanCell = {
+        month: 5,
+        status: 'PROJECTED',
+        targetAmount: 800000,
+        paidAmount: 0,
+      };
+      const badge = getCellBadge(projCell);
+      expect(badge.text).toBe('800.000');
+      expect(badge.className).toContain('text-slate-400');
+      expect(badge.className).toContain('border-dashed');
+      expect(badge.statusLabel).toBe('Proyeksi');
+    });
+
+    it('returns "-" and "Di Luar Masa Tenor" label for NONE or default status', () => {
+      const noneCell: MonthLoanCell = {
+        month: 6,
+        status: 'NONE',
+        targetAmount: 0,
+        paidAmount: 0,
+      };
+      const badge = getCellBadge(noneCell);
+      expect(badge.text).toBe('-');
+      expect(badge.className).toContain('text-slate-300');
+      expect(badge.statusLabel).toBe('Di Luar Masa Tenor');
+    });
+
+    it('handles lowercase status variants gracefully (case-insensitive)', () => {
+      const paidLower: any = { month: 1, status: 'paid', targetAmount: 100000, paidAmount: 100000 };
+      const partialLower: any = { month: 2, status: 'partial', targetAmount: 100000, paidAmount: 50000 };
+      const unpaidLower: any = { month: 3, status: 'unpaid', targetAmount: 100000, paidAmount: 0 };
+      const projLower: any = { month: 4, status: 'projection', targetAmount: 100000, paidAmount: 0 };
+
+      expect(getCellBadge(paidLower).statusLabel).toBe('Lunas');
+      expect(getCellBadge(partialLower).statusLabel).toBe('Parsial');
+      expect(getCellBadge(unpaidLower).statusLabel).toBe('Menunggak');
+      expect(getCellBadge(projLower).statusLabel).toBe('Proyeksi');
+    });
+  });
+
+  describe('Static UI Structure, Status Legend & Dynamic Year Options', () => {
+    it('renders page layout, KPI cards, filter toolbar, and status legend correctly', () => {
       const html = renderToStaticMarkup(<LoanMatrix />);
 
       // Headers and breadcrumb
@@ -104,6 +217,14 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('Pinjaman Aktif');
       expect(html).toContain('Ada Tunggakan');
       expect(html).toContain('Tahun:');
+
+      // Status Legend
+      expect(html).toContain('Keterangan Status:');
+      expect(html).toContain('Lunas');
+      expect(html).toContain('Parsial');
+      expect(html).toContain('Menunggak');
+      expect(html).toContain('Proyeksi');
+      expect(html).toContain('Di Luar Masa Tenor');
     });
 
     it('renders dynamic year dropdown options with [2027, 2026, 2025, 2024]', () => {
