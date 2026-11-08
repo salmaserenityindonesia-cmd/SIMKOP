@@ -84,7 +84,7 @@ export interface Loan {
   principal_amount: number;
   agreed_tenor_months: number;
   planned_installment_amount: number;
-  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'paid';
+  status: 'draft' | 'approved' | 'active' | 'paid_off' | 'defaulted' | 'completed' | 'rejected';
   created_at?: string;
 }
 
@@ -829,7 +829,7 @@ export async function ajukanPinjaman(data: Omit<Loan, 'id' | 'created_at' | 'sta
   const loanData = {
     ...data,
     loan_number: `LOAN-${Date.now()}`,
-    status: 'pending',
+    status: 'draft',
   };
 
   const { data: result, error } = await supabase
@@ -867,7 +867,7 @@ export async function getPendingPinjaman() {
         nrp
       )
     `)
-    .eq('status', 'pending')
+    .eq('status', 'draft')
     .order('created_at', { ascending: true });
 
   if (error) {

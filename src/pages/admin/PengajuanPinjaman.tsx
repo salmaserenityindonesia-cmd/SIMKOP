@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService, MIN_REMAINING_THP, calculateTHPEligibility } from '../../services/loanService';
+import { extractMemberTHP } from '../../services/memberService';
 import { supabase } from '../../lib/supabaseClient';
 import { Loader2, Plus, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
 
@@ -124,7 +125,26 @@ export default function PengajuanPinjaman({
   const [amount, setAmount] = useState<number | ''>(initialAmount ?? '');
   const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
   
-  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(initialThpData ?? null);
+  const [masterThp, setMasterThp] = useState<number>(() => {
+    if (initialThpData) return initialThpData.master_thp;
+    if (initialSelectedAnggota && initialAnggotaList) {
+      const sel = initialAnggotaList.find(a => String(a.id) === String(initialSelectedAnggota));
+      if (sel) return extractMemberTHP(sel);
+    }
+    return 0;
+  });
+
+  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(() => {
+    if (initialThpData) return initialThpData;
+    if (initialSelectedAnggota && initialAnggotaList) {
+      const sel = initialAnggotaList.find(a => String(a.id) === String(initialSelectedAnggota));
+      if (sel) {
+        const num = extractMemberTHP(sel);
+        return { master_thp: num, active_installments: 0, remaining_thp: num };
+      }
+    }
+    return null;
+  });
   
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,19 +158,68 @@ export default function PengajuanPinjaman({
     if (selectedAnggota) {
       checkTHP(selectedAnggota);
     } else {
+      setMasterThp(0);
       setThpData(null);
     }
   }, [selectedAnggota]);
 
   async function loadAnggota() {
-    const { data } = await supabase.from('anggota').select('*').eq('status', 'aktif').order('nama');
+    let { data, error } = await supabase
+      .from('anggota')
+      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
+      .eq('status', 'aktif')
+      .order('nama');
+
+    if (error) {
+      const fallback = await supabase
+        .from('anggota')
+        .select('*')
+        .eq('status', 'aktif')
+        .order('nama');
+      data = fallback.data;
+    }
+
     if (data) setAnggotaList(data);
   }
+
+  const handleSelectMember = (memberId: string) => {
+    setSelectedAnggota(memberId);
+    if (!memberId) {
+      setMasterThp(0);
+      setThpData(null);
+      return;
+    }
+
+    const selectedMember = anggotaList.find(a => String(a.id) === String(memberId));
+    if (selectedMember) {
+      const numericThp = extractMemberTHP(selectedMember);
+      setMasterThp(numericThp);
+
+      // Langsung render di panel Simulasi & Kelayakan
+      setThpData({
+        master_thp: numericThp,
+        active_installments: 0,
+        remaining_thp: numericThp
+      });
+    }
+  };
 
   async function checkTHP(memberId: string) {
     try {
       const data = await loanService.getMemberTHP(memberId);
-      setThpData(data);
+      const selectedMember = anggotaList.find(a => String(a.id) === String(memberId));
+      let numericThp = data.master_thp;
+
+      if (!numericThp && selectedMember) {
+        numericThp = extractMemberTHP(selectedMember);
+      }
+
+      setMasterThp(numericThp);
+      setThpData({
+        master_thp: numericThp,
+        active_installments: data.active_installments,
+        remaining_thp: numericThp - data.active_installments
+      });
     } catch (err: any) {
       console.error(err);
     }
@@ -226,7 +295,7 @@ export default function PengajuanPinjaman({
                 <select 
                   required
                   value={selectedAnggota}
-                  onChange={e => setSelectedAnggota(e.target.value)}
+                  onChange={e => handleSelectMember(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="">-- Pilih Anggota --</option>
@@ -281,7 +350,7 @@ export default function PengajuanPinjaman({
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota}
+                  disabled={submitting || !selectedAnggota || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}

@@ -84,6 +84,57 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('Memenuhi Syarat');
       expect(html).toContain('Sisa THP Akhir');
     });
+
+    it('renders imported THP member (e.g. Wawan Gunawan) with Rp 5.000.000 THP and active status', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-wawan"
+          initialAnggotaList={[
+            {
+              id: 'm-wawan',
+              nrp: '123456',
+              nama: 'Wawan Gunawan',
+              master_thp: 0,
+              take_home_pay: 5000000,
+              salary: null
+            }
+          ]}
+        />
+      );
+
+      // Anggota terpilih
+      expect(html).toContain('Wawan Gunawan');
+      // Gaji Pokok (Master THP) langsung menampilkan Rp 5.000.000
+      expect(html).toContain('5.000.000');
+      // Memenuhi syarat & Sisa THP Akhir menampilkan Rp 5.000.000
+      expect(html).toContain('Memenuhi Syarat');
+      // Kotak merah tidak muncul
+      expect(html).not.toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).not.toContain('Data Master THP anggota ini masih Rp 0 di sistem');
+    });
+
+    it('renders member with formatted string salary and cleans non-numeric characters', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-str"
+          initialAnggotaList={[
+            {
+              id: 'm-str',
+              nrp: '99999',
+              nama: 'Prajurit Teguh',
+              master_thp: 0,
+              take_home_pay: null,
+              salary: 'Rp 4.500.000'
+            }
+          ]}
+        />
+      );
+
+      expect(html).toContain('Prajurit Teguh');
+      expect(html).toContain('4.500.000');
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).not.toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+    });
   });
 
   describe('SimulationPanel Component Tests', () => {

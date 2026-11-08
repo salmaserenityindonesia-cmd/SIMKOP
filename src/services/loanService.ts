@@ -7,7 +7,7 @@ export interface Loan {
   amount: number;
   tenor: number;
   monthly_target: number;
-  status: 'draft' | 'pending' | 'approved' | 'active' | 'rejected' | 'completed';
+  status: 'draft' | 'approved' | 'active' | 'paid_off' | 'defaulted' | 'completed' | 'rejected';
   disbursed_at: string | null;
   created_at: string;
 }
@@ -95,9 +95,10 @@ export const loanService = {
       .order('created_at', { ascending: false });
 
     if (statusTab === 'PENDING') {
-      query = query.in('status', ['draft', 'pending']);
+      // Di skema database, permohonan baru yang menunggu persetujuan berstatus 'draft'
+      query = query.eq('status', 'draft');
     } else if (statusTab === 'APPROVED') {
-      query = query.in('status', ['approved', 'active', 'completed', 'paid_off']);
+      query = query.in('status', ['approved', 'active', 'paid_off']);
     }
     // Jika 'ALL', tidak ada filter status (mengambil semua riwayat)
 

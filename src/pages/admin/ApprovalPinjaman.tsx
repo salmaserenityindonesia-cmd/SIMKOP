@@ -49,6 +49,7 @@ export default function ApprovalPinjaman({
       setError(null);
       const data = await loanService.getLoanApplications(tab);
       setPinjamanList(data || []);
+      setError(null);
 
       if (tab === 'PENDING') {
         setCounts(prev => ({ ...prev, pending: (data || []).length }));
@@ -85,12 +86,20 @@ export default function ApprovalPinjaman({
         showToast('Pinjaman berhasil ditolak', 'success');
       }
       await loadData(activeTab);
-      // Refresh approved count in background
-      loanService.getLoanApplications('APPROVED')
-        .then(res => {
-          if (res) setCounts(prev => ({ ...prev, approved: res.length }));
-        })
-        .catch(() => {});
+      // Refresh count in background
+      if (activeTab === 'APPROVED') {
+        loanService.getLoanApplications('PENDING')
+          .then(res => {
+            if (res) setCounts(prev => ({ ...prev, pending: res.length }));
+          })
+          .catch(() => {});
+      } else {
+        loanService.getLoanApplications('APPROVED')
+          .then(res => {
+            if (res) setCounts(prev => ({ ...prev, approved: res.length }));
+          })
+          .catch(() => {});
+      }
     } catch (err: any) {
       showToast(err.message || 'Terjadi kesalahan', 'error');
     } finally {

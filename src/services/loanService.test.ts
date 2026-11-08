@@ -290,7 +290,7 @@ describe('loanService', () => {
       mockSupabase.mockImplementationOnce(() => ({
         insert: () => ({
           select: () => ({
-            single: vi.fn().mockResolvedValue({ data: { id: 'loan-1', status: 'pending' }, error: null })
+            single: vi.fn().mockResolvedValue({ data: { id: 'loan-1', status: 'draft' }, error: null })
           })
         })
       }));
@@ -300,7 +300,7 @@ describe('loanService', () => {
       // Sisa setelah = 3M (Aman, > 1.5M)
       
       const res = await loanService.applyLoan('member-1', 'Beli Laptop', 12000000, 12);
-      expect(res.status).toBe('pending');
+      expect(res.status).toBe('draft');
     });
   });
 
@@ -406,13 +406,13 @@ describe('loanService', () => {
   });
 
   describe('getLoanApplications', () => {
-    it('should query pending loans with draft and pending status', async () => {
+    it('should query pending loans with draft status', async () => {
       const mockPendingData = [
         { id: 'loan-p1', status: 'draft', amount: 5000000 },
-        { id: 'loan-p2', status: 'pending', amount: 3000000 }
+        { id: 'loan-p2', status: 'draft', amount: 3000000 }
       ];
-      const mockIn = vi.fn().mockResolvedValue({ data: mockPendingData, error: null });
-      const mockOrder = vi.fn().mockReturnValue({ in: mockIn });
+      const mockEq = vi.fn().mockResolvedValue({ data: mockPendingData, error: null });
+      const mockOrder = vi.fn().mockReturnValue({ eq: mockEq });
       const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
       (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
 
@@ -420,11 +420,11 @@ describe('loanService', () => {
 
       expect(supabase.from).toHaveBeenCalledWith('loans');
       expect(mockOrder).toHaveBeenCalledWith('created_at', { ascending: false });
-      expect(mockIn).toHaveBeenCalledWith('status', ['draft', 'pending']);
+      expect(mockEq).toHaveBeenCalledWith('status', 'draft');
       expect(result).toEqual(mockPendingData);
     });
 
-    it('should query approved history loans with approved, active, completed, paid_off status', async () => {
+    it('should query approved history loans with approved, active, paid_off status', async () => {
       const mockApprovedData = [
         { id: 'loan-a1', status: 'approved', amount: 10000000 },
         { id: 'loan-a2', status: 'active', amount: 7500000 }
@@ -438,7 +438,7 @@ describe('loanService', () => {
 
       expect(supabase.from).toHaveBeenCalledWith('loans');
       expect(mockOrder).toHaveBeenCalledWith('created_at', { ascending: false });
-      expect(mockIn).toHaveBeenCalledWith('status', ['approved', 'active', 'completed', 'paid_off']);
+      expect(mockIn).toHaveBeenCalledWith('status', ['approved', 'active', 'paid_off']);
       expect(result).toEqual(mockApprovedData);
     });
 
@@ -465,8 +465,8 @@ describe('loanService', () => {
     });
 
     it('should throw error when database returns an error', async () => {
-      const mockIn = vi.fn().mockResolvedValue({ data: null, error: { message: 'Database query failed' } });
-      const mockOrder = vi.fn().mockReturnValue({ in: mockIn });
+      const mockEq = vi.fn().mockResolvedValue({ data: null, error: { message: 'Database query failed' } });
+      const mockOrder = vi.fn().mockReturnValue({ eq: mockEq });
       const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
       (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
 

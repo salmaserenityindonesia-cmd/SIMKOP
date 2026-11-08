@@ -1,7 +1,8 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import SalaryImport from './SalaryImport';
+import SalaryImport, { ImportGajiRekening } from './SalaryImport';
+import ImportGajiRekeningPage from './ImportGajiRekening';
 
 // Mock layout
 vi.mock('../../components/layout/AdminLayout', () => ({
@@ -50,7 +51,10 @@ const { mockMemberList } = vi.hoisted(() => ({
 vi.mock('../../services/salaryImportService', () => ({
   parseSalaryReconciliationFile: vi.fn().mockResolvedValue([]),
   confirmSalaryReconciliation: vi.fn().mockResolvedValue(true),
+  applySalaryReconciliation: vi.fn().mockResolvedValue(true),
   fetchMembersSalaryAndAccounts: vi.fn().mockResolvedValue(mockMemberList),
+  fetchMemberSalaryData: vi.fn().mockResolvedValue(mockMemberList),
+  cleanNumber: (val: any) => (typeof val === 'number' ? val : Number(String(val || '').replace(/[^0-9]/g, '')) || 0),
 }));
 
 describe('SalaryImport Page Integration', () => {
@@ -120,5 +124,32 @@ describe('SalaryImport Page Integration', () => {
     expect(html).toContain('Belum Ada Rekening');
     expect(html).toContain('Dewi Lestari');
     expect(html).toContain('Menampilkan 1-2 dari 2 data');
+  });
+
+  it('renders correctly using ImportGajiRekening alias and ImportGajiRekeningPage re-export', () => {
+    const html1 = renderToStaticMarkup(<ImportGajiRekening initialMembers={mockMemberList} />);
+    const html2 = renderToStaticMarkup(<ImportGajiRekeningPage initialMembers={mockMemberList} />);
+
+    expect(html1).toContain('Import Gaji &amp; Rekening');
+    expect(html2).toContain('Import Gaji &amp; Rekening');
+  });
+
+  it('renders salary fallback priority: take_home_pay > master_thp > salary', () => {
+    const fallbackMembers = [
+      {
+        id: 'm-only-salary',
+        nrp: '778899',
+        nama: 'Agus Pramono',
+        pangkat: 'Kopda',
+        bank_account_number: '112233',
+        take_home_pay: null,
+        master_thp: null,
+        salary: 5000000,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<SalaryImport initialMembers={fallbackMembers} />);
+    expect(html).toContain('Agus Pramono');
+    expect(html).toContain('Rp 5.000.000');
   });
 });

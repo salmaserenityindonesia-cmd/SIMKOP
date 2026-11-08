@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   fetchMembersSalaryAndAccounts,
   confirmSalaryReconciliation,
+  applySalaryReconciliation,
+  cleanNumber,
   MemberSalaryAccountItem,
 } from './salaryImportService';
 import { supabase } from '../lib/supabaseClient';
@@ -203,6 +205,132 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
       });
 
       await expect(confirmSalaryReconciliation([])).rejects.toThrow('RPC execution failed');
+    });
+  });
+
+  describe('cleanNumber', () => {
+    it('mengembalikan angka langsung jika input sudah bertipe number', () => {
+      expect(cleanNumber(5000000)).toBe(5000000);
+      expect(cleanNumber(0)).toBe(0);
+      expect(cleanNumber(NaN)).toBe(0);
+    });
+
+    it('membersihkan format rupiah dan karakter non-numerik', () => {
+      expect(cleanNumber('Rp 5.000.000')).toBe(5000000);
+      expect(cleanNumber('5.000.000')).toBe(5000000);
+      expect(cleanNumber('Rp 5.000.000,00')).toBe(5000000);
+      expect(cleanNumber('5.000.000.00')).toBe(5000000);
+    });
+
+    it('mengembalikan 0 untuk nilai falsy atau kosong', () => {
+      expect(cleanNumber(null)).toBe(0);
+      expect(cleanNumber(undefined)).toBe(0);
+      expect(cleanNumber('')).toBe(0);
+      expect(cleanNumber('-')).toBe(0);
+    });
+  });
+
+  describe('applySalaryReconciliation', () => {
+    it('mengupdate take_home_pay, master_thp, salary, dan bank_account_number ke tabel anggota', async () => {
+      const mockEq = vi.fn().mockResolvedValue({ error: null });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const previewRows = [
+        {
+          nrp: '12345',
+          thp: 'Rp 5.000.000',
+          rekening_baru: '987654321',
+        },
+        {
+          nrp: '67890',
+          take_home_pay: 4500000,
+          bank_account_number: '123456789',
+        },
+      ];
+
+      const success = await applySalaryReconciliation(previewRows);
+      expect(success).toBe(true);
+
+      expect(supabase.from).toHaveBeenCalledWith('anggota');
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take_home_pay: 5000000,
+          master_thp: 5000000,
+          salary: 5000000,
+          bank_account_number: '987654321',
+          updated_at: expect.any(String),
+        })
+      );
+      expect(mockEq).toHaveBeenCalledWith('nrp', '12345');
+      expect(mockEq).toHaveBeenCalledWith('nrp', '67890');
+    });
+
+    it('melakukan retry tanpa kolom salary jika kolom salary tidak ada di skema database', async () => {
+      let callCount = 0;
+      const mockEq = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            error: { message: 'column "salary" of relation "anggota" does not exist' },
+          });
+        }
+        return Promise.resolve({ error: null });
+      });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const previewRows = [
+        {
+          nrp: '99999',
+          thp: 7500000,
+          rekening_baru: '555666777',
+        },
+      ];
+
+      const success = await applySalaryReconciliation(previewRows);
+      expect(success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      // Panggilan kedua tidak menyertakan salary
+      expect(mockUpdate).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({
+          salary: expect.anything(),
+        })
+      );
+    });
+
+    it('melempar error jika database gagal mengupdate baris anggota', async () => {
+      const mockEq = vi.fn().mockResolvedValue({
+        error: { message: 'Network connection lost' },
+      });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const previewRows = [
+        {
+          nrp: '11111',
+          thp: 5000000,
+        },
+      ];
+
+      await expect(applySalaryReconciliation(previewRows)).rejects.toThrow(
+        /Gagal update NRP 11111: Network connection lost/
+      );
     });
   });
 });

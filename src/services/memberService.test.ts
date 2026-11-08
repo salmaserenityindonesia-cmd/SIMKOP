@@ -4,6 +4,8 @@ import {
   MemberComprehensiveExportRow,
   createMember,
   resetAllMembersData,
+  extractMemberTHP,
+  getActiveMembersForLoan,
 } from './memberService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -810,4 +812,49 @@ describe('memberService - resetAllMembersData', () => {
     );
   });
 });
+
+describe('memberService - extractMemberTHP and getActiveMembersForLoan', () => {
+  it('extractMemberTHP returns positive number prioritizing take_home_pay over master_thp=0', () => {
+    const member = {
+      master_thp: 0,
+      take_home_pay: 5000000,
+      salary: null
+    };
+    expect(extractMemberTHP(member)).toBe(5000000);
+  });
+
+  it('extractMemberTHP parses string currency values', () => {
+    const member = {
+      take_home_pay: 'Rp 6.750.000,00'
+    };
+    expect(extractMemberTHP(member)).toBe(6750000);
+  });
+
+  it('extractMemberTHP falls back to salary when others are empty or 0', () => {
+    const member = {
+      master_thp: 0,
+      take_home_pay: 0,
+      salary: 3500000
+    };
+    expect(extractMemberTHP(member)).toBe(3500000);
+  });
+
+  it('extractMemberTHP returns 0 when null or empty', () => {
+    expect(extractMemberTHP(null)).toBe(0);
+    expect(extractMemberTHP({})).toBe(0);
+  });
+
+  it('getActiveMembersForLoan queries member table and falls back on column failure', async () => {
+    const mockData = [{ id: '1', nama: 'Wawan Gunawan', take_home_pay: 5000000 }];
+    const mockOrder = vi.fn().mockResolvedValue({ data: mockData, error: null });
+    const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+    const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+
+    (supabase.from as any) = vi.fn().mockReturnValue({ select: mockSelect });
+
+    const res = await getActiveMembersForLoan();
+    expect(res).toEqual(mockData);
+  });
+});
+
 

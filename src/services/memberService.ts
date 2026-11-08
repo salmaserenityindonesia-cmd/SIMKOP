@@ -79,6 +79,57 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
   return member as Anggota;
 }
 
+/**
+ * Sanitasi nilai numerik THP agar bersih dari karakter non-numerik (Rp, titik, spasi, desimal ,00).
+ */
+export function cleanThpNumber(val: any): number {
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  if (!val) return 0;
+  let str = String(val).trim().replace(/[,.]00$/, '');
+  const cleaned = str.replace(/[^0-9]/g, '');
+  return Number(cleaned) || 0;
+}
+
+/**
+ * Ekstraksi nilai THP numerik anggota dengan fallback berurutan dan pembersihan karakter non-numerik.
+ * Mendukung variasi kolom: take_home_pay, master_thp, salary.
+ */
+export function extractMemberTHP(member: any): number {
+  if (!member) return 0;
+  // Cari kolom yang memiliki nominal > 0 terlebih dahulu
+  const candidates = [member.take_home_pay, member.master_thp, member.salary];
+  for (const c of candidates) {
+    if (c !== undefined && c !== null && c !== '') {
+      const num = cleanThpNumber(c);
+      if (num > 0) return num;
+    }
+  }
+  const rawThp = member.take_home_pay ?? member.master_thp ?? member.salary ?? 0;
+  return cleanThpNumber(rawThp);
+}
+
+/**
+ * Mengambil daftar anggota aktif dengan kolom data gaji lengkap untuk keperluan pinjaman.
+ */
+export async function getActiveMembersForLoan() {
+  let { data, error } = await supabase
+    .from('anggota')
+    .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
+    .eq('status', 'aktif')
+    .order('nama');
+
+  if (error) {
+    const fallback = await supabase
+      .from('anggota')
+      .select('*')
+      .eq('status', 'aktif')
+      .order('nama');
+    data = fallback.data;
+  }
+
+  return data || [];
+}
+
 export interface MemberComprehensiveExportRow {
   nrp: string;
   nama: string;
