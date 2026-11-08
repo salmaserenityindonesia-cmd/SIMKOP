@@ -4,6 +4,8 @@ import {
   getLoanMatrix,
   MonthLoanCell,
   LoanMatrixMonth,
+  LoanMatrixMember,
+  getCumulativePaidUpToMonth,
   getLoanInteractiveGrid,
   toggleLoanSchedulePaid,
   autoReconcileLoanInstallments,
@@ -284,6 +286,7 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(janCell.status).toBe('PAID');
     expect(janCell.targetAmount).toBe(1000000);
     expect(janCell.paidAmount).toBe(1000000);
+    expect(janCell.cumulativePaidAmount).toBe(1000000);
 
     // Month 2 partial
     const febCell: MonthLoanCell = member.months[2];
@@ -294,6 +297,7 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(febCell.status).toBe('PARTIAL');
     expect(febCell.targetAmount).toBe(1000000);
     expect(febCell.paidAmount).toBe(500000);
+    expect(febCell.cumulativePaidAmount).toBe(1500000);
 
     // Month 12 unpopulated should have default initialization with year and status NONE
     const decCell: MonthLoanCell = member.months[12];
@@ -303,6 +307,249 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(decCell.status).toBe('NONE');
     expect(decCell.targetAmount).toBe(0);
     expect(decCell.paidAmount).toBe(0);
+    expect(decCell.cumulativePaidAmount).toBeUndefined();
+  });
+});
+
+describe('loanMatrixService - cumulativePaidAmount & getCumulativePaidUpToMonth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('mengembalikan cumulativePaidAmount langsung dari targetCell jika tersedia', () => {
+    const mockMember: LoanMatrixMember = {
+      memberId: 'mem-001',
+      nrp: 'NRP-001',
+      nama: 'Kopda Suryo',
+      isLoanActive: true,
+      totalLoans: 1,
+      complianceYTD: 100,
+      months: {
+        1: {
+          month: 1,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 1000000,
+          cumulativePaidAmount: 1000000,
+          status: 'PAID',
+          loanId: 'loan-abc',
+        },
+        2: {
+          month: 2,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 1000000,
+          cumulativePaidAmount: 2000000,
+          status: 'PAID',
+          loanId: 'loan-abc',
+        },
+        3: {
+          month: 3,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 500000,
+          cumulativePaidAmount: 2500000,
+          status: 'PARTIAL',
+          loanId: 'loan-abc',
+        },
+      },
+    };
+
+    expect(getCumulativePaidUpToMonth(mockMember, 1)).toBe(1000000);
+    expect(getCumulativePaidUpToMonth(mockMember, 2)).toBe(2000000);
+    expect(getCumulativePaidUpToMonth(mockMember, 3)).toBe(2500000);
+  });
+
+  it('melakukan fallback dengan menjumlahkan paidAmount dari bulan 1 s/d targetMonth jika cumulativePaidAmount belum ada', () => {
+    const mockMember: LoanMatrixMember = {
+      memberId: 'mem-002',
+      nrp: 'NRP-002',
+      nama: 'Praka Danu',
+      isLoanActive: true,
+      totalLoans: 1,
+      complianceYTD: 80,
+      months: {
+        1: {
+          month: 1,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 1000000,
+          status: 'PAID',
+          loanId: 'loan-xyz',
+        },
+        2: {
+          month: 2,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 600000,
+          status: 'PARTIAL',
+          loanId: 'loan-xyz',
+        },
+        3: {
+          month: 3,
+          year: 2026,
+          targetAmount: 1000000,
+          paidAmount: 0,
+          status: 'UNPAID',
+          loanId: 'loan-xyz',
+        },
+      },
+    };
+
+    expect(getCumulativePaidUpToMonth(mockMember, 1)).toBe(1000000);
+    expect(getCumulativePaidUpToMonth(mockMember, 2)).toBe(1600000);
+    expect(getCumulativePaidUpToMonth(mockMember, 3)).toBe(1600000);
+  });
+
+  it('memfilter loanId yang sesuai saat fallback jika terdapat beberapa pinjaman', () => {
+    const mockMember: LoanMatrixMember = {
+      memberId: 'mem-003',
+      nrp: 'NRP-003',
+      nama: 'Letda Haris',
+      isLoanActive: true,
+      totalLoans: 2,
+      complianceYTD: 100,
+      months: {
+        1: {
+          month: 1,
+          year: 2026,
+          targetAmount: 500000,
+          paidAmount: 500000,
+          status: 'PAID',
+          loanId: 'loan-old',
+        },
+        2: {
+          month: 2,
+          year: 2026,
+          targetAmount: 800000,
+          paidAmount: 800000,
+          status: 'PAID',
+          loanId: 'loan-new',
+        },
+        3: {
+          month: 3,
+          year: 2026,
+          targetAmount: 800000,
+          paidAmount: 800000,
+          status: 'PAID',
+          loanId: 'loan-new',
+        },
+      },
+    };
+
+    // Target bulan 3 berasal dari pinjaman 'loan-new', sehingga bulan 1 (loan-old) tidak ikut dijumlahkan
+    expect(getCumulativePaidUpToMonth(mockMember, 3)).toBe(1600000);
+    // Target bulan 1 berasal dari pinjaman 'loan-old'
+    expect(getCumulativePaidUpToMonth(mockMember, 1)).toBe(500000);
+  });
+
+  it('mengembalikan 0 secara aman jika input member null atau kosong', () => {
+    expect(getCumulativePaidUpToMonth(null as any, 1)).toBe(0);
+    expect(getCumulativePaidUpToMonth({} as any, 1)).toBe(0);
+    expect(getCumulativePaidUpToMonth({ months: {} } as any, 5)).toBe(0);
+  });
+
+  it('getLoanMatrix mengakumulasikan paid_amount kronologis secara berurutan antar bulan pada jadwal pinjaman', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-multi-period' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'sched-1',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-multi-period',
+                        loan_number: 'PINJ-2026-MULTI',
+                        tenor: 10,
+                        status: 'active',
+                        monthly_target: 1000000,
+                        member: {
+                          id: 'mem-multi',
+                          nrp: 'NRP-MULTI',
+                          nama: 'Serma Joni',
+                        },
+                      },
+                    },
+                    {
+                      id: 'sched-2',
+                      period_number: 2,
+                      due_date: '2026-02-15',
+                      target_amount: 1000000,
+                      paid_amount: 750000,
+                      status: 'partial',
+                      loan: {
+                        id: 'loan-multi-period',
+                        loan_number: 'PINJ-2026-MULTI',
+                        tenor: 10,
+                        status: 'active',
+                        monthly_target: 1000000,
+                        member: {
+                          id: 'mem-multi',
+                          nrp: 'NRP-MULTI',
+                          nama: 'Serma Joni',
+                        },
+                      },
+                    },
+                    {
+                      id: 'sched-3',
+                      period_number: 3,
+                      due_date: '2026-03-15',
+                      target_amount: 1000000,
+                      paid_amount: 250000,
+                      status: 'partial',
+                      loan: {
+                        id: 'loan-multi-period',
+                        loan_number: 'PINJ-2026-MULTI',
+                        tenor: 10,
+                        status: 'active',
+                        monthly_target: 1000000,
+                        member: {
+                          id: 'mem-multi',
+                          nrp: 'NRP-MULTI',
+                          nama: 'Serma Joni',
+                        },
+                      },
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members.length).toBe(1);
+
+    const member = summary.members[0];
+    expect(member.months[1].cumulativePaidAmount).toBe(1000000);
+    expect(member.months[2].cumulativePaidAmount).toBe(1750000);
+    expect(member.months[3].cumulativePaidAmount).toBe(2000000);
+
+    expect(getCumulativePaidUpToMonth(member, 1)).toBe(1000000);
+    expect(getCumulativePaidUpToMonth(member, 2)).toBe(1750000);
+    expect(getCumulativePaidUpToMonth(member, 3)).toBe(2000000);
   });
 });
 
