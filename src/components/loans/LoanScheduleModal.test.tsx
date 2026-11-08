@@ -14,6 +14,7 @@ import {
   checkAllLoanUpToCurrentMonth,
   autoReconcileLoanInstallments,
   uncheckAllLoanSchedules,
+  calculateRemainingInstallmentDeficit,
   LoanInteractiveGridSummary,
 } from '../../services/loanMatrixService';
 
@@ -26,6 +27,8 @@ vi.mock('../../services/loanMatrixService', () => {
     checkAllLoanUpToCurrentMonth: vi.fn(),
     autoReconcileLoanInstallments: vi.fn(),
     uncheckAllLoanSchedules: vi.fn(),
+    calculateRemainingInstallmentDeficit: (target: number, paid: number) =>
+      Math.max(0, Number(target || 0) - Number(paid || 0)),
   };
 });
 
@@ -453,6 +456,109 @@ describe('LoanScheduleModal Component Tests', () => {
       expect(getImportedRepaidBalance(null)).toBe(0);
       expect(getImportedRepaidBalance({})).toBe(0);
       expect(getImportedRepaidBalance({ principal_amount: 0, sisa_pinjaman: 0 })).toBe(0);
+    });
+  });
+
+  describe('Repayment Evidence Modal & Deficit Auto-Populate', () => {
+    it('auto-populates remaining deficit (Rp 7), default notes, potong_gaji method, and receipt number when opening partial period', () => {
+      const partialPeriod = {
+        id: 'sched-part-1',
+        loanId: 'loan-123',
+        periodNumber: 4,
+        dueDate: '2026-05-15',
+        targetAmount: 277778,
+        paidAmount: 277771,
+        status: 'PARTIAL' as const,
+        label: 'Bulan 4 [Mei-26]',
+        isCurrentMonth: true,
+        repayments: [
+          {
+            id: 'rep-part-1',
+            amountPaid: 277771,
+            paymentDate: '2026-05-10T11:00:00Z',
+            paymentMethod: 'potong_gaji',
+            notes: 'Potong gaji Mei parsial',
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Bripda Ahmad Fadli"
+          onClose={vi.fn()}
+          initialData={mockLoanGridData}
+          initialEvidencePeriod={partialPeriod}
+        />
+      );
+
+      // Verify evidence modal is open
+      expect(html).toContain('data-testid="loan-evidence-modal"');
+      expect(html).toContain('Dokumentasi Bukti Pelunasan Angsuran');
+      expect(html).toContain('Bulan 4 [Mei-26]');
+
+      // Verify input nominal is auto-filled with remaining deficit 7 (Math.max(0, 277778 - 277771))
+      expect(html).toContain('data-testid="evidence-amount-input"');
+      expect(html).toContain('value="7"');
+
+      // Verify notes auto-generated with format "Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-[N]"
+      expect(html).toContain('data-testid="evidence-notes-input"');
+      expect(html).toContain('Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-4');
+
+      // Verify payment method default is potong_gaji
+      expect(html).toContain('data-testid="evidence-method-select"');
+      expect(html).toContain('<option value="potong_gaji" selected="">Potong Gaji</option>');
+
+      // Verify receipt number generated
+      expect(html).toContain('data-testid="evidence-receipt-input"');
+      expect(html).toContain('value="KW-PINJ/PJ-2026-001/B4"');
+
+      // Verify helper deficit info display
+      expect(html).toContain('data-testid="evidence-deficit-info"');
+      expect(html).toContain('Sudah terbayar:');
+      expect(html).toContain('277.771');
+      expect(html).toContain('Sisa kekurangan:');
+      expect(html).toContain('7');
+    });
+
+    it('defaults to targetAmount and empty notes when opening an unpaid period', () => {
+      const unpaidPeriod = {
+        id: 'sched-unpaid-1',
+        loanId: 'loan-123',
+        periodNumber: 5,
+        dueDate: '2026-06-15',
+        targetAmount: 500000,
+        paidAmount: 0,
+        status: 'UNPAID' as const,
+        label: 'Bulan 5 [Jun-26]',
+        isCurrentMonth: false,
+        repayments: [],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Bripda Ahmad Fadli"
+          onClose={vi.fn()}
+          initialData={mockLoanGridData}
+          initialEvidencePeriod={unpaidPeriod}
+        />
+      );
+
+      // Verify evidence modal is open
+      expect(html).toContain('data-testid="loan-evidence-modal"');
+
+      // Verify input nominal is targetAmount 500000
+      expect(html).toContain('data-testid="evidence-amount-input"');
+      expect(html).toContain('value="500000"');
+
+      // Verify deficit info banner is not displayed since paidAmount is 0
+      expect(html).not.toContain('data-testid="evidence-deficit-info"');
+
+      // Notes textarea empty
+      expect(html).toContain('data-testid="evidence-notes-input"></textarea>');
     });
   });
 });

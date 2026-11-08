@@ -38,6 +38,7 @@ export interface LoanScheduleModalProps {
   onSuccess?: () => void;
   initialData?: LoanInteractiveGridSummary | null;
   initialLoading?: boolean;
+  initialEvidencePeriod?: LoanGridPeriod | null;
 }
 
 /**
@@ -109,6 +110,7 @@ export default function LoanScheduleModal({
   onSuccess,
   initialData = null,
   initialLoading,
+  initialEvidencePeriod = null,
 }: LoanScheduleModalProps) {
   const [data, setData] = useState<LoanInteractiveGridSummary | null>(initialData);
   const [loading, setLoading] = useState(initialLoading ?? (initialData ? false : true));
@@ -119,13 +121,34 @@ export default function LoanScheduleModal({
     initialData ? getImportedRepaidBalance(initialData) : 0
   );
 
+  const initialDeficit = initialEvidencePeriod
+    ? calculateRemainingInstallmentDeficit(
+        initialEvidencePeriod.targetAmount,
+        initialEvidencePeriod.paidAmount
+      )
+    : 0;
+
   // Sub-modal state: Input Bukti Pelunasan / Setoran Angsuran
-  const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
-  const [selectedPeriodForEvidence, setSelectedPeriodForEvidence] = useState<LoanGridPeriod | null>(null);
-  const [evidenceAmount, setEvidenceAmount] = useState<number>(0);
-  const [evidenceReceiptNo, setEvidenceReceiptNo] = useState('');
+  const [evidenceModalOpen, setEvidenceModalOpen] = useState(Boolean(initialEvidencePeriod));
+  const [selectedPeriodForEvidence, setSelectedPeriodForEvidence] = useState<LoanGridPeriod | null>(
+    initialEvidencePeriod || null
+  );
+  const [evidenceAmount, setEvidenceAmount] = useState<number>(
+    initialEvidencePeriod
+      ? (initialDeficit > 0 ? initialDeficit : initialEvidencePeriod.targetAmount)
+      : 0
+  );
+  const [evidenceReceiptNo, setEvidenceReceiptNo] = useState(
+    initialEvidencePeriod
+      ? `KW-PINJ/${initialData?.loanNumber || '01'}/B${initialEvidencePeriod.periodNumber}`
+      : ''
+  );
   const [evidencePaymentMethod, setEvidencePaymentMethod] = useState('potong_gaji');
-  const [evidenceNotes, setEvidenceNotes] = useState('');
+  const [evidenceNotes, setEvidenceNotes] = useState(
+    initialEvidencePeriod && initialDeficit > 0 && initialEvidencePeriod.paidAmount > 0
+      ? `Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-${initialEvidencePeriod.periodNumber}`
+      : ''
+  );
   const [savingEvidence, setSavingEvidence] = useState(false);
 
   // Sub-modal state: Konfirmasi Pembatalan (Uncheck)

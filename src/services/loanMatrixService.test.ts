@@ -8,6 +8,7 @@ import {
   getCumulativePaidUpToMonth,
   getLoanInteractiveGrid,
   toggleLoanSchedulePaid,
+  calculateRemainingInstallmentDeficit,
   autoReconcileLoanInstallments,
   checkAllLoanUpToCurrentMonth,
   uncheckAllLoanSchedules
@@ -868,6 +869,114 @@ describe('loanMatrixService - toggleLoanSchedulePaid', () => {
     expect(updateLoanMock).toHaveBeenCalledWith({
       status: 'active'
     });
+  });
+
+  it('melunasi sisa kekurangan parsial (paid = true): mengakumulasi paid_amount (277771 + 7 = 277778), status menjadi paid, dan repayment mencatat nominal riil setoran 7', async () => {
+    const insertMock = vi.fn().mockResolvedValue({ error: null });
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const updateLoanMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('loan:loans')) {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'sched-partial-1',
+                      loan_id: 'loan-1',
+                      period_number: 2,
+                      target_amount: 277778,
+                      paid_amount: 277771,
+                      status: 'partial',
+                      loan: { id: 'loan-1', status: 'active' }
+                    },
+                    error: null
+                  })
+                })
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'sched-partial-1', status: 'paid', paid_amount: 277778, target_amount: 277778 }
+                ],
+                error: null
+              })
+            };
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          insert: insertMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: updateLoanMock
+        };
+      }
+      return {};
+    });
+
+    await toggleLoanSchedulePaid('sched-partial-1', true, {
+      amount: 7,
+      receiptNo: 'KW-SELISIH-02',
+      notes: 'Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-2',
+      paymentMethod: 'potong_gaji'
+    });
+
+    // Verifikasi loan_repayments mencatat nominal riil setoran Rp 7
+    expect(insertMock).toHaveBeenCalledTimes(1);
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({
+      loan_id: 'loan-1',
+      schedule_id: 'sched-partial-1',
+      amount_paid: 7,
+      payment_method: 'potong_gaji',
+      notes: 'Kwitansi: KW-SELISIH-02 - Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-2'
+    }));
+
+    // Verifikasi loan_schedules diakumulasikan ke target penuh 277778 dan berstatus 'paid'
+    expect(updateScheduleMock).toHaveBeenCalledWith({
+      paid_amount: 277778,
+      status: 'paid'
+    });
+
+    // Verifikasi update status pinjaman jika seluruh jadwal terpenuhi
+    expect(updateLoanMock).toHaveBeenCalledWith({
+      status: 'completed'
+    });
+  });
+});
+
+describe('loanMatrixService - calculateRemainingInstallmentDeficit', () => {
+  it('menghitung sisa kekurangan angsuran secara presisi (target - paid)', () => {
+    // Skenario pembulatan angsuran (misal 277.778 vs 277.771 -> defisit 7)
+    expect(calculateRemainingInstallmentDeficit(277778, 277771)).toBe(7);
+
+    // Belum dibayar sama sekali
+    expect(calculateRemainingInstallmentDeficit(500000, 0)).toBe(500000);
+
+    // Sudah dibayar sebagian
+    expect(calculateRemainingInstallmentDeficit(500000, 200000)).toBe(300000);
+
+    // Sudah lunas pas
+    expect(calculateRemainingInstallmentDeficit(500000, 500000)).toBe(0);
+
+    // Pembayaran melebihi target (tidak boleh negatif)
+    expect(calculateRemainingInstallmentDeficit(500000, 600000)).toBe(0);
+
+    // Null / undefined / 0 fallback
+    expect(calculateRemainingInstallmentDeficit(0, 0)).toBe(0);
+    expect(calculateRemainingInstallmentDeficit(undefined as any, null as any)).toBe(0);
   });
 });
 
