@@ -1186,6 +1186,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 67: Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval
+**Status:** ✅ Complete
+**Objective:** Menampilkan riwayat permohonan pinjaman yang telah disetujui (`approved`, `active`, `completed`/`paid_off`) pada antarmuka Persetujuan Pinjaman (`/admin/approval` di `src/pages/admin/ApprovalPinjaman.tsx`) dengan menambahkan tab navigasi status ("Menunggu Persetujuan", "Sudah Disetujui", "Semua Permohonan"), counter badge dinamis, perluasan kueri data pada `loanService.getLoanApplications`, aksi kontekstual pada tabel, ekspor Excel/PDF adaptif, dan pengujian unit komprehensif.
+**Depends on:** Phase 66, Phase 4
+
+**Plans:**
+- [x] Plan 67.1: Approved Loan Applications History & Status Tab Navigation
+
+**Deliverables:**
+- Fleksibilitas kueri status `getLoanApplications` pada `src/services/loanService.ts`
+- Navigasi tab status ("Menunggu Persetujuan", "Sudah Disetujui", "Semua Permohonan") dengan badge count di `src/pages/admin/ApprovalPinjaman.tsx`
+- Kolom aksi kontekstual (hanya tampilkan Setujui/Tolak untuk status draft/pending, tampilkan Detail untuk status disetujui)
+- Unit test komprehensif di `src/services/loanService.test.ts` dan `src/pages/admin/ApprovalPinjaman.test.tsx`
+- Verifikasi typecheck dan build produksi tanpa regresi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1313,6 +1330,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 64 | Relokasi Toolbar Tombol Aksi Matriks Pinjaman ke Baris Filter dan Pencarian | ✅ | 2/2 | 100% |
 | 65 | Tabel Data Gaji & Rekening dengan Autocompletion & Pagination | ✅ | 2/2 | 100% |
 | 66 | Tampilkan Nilai Perkiraan Sisa THP dan Defisit Ambang Batas pada Validasi Pengajuan Pinjaman | ✅ | 1/1 | 100% |
+| 67 | Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval | ✅ | 1/1 | 100% |
 
 ---
 
@@ -1386,5 +1404,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 64 | 2026-11-08 | 2026-11-08 | 1 day |
 | 65 | 2026-11-08 | 2026-11-08 | 1 day |
 | 66 | 2026-11-08 | 2026-11-08 | 1 day |
+| 67 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
