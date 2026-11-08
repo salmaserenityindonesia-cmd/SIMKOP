@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getLoanMatrixAvailableYears } from './loanMatrixService';
+import { getLoanMatrixAvailableYears, getLoanMatrix, MonthLoanCell, LoanMatrixMonth } from './loanMatrixService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -122,5 +122,176 @@ describe('loanMatrixService - getLoanMatrixAvailableYears', () => {
 
     years = await getLoanMatrixAvailableYears();
     expect(years).toEqual([currentYear]);
+  });
+});
+
+describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('MonthLoanCell contract allows both uppercase and lowercase status and optional year/dueDate', () => {
+    const sampleCell: MonthLoanCell = {
+      month: 1,
+      year: 2026,
+      dueDate: '2026-01-10',
+      status: 'PAID',
+      targetAmount: 500000,
+      paidAmount: 500000,
+    };
+    expect(sampleCell.month).toBe(1);
+    expect(sampleCell.year).toBe(2026);
+    expect(sampleCell.dueDate).toBe('2026-01-10');
+    expect(sampleCell.status).toBe('PAID');
+    expect(sampleCell.targetAmount).toBe(500000);
+    expect(sampleCell.paidAmount).toBe(500000);
+
+    const lowercaseCell: MonthLoanCell = {
+      month: 2,
+      year: 2026,
+      dueDate: '2026-02-10',
+      status: 'projection',
+      targetAmount: 500000,
+      paidAmount: 0,
+    };
+    expect(lowercaseCell.status).toBe('projection');
+  });
+
+  it('getLoanMatrix returns empty summary when no loans exist for the year', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockResolvedValue({
+                data: [],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.complianceYTD).toBe(100);
+    expect(summary.totalCollectedYTD).toBe(0);
+    expect(summary.projectedNextMonth).toBe(0);
+    expect(summary.unpaidMembersCount).toBe(0);
+    expect(summary.members).toEqual([]);
+  });
+
+  it('getLoanMatrix populates year, dueDate, and MonthLoanCell properties on schedules', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-101' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'sched-101',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-101',
+                        loan_number: 'PINJ-2026-001',
+                        tenor: 12,
+                        status: 'active',
+                        monthly_target: 1000000,
+                        member: {
+                          id: 'mem-101',
+                          nrp: 'NRP-999',
+                          nama: 'Sertu Bambang',
+                        },
+                      },
+                    },
+                    {
+                      id: 'sched-102',
+                      period_number: 2,
+                      due_date: '2026-02-15',
+                      target_amount: 1000000,
+                      paid_amount: 500000,
+                      status: 'partial',
+                      loan: {
+                        id: 'loan-101',
+                        loan_number: 'PINJ-2026-001',
+                        tenor: 12,
+                        status: 'active',
+                        monthly_target: 1000000,
+                        member: {
+                          id: 'mem-101',
+                          nrp: 'NRP-999',
+                          nama: 'Sertu Bambang',
+                        },
+                      },
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members.length).toBe(1);
+
+    const member = summary.members[0];
+    expect(member.memberId).toBe('mem-101');
+    expect(member.nama).toBe('Sertu Bambang');
+
+    // Month 1 should have schedule details with year and dueDate
+    const janCell: MonthLoanCell = member.months[1];
+    expect(janCell).toBeDefined();
+    expect(janCell.month).toBe(1);
+    expect(janCell.year).toBe(2026);
+    expect(janCell.dueDate).toBe('2026-01-15');
+    expect(janCell.status).toBe('PAID');
+    expect(janCell.targetAmount).toBe(1000000);
+    expect(janCell.paidAmount).toBe(1000000);
+
+    // Month 2 partial
+    const febCell: MonthLoanCell = member.months[2];
+    expect(febCell).toBeDefined();
+    expect(febCell.month).toBe(2);
+    expect(febCell.year).toBe(2026);
+    expect(febCell.dueDate).toBe('2026-02-15');
+    expect(febCell.status).toBe('PARTIAL');
+    expect(febCell.targetAmount).toBe(1000000);
+    expect(febCell.paidAmount).toBe(500000);
+
+    // Month 12 unpopulated should have default initialization with year and status NONE
+    const decCell: MonthLoanCell = member.months[12];
+    expect(decCell).toBeDefined();
+    expect(decCell.month).toBe(12);
+    expect(decCell.year).toBe(2026);
+    expect(decCell.status).toBe('NONE');
+    expect(decCell.targetAmount).toBe(0);
+    expect(decCell.paidAmount).toBe(0);
   });
 });
