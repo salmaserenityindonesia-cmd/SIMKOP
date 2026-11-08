@@ -11,6 +11,7 @@ import {
 import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
+  getCumulativePaidUpToMonth,
   LoanMatrixSummary,
   MonthLoanCell,
 } from '../../services/loanMatrixService';
@@ -77,10 +78,14 @@ const { mockSummaryData } = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../services/loanMatrixService', () => ({
-  getLoanMatrixAvailableYears: vi.fn().mockResolvedValue([2027, 2026, 2025, 2024]),
-  getLoanMatrix: vi.fn().mockResolvedValue(mockSummaryData),
-}));
+vi.mock('../../services/loanMatrixService', async () => {
+  const actual = await vi.importActual<typeof import('../../services/loanMatrixService')>('../../services/loanMatrixService');
+  return {
+    ...actual,
+    getLoanMatrixAvailableYears: vi.fn().mockResolvedValue([2027, 2026, 2025, 2024]),
+    getLoanMatrix: vi.fn().mockResolvedValue(mockSummaryData),
+  };
+});
 
 describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration', () => {
   beforeEach(() => {
@@ -339,6 +344,195 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(result).toBeNull();
       expect(consoleErrorSpy).toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('Monthly Cell Rich Tooltip Cumulative Paid Rendering', () => {
+    it('renders cumulativePaidAmount on "Terbayar:" label when present on cell (e.g. Rp 9.761.905 at month 10)', () => {
+      const summaryWithCumulative: LoanMatrixSummary = {
+        complianceYTD: 100,
+        totalCollectedYTD: 9761905,
+        projectedNextMonth: 976190,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            memberId: 'mem-cum-1',
+            nrp: '11223344',
+            nama: 'Ahmad Dahlan',
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 100,
+            months: {
+              ...Array.from({ length: 12 }, (_, i) => ({
+                month: i + 1,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, m) => ({ ...acc, [m.month]: m }), {}),
+              10: {
+                month: 10,
+                status: 'PAID',
+                targetAmount: 976190,
+                paidAmount: 976190,
+                cumulativePaidAmount: 9761905,
+                remainingBalance: 0,
+                loanId: 'loan-cum-1',
+                loanNumber: 'PJ-CUM-10',
+                periodNumber: 10,
+                tenor: 12,
+                dueDate: '2026-10-25',
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={summaryWithCumulative} initialYear={2026} />
+      );
+
+      // Verify member and cell details are rendered
+      expect(html).toContain('Ahmad Dahlan');
+      expect(html).toContain('PJ-CUM-10');
+      expect(html).toContain('10 / 12');
+      // Verify "Terbayar:" contains Rp 9.761.905
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 9.761.905</span>');
+    });
+
+    it('falls back to getCumulativePaidUpToMonth calculation when cumulativePaidAmount is undefined on cell', () => {
+      const summaryFallback: LoanMatrixSummary = {
+        complianceYTD: 100,
+        totalCollectedYTD: 2500000,
+        projectedNextMonth: 1000000,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            memberId: 'mem-fallback-1',
+            nrp: '55667788',
+            nama: 'Siti Aminah',
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 100,
+            months: {
+              ...Array.from({ length: 12 }, (_, i) => ({
+                month: i + 1,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, m) => ({ ...acc, [m.month]: m }), {}),
+              1: {
+                month: 1,
+                status: 'PAID',
+                targetAmount: 1000000,
+                paidAmount: 1000000,
+                // cumulativePaidAmount intentionally undefined
+                loanId: 'loan-fb-1',
+                loanNumber: 'PJ-FB-01',
+                periodNumber: 1,
+                tenor: 5,
+                dueDate: '2026-01-25',
+              },
+              2: {
+                month: 2,
+                status: 'PAID',
+                targetAmount: 1000000,
+                paidAmount: 1000000,
+                // cumulativePaidAmount intentionally undefined
+                loanId: 'loan-fb-1',
+                loanNumber: 'PJ-FB-01',
+                periodNumber: 2,
+                tenor: 5,
+                dueDate: '2026-02-25',
+              },
+              3: {
+                month: 3,
+                status: 'PARTIAL',
+                targetAmount: 1000000,
+                paidAmount: 500000,
+                remainingBalance: 500000,
+                // cumulativePaidAmount intentionally undefined
+                loanId: 'loan-fb-1',
+                loanNumber: 'PJ-FB-01',
+                periodNumber: 3,
+                tenor: 5,
+                dueDate: '2026-03-25',
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={summaryFallback} initialYear={2026} />
+      );
+
+      expect(html).toContain('Siti Aminah');
+      // Month 1 cumulative fallback: 1.000.000
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 1.000.000</span>');
+      // Month 2 cumulative fallback: 1.000.000 + 1.000.000 = 2.000.000
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 2.000.000</span>');
+      // Month 3 cumulative fallback: 2.000.000 + 500.000 = 2.500.000
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 2.500.000</span>');
+    });
+
+    it('demonstrates chronological progression between consecutive months (month 1 vs month 2)', () => {
+      const summaryProgression: LoanMatrixSummary = {
+        complianceYTD: 100,
+        totalCollectedYTD: 3000000,
+        projectedNextMonth: 1500000,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            memberId: 'mem-prog-1',
+            nrp: '99887766',
+            nama: 'Dedi Mulyadi',
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 100,
+            months: {
+              ...Array.from({ length: 12 }, (_, i) => ({
+                month: i + 1,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, m) => ({ ...acc, [m.month]: m }), {}),
+              1: {
+                month: 1,
+                status: 'PAID',
+                targetAmount: 1500000,
+                paidAmount: 1500000,
+                cumulativePaidAmount: 1500000,
+                loanId: 'loan-prog-1',
+                loanNumber: 'PJ-PROG-1',
+                periodNumber: 1,
+                tenor: 10,
+                dueDate: '2026-01-25',
+              },
+              2: {
+                month: 2,
+                status: 'PAID',
+                targetAmount: 1500000,
+                paidAmount: 1500000,
+                cumulativePaidAmount: 3000000,
+                loanId: 'loan-prog-1',
+                loanNumber: 'PJ-PROG-1',
+                periodNumber: 2,
+                tenor: 10,
+                dueDate: '2026-02-25',
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={summaryProgression} initialYear={2026} />
+      );
+
+      expect(html).toContain('Dedi Mulyadi');
+      // Month 1 shows 1.500.000, Month 2 shows 3.000.000
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 1.500.000</span>');
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 3.000.000</span>');
     });
   });
 });

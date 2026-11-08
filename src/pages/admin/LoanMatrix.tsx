@@ -68,6 +68,7 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
 export interface LoanMatrixProps {
   initialYear?: number;
   initialAvailableYears?: number[];
+  initialData?: LoanMatrixSummary | null;
   onYearChange?: (year: number) => void;
 }
 
@@ -109,6 +110,7 @@ export const fetchLoanMatrixData = async (
 export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   initialYear,
   initialAvailableYears,
+  initialData,
   onYearChange,
 }) => {
   const currentYear = new Date().getFullYear();
@@ -119,15 +121,21 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<LoanMatrixSummary | null>(null);
+  const [loading, setLoading] = useState(initialData !== undefined ? false : true);
+  const [data, setData] = useState<LoanMatrixSummary | null>(initialData ?? null);
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
 
   useEffect(() => {
+    if (initialData !== undefined) return;
     loadAvailableYearsData(setAvailableYears, setYear);
   }, []);
 
+  const skipInitialFetch = React.useRef(initialData !== undefined);
   useEffect(() => {
+    if (skipInitialFetch.current) {
+      skipInitialFetch.current = false;
+      return;
+    }
     fetchLoanMatrixData(year, setLoading, setData);
   }, [year]);
 
