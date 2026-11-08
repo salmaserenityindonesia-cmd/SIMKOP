@@ -1,28 +1,35 @@
 ## Current Position
 - **Phase**: 62 (Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman)
-- **Task**: Planning Complete (3 plans created across 3 waves)
-- **Status**: ⏳ Ready for Execution
-
-## Next Steps
-1. Execute Plan 62.1: Data Contract & Cumulative Paid Calculation Engine (`/execute 62 1`)
-2. Execute Plan 62.2: Bind Cumulative Paid Amount to Popover Component & Component Tests (`/execute 62 2`)
-3. Execute Plan 62.3: Static Analysis, Vitest Suite & Production Build Verification (`/execute 62 3`)
+- **Task**: Phase Execution Complete & Verified (3 plans completed across 3 waves)
+- **Status**: ✅ Complete & Verified
 
 ## Last Session Summary
-Phase 62 planned with 3 atomic execution plans:
-- **Plan 62.1**: Data Contract & Cumulative Paid Calculation Engine (Wave 1)
-  - Enrich `LoanMatrixMonth` interface with `cumulativePaidAmount?: number`
-  - Maintain chronological running total in `getLoanMatrix` across all loan schedules
-  - Add & export `getCumulativePaidUpToMonth` helper function
-  - Unit tests in `src/services/loanMatrixService.test.ts`
-- **Plan 62.2**: Bind Cumulative Paid Amount to Popover Component & Component Tests (Wave 2)
-  - Bind cumulative paid to hover tooltip in `src/pages/admin/LoanMatrix.tsx` on "Terbayar:" label
-  - Maintain proper Indonesian Rupiah currency formatting (`Rp X.XXX.XXX`)
-  - Update component tests in `src/pages/admin/LoanMatrix.test.tsx`
+Phase 62 executed and verified across 3 plans:
+- **Plan 62.1**: Data Contract & Cumulative Paid Calculation Engine (`src/services/loanMatrixService.ts`) (Wave 1)
+  - Extended `LoanMatrixMonth` interface with `cumulativePaidAmount?: number`.
+  - Implemented chronological running accumulation `loanCumulativePaid[loan.id]` in `getLoanMatrix` across all loan schedules sorted by `due_date: ascending`.
+  - Added and exported `getCumulativePaidUpToMonth` helper utility function.
+  - Added unit test suite with 6 new tests in `src/services/loanMatrixService.test.ts`. Commits: `0ae50a8d`, `56de6a85`.
+- **Plan 62.2**: Bind Cumulative Paid Amount to Popover Component & Component Tests (`src/pages/admin/LoanMatrix.tsx`) (Wave 2)
+  - Updated "Terbayar:" row in loan matrix cell hover popover to display cumulative paid amount up to the hovered month instead of single-month paid amount.
+  - Formatted currency as standard Indonesian Rupiah with thousand separator (`formatAmount`).
+  - Added component tests in `src/pages/admin/LoanMatrix.test.tsx` verifying cumulative paid amounts in tooltips. Commits: `5cd4c05a`, `bfba5c11`.
 - **Plan 62.3**: Static Analysis, Vitest Suite & Production Build Verification (Wave 3)
-  - TypeScript strict typecheck (`tsc --noEmit`)
-  - Full Vitest suite run
-  - Vite production bundle build (`npm run build`)
+  - Strict TypeScript check: `tsc --noEmit` exit code 0 (0 error).
+  - Targeted unit tests: 2 test files, 42 tests passed (100% pass).
+  - Production build: `npm run build` completed in 3.52s (2269 modules transformed). Commits: `bb1c5b7c`, `97d6ef74`.
+
+## Next Steps
+Phase 62 is complete. Awaiting next user request or roadmap update.
+
+## Blockers
+- None.
+
+## Context Dump
+
+### Decisions Made
+- **Chronological Cumulative Paid Tracking**: Melacak total nominal yang telah terbayar (`sched.paid_amount`) secara urut waktu (`due_date` ascending) sejak awal pinjaman hingga bulan target, memastikan pinjaman multi-tahun (misal periode 41/42) menampilkan akumulasi seluruh pembayaran historis dengan benar.
+- **Dual Resolution Strategy**: Menyediakan nilai pre-computed `cell.cumulativePaidAmount` dari query `getLoanMatrix` serta helper fallback `getCumulativePaidUpToMonth` untuk fleksibilitas konsumsi di UI dan mock test.
 
 ## Blockers
 - None.

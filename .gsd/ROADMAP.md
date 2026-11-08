@@ -1096,14 +1096,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 62: Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Memperbarui kartu popover/tooltip yang muncul saat mengarahkan mouse (hover) ke sel bulan pinjaman pada /admin/loan-matrix (LoanMatrix.tsx) agar menghitung dan menampilkan total akumulasi angsuran yang telah terbayar (cumulative paid) sejak awal pinjaman hingga periode/bulan yang sedang di-hover (misal: "Rp 9.761.905"), menggantikan tampilan nominal terbayar satu bulan saja.
 **Depends on:** Phase 61
 
 **Plans:**
-- [ ] Plan 62.1: Data Contract & Cumulative Paid Calculation Engine
-- [ ] Plan 62.2: Bind Cumulative Paid Amount to Popover Component & Component Tests
-- [ ] Plan 62.3: Static Analysis, Vitest Suite & Production Build Verification
+- [x] Plan 62.1: Data Contract & Cumulative Paid Calculation Engine
+- [x] Plan 62.2: Bind Cumulative Paid Amount to Popover Component & Component Tests
+- [x] Plan 62.3: Static Analysis, Vitest Suite & Production Build Verification
 
 **Deliverables:**
 - Penambahan properti `cumulativePaidAmount` dan engine akumulasi kronologis di `src/services/loanMatrixService.ts`
@@ -1233,7 +1233,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 59 | Integrasi Pembayaran Simpanan Belanja di POS | ✅ | 3/3 | 100% |
 | 60 | Angka Nominal Angsuran Berwarna Dinamis di Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 61 | Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan) | ✅ | 3/3 | 100% |
-| 62 | Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman | ⏳ | 0/3 | 0% |
+| 62 | Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1302,6 +1302,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 59 | 2026-11-05 | 2026-11-05 | 1 day |
 | 60 | 2026-11-08 | 2026-11-08 | 1 day |
 | 61 | 2026-11-08 | 2026-11-08 | 1 day |
-| 62 | 2026-11-08 | — | — |
+| 62 | 2026-11-08 | 2026-11-08 | 1 day |
 
 

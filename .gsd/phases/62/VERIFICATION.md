@@ -1,32 +1,31 @@
-# Phase 62 Verification Report: Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman
+# Phase 62 Verification: Tampilkan Total Kumulatif Terbayar s/d Bulan Tertentu pada Hover Tooltip Matriks Pinjaman
 
-## 1. Executive Summary
-- **Phase**: 62
-- **Status**: PASSED (All must-haves empirically verified)
-- **Scope**: Data contract enrichment (`cumulativePaidAmount`), running cumulative calculation engine in `loanMatrixService.ts`, binding to hover popover tooltip in `LoanMatrix.tsx`, targeted unit/component tests, full Vitest test suite, and production bundle build.
+## Objective
+Memperbarui kartu popover/tooltip yang muncul saat mengarahkan mouse (hover) ke sel bulan pinjaman pada `/admin/loan-matrix` (`LoanMatrix.tsx`) agar menghitung dan menampilkan total akumulasi angsuran yang telah terbayar (cumulative paid) sejak awal pinjaman hingga periode/bulan yang sedang di-hover (misal: "Rp 9.761.905"), menggantikan tampilan nominal terbayar satu bulan saja.
 
----
+## Must-Haves Verification
 
-## 2. Requirement Verification Matrix
+### 1. Cumulative Paid Engine & Data Contract (`src/services/loanMatrixService.ts`)
+- [x] **Enrich Interface**: `LoanMatrixMonth` diperluas dengan field opsional `cumulativePaidAmount?: number`.
+- [x] **Chronological Accumulation**: `getLoanMatrix` melacak akumulasi running total `loanCumulativePaid[loan.id]` secara kronologis melintasi seluruh jadwal angsuran pinjaman terkait (`due_date` ascending).
+- [x] **Cell Population**: Sel bulanan pada tahun matriks yang diminta terisi nilai `cumulativePaidAmount`.
+- [x] **Helper Utility**: Fungsi helper `getCumulativePaidUpToMonth(member, targetMonth, targetYear)` tersedia dan diekspor, lengkap dengan fallback penjumlah kumulatif per loan ID.
+- **Evidence**:
+  - `src/services/loanMatrixService.ts` baris 10, 112, 132-135, 215, 263-281.
+  - 22/22 test passed di `src/services/loanMatrixService.test.ts`.
 
-| # | Requirement | Implementation Evidence | Test / Empirical Proof | Status |
-|---|-------------|-------------------------|------------------------|--------|
-| 1 | Data Contract Enrichment (`cumulativePaidAmount`) | Added `cumulativePaidAmount?: number` to `LoanMatrixMonth` interface in `src/services/loanMatrixService.ts` | Unit test `src/services/loanMatrixService.test.ts`: passed | PASSED |
-| 2 | Chronological Cumulative Paid Calculation Engine | Cumulative calculation running total across loan schedules in `getLoanMatrix` & exported `getCumulativePaidUpToMonth` | Unit test `src/services/loanMatrixService.test.ts`: 22/22 passed (100%) | PASSED |
-| 3 | Tooltip Binding & Currency Formatting | Popover tooltip displays `Rp X.XXX.XXX (Kumulatif: Rp Y.YYY.YYY)` in `src/pages/admin/LoanMatrix.tsx` | Component test `src/pages/admin/LoanMatrix.test.tsx`: 20/20 passed (100%) | PASSED |
-| 4 | Static Type Checking TypeScript | `npx tsc --noEmit` | Clean exit code 0, 0 errors | PASSED |
-| 5 | Comprehensive Regression Test Suite (Vitest) | `npx vitest run` | 50 test files passed, 650 tests passed (100% pass) | PASSED |
-| 6 | Production Bundle Build Verification | `npm run build` | Vite build exit code 0, 2269 modules transformed in 2.44s | PASSED |
+### 2. Hover Tooltip UI Rendering (`src/pages/admin/LoanMatrix.tsx`)
+- [x] **Binding Akumulasi**: Baris "Terbayar:" pada tooltip sel bulanan me-resolve `cell.cumulativePaidAmount !== undefined ? cell.cumulativePaidAmount : getCumulativePaidUpToMonth(member, m, year)`.
+- [x] **Format Rupiah Standar**: Ditampilkan dengan format `Rp {formatAmount(cumulativePaid)}` menggunakan pemisah ribuan titik khas Indonesia.
+- [x] **Component Testing**: Pengujian komponen di `src/pages/admin/LoanMatrix.test.tsx` memvalidasi bahwa nominal terbayar kumulatif tampil pada tooltip saat di-hover dan bertambah seiring bertambahnya bulan.
+- **Evidence**:
+  - `src/pages/admin/LoanMatrix.tsx` baris 408-417.
+  - 20/20 test passed di `src/pages/admin/LoanMatrix.test.tsx`.
 
----
+### 3. Quality Gate & Static Verification
+- [x] **TypeScript Strict Check**: `npx tsc --noEmit` exit code 0 (0 error).
+- [x] **Targeted Unit Tests**: 42/42 tests passed across 2 test files (100% pass).
+- [x] **Production Bundle Build**: `npm run build` sukses (2269 modules transformed in 3.52s, exit code 0).
 
-## 3. Test Results Summary
-- **Targeted Unit Tests**:
-  - `src/services/loanMatrixService.test.ts`: **22/22 tests passed**.
-  - `src/pages/admin/LoanMatrix.test.tsx`: **20/20 tests passed**.
-- **Full Vitest Suite**:
-  - **50 test files passed, 650 tests passed (100%)**.
-- **TypeScript Static Check**:
-  - `tsc --noEmit`: Clean, 0 errors.
-- **Production Build**:
-  - `npm run build`: Exit code 0, 2269 modules transformed in 2.44s.
+## Verdict: PASS
+Seluruh kriteria penerimaan (acceptance criteria) dan must-haves pada Phase 62 terpenuhi 100% dengan bukti empiris pengujian kode dan build produksi.

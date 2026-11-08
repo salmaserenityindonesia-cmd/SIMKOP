@@ -88,3 +88,4 @@ Load these files for context:
 - [ ] Format angka menggunakan pemisah ribuan Rupiah standar (`formatAmount`)
 - [ ] Pengujian di `src/pages/admin/LoanMatrix.test.tsx` memverifikasi rendering akumulasi terbayar
 - [ ] Seluruh pengujian komponen lulus 100%
+

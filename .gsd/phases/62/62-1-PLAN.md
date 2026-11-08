@@ -105,3 +105,4 @@ Load these files for context:
 - [ ] `getLoanMatrix` menghitung akumulasi terbayar secara kronologis untuk setiap pinjaman
 - [ ] Helper `getCumulativePaidUpToMonth` tersedia dan diekspor
 - [ ] Test unit di `src/services/loanMatrixService.test.ts` lulus tanpa error
+
