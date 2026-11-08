@@ -62,15 +62,52 @@ export const calculateRemainingInstallmentDeficit = (
   return Math.max(0, Number(targetAmount || 0) - Number(paidAmount || 0));
 };
 
+export type LoanApplicationStatusTab = 'PENDING' | 'APPROVED' | 'ALL';
+
 export const loanService = {
-  async getPendingLoans() {
-    const { data, error } = await supabase
+  async getLoanApplications(statusTab: LoanApplicationStatusTab = 'PENDING') {
+    let query: any = supabase
       .from('loans')
-      .select('*, anggota(nama, nrp)')
-      .eq('status', 'draft')
+      .select(`
+        id,
+        loan_number,
+        member_id,
+        loan_type_id,
+        amount,
+        principal_amount,
+        agreed_tenor_months,
+        tenor,
+        monthly_target,
+        disbursed_at,
+        created_at,
+        status,
+        notes,
+        anggota:member_id (
+          id,
+          nrp,
+          nama,
+          pangkat,
+          take_home_pay,
+          master_thp,
+          bank_account_number
+        )
+      `)
       .order('created_at', { ascending: false });
+
+    if (statusTab === 'PENDING') {
+      query = query.in('status', ['draft', 'pending']);
+    } else if (statusTab === 'APPROVED') {
+      query = query.in('status', ['approved', 'active', 'completed', 'paid_off']);
+    }
+    // Jika 'ALL', tidak ada filter status (mengambil semua riwayat)
+
+    const { data, error } = await query;
     if (error) throw new Error(error.message);
-    return data;
+    return data || [];
+  },
+
+  async getPendingLoans() {
+    return this.getLoanApplications('PENDING');
   },
 
   async getAllLoans() {
@@ -107,7 +144,7 @@ export const loanService = {
     let memberData: any = null;
     const { data: member, error: memberError } = await supabase
       .from('anggota')
-      .select('master_thp, take_home_pay')
+      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
       .eq('id', memberId)
       .single();
 
@@ -123,7 +160,30 @@ export const loanService = {
       memberData = member;
     }
 
-    const masterThp = Number(memberData?.master_thp ?? memberData?.take_home_pay ?? memberData?.salary ?? 0);
+    // Resolusi THP: utamakan nominal positif dari take_home_pay, master_thp, atau salary
+    const cleanNumber = (val: any): number => {
+      if (typeof val === 'number') return isNaN(val) ? 0 : val;
+      if (!val) return 0;
+      let str = String(val).trim().replace(/[,.]00$/, '');
+      return Number(str.replace(/[^0-9]/g, '')) || 0;
+    };
+
+    const candidates = [memberData?.take_home_pay, memberData?.master_thp, memberData?.salary];
+    let resolvedThp = 0;
+    for (const c of candidates) {
+      if (c !== undefined && c !== null && c !== '') {
+        const num = cleanNumber(c);
+        if (num > 0) {
+          resolvedThp = num;
+          break;
+        }
+      }
+    }
+
+    const rawThp = resolvedThp > 0
+      ? resolvedThp
+      : (memberData?.take_home_pay ?? memberData?.master_thp ?? memberData?.salary ?? 0);
+    const masterThp = cleanNumber(rawThp);
 
     // 2. Get active loans
     const { data: activeLoans, error: loansError } = await supabase

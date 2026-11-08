@@ -110,6 +110,67 @@ describe('loanService', () => {
       expect(res.remaining_thp).toBe(4500000);
     });
 
+    it('should prioritize take_home_pay if master_thp is 0 (imported THP case)', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'm-wawan',
+                nrp: '123456',
+                nama: 'Wawan Gunawan',
+                master_thp: 0,
+                take_home_pay: 5000000,
+                salary: null
+              },
+              error: null
+            })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-wawan');
+      expect(res.master_thp).toBe(5000000);
+      expect(res.remaining_thp).toBe(5000000);
+    });
+
+    it('should sanitize formatted currency string in take_home_pay', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'm-wawan-str',
+                master_thp: 0,
+                take_home_pay: 'Rp 5.250.000'
+              },
+              error: null
+            })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-wawan-str');
+      expect(res.master_thp).toBe(5250000);
+      expect(res.remaining_thp).toBe(5250000);
+    });
+
     it('should fallback to select * and salary if specific column select fails with error', async () => {
       const mockSupabase = supabase.from as any;
       // First select fails
@@ -335,33 +396,91 @@ describe('loanService', () => {
         })
       }));
 
-      // It calls makePayment internally, which will fetch schedules again...
-      // Mock makePayment's fetching schedules:
-      mockSupabase.mockImplementationOnce(() => ({
-        select: () => ({
-          eq: () => ({
-            in: () => ({
-              order: vi.fn().mockResolvedValue({
-                data: [
-                  { id: 'sch-1', target_amount: 1000000, paid_amount: 200000, status: 'partial' },
-                  { id: 'sch-2', target_amount: 1000000, paid_amount: 0, status: 'unpaid' }
-                ],
-                error: null
-              })
-            })
-          })
-        })
-      }));
-
-      // Mock updates & inserts... we can just spy on makePayment.
-      // But since we are unit testing, we'll let it execute and assume mock chaining is fine.
-      
-      // Let's just spy on makePayment
+      // Spy on makePayment to isolate fullPayoff logic
       const spy = vi.spyOn(loanService, 'makePayment').mockResolvedValueOnce({ success: true, excess_amount: 0 });
 
       await loanService.fullPayoff('loan-1', 'transfer');
       
       expect(spy).toHaveBeenCalledWith('loan-1', 1800000, 'transfer', 'Pelunasan Penuh');
+    });
+  });
+
+  describe('getLoanApplications', () => {
+    it('should query pending loans with draft and pending status', async () => {
+      const mockPendingData = [
+        { id: 'loan-p1', status: 'draft', amount: 5000000 },
+        { id: 'loan-p2', status: 'pending', amount: 3000000 }
+      ];
+      const mockIn = vi.fn().mockResolvedValue({ data: mockPendingData, error: null });
+      const mockOrder = vi.fn().mockReturnValue({ in: mockIn });
+      const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      const result = await loanService.getLoanApplications('PENDING');
+
+      expect(supabase.from).toHaveBeenCalledWith('loans');
+      expect(mockOrder).toHaveBeenCalledWith('created_at', { ascending: false });
+      expect(mockIn).toHaveBeenCalledWith('status', ['draft', 'pending']);
+      expect(result).toEqual(mockPendingData);
+    });
+
+    it('should query approved history loans with approved, active, completed, paid_off status', async () => {
+      const mockApprovedData = [
+        { id: 'loan-a1', status: 'approved', amount: 10000000 },
+        { id: 'loan-a2', status: 'active', amount: 7500000 }
+      ];
+      const mockIn = vi.fn().mockResolvedValue({ data: mockApprovedData, error: null });
+      const mockOrder = vi.fn().mockReturnValue({ in: mockIn });
+      const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      const result = await loanService.getLoanApplications('APPROVED');
+
+      expect(supabase.from).toHaveBeenCalledWith('loans');
+      expect(mockOrder).toHaveBeenCalledWith('created_at', { ascending: false });
+      expect(mockIn).toHaveBeenCalledWith('status', ['approved', 'active', 'completed', 'paid_off']);
+      expect(result).toEqual(mockApprovedData);
+    });
+
+    it('should query all loans without status in filter when tab is ALL', async () => {
+      const mockAllData = [
+        { id: 'loan-1', status: 'draft' },
+        { id: 'loan-2', status: 'approved' }
+      ];
+      const mockIn = vi.fn();
+      const mockQuery = {
+        in: mockIn,
+        then: (resolve: any, reject: any) => Promise.resolve({ data: mockAllData, error: null }).then(resolve, reject)
+      };
+      const mockOrder = vi.fn().mockReturnValue(mockQuery);
+      const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      const result = await loanService.getLoanApplications('ALL');
+
+      expect(supabase.from).toHaveBeenCalledWith('loans');
+      expect(mockOrder).toHaveBeenCalledWith('created_at', { ascending: false });
+      expect(mockIn).not.toHaveBeenCalled();
+      expect(result).toEqual(mockAllData);
+    });
+
+    it('should throw error when database returns an error', async () => {
+      const mockIn = vi.fn().mockResolvedValue({ data: null, error: { message: 'Database query failed' } });
+      const mockOrder = vi.fn().mockReturnValue({ in: mockIn });
+      const mockSelect = vi.fn().mockReturnValue({ order: mockOrder });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      await expect(loanService.getLoanApplications('PENDING')).rejects.toThrow('Database query failed');
+    });
+
+    it('should delegate getPendingLoans to getLoanApplications with PENDING filter', async () => {
+      const spy = vi.spyOn(loanService, 'getLoanApplications').mockResolvedValueOnce([
+        { id: 'pending-legacy', status: 'draft' } as any
+      ]);
+
+      const result = await loanService.getPendingLoans();
+      expect(spy).toHaveBeenCalledWith('PENDING');
+      expect(result).toEqual([{ id: 'pending-legacy', status: 'draft' }]);
     });
   });
 });
