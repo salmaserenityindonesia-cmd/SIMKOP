@@ -15,14 +15,24 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
 
-export default function ManajemenProdukSimpanPinjam() {
+export interface ManajemenProdukSimpanPinjamProps {
+  initialDepositTypes?: DepositType[];
+  initialLoanTypes?: LoanType[];
+  initialLoading?: boolean;
+}
+
+export default function ManajemenProdukSimpanPinjam({
+  initialDepositTypes,
+  initialLoanTypes,
+  initialLoading,
+}: ManajemenProdukSimpanPinjamProps = {}) {
   const { showToast, showConfirm } = useFeedback();
   const [activeTab, setActiveTab] = useState<'simpanan' | 'pinjaman'>('simpanan');
   
   // Data States
-  const [depositTypes, setDepositTypes] = useState<DepositType[]>([]);
-  const [loanTypes, setLoanTypes] = useState<LoanType[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [depositTypes, setDepositTypes] = useState<DepositType[]>(initialDepositTypes || []);
+  const [loanTypes, setLoanTypes] = useState<LoanType[]>(initialLoanTypes || []);
+  const [loading, setLoading] = useState(initialLoading ?? (initialDepositTypes === undefined));
   const [error, setError] = useState('');
   
   // Modal States
@@ -34,7 +44,9 @@ export default function ManajemenProdukSimpanPinjam() {
   const [loanForm, setLoanForm] = useState<Partial<LoanType>>({});
 
   useEffect(() => {
-    fetchData();
+    if (initialDepositTypes === undefined && initialLoanTypes === undefined) {
+      fetchData();
+    }
   }, []);
 
   const fetchData = async () => {
@@ -218,28 +230,40 @@ export default function ManajemenProdukSimpanPinjam() {
                 </tr>
               </thead>
               <tbody>
-                {depositTypes.map(type => (
-                  <tr key={type.id} className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/10">
-                    <td className="p-4 text-body-md font-medium">{type.code}</td>
-                    <td className="p-4 text-body-md">{type.name}</td>
-                    <td className="p-4 text-body-md capitalize">{type.frequency_type}</td>
-                    <td className="p-4 text-body-md">{formatCurrency(type.default_amount)}</td>
-                    <td className="p-4 text-body-md">
-                      {type.can_be_withdrawn ? <span className="text-primary font-medium">Ya</span> : <span className="text-error font-medium">Tidak</span>}
-                    </td>
-                    <td className="p-4 text-body-md">
-                      {type.is_active ? <span className="px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container text-label-sm">Aktif</span> : <span className="px-2.5 py-1 rounded-full bg-surface-variant text-on-surface-variant text-label-sm">Non-Aktif</span>}
-                    </td>
-                    <td className="p-4 text-right space-x-2">
-                      <button onClick={() => openDepositModal(type)} className="p-2 text-primary hover:bg-primary-container rounded-lg transition-colors">
-                        <span className="material-symbols-outlined text-[20px]">edit</span>
-                      </button>
-                      <button onClick={() => handleDeleteDeposit(type.id)} className="p-2 text-error hover:bg-error-container rounded-lg transition-colors">
-                        <span className="material-symbols-outlined text-[20px]">delete</span>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {depositTypes.map(type => {
+                  const displayAmount = type.effective_amount ?? type.default_amount ?? 0;
+                  const isTierSynced = Boolean(type.effective_amount && type.effective_amount !== type.default_amount);
+
+                  return (
+                    <tr key={type.id} className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/10">
+                      <td className="p-4 text-body-md font-medium">{type.code}</td>
+                      <td className="p-4 text-body-md">{type.name}</td>
+                      <td className="p-4 text-body-md capitalize">{type.frequency_type}</td>
+                      <td className="p-4 text-body-md">
+                        <div>{formatCurrency(displayAmount)}</div>
+                        {isTierSynced && (
+                          <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
+                            * Sinkron Tarif Bertingkat
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4 text-body-md">
+                        {type.can_be_withdrawn ? <span className="text-primary font-medium">Ya</span> : <span className="text-error font-medium">Tidak</span>}
+                      </td>
+                      <td className="p-4 text-body-md">
+                        {type.is_active ? <span className="px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container text-label-sm">Aktif</span> : <span className="px-2.5 py-1 rounded-full bg-surface-variant text-on-surface-variant text-label-sm">Non-Aktif</span>}
+                      </td>
+                      <td className="p-4 text-right space-x-2">
+                        <button onClick={() => openDepositModal(type)} className="p-2 text-primary hover:bg-primary-container rounded-lg transition-colors">
+                          <span className="material-symbols-outlined text-[20px]">edit</span>
+                        </button>
+                        <button onClick={() => handleDeleteDeposit(type.id)} className="p-2 text-error hover:bg-error-container rounded-lg transition-colors">
+                          <span className="material-symbols-outlined text-[20px]">delete</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {depositTypes.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-on-surface-variant text-body-md">Belum ada data jenis simpanan.</td>
