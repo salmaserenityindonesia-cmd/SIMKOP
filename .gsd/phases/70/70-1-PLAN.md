@@ -93,3 +93,4 @@ After all tasks complete, verify:
 ## Success Criteria
 - [ ] Nilai Simpanan Wajib, Belanja, dan Lebaran menampilkan tarif aktif yang dikonfigurasi di Pengaturan Koperasi.
 - [ ] Atribut master produk simpan pinjam lainnya tetap terjaga integritasnya.
+

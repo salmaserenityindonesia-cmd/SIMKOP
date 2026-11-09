@@ -91,3 +91,4 @@ After all tasks complete, verify:
 ## Success Criteria
 - [ ] Kelayakan pinjaman terintegrasi erat dengan kewajiban simpanan aktif anggota.
 - [ ] Pengguna mendapatkan panduan tenor yang jelas dan aplikatif saat simulasi menunjukkan shortfall.
+
