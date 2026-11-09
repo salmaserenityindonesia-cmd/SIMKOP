@@ -1203,6 +1203,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 68: Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan
+**Status:** ⏳ In Progress
+**Objective:** Mengimplementasikan menu khusus "Laporan Pengawasan & Pencairan Simpanan" (`/admin/laporan-penarikan`) di kelompok SIMPAN PINJAM (KSP / USP) yang menyajikan visibilitas menyeluruh atas arus kas keluar penarikan simpanan, audit bukti pencairan, deteksi kewajiban anggota (sisa pinjaman aktif / cross-obligation alert), indikator rasio likuiditas simpanan sukarela/lebaran, rekapitulasi metode pencairan (Tunai Kas vs Transfer Bank), cetak ulang bukti kwitansi, dan ekspor Excel & PDF.
+**Depends on:** Phase 67, Phase 54
+
+**Plans:**
+- [ ] Plan 68.1: Service Layer & Data Engine for Withdrawal Surveillance & Aggregation
+- [ ] Plan 68.2: UI Dashboard, Receipt Modal, Routing & Navigation Integration
+
+**Deliverables:**
+- Layanan data `src/services/withdrawalReportService.ts` (kueri agregasi, audit bukti pencairan, deteksi kewajiban pinjaman aktif anggota, dan ekspor Excel)
+- Antarmuka dashboard `src/pages/admin/LaporanPenarikanSimpanan.tsx` (KPI cards, filter tanggal/simpanan/metode/kewajiban, tabel mutasi, modal kwitansi cetak)
+- Pendaftaran navigasi menu di `src/components/layout/Sidebar.tsx` dan route di `src/App.tsx`
+- Pengujian unit komprehensif pada service layer dan komponen UI
+- Build produksi Vite dan typecheck bersih tanpa error
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1331,6 +1349,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 65 | Tabel Data Gaji & Rekening dengan Autocompletion & Pagination | ✅ | 2/2 | 100% |
 | 66 | Tampilkan Nilai Perkiraan Sisa THP dan Defisit Ambang Batas pada Validasi Pengajuan Pinjaman | ✅ | 1/1 | 100% |
 | 67 | Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval | ✅ | 1/1 | 100% |
+| 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ⏳ | 0/2 | 0% |
 
 ---
 
@@ -1405,5 +1424,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 65 | 2026-11-08 | 2026-11-08 | 1 day |
 | 66 | 2026-11-08 | 2026-11-08 | 1 day |
 | 67 | 2026-11-09 | 2026-11-09 | 1 day |
+| 68 | 2026-11-09 | — | 1 day |
 
 

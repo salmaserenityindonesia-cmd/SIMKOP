@@ -1,29 +1,22 @@
 ## Current Position
-- **Phase**: 67 (Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval)
-- **Task**: Phase Execution Complete & Verified (1 plan completed)
-- **Status**: ✅ Complete & Verified
+- **Phase**: 68 (Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan)
+- **Task**: Planning complete (2 plans created)
+- **Status**: Ready for execution
 
-## Last Session Summary
-Phase 67 executed and verified under Plan 67.1:
-- **Plan 67.1**: Approved Loan Applications History & Status Tab Navigation
-  - **Service Query**: Menambahkan method `loanService.getLoanApplications(statusTab)` dengan filtering dinamis (`'PENDING'`, `'APPROVED'`, `'ALL'`) serta method counter helper `getLoanApplicationCounts()`.
-  - **UI Tab Navigation**: Menambahkan tab navigasi status ("Menunggu Persetujuan", "Sudah Disetujui", "Semua Permohonan") dengan badge counter dinamis (kuning untuk pending, hijau untuk approved) di `src/pages/admin/ApprovalPinjaman.tsx`.
-  - **Contextual Actions & Details**: Aksi tombol `[Setujui]` dan `[Tolak]` hanya muncul pada status draft/pending, sedangkan status approved/active/completed hanya menampilkan tombol `[Detail]`. Menambahkan kolom "Tanggal Pengajuan" dan penyesuaian empty state yang kontekstual.
-  - **Adaptif Export**: Ekspor Excel dan PDF menyelaraskan data sesuai dengan tab yang sedang aktif.
-  - **Testing & Verification**:
-    - `src/services/loanService.test.ts`: 18 tests passed (termasuk 3 tests baru untuk query filtering dan counter).
-    - `src/pages/admin/ApprovalPinjaman.test.tsx`: 5 tests passed (pengujian render tab, filter status, aksi kontekstual, dan empty state).
-    - Vitest full suite & production build `npm run build` lulus 100%. Commits: `60e25619`, `27c86617`, `accd5da6`.
+## Plans Created
+- **Plan 68.1**: Service Layer & Data Engine for Withdrawal Surveillance & Aggregation (`src/services/withdrawalReportService.ts`, `src/services/withdrawalReportService.test.ts`)
+- **Plan 68.2**: UI Dashboard, Receipt Modal, Routing & Navigation Integration (`src/pages/admin/LaporanPenarikanSimpanan.tsx`, `src/components/layout/Sidebar.tsx`, `src/App.tsx`, `src/pages/admin/LaporanPenarikanSimpanan.test.tsx`)
 
 ## Next Steps
-Phase 67 is complete. Awaiting next user request or roadmap update.
+1. Execute Plan 68.1: Service Layer & Aggregations + Excel Exporter
+2. Execute Plan 68.2: UI Dashboard, Receipt Modal, Sidebar Menu & App Routing
 
 ## Blockers
 - None.
 
 ## Context Dump
 
-### Decisions Made
-- **Backward-Compatible Query Layer**: `loanService.getPendingLoans` tetap dipertahankan dan memanggil `getLoanApplications('PENDING')` guna menjaga kompatibilitas dengan komponen lain yang mungkin masih mengonsumsi method tersebut.
-- **Accurate Count Badges**: `loanService.getLoanApplicationCounts` menghitung permohonan pending (`['draft', 'pending']`) dan approved (`['approved', 'active', 'completed', 'paid_off']`) secara independen untuk menjaga akurasi badge counter terlepas dari tab yang sedang aktif.
-- **Contextual Action Buttons**: Permohonan yang sudah disetujui tidak lagi menampilkan tombol Setujui/Tolak (menghindari duplikasi aksi approval atau error status) dan hanya menampilkan tombol Detail.
+### Architectural Blueprint
+- **Data Engine**: `withdrawalReportService` membaca mutasi `deposit_transactions` bertipe `withdrawal`, menghubungkan ke `member_deposits`, `deposit_types`, `anggota`, serta melakukan cross-referencing ke tabel `loans` untuk mendeteksi apakah anggota pemohon pencairan memiliki kewajiban pinjaman aktif yang belum lunas (Cross-Obligation Risk Indicator).
+- **Format Audit Standar**: Ekspor Excel menggunakan `exceljs` dengan header styling formal, metadata periode pencairan, formatting rupiah, dan footer kalkulasi total.
+- **UI & UX**: Halaman `LaporanPenarikanSimpanan.tsx` menyajikan kartu metrik KPI, filter komprehensif (tanggal, jenis simpanan, metode pencairan, filter khusus pinjaman aktif), tabel mutasi pengawasan, dialog cetak bukti kwitansi, serta tombol ekspor Excel dan PDF.
