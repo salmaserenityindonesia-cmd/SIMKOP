@@ -73,21 +73,49 @@ export async function getWithdrawableSavings(memberId: string): Promise<Withdraw
 export interface WithdrawalPayload {
   member_deposit_id: string;
   amount: number;
-  payment_method: 'transfer' | 'tunai';
-  description: string;
+  payment_method: 'transfer' | 'tunai' | string;
+  description?: string;
+  reference_no?: string;
+  notes?: string;
+  created_by?: string | null;
+  jenisSimpananLabel?: string;
+  namaAnggota?: string;
 }
 
 export async function withdrawSavings(payload: WithdrawalPayload) {
+  const receiptNumber = payload.reference_no || `KW-WD-${Date.now()}`;
+  const notes = payload.notes || payload.description || 'Pencairan simpanan anggota';
+  const desc = payload.description || (
+    payload.jenisSimpananLabel && payload.namaAnggota
+      ? `Penarikan Simpanan ${payload.jenisSimpananLabel} - ${payload.namaAnggota}`
+      : 'Penarikan Simpanan'
+  );
+
   // Try RPC first for atomic transaction
   const { data: rpcData, error: rpcError } = await supabase.rpc('withdraw_savings_atomic', {
     p_member_deposit_id: payload.member_deposit_id,
     p_amount: payload.amount,
-    p_description: payload.description,
+    p_description: desc,
     p_payment_method: payload.payment_method
   });
 
   if (!rpcError && rpcData?.success) {
-    return { id: rpcData.transaction_id };
+    const txId = rpcData.transaction_id;
+    // Enrich with audit and receipt fields (migration 034)
+    try {
+      await supabase
+        .from('deposit_transactions')
+        .update({
+          reference_no: receiptNumber,
+          payment_method: payload.payment_method || 'tunai',
+          notes: notes,
+          created_by: payload.created_by || null
+        })
+        .eq('id', txId);
+    } catch (e) {
+      console.warn('Gagal update metadata transaksi penarikan:', e);
+    }
+    return { id: txId, reference_no: receiptNumber };
   }
 
   // Fallback to manual inserts if RPC not yet deployed
@@ -114,14 +142,19 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
     throw new Error('Saldo tidak mencukupi untuk penarikan');
   }
 
-  // 2. Insert withdrawal transaction
+  // 2. Insert withdrawal transaction with official 'withdrawal' enum and complete metadata
   const { data: insertData, error: insertError } = await supabase
     .from('deposit_transactions')
     .insert([{
       member_deposit_id: payload.member_deposit_id,
       transaction_type: 'withdrawal',
-      amount: payload.amount,
-      description: payload.description
+      amount: Number(payload.amount),
+      description: desc,
+      reference_no: receiptNumber,
+      payment_method: payload.payment_method || 'tunai',
+      notes: notes,
+      created_by: payload.created_by || null,
+      created_at: new Date().toISOString()
     }])
     .select()
     .single();
@@ -132,7 +165,7 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
   try {
     await supabase.from('cash_flow').insert([{
       direction: 'out',
-      amount: payload.amount,
+      amount: Number(payload.amount),
       category: 'penarikan_simpanan',
       reference_id: insertData.id
     }]);
@@ -140,5 +173,8 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
     console.warn('Cash flow table might not exist yet', e);
   }
 
-  return insertData;
+  return {
+    ...insertData,
+    reference_no: receiptNumber
+  };
 }

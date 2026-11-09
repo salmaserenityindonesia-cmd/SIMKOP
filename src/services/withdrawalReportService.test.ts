@@ -5,6 +5,7 @@ import {
   calculateWithdrawalSummary,
   exportWithdrawalReportExcel,
   categorizeDepositType,
+  isLebaran,
   formatRupiah,
   sanitizeNumber,
   WithdrawalLedgerItem
@@ -65,6 +66,19 @@ describe('withdrawalReportService', () => {
 
       expect(categorizeDepositType('SS', 'Simpanan Sukarela')).toBe('sukarela_lainnya');
       expect(categorizeDepositType('CUSTOM', 'Tabungan Lainnya')).toBe('sukarela_lainnya');
+    });
+
+    it('isLebaran identifies variations of lebaran / THR codes, names, and notes', () => {
+      expect(isLebaran('LEBARAN')).toBe(true);
+      expect(isLebaran('SL')).toBe(true);
+      expect(isLebaran('THR')).toBe(true);
+      expect(isLebaran('SIMPANAN_LEBARAN')).toBe(true);
+      expect(isLebaran(undefined, 'Simpanan Hari Raya')).toBe(true);
+      expect(isLebaran(undefined, 'THR 2026')).toBe(true);
+      expect(isLebaran(undefined, undefined, 'Penarikan Simpanan Lebaran - Wawan Gunawan')).toBe(true);
+      expect(isLebaran(undefined, undefined, undefined, 'Pencairan THR Idul Fitri')).toBe(true);
+      expect(isLebaran('SP', 'Simpanan Pokok')).toBe(false);
+      expect(isLebaran('SB', 'Simpanan Belanja')).toBe(false);
     });
   });
 
@@ -255,6 +269,61 @@ describe('withdrawalReportService', () => {
 
       const result = await getWithdrawalDetailedLedger();
       expect(result).toEqual([]);
+    });
+
+    it('successfully resolves Wawan Gunawan withdrawal and unlinked relationships from description', async () => {
+      const unlinkedTx = [
+        {
+          id: 'tx-wawan',
+          amount: 2500000,
+          created_at: '2026-10-15T09:00:00.000Z',
+          reference_no: 'KW-WD-991',
+          payment_method: 'Transfer (BRI - 92185332)',
+          notes: 'Pencairan THR Idul Fitri',
+          description: 'Penarikan Simpanan Lebaran - Wawan Gunawan',
+          created_by: 'admin-1',
+          transaction_type: 'withdrawal',
+          member_deposit_id: 'md-orphan',
+          member_deposits: null // Unlinked
+        }
+      ];
+
+      const anggotaList = [
+        {
+          id: 'm-wawan',
+          nama: 'Wawan Gunawan',
+          nrp: '92185332',
+          pangkat: 'PNS III/a',
+          bank_name: 'BRI',
+          bank_account_number: '92185332001',
+          status: 'aktif'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return createQueryMock(unlinkedTx);
+        }
+        if (table === 'member_deposits') {
+          return createQueryMock([]);
+        }
+        if (table === 'anggota') {
+          return createQueryMock(anggotaList);
+        }
+        if (table === 'loans') {
+          return createQueryMock([]);
+        }
+        return createQueryMock([]);
+      });
+
+      const result = await getWithdrawalDetailedLedger();
+      expect(result).toHaveLength(1);
+      expect(result[0].member_name).toBe('Wawan Gunawan');
+      expect(result[0].member_nrp).toBe('92185332');
+      expect(result[0].deposit_type_name).toBe('Simpanan Lebaran');
+      expect(result[0].deposit_type_code).toBe('LEBARAN');
+      expect(result[0].amount).toBe(2500000);
+      expect(result[0].reference_no).toBe('KW-WD-991');
     });
 
     it('handles unexpected exceptions gracefully', async () => {

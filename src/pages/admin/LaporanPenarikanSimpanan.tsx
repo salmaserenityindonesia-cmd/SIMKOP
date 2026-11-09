@@ -127,9 +127,10 @@ export default function LaporanPenarikanSimpanan({
   initialReceiptData = null
 }: LaporanPenarikanSimpananProps = {}) {
   // Preset filter state: 'all' | 'today' | 'month' | 'quarter' | 'custom'
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'month' | 'quarter' | 'custom'>('month');
-  const [startDate, setStartDate] = useState<string>(() => getStartOfMonthString());
-  const [endDate, setEndDate] = useState<string>(() => getLocalDateString());
+  // Default ke 'all' (Semua Waktu) agar seluruh mutasi historis langsung tampil tanpa terpotong batas bulan
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'month' | 'quarter' | 'custom'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
 
   // Dropdown & Checkbox filters
   const [depositTypeCode, setDepositTypeCode] = useState<string>('all');
@@ -196,8 +197,8 @@ export default function LaporanPenarikanSimpanan({
     setIsLoading(true);
     try {
       const filters: WithdrawalReportFilters = {
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
+        startDate: (datePreset === 'all' || !startDate) ? undefined : startDate,
+        endDate: (datePreset === 'all' || !endDate) ? undefined : endDate,
         depositTypeCode,
         paymentMethod,
         hasActiveLoanOnly,
@@ -214,7 +215,9 @@ export default function LaporanPenarikanSimpanan({
     } finally {
       setIsLoading(false);
     }
-  }, [startDate, endDate, depositTypeCode, paymentMethod, hasActiveLoanOnly, searchQuery]);
+  }, [datePreset, startDate, endDate, depositTypeCode, paymentMethod, hasActiveLoanOnly, searchQuery]);
+
+  const loadWithdrawalData = loadReportData;
 
   const isInitialMount = React.useRef(true);
 
@@ -662,7 +665,7 @@ export default function LaporanPenarikanSimpanan({
                           - {formatRupiah(item.amount)}
                         </td>
                         <td className="py-3 px-3 text-center whitespace-nowrap">
-                          {item.payment_method.toLowerCase() === 'transfer' ? (
+                          {item.payment_method.toLowerCase().includes('transfer') ? (
                             <div className="inline-flex flex-col items-center">
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-sky-100 text-sky-800">
                                 <Landmark className="w-3 h-3" /> Transfer Bank

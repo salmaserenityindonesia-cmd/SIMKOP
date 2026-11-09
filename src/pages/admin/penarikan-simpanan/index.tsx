@@ -106,6 +106,13 @@ export default function PenarikanSimpanan() {
     setError('');
     
     try {
+      let currentUserId: string | null = null;
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        currentUserId = userData?.user?.id || null;
+      } catch (_) {}
+
+      const receiptNumber = `KW-WD-${Date.now()}`;
       const methodText = paymentMethod === 'transfer' 
         ? `Transfer (${selectedAnggota.bank_name || 'Bank'} - ${selectedAnggota.bank_account_number || '-'})` 
         : 'Tunai Kasir';
@@ -114,12 +121,17 @@ export default function PenarikanSimpanan() {
         member_deposit_id: selectedDeposit.member_deposit_id,
         amount: amountNum,
         payment_method: paymentMethod,
-        description: `Pencairan ${selectedDeposit.deposit_name} - ${methodText}`
+        description: `Penarikan Simpanan ${selectedDeposit.deposit_name} - ${selectedAnggota.nama}`,
+        reference_no: receiptNumber,
+        notes: `Pencairan ${selectedDeposit.deposit_name} (${methodText})`,
+        created_by: currentUserId,
+        jenisSimpananLabel: selectedDeposit.deposit_name,
+        namaAnggota: selectedAnggota.nama
       });
 
       // Show receipt
       setReceiptData({
-        transactionId: tx.id,
+        transactionId: tx.reference_no || tx.id || receiptNumber,
         member: selectedAnggota,
         depositName: selectedDeposit.deposit_name,
         amount: amountNum,

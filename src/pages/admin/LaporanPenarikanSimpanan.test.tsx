@@ -68,15 +68,36 @@ const mockLedgerItems: withdrawalReportService.WithdrawalLedgerItem[] = [
     has_active_loan: false,
     active_loan_balance: 0,
     active_loan_count: 0
+  },
+  {
+    id: 'tx-003',
+    member_id: 'mem-wawan',
+    member_name: 'Wawan Gunawan',
+    member_nrp: '92185332',
+    member_rank: 'PNS III/a',
+    bank_name: 'BRI',
+    bank_account_number: '92185332001',
+    deposit_type_id: 'dt-leb',
+    deposit_type_code: 'LEBARAN',
+    deposit_type_name: 'Simpanan Lebaran',
+    amount: 2500000,
+    transaction_date: '2026-03-22T11:00:00.000Z',
+    reference_no: 'KW-WD-92185332',
+    payment_method: 'Transfer (BRI - 92185332001)',
+    notes: 'Penarikan Simpanan Lebaran - Wawan Gunawan',
+    created_by: 'adm-01',
+    has_active_loan: false,
+    active_loan_balance: 0,
+    active_loan_count: 0
   }
 ];
 
 const mockSummary: withdrawalReportService.WithdrawalSummary = {
-  totalWithdrawalAmount: 7500000,
-  totalTransactions: 2,
-  uniqueMembers: 2,
+  totalWithdrawalAmount: 10000000,
+  totalTransactions: 3,
+  uniqueMembers: 3,
   breakdownByType: {
-    lebaran: 5000000,
+    lebaran: 7500000,
     belanja: 0,
     pokok_wajib: 0,
     sukarela_lainnya: 2500000
@@ -84,13 +105,13 @@ const mockSummary: withdrawalReportService.WithdrawalSummary = {
   breakdownByMethod: {
     tunai: {
       amount: 2500000,
-      percentage: 33.3,
+      percentage: 25.0,
       count: 1
     },
     transfer: {
-      amount: 5000000,
-      percentage: 66.7,
-      count: 1
+      amount: 7500000,
+      percentage: 75.0,
+      count: 2
     }
   },
   membersWithActiveLoansCount: 1,
@@ -127,19 +148,19 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
 
     // KPI 1: Total Pencairan Kas
     expect(html).toContain('Total Pencairan Kas');
-    expect(html).toContain('7.500.000');
-    expect(html).toContain('2 transaksi');
-    expect(html).toContain('2 anggota');
+    expect(html).toContain('10.000.000');
+    expect(html).toContain('3 transaksi');
+    expect(html).toContain('3 anggota');
 
     // KPI 2: Fokus Lebaran
     expect(html).toContain('Fokus Lebaran (THR)');
-    expect(html).toContain('5.000.000');
-    expect(html).toContain('66.7% dari total');
+    expect(html).toContain('7.500.000');
+    expect(html).toContain('75.0% dari total');
 
     // KPI 3: Transfer Non-Tunai
     expect(html).toContain('Transfer Non-Tunai');
-    expect(html).toContain('5.000.000');
-    expect(html).toContain('66.7% Akuntabilitas');
+    expect(html).toContain('7.500.000');
+    expect(html).toContain('75% Akuntabilitas');
 
     // KPI 4: Pinjaman Aktif Alert
     expect(html).toContain('Kewajiban Pinjaman Aktif');
@@ -147,7 +168,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('15.000.000');
   });
 
-  it('renders filter controls and date presets', () => {
+  it('renders filter controls, date presets, and reload button', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <LaporanPenarikanSimpanan initialItems={mockLedgerItems} initialSummary={mockSummary} />
@@ -160,6 +181,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('Hari Ini');
     expect(html).toContain('Semua Waktu');
     expect(html).toContain('Custom');
+    expect(html).toContain('Muat Ulang');
 
     // Dropdown options
     expect(html).toContain('Semua Jenis Simpanan');
@@ -174,7 +196,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('Hanya yang Memiliki Pinjaman Aktif');
   });
 
-  it('renders surveillance ledger table rows with cross-obligation indicator', () => {
+  it('renders surveillance ledger table rows with Wawan Gunawan and cross-obligation indicator', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
         <LaporanPenarikanSimpanan initialItems={mockLedgerItems} initialSummary={mockSummary} />
@@ -200,9 +222,16 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('Kasir Tunai');
     expect(html).toContain('Bebas Pinjaman');
 
+    // Member 3: Wawan Gunawan (Simpanan Lebaran)
+    expect(html).toContain('Wawan Gunawan');
+    expect(html).toContain('92185332');
+    expect(html).toContain('KW-WD-92185332');
+    expect(html).toContain('Simpanan Lebaran');
+    expect(html).toContain(withdrawalReportService.formatRupiah(2500000));
+
     // Table summary row
-    expect(html).toContain('TOTAL PENCAIRAN (2 TRANSAKSI):');
-    expect(html).toContain(withdrawalReportService.formatRupiah(7500000));
+    expect(html).toContain('TOTAL PENCAIRAN (3 TRANSAKSI):');
+    expect(html).toContain(withdrawalReportService.formatRupiah(10000000));
   });
 
   it('renders empty state placeholder when no records are found', () => {
