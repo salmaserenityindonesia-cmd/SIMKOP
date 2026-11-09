@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import AdminProfileModal from '../admin/AdminProfileModal';
@@ -10,6 +10,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
   const navigate = useNavigate();
   const location = useLocation();
+  const navContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const handleNavScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        sessionStorage.setItem('simkop_sidebar_scroll_top', String(e.currentTarget.scrollTop));
+      }
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  useLayoutEffect(() => {
+    try {
+      if (typeof window === 'undefined' || !window.sessionStorage) return;
+      const savedScrollTop = sessionStorage.getItem('simkop_sidebar_scroll_top');
+      if (navContainerRef.current) {
+        if (savedScrollTop !== null) {
+          navContainerRef.current.scrollTop = Number(savedScrollTop);
+        } else {
+          const activeItem = navContainerRef.current.querySelector(
+            '[aria-current="page"], .border-secondary-fixed'
+          );
+          if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+            activeItem.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+          }
+        }
+      }
+    } catch {
+      // ignore errors
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     if (window.innerWidth < 1024) {
@@ -69,7 +101,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* SIDEBAR NAVIGATION */}
       <aside className={`fixed top-0 left-0 h-screen w-72 flex flex-col z-40 bg-primary-container text-on-primary-container shadow-md border-r border-outline-variant/20 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="w-72 h-full flex flex-col justify-between p-4">
-          <div className="space-y-6 flex-1 overflow-y-auto pb-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          <div 
+            ref={navContainerRef}
+            onScroll={handleNavScroll}
+            className="space-y-6 flex-1 overflow-y-auto pb-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+          >
             <div className="flex items-center gap-3 px-2 py-1">
               <div className="w-10 h-10 rounded-lg bg-surface-container-lowest p-1 shadow-sm flex items-center justify-center text-primary font-bold text-xl">S</div>
               <div className="flex flex-col">

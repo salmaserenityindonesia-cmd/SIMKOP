@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
+import React, { useRef, useLayoutEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Boxes,
@@ -107,8 +107,45 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
+  const location = useLocation();
+  const navRef = useRef<HTMLElement | null>(null);
+
+  const handleItemClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    try {
+      const container = e.currentTarget.closest('.overflow-y-auto') as HTMLElement | null;
+      if (container && typeof window !== 'undefined' && window.sessionStorage) {
+        sessionStorage.setItem('simkop_sidebar_scroll_top', String(container.scrollTop));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    if (onItemClick) {
+      onItemClick();
+    }
+  };
+
+  useLayoutEffect(() => {
+    try {
+      if (typeof window === 'undefined' || !window.sessionStorage) return;
+      const container = navRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
+      const savedScrollTop = sessionStorage.getItem('simkop_sidebar_scroll_top');
+      if (container && savedScrollTop !== null) {
+        container.scrollTop = Number(savedScrollTop);
+      } else if (navRef.current) {
+        const activeItem = navRef.current.querySelector(
+          '[aria-current="page"], .border-secondary-fixed'
+        );
+        if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+          activeItem.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        }
+      }
+    } catch {
+      // ignore errors
+    }
+  }, [location.pathname]);
+
   return (
-    <nav className="space-y-6">
+    <nav ref={navRef} className="space-y-6">
       {navigationGroups.map((group) => {
         // Filter items based on user role (if adminOnly, only render for admin)
         const visibleItems = group.items.filter(
@@ -136,7 +173,7 @@ export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
                     key={item.href}
                     to={item.href}
                     end={item.href === '/admin'}
-                    onClick={onItemClick}
+                    onClick={handleItemClick}
                     className={({ isActive }) =>
                       `group flex items-center gap-3 px-3 py-2 rounded-lg font-medium text-xs transition-all duration-150 ${
                         isActive
