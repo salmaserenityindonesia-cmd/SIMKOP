@@ -1,20 +1,12 @@
 ## Current Position
-- **Phase**: 69 (Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman)
-- **Task**: Execution & Verification Complete (Plan 69.1 verified)
-- **Status**: Complete
+- **Phase**: 70 (Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Iuran Bertingkat dan Integrasi Validasi Pengajuan Pinjaman)
+- **Task**: Planning Complete — Ready for Wave 1 Execution (Plan 70.1)
+- **Status**: Ready to Execute
 
-## Plans Completed
-- **Plan 69.1**: Sidebar Scroll Position Persistence & Contextual Auto-Focus (`src/components/layout/AdminLayout.tsx`, `src/components/layout/Sidebar.tsx`, `src/components/layout/Sidebar.test.tsx`)
-  - Commits:
-    - `a56d3f78`: `feat(phase-69): implement scroll position persistence in AdminLayout and Sidebar`
-    - `266dc7c9`: `feat(phase-69): add unit tests for sidebar scroll persistence and verify build`
-
-## Key Accomplishments
-1. **Real-time Scroll Offset Tracking**: Menambahkan `handleNavScroll` pada kontainer navigasi `div.overflow-y-auto` di `AdminLayout.tsx` yang menyimpan posisi `scrollTop` ke `sessionStorage` (`simkop_sidebar_scroll_top`).
-2. **Pre-Navigation Scroll Capture**: Menambahkan `handleItemClick` pada `NavLink` di `Sidebar.tsx` untuk menangkap `scrollTop` sesaat sebelum transisi route dimulai.
-3. **Dual-Layer Scroll Restoration & Auto-Focus**: Menerapkan `useLayoutEffect` berbasis `location.pathname` di `AdminLayout.tsx` dan `Sidebar.tsx` untuk langsung mengembalikan `container.scrollTop`. Apabila belum ada nilai tersimpan, container secara otomatis melakukan `scrollIntoView` ke menu yang aktif (`[aria-current="page"]`).
-4. **Resilient Architecture**: Solusi bekerja mulus meskipun rute pada `App.tsx` merender ulang `<AdminLayout>` di setiap perpindahan halaman.
-5. **Quality Gate Passing**: 12/12 unit tests di `Sidebar.test.tsx` lulus 100%, typecheck dan build produksi (`npm run build`) sukses tanpa error.
+## Phase 70 Plans
+- [ ] **Plan 70.1**: Dynamic Rate Resolver for Master Deposit Types & Display Effective Tier Amount (`src/services/savingsRateService.ts`, `src/services/koperasiService.ts`, `src/pages/admin/ManajemenProdukSimpanPinjam.tsx`)
+- [ ] **Plan 70.2**: Integrate Active Savings Deductions & Tenor Constraints into Loan Application Validation (`src/services/loanService.ts`, `src/pages/admin/PengajuanPinjaman.tsx`, `src/services/loanService.test.ts`, `src/pages/admin/PengajuanPinjaman.test.tsx`)
 
 ## Next Steps
-1. Siap untuk audit / verifikasi fase (`/verify 69`).
+1. Jalankan `/execute 70 1` untuk eksekusi Plan 70.1 (Dynamic Rate Resolver & Display Effective Tier Amount).
+2. Lanjutkan dengan `/execute 70 2` untuk eksekusi Plan 70.2 (Loan Application Savings Deductions & Tenor Constraints).
