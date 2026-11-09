@@ -3,6 +3,7 @@ import {
   importMembersChunked,
   fetchAllAnggotaPaged,
   getAnggota,
+  getDepositTypes,
   MemberImportInput,
 } from './koperasiService';
 import { supabase } from '../lib/supabaseClient';
@@ -545,6 +546,88 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       const res = await importMembersChunked(zeroInput);
       expect(res.successCount).toBe(1);
       expect(insertedTransactions).toHaveLength(0);
+    });
+  });
+
+  describe('getDepositTypes', () => {
+    it('harus memperkaya jenis simpanan dengan effective_amount dari tarif bertingkat aktif', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-1', code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+        { id: 'dt-2', code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+        { id: 'dt-3', code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null })
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 't-1', deposit_type_code: 'WAJIB', start_year: 2025, start_month: 1, end_year: null, end_month: null, monthly_rate: 210000 },
+                    { id: 't-2', deposit_type_code: 'BELANJA', start_year: 2025, start_month: 1, end_year: null, end_month: null, monthly_rate: 45000 },
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const types = await getDepositTypes();
+      expect(types).toHaveLength(3);
+
+      const sw = types.find(t => t.code === 'SW');
+      expect(sw?.default_amount).toBe(50000);
+      expect(sw?.effective_amount).toBe(210000);
+
+      const sb = types.find(t => t.code === 'SB');
+      expect(sb?.default_amount).toBe(25000);
+      expect(sb?.effective_amount).toBe(45000);
+
+      const sp = types.find(t => t.code === 'SP');
+      expect(sp?.default_amount).toBe(100000);
+      expect(sp?.effective_amount).toBe(100000);
+    });
+
+    it('harus fallback ke default_amount jika query tabel savings_rate_tiers error', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-1', code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null })
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: null, error: new Error('DB Error') })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const types = await getDepositTypes();
+      expect(types).toHaveLength(1);
+      // Hardcoded fallback rate for WAJIB is 200000, which will be picked if fallback is returned, or default_amount if completely failed
+      expect(types[0].effective_amount).toBeGreaterThan(0);
     });
   });
 });

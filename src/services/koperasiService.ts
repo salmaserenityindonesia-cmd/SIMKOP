@@ -5,6 +5,7 @@ function shouldFallback(e: any): boolean {
 }
 
 import { supabase } from '../lib/supabaseClient';
+import { getActiveSavingsRateTiers } from './savingsRateService';
 
 export interface Pengelola {
   id: string;
@@ -46,6 +47,7 @@ export interface DepositType {
   default_amount: number;
   can_be_withdrawn: boolean;
   is_active: boolean;
+  effective_amount?: number;
 }
 
 export interface MemberDeposit {
@@ -1334,7 +1336,38 @@ export async function getDepositTypes(): Promise<DepositType[]> {
     if (shouldFallback(error)) return [];
     throw new Error(`Failed to fetch deposit types: ${error.message}`);
   }
-  return data as DepositType[];
+
+  const depositTypes = (data || []) as DepositType[];
+
+  try {
+    const activeRates = await getActiveSavingsRateTiers();
+    return depositTypes.map((dt) => {
+      const codeUpper = (dt.code || '').toUpperCase();
+      const nameLower = (dt.name || '').toLowerCase();
+
+      let effectiveRate = activeRates[codeUpper];
+      if (effectiveRate === undefined || effectiveRate <= 0) {
+        if (codeUpper === 'SW' || nameLower.includes('wajib')) {
+          effectiveRate = activeRates['WAJIB'] || activeRates['SW'];
+        } else if (codeUpper === 'SB' || nameLower.includes('belanja')) {
+          effectiveRate = activeRates['BELANJA'] || activeRates['SB'];
+        } else if (codeUpper === 'SL' || nameLower.includes('lebaran') || nameLower.includes('hari raya')) {
+          effectiveRate = activeRates['LEBARAN'] || activeRates['SL'];
+        }
+      }
+
+      return {
+        ...dt,
+        effective_amount: (effectiveRate !== undefined && effectiveRate > 0) ? effectiveRate : dt.default_amount
+      };
+    });
+  } catch (err) {
+    console.warn('Gagal menyinkronkan tarif bertingkat ke deposit_types:', err);
+    return depositTypes.map((dt) => ({
+      ...dt,
+      effective_amount: dt.default_amount
+    }));
+  }
 }
 
 export async function addDepositType(depositType: Omit<DepositType, 'id'>): Promise<DepositType> {

@@ -389,3 +389,61 @@ export function getApplicableTierRate(
   return getApplicableRate(depositTypeCode, year, month, tiers);
 }
 
+/**
+ * Mengambil seluruh tier tarif aktif untuk tahun dan bulan tertentu (default: bulan dan tahun berjalan).
+ * Mengembalikan mapping objek dictionary Record<string, number> (contoh: { WAJIB: 200000, BELANJA: 25000, LEBARAN: 50000, SW: 200000, ... })
+ */
+export async function getActiveSavingsRateTiers(
+  year?: number,
+  month?: number
+): Promise<Record<string, number>> {
+  const now = new Date();
+  const targetYear = year !== undefined && !isNaN(year) ? year : now.getFullYear();
+  const targetMonth = month !== undefined && !isNaN(month) ? month : (now.getMonth() + 1);
+
+  const result: Record<string, number> = {};
+
+  try {
+    const tiers = await getRateTiers();
+    const codes = new Set<string>(['WAJIB', 'BELANJA', 'LEBARAN']);
+    for (const t of tiers) {
+      if (t.deposit_type_code) {
+        codes.add(t.deposit_type_code.toUpperCase());
+      }
+    }
+
+    for (const code of codes) {
+      const rate = getApplicableRate(code, targetYear, targetMonth, tiers);
+      if (rate > 0) {
+        result[code] = rate;
+      }
+    }
+
+    // Dukung alias kode standar database ('SW' -> 'WAJIB', 'SB' -> 'BELANJA', 'SL' -> 'LEBARAN')
+    if (result['WAJIB'] !== undefined && result['SW'] === undefined) {
+      result['SW'] = result['WAJIB'];
+    }
+    if (result['BELANJA'] !== undefined && result['SB'] === undefined) {
+      result['SB'] = result['BELANJA'];
+    }
+    if (result['LEBARAN'] !== undefined && result['SL'] === undefined) {
+      result['SL'] = result['LEBARAN'];
+    }
+  } catch (err) {
+    console.warn('Gagal memuat active savings rate tiers:', err);
+    // Fallback default aman jika offline atau ada error
+    const wRate = getApplicableRate('WAJIB', targetYear, targetMonth);
+    const bRate = getApplicableRate('BELANJA', targetYear, targetMonth);
+    const lRate = getApplicableRate('LEBARAN', targetYear, targetMonth);
+    result['WAJIB'] = wRate;
+    result['SW'] = wRate;
+    result['BELANJA'] = bRate;
+    result['SB'] = bRate;
+    result['LEBARAN'] = lRate;
+    result['SL'] = lRate;
+  }
+
+  return result;
+}
+
+

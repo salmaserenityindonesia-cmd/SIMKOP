@@ -4,6 +4,7 @@ import {
   addRateTier,
   deleteRateTier,
   getApplicableRate,
+  getActiveSavingsRateTiers,
   getPreviousMonth,
   clearTierCache,
   DEFAULT_RATE_TIERS,
@@ -483,6 +484,74 @@ describe('savingsRateService', () => {
       });
 
       await expect(deleteRateTier('tier-id')).rejects.toThrow('RLS violation: delete not allowed');
+    });
+  });
+
+  describe('getActiveSavingsRateTiers', () => {
+    it('should return active rate dictionary for given year and month with aliases', async () => {
+      const mockTiers: SavingsRateTier[] = [
+        {
+          id: 'tier-1',
+          deposit_type_code: 'WAJIB',
+          start_year: 2025,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 210000
+        },
+        {
+          id: 'tier-2',
+          deposit_type_code: 'BELANJA',
+          start_year: 2025,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 45000
+        },
+        {
+          id: 'tier-3',
+          deposit_type_code: 'LEBARAN',
+          start_year: 2025,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 60000
+        }
+      ];
+
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: mockTiers, error: null })
+          })
+        })
+      });
+
+      const rates = await getActiveSavingsRateTiers(2026, 5);
+      expect(rates['WAJIB']).toBe(210000);
+      expect(rates['SW']).toBe(210000);
+      expect(rates['BELANJA']).toBe(45000);
+      expect(rates['SB']).toBe(45000);
+      expect(rates['LEBARAN']).toBe(60000);
+      expect(rates['SL']).toBe(60000);
+    });
+
+    it('should fallback gracefully to hardcoded defaults if database query fails', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: null, error: new Error('Network error') })
+          })
+        })
+      });
+
+      const rates = await getActiveSavingsRateTiers(2026, 1);
+      expect(rates['WAJIB']).toBe(200000);
+      expect(rates['SW']).toBe(200000);
+      expect(rates['BELANJA']).toBe(25000);
+      expect(rates['SB']).toBe(25000);
+      expect(rates['LEBARAN']).toBe(50000);
+      expect(rates['SL']).toBe(50000);
     });
   });
 });
