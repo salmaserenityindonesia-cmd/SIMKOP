@@ -64,7 +64,7 @@ describe('loanService', () => {
   });
 
   describe('getMemberTHP - resilient multi-column binding', () => {
-    it('should read master_thp directly if present', async () => {
+    it('should read master_thp directly if present and deduct active savings', async () => {
       const mockSupabase = supabase.from as any;
       mockSupabase.mockImplementationOnce(() => ({
         select: () => ({
@@ -84,7 +84,8 @@ describe('loanService', () => {
       const res = await loanService.getMemberTHP('m-1');
       expect(res.master_thp).toBe(6000000);
       expect(res.active_installments).toBe(1000000);
-      expect(res.remaining_thp).toBe(5000000);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(4800000);
     });
 
     it('should fallback to take_home_pay if master_thp is null or missing', async () => {
@@ -107,7 +108,8 @@ describe('loanService', () => {
       const res = await loanService.getMemberTHP('m-2');
       expect(res.master_thp).toBe(4500000);
       expect(res.active_installments).toBe(0);
-      expect(res.remaining_thp).toBe(4500000);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(4300000);
     });
 
     it('should prioritize take_home_pay if master_thp is 0 (imported THP case)', async () => {
@@ -139,7 +141,8 @@ describe('loanService', () => {
 
       const res = await loanService.getMemberTHP('m-wawan');
       expect(res.master_thp).toBe(5000000);
-      expect(res.remaining_thp).toBe(5000000);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(4800000);
     });
 
     it('should sanitize formatted currency string in take_home_pay', async () => {
@@ -168,7 +171,8 @@ describe('loanService', () => {
 
       const res = await loanService.getMemberTHP('m-wawan-str');
       expect(res.master_thp).toBe(5250000);
-      expect(res.remaining_thp).toBe(5250000);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(5050000);
     });
 
     it('should fallback to select * and salary if specific column select fails with error', async () => {
@@ -200,7 +204,8 @@ describe('loanService', () => {
 
       const res = await loanService.getMemberTHP('m-3');
       expect(res.master_thp).toBe(4000000);
-      expect(res.remaining_thp).toBe(4000000);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(3800000);
     });
 
     it('should fallback to 0 when no salary or thp columns are present', async () => {
@@ -222,7 +227,51 @@ describe('loanService', () => {
 
       const res = await loanService.getMemberTHP('m-4');
       expect(res.master_thp).toBe(0);
-      expect(res.remaining_thp).toBe(0);
+      expect(res.savings_deduction).toBe(200000);
+      expect(res.remaining_thp).toBe(-200000);
+    });
+
+    it('should aggregate all active member_deposits (WAJIB, BELANJA, LEBARAN) accurately', async () => {
+      const mockSupabase = supabase.from as any;
+      // 1. Anggota
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: 5000000 }, error: null })
+          })
+        })
+      }));
+      // 2. Active loans
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [{ monthly_target: 500000 }], error: null })
+          })
+        })
+      }));
+      // 3. Member deposits (WAJIB + BELANJA + LEBARAN)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                { deposit_types: { code: 'WAJIB' } },
+                { deposit_types: { code: 'BELANJA' } },
+                { deposit_types: { code: 'LEBARAN' } }
+              ],
+              error: null
+            })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-multi-deposits');
+      expect(res.master_thp).toBe(5000000);
+      expect(res.active_installments).toBe(500000);
+      // WAJIB (200k) + BELANJA (25k) + LEBARAN (50k) = 275k
+      expect(res.savings_deduction).toBe(275000);
+      // 5,000,000 - 500,000 - 275,000 = 4,225,000
+      expect(res.remaining_thp).toBe(4225000);
     });
   });
 
@@ -249,18 +298,63 @@ describe('loanService', () => {
         })
       }));
 
-      // Sisa THP saat ini: 5,000,000 - 2,000,000 = 3,000,000
+      // Third call is to get member_deposits
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // Sisa THP saat ini: 5,000,000 - 2,000,000 - 200,000 (Wajib) = 2,800,000
       // Ajukan pinjaman Rp 20,000,000 tenor 10 bulan -> cicilan 2,000,000
-      // Sisa THP setelah pengajuan = 1,000,000 (Kurang dari 1,500,000, shortfall 500,000)
+      // Sisa THP setelah pengajuan = 800,000 (Kurang dari 1,500,000, shortfall 700,000)
       
       await expect(loanService.applyLoan('member-1', 'Beli Motor', 20000000, 10))
         .rejects
-        .toThrow(/Sisa THP setelah pemotongan \(Rp 1\.000\.000\) kurang Rp 500\.000 dari batas minimal Rp 1\.500\.000/);
+        .toThrow(/Sisa THP setelah pemotongan \(Rp 800\.000\) kurang Rp 700\.000 dari batas minimal Rp 1\.500\.000/);
+    });
+
+    it('should reject loan when savings deduction triggers shortfall below 1,500,000', async () => {
+      const mockSupabase = supabase.from as any;
+
+      // 1. Anggota: 3,500,000
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: 3500000 }, error: null })
+          })
+        })
+      }));
+      // 2. Loans: 0
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+      // 3. Member deposits: default WAJIB 200,000
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // Without savings: 3,500,000 - 1,900,000 = 1,600,000 (>= 1,500,000 -> would pass)
+      // With savings: 3,500,000 - 200,000 = 3,300,000 - 1,900,000 = 1,400,000 (< 1,500,000, shortfall 100,000)
+      await expect(loanService.applyLoan('member-borderline', 'Renovasi', 19000000, 10))
+        .rejects
+        .toThrow(/Sisa THP setelah pemotongan \(Rp 1\.400\.000\) kurang Rp 100\.000 dari batas minimal Rp 1\.500\.000/);
     });
 
     it('should approve loan if remaining THP is sufficient', async () => {
       const mockSupabase = supabase.from as any;
       
+      // 1. Anggota
       mockSupabase.mockImplementationOnce(() => ({
         select: () => ({
           eq: () => ({
@@ -269,6 +363,7 @@ describe('loanService', () => {
         })
       }));
 
+      // 2. Loans (active)
       mockSupabase.mockImplementationOnce(() => ({
         select: () => ({
           eq: () => ({
@@ -277,7 +372,16 @@ describe('loanService', () => {
         })
       }));
 
-      // Third call is loan_types
+      // 3. Member deposits
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // 4. loan_types
       mockSupabase.mockImplementationOnce(() => ({
         select: () => ({
           eq: () => ({
@@ -286,7 +390,7 @@ describe('loanService', () => {
         })
       }));
 
-      // Fourth call is insert loan
+      // 5. insert loan
       mockSupabase.mockImplementationOnce(() => ({
         insert: () => ({
           select: () => ({
@@ -295,9 +399,9 @@ describe('loanService', () => {
         })
       }));
 
-      // Sisa THP: 5M - 1M = 4M.
+      // Sisa THP: 5M - 1M - 200k = 3.8M.
       // Ajukan pinjaman: 12M / 12 = 1M/bulan
-      // Sisa setelah = 3M (Aman, > 1.5M)
+      // Sisa setelah = 2.8M (Aman, > 1.5M)
       
       const res = await loanService.applyLoan('member-1', 'Beli Laptop', 12000000, 12);
       expect(res.status).toBe('draft');

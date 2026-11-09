@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { getActiveSavingsRateTiers } from './savingsRateService';
 
 export interface Loan {
   id: string;
@@ -140,7 +141,12 @@ export const loanService = {
     return data;
   },
 
-  async getMemberTHP(memberId: string): Promise<{ master_thp: number; active_installments: number; remaining_thp: number }> {
+  async getMemberTHP(memberId: string): Promise<{
+    master_thp: number;
+    active_installments: number;
+    savings_deduction: number;
+    remaining_thp: number;
+  }> {
     // 1. Get member master_thp with fallback
     let memberData: any = null;
     const { data: member, error: memberError } = await supabase
@@ -195,10 +201,54 @@ export const loanService = {
 
     if (loansError) throw new Error(loansError.message);
 
-    const activeInstallments = activeLoans.reduce((sum, loan) => sum + Number(loan.monthly_target), 0);
-    const remainingThp = masterThp - activeInstallments;
+    const activeInstallments = (activeLoans || []).reduce((sum, loan) => sum + Number(loan.monthly_target || 0), 0);
 
-    return { master_thp: masterThp, active_installments: activeInstallments, remaining_thp: remainingThp };
+    // 3. Get active savings rate tiers & member deposit commitments
+    let savingsDeduction = 0;
+    try {
+      const activeRates = await getActiveSavingsRateTiers();
+      const defaultWajibRate = activeRates['WAJIB'] || 200000;
+
+      const { data: memberDeposits, error: depError } = await supabase
+        .from('member_deposits')
+        .select('id, deposit_type_id, is_terminated, deposit_types(code)')
+        .eq('member_id', memberId)
+        .eq('is_terminated', false);
+
+      if (!depError && memberDeposits && memberDeposits.length > 0) {
+        let total = 0;
+        let hasWajib = false;
+        for (const dep of memberDeposits) {
+          const rawCode = Array.isArray(dep.deposit_types)
+            ? dep.deposit_types[0]?.code
+            : (dep.deposit_types as any)?.code;
+          const code = (rawCode || '').toUpperCase();
+          if (code === 'WAJIB' || code === 'SW') {
+            hasWajib = true;
+          }
+          const rate = activeRates[code] || (code === 'WAJIB' || code === 'SW' ? defaultWajibRate : 0);
+          total += rate;
+        }
+        if (!hasWajib && defaultWajibRate > 0) {
+          total += defaultWajibRate;
+        }
+        savingsDeduction = total;
+      } else {
+        savingsDeduction = defaultWajibRate;
+      }
+    } catch (err) {
+      console.warn('Gagal memuat potongan simpanan aktif, fallback default:', err);
+      savingsDeduction = 200000;
+    }
+
+    const remainingThp = masterThp - activeInstallments - savingsDeduction;
+
+    return {
+      master_thp: masterThp,
+      active_installments: activeInstallments,
+      savings_deduction: savingsDeduction,
+      remaining_thp: remainingThp
+    };
   },
 
   async applyLoan(memberId: string, purpose: string, amount: number, tenor: number) {
