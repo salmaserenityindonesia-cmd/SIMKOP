@@ -1310,14 +1310,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 74: Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 **Objective:** Mengimplementasikan jendela 12 bulan bergulir lintas tahun berdasarkan bulan pembayaran terakhir anggota (misal Nov-25 s/d Okt-26) pada Matriks Tracking Simpanan (`/admin/compliance-matrix`), menambahkan kolom khusus Saldo Awal Pra-Jendela sebelum kolom bulan pertama, dan menjaga running cumulative balance tetap seimbang sempurna dengan saldo kas riil anggota.
 **Depends on:** Phase 73
 
 **Plans:**
-- [ ] Plan 74.1: Cross-Year Rolling Window & Prior Balance Summary Engine
-- [ ] Plan 74.2: Dynamic Table Headers & Prior Balance Summary Column in ComplianceMatrix
-- [ ] Plan 74.3: Static Verification, Full Test Suite, and Production Build Check
+- [x] Plan 74.1: Cross-Year Rolling Window & Prior Balance Summary Engine
+- [x] Plan 74.2: Dynamic Table Headers & Prior Balance Summary Column in ComplianceMatrix
+- [x] Plan 74.3: Static Verification, Full Test Suite, and Production Build Check
 
 **Deliverables:**
 - Generator `getRolling12MonthRange` dan kalkulasi `priorSummary` di `src/services/complianceService.ts`
@@ -1461,7 +1461,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ✅ | 2/2 | 100% |
 | 72 | Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel | ✅ | 3/3 | 100% |
 | 73 | Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan | ✅ | 3/3 | 100% |
-| 74 | Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan | ⬜ | 0/3 | 0% |
+| 74 | Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1542,7 +1542,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 71 | 2026-11-09 | 2026-11-09 | 1 day |
 | 72 | 2026-11-09 | 2026-11-09 | 1 day |
 | 73 | 2026-11-09 | 2026-11-09 | 1 day |
-| 74 | 2026-11-10 | — | — |
+| 74 | 2026-11-10 | 2026-11-10 | 1 day |
 
 
 
