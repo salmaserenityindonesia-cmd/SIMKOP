@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 69 — Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman
+> **Current Phase:** 72 — Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel
 > **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
@@ -1272,6 +1272,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 72: Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel
+**Status:** ✅ Complete
+**Objective:** Mengimplementasikan mesin penguraian mundur (reverse chronological breakdown) dari bulan berjalan hingga tanggal awal anggota berdasarkan konfigurasi tarif bertingkat (`savings_rate_tiers`), pengabaian penguraian periode historis pra-2020 sebagai saldo utuh lump-sum, serta penyajian badge peringatan audit selisih transparan dan modal inspeksi rincian uraian bulanan pada Pratinjau Migrasi Anggota di `/admin/anggota`.
+**Depends on:** Phase 71, Phase 50, Phase 44
+
+**Plans:**
+- [x] Plan 72.1: Reverse Chronological Breakdown & Difference Validator in Migration Parser
+- [x] Plan 72.2: Warning Badges & Breakdown Inspection in Preview Modal
+- [x] Plan 72.3: Verification, Full Test Suite, and Production Build Check
+
+**Deliverables:**
+- Fungsi mesin `computeReverseWajibBreakdown` dan pengujian unit komprehensif di `src/utils/memberMigrationParser.ts`
+- Props dan integrasi tarif berjenjang simpanan wajib aktif di `src/pages/admin/ManajemenAnggota.tsx`
+- Tampilan badge selisih (merah/oranye), seimbang (hijau), dan saldo utuh pra-2020 (biru) beserta modal detail uraian di `src/components/members/MemberMigrationModal.tsx`
+- Verifikasi otomatis via vitest dan build produksi Vite bebas error
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1404,6 +1422,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
 | 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ✅ | 2/2 | 100% |
 | 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ✅ | 2/2 | 100% |
+| 72 | Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1482,6 +1501,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 69 | 2026-11-09 | 2026-11-09 | 1 day |
 | 70 | 2026-11-09 | 2026-11-09 | 1 day |
 | 71 | 2026-11-09 | 2026-11-09 | 1 day |
+| 72 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
 

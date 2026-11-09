@@ -1,22 +1,24 @@
 ## Current Position
-- **Phase**: 71 (Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat di /admin/pengaturan)
-- **Task**: Phase 71 Complete (Plan 71.1 & Plan 71.2 Done)
+- **Phase**: 72 (Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel)
+- **Task**: Phase 72 Complete (Plan 72.1, 72.2, 72.3 Done)
 - **Status**: Completed
 
-## Plans Completed (Phase 71)
-- [x] **Plan 71.1**: Support 'POKOK' in savingsRateService.ts & PengaturanKoperasi.tsx
+## Plans Completed (Phase 72)
+- [x] **Plan 72.1**: Reverse Chronological Breakdown & Difference Validator in Migration Parser
   - Commits:
-    - `98d2496b`: feat(phase-71): expand savings rate tier code type and helpers to support Simpanan Pokok
-    - `3175caa7`: feat(phase-71): update modal form, table display, and tests for Simpanan Pokok in PengaturanKoperasi
-  - Summary: `.gsd/phases/71/71-1-SUMMARY.md`
-- [x] **Plan 71.2**: Bind Active Pokok Rate to Master Products, Member Registration & Full Verification
+    - `64e6c20c`: feat(phase-72): implement reverse chronological breakdown and discrepancy calculator in migration parser
+  - Summary: `.gsd/phases/72/72-1-SUMMARY.md`
+- [x] **Plan 72.2**: Warning Badges & Breakdown Inspection in Preview Modal
   - Commits:
-    - `71b37712`: feat(phase-71): bind active pokok tier rate to master products and member defaults
-    - `d6d82e6d`: feat(phase-71): verify full test suite, typecheck and production build output
-  - Summary: `.gsd/phases/71/71-2-SUMMARY.md`
+    - `21b87c34`: feat(phase-72): integrate savings rate tiers and difference inspection into member migration modal
+  - Summary: `.gsd/phases/72/72-2-SUMMARY.md`
+- [x] **Plan 72.3**: Verification, Full Test Suite, and Production Build Check
+  - Commits:
+    - `71f5ef3b`: test(phase-72): add unit tests for member migration modal tiered breakdown and discrepancy badges
+  - Summary: `.gsd/phases/72/72-3-SUMMARY.md`
 
-## Remaining Plans (Phase 71)
+## Remaining Plans (Phase 72)
 - None. All plans completed.
 
 ## Next Steps
-1. Phase 71 audit & verification via `/verify 71`.
+1. Phase 72 audit & verification via `/verify 72`.
