@@ -172,4 +172,118 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
     expect(markup).toContain('transition-all duration-300');
     expect(markup).toContain('disabled=""'); // Buttons disabled during import
   });
+
+  it('renders discrepancy warning badge, balanced badge, and pre-2020 badge based on savings rate tiers', () => {
+    const tieredParseResult: MemberParseResult = {
+      errors: [],
+      rows: [
+        {
+          nrp: '111',
+          nama: 'Budi Seimbang',
+          pangkat: 'Bripda',
+          bank_account_number: '111222',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2026-09-01', // 3 bulan s/d Nov 2026 @ 200k = 600.000
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 600000,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+          jumlah_pinjaman: 0,
+          tgl_awal_pinjaman: null,
+          tenor: 0,
+          sisa_pinjaman: 0,
+          n_bulan_simpanan: 1,
+          wajib_per_bulan: 600000,
+          belanja_per_bulan: 0,
+          lebaran_per_bulan: 0,
+          n_bulan_pinjaman: 0,
+          sudah_diangsur: 0,
+          angsuran_lampau_per_bulan: 0,
+        },
+        {
+          nrp: '222',
+          nama: 'Chandra Selisih',
+          pangkat: 'Briptu',
+          bank_account_number: '222333',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2026-09-01', // 3 bulan s/d Nov 2026 @ 200k = 600.000, di Excel 1.000.000 (Selisih +400.000)
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 1000000,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+          jumlah_pinjaman: 0,
+          tgl_awal_pinjaman: null,
+          tenor: 0,
+          sisa_pinjaman: 0,
+          n_bulan_simpanan: 1,
+          wajib_per_bulan: 1000000,
+          belanja_per_bulan: 0,
+          lebaran_per_bulan: 0,
+          n_bulan_pinjaman: 0,
+          sudah_diangsur: 0,
+          angsuran_lampau_per_bulan: 0,
+        },
+        {
+          nrp: '333',
+          nama: 'Dedi Veteran Pra-2020',
+          pangkat: 'Aiptu',
+          bank_account_number: '333444',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2018-05-10', // Sebelum 2020
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 25000000,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+          jumlah_pinjaman: 0,
+          tgl_awal_pinjaman: null,
+          tenor: 0,
+          sisa_pinjaman: 0,
+          n_bulan_simpanan: 1,
+          wajib_per_bulan: 25000000,
+          belanja_per_bulan: 0,
+          lebaran_per_bulan: 0,
+          n_bulan_pinjaman: 0,
+          sudah_diangsur: 0,
+          angsuran_lampau_per_bulan: 0,
+        },
+      ],
+    };
+
+    const tiers = [
+      {
+        startYear: 2024,
+        startMonth: 1,
+        endYear: null,
+        endMonth: null,
+        monthlyAmount: 200000,
+      },
+    ];
+
+    const markup = renderToStaticMarkup(
+      React.createElement(MemberMigrationModal, {
+        isOpen: true,
+        onClose: vi.fn(),
+        onConfirm: vi.fn(),
+        parseResult: tieredParseResult,
+        isImporting: false,
+        wajibRateTiers: tiers,
+      })
+    );
+
+    // Audit summary bar
+    expect(markup).toContain('Audit Tarif Bertingkat Simpanan Wajib');
+    expect(markup).toContain('Seimbang:');
+    expect(markup).toContain('Historis Pra-2020:');
+    expect(markup).toContain('Terdapat Selisih:');
+
+    // Budi Seimbang
+    expect(markup).toContain('Seimbang (');
+
+    // Chandra Selisih
+    expect(markup).toContain('Selisih:');
+    expect(markup).toContain('Ekspektasi sistem');
+
+    // Dedi Veteran Pra-2020
+    expect(markup).toContain('Pra-2020: Utuh');
+  });
 });
