@@ -69,6 +69,16 @@ vi.mock('../../services/settingsService', () => ({
 const { mockTiers } = vi.hoisted(() => ({
   mockTiers: [
     {
+      id: 'tier-pokok-1',
+      deposit_type_code: 'POKOK',
+      start_year: 2024,
+      start_month: 1,
+      end_year: null,
+      end_month: null,
+      monthly_rate: 100000,
+      notes: 'Tarif Simpanan Pokok Standar (Rp 100.000)'
+    },
+    {
       id: 'tier-wajib-1',
       deposit_type_code: 'WAJIB',
       start_year: 2024,
@@ -164,6 +174,14 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
     });
 
     it('getDepositTypeBadge returns appropriate badge styling and label for each savings type', () => {
+      const pokokBadge = getDepositTypeBadge('POKOK');
+      expect(pokokBadge.label).toBe('Simpanan Pokok');
+      expect(pokokBadge.className).toContain('blue');
+
+      const spBadge = getDepositTypeBadge('SP');
+      expect(spBadge.label).toBe('Simpanan Pokok');
+      expect(spBadge.className).toContain('blue');
+
       const wajibBadge = getDepositTypeBadge('WAJIB');
       expect(wajibBadge.label).toBe('Simpanan Wajib');
       expect(wajibBadge.className).toContain('emerald');
@@ -176,8 +194,8 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       expect(lebaranBadge.label).toBe('Simpanan Lebaran');
       expect(lebaranBadge.className).toContain('purple');
 
-      const unknownBadge = getDepositTypeBadge('POKOK');
-      expect(unknownBadge.label).toBe('POKOK');
+      const unknownBadge = getDepositTypeBadge('UNKNOWN_CUSTOM');
+      expect(unknownBadge.label).toBe('UNKNOWN_CUSTOM');
     });
 
     it('isTierActive detects active vs historical tiers based on date index', () => {
@@ -231,6 +249,11 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       expect(html).toContain('Aksi');
 
       // Tiers data rows
+      expect(html).toContain('Simpanan Pokok');
+      expect(html).toContain('100.000');
+      expect(html).toContain('(Sekali Bayar / Awal)');
+      expect(html).toContain('Tarif Simpanan Pokok Standar (Rp 100.000)');
+
       expect(html).toContain('Simpanan Wajib');
       expect(html).toContain('Januari 2024 - Oktober 2025');
       expect(html).toContain('150.000');
@@ -266,17 +289,35 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
 
       expect(html).toContain('Tambah Kenaikan Tarif Simpanan');
       expect(html).toContain('Konfigurasi nominal iuran berjenjang untuk periode waktu tertentu');
+      expect(html).toContain('<option value="POKOK">Simpanan Pokok</option>');
+      expect(html).toContain('Simpanan Wajib');
+      expect(html).toContain('Simpanan Belanja');
+      expect(html).toContain('Simpanan Hari Raya (Lebaran)');
       expect(html).toContain('Berlaku Seterusnya (Open-Ended)');
       expect(html).toContain('Nominal Iuran Bulanan Baru (Rp)');
       expect(html).toContain('Catatan / Dasar Keputusan (Opsional)');
       expect(html).toContain('Simpan Tarif');
+    });
+
+    it('renders dynamic label and placeholder for Simpanan Pokok in Add Modal', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialRateTiers={mockTiers}
+          initialAddModalOpen={true}
+          initialTierCode="POKOK"
+        />
+      );
+
+      expect(html).toContain('Nominal Simpanan Pokok Baru (Rp)');
+      expect(html).toContain('Contoh: 100000');
     });
   });
 
   describe('Service Integration Contract', () => {
     it('calls savingsRateService.getRateTiers to load tiers', async () => {
       const tiers = await savingsRateService.getRateTiers();
-      expect(tiers).toHaveLength(4);
+      expect(tiers).toHaveLength(5);
       expect(savingsRateService.getRateTiers).toHaveBeenCalled();
     });
 
