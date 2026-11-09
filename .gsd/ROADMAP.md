@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 61 — Transformasi Modal Buku Bantu Angsuran Pinjaman Menjadi Matriks Interaktif (UX Simpanan)
+> **Current Phase:** 69 — Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman
 > **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
@@ -1222,12 +1222,12 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 69: Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Mencegah kontainer scroll menu navigasi kiri (`Sidebar.tsx` / `AdminLayout.tsx`) melompat kembali ke posisi paling atas saat pengguna mengklik menu di kelompok navigasi bawah (seperti Manajemen Anggota, Buku Besar Belanja, atau Laporan Keuangan), dengan menerapkan retensi posisi scroll berbasis `sessionStorage` (`simkop_sidebar_scroll_top`) dan auto-scroll kontekstual (`scrollIntoView`) pada menu aktif saat terjadi pergantian rute.
 **Depends on:** Phase 68, Phase 2
 
 **Plans:**
-- [ ] Plan 69.1: Sidebar Scroll Position Persistence & Contextual Auto-Focus
+- [x] Plan 69.1: Sidebar Scroll Position Persistence & Contextual Auto-Focus
 
 **Deliverables:**
 - Retensi posisi scroll otomatis via `sessionStorage` pada kontainer scrollable di `src/components/layout/AdminLayout.tsx`
@@ -1366,7 +1366,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 66 | Tampilkan Nilai Perkiraan Sisa THP dan Defisit Ambang Batas pada Validasi Pengajuan Pinjaman | ✅ | 1/1 | 100% |
 | 67 | Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval | ✅ | 1/1 | 100% |
 | 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ✅ | 2/2 | 100% |
-| 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ⏳ | 0/1 | 0% |
+| 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
 
 ---
 
@@ -1442,6 +1442,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 66 | 2026-11-08 | 2026-11-08 | 1 day |
 | 67 | 2026-11-09 | 2026-11-09 | 1 day |
 | 68 | 2026-11-09 | 2026-11-09 | 1 day |
-| 69 | 2026-11-09 | — | 1 day |
+| 69 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
