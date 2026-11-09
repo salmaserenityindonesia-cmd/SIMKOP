@@ -6,6 +6,7 @@ import {
   parseSafeDate,
   sanitizeBankAccountNumber,
   sanitizeDateString,
+  computeReverseWajibBreakdown,
 } from './memberMigrationParser';
 
 describe('memberMigrationParser - generateMigrationLoanSchedules', () => {
@@ -266,5 +267,107 @@ describe('memberMigrationParser - sanitizeMigrationLoanRow', () => {
     expect(sanitizeDateString('2023-08-20')).toBe('2023-08-20');
     expect(sanitizeDateString('10')).toBe('10');
     expect(sanitizeDateString(null)).toBeNull();
+  });
+});
+
+describe('memberMigrationParser - computeReverseWajibBreakdown', () => {
+  const tiers = [
+    {
+      startYear: 2024,
+      startMonth: 1,
+      endYear: 2025,
+      endMonth: 10,
+      monthlyAmount: 150000,
+    },
+    {
+      startYear: 2025,
+      startMonth: 11,
+      endYear: null,
+      endMonth: null,
+      monthlyAmount: 200000,
+    },
+  ];
+
+  it('correctly calculates reverse breakdown from current date back to join date with zero difference', () => {
+    // Current date: 2026-11-15 (Nov 2026)
+    // Joined: 2025-10-01 (Oct 2025)
+    // Breakdown months:
+    // 2026: Nov, Oct, Sep, Aug, Jul, Jun, May, Apr, Mar, Feb, Jan (11 months @ 200k = 2,200,000)
+    // 2025: Dec, Nov (2 months @ 200k = 400,000)
+    // 2025: Oct (1 month @ 150k = 150,000)
+    // Total months: 14 months, calculatedTotal = 2,750,000
+    const fakeNow = new Date(2026, 10, 15); // Nov 2026
+    const res = computeReverseWajibBreakdown('2025-10-01', 2750000, tiers, fakeNow);
+
+    expect(res.monthsCount).toBe(14);
+    expect(res.calculatedTotal).toBe(2750000);
+    expect(res.excelWajibAmount).toBe(2750000);
+    expect(res.difference).toBe(0);
+    expect(res.hasDifference).toBe(false);
+    expect(res.isPre2020Member).toBe(false);
+    expect(res.pre2020LumpSum).toBe(0);
+
+    // Verify reverse order: starts with Nov 2026, ends with Oct 2025
+    expect(res.monthlyBreakdown[0]).toEqual({ year: 2026, month: 11, amount: 200000 });
+    expect(res.monthlyBreakdown[13]).toEqual({ year: 2025, month: 10, amount: 150000 });
+  });
+
+  it('detects positive and negative difference for members joined after 2020', () => {
+    const fakeNow = new Date(2026, 10, 15); // Nov 2026
+    // Joined 2026-09-01 -> Sept, Oct, Nov 2026 = 3 months @ 200k = 600,000
+    
+    // Case 1: Excel has excess (800,000 vs 600,000)
+    const excessRes = computeReverseWajibBreakdown('2026-09-01', 800000, tiers, fakeNow);
+    expect(excessRes.monthsCount).toBe(3);
+    expect(excessRes.calculatedTotal).toBe(600000);
+    expect(excessRes.difference).toBe(200000);
+    expect(excessRes.hasDifference).toBe(true);
+
+    // Case 2: Excel has deficit (500,000 vs 600,000)
+    const deficitRes = computeReverseWajibBreakdown('2026-09-01', 500000, tiers, fakeNow);
+    expect(deficitRes.difference).toBe(-100000);
+    expect(deficitRes.hasDifference).toBe(true);
+  });
+
+  it('handles pre-2020 members by stopping breakdown at Jan 2020 and storing remainder as lump sum', () => {
+    // Current date: 2020-03-01
+    // Tiers: default fallback @ 200,000
+    // Joined: 2015-05-10 (pre-2020)
+    // Breakdown >= 2020: Jan 2020, Feb 2020, Mar 2020 = 3 months @ 200,000 = 600,000
+    // Total in Excel: 5,000,000
+    // Remaining for pre-2020 lump sum: 5,000,000 - 600,000 = 4,400,000
+    const fakeNow = new Date(2020, 2, 15); // March 2020
+    const res = computeReverseWajibBreakdown('2015-05-10', 5000000, [], fakeNow);
+
+    expect(res.isPre2020Member).toBe(true);
+    expect(res.monthsCount).toBe(3);
+    expect(res.calculatedTotal).toBe(600000);
+    expect(res.pre2020LumpSum).toBe(4400000);
+    expect(res.difference).toBe(0);
+    expect(res.hasDifference).toBe(false);
+
+    // Check oldest month in breakdown is Jan 2020
+    expect(res.monthlyBreakdown[res.monthlyBreakdown.length - 1]).toEqual({
+      year: 2020,
+      month: 1,
+      amount: 200000,
+    });
+  });
+
+  it('detects deficit for pre-2020 members if Excel amount is lower than breakdown >= 2020', () => {
+    const fakeNow = new Date(2020, 2, 15); // March 2020 -> 3 months = 600,000
+    const res = computeReverseWajibBreakdown('2015-05-10', 400000, [], fakeNow);
+
+    expect(res.isPre2020Member).toBe(true);
+    expect(res.calculatedTotal).toBe(600000);
+    expect(res.pre2020LumpSum).toBe(0);
+    expect(res.difference).toBe(-200000);
+    expect(res.hasDifference).toBe(true);
+  });
+
+  it('handles null or invalid join dates gracefully', () => {
+    const res = computeReverseWajibBreakdown(null, 100000, tiers);
+    expect(res.monthsCount).toBe(1);
+    expect(res.isPre2020Member).toBe(false);
   });
 });

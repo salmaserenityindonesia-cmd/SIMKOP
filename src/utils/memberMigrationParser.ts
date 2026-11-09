@@ -275,3 +275,117 @@ export function generateMigrationLoanSchedules(
 
   return schedules;
 }
+
+export interface TierRate {
+  startYear: number;
+  startMonth: number;
+  endYear?: number | null;
+  endMonth?: number | null;
+  monthlyAmount: number;
+}
+
+export interface MonthlyBreakdownItem {
+  year: number;
+  month: number;
+  amount: number;
+}
+
+export interface ReverseWajibBreakdownResult {
+  monthlyBreakdown: MonthlyBreakdownItem[];
+  monthsCount: number;
+  calculatedTotal: number;
+  pre2020LumpSum: number;
+  excelWajibAmount: number;
+  difference: number;
+  hasDifference: boolean;
+  isPre2020Member: boolean;
+}
+
+/**
+ * Penguraian mundur Simpanan Wajib dari bulan berjalan ke belakang hingga tanggal awal anggota.
+ * Periode sebelum Jan 2020 tidak diurai bulanan melainkan dicatat utuh (lump sum) dan digabung dengan total uraian.
+ * Mendeteksi selisih antara nilai Excel dan ekspektasi sistem.
+ */
+export function computeReverseWajibBreakdown(
+  joinDateStr: string | null | undefined,
+  excelWajibAmount: number,
+  tiers: TierRate[],
+  currentDate: Date = new Date()
+): ReverseWajibBreakdownResult {
+  const safeExcelAmount = parseAmount(excelWajibAmount);
+  const cutoff2020 = new Date(2020, 0, 1); // 1 Januari 2020
+
+  const joinDate = joinDateStr ? parseSafeDate(joinDateStr) : null;
+  const isPre2020Member = !!(joinDate && joinDate < cutoff2020);
+
+  let currYear = currentDate.getFullYear();
+  let currMonth = currentDate.getMonth() + 1; // 1-12
+
+  const joinYear = joinDate ? joinDate.getFullYear() : currYear;
+  const joinMonth = joinDate ? joinDate.getMonth() + 1 : currMonth;
+
+  let calculatedTotal = 0;
+  const monthlyBreakdown: MonthlyBreakdownItem[] = [];
+
+  // Loop mundur dari bulan berjalan sampai batas tanggal bergabung atau batas 2020
+  while (true) {
+    const isPastJoin = currYear < joinYear || (currYear === joinYear && currMonth < joinMonth);
+    const isPre2020 = currYear < 2020;
+
+    if (isPastJoin || isPre2020) break;
+
+    // Cari tarif yang berlaku pada currYear & currMonth
+    const targetIndex = currYear * 12 + currMonth;
+    const matchedTier = tiers.find(t => {
+      const startIdx = t.startYear * 12 + t.startMonth;
+      const endIdx = t.endYear && t.endMonth ? t.endYear * 12 + t.endMonth : 999999;
+      return targetIndex >= startIdx && targetIndex <= endIdx;
+    });
+
+    const rate = matchedTier ? matchedTier.monthlyAmount : 200000;
+    monthlyBreakdown.push({ year: currYear, month: currMonth, amount: rate });
+    calculatedTotal += rate;
+
+    // Geser mundur 1 bulan
+    currMonth--;
+    if (currMonth === 0) {
+      currMonth = 12;
+      currYear--;
+    }
+  }
+
+  // Jika tanggal bergabung sebelum Jan 2020:
+  // Saldo sebelum 2020 tidak diurai per bulan, melainkan dicatat utuh
+  let pre2020LumpSum = 0;
+  let difference = 0;
+  let hasDifference = false;
+
+  if (isPre2020Member) {
+    if (safeExcelAmount >= calculatedTotal) {
+      pre2020LumpSum = safeExcelAmount - calculatedTotal;
+      difference = 0;
+      hasDifference = false;
+    } else {
+      // Jika total Excel lebih kecil dari uraian >= 2020 yang wajib dibayar
+      pre2020LumpSum = 0;
+      difference = safeExcelAmount - calculatedTotal;
+      hasDifference = true;
+    }
+  } else {
+    // Anggota bergabung >= Jan 2020
+    difference = safeExcelAmount - calculatedTotal;
+    hasDifference = Math.abs(difference) > 0;
+  }
+
+  return {
+    monthlyBreakdown,
+    monthsCount: monthlyBreakdown.length,
+    calculatedTotal,
+    pre2020LumpSum,
+    excelWajibAmount: safeExcelAmount,
+    difference,
+    hasDifference,
+    isPre2020Member,
+  };
+}
+
