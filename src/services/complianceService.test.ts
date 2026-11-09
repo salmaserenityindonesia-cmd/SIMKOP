@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getSavingsComplianceAvailableYears,
   getComplianceMatrixData,
+  getRolling12Months,
+  MonthPeriod,
   matchDepositType,
   importSavingsMatrixLedger,
   fetchAllPaged,
@@ -1911,4 +1913,382 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       });
     });
   });
+
+describe('Phase 73: getRolling12Months', () => {
+  it('Kasus 1: Batas lintas tahun (referensi Nov 2026 -> mengembalikan 12 bulan mulai dari Des-25 hingga Nov-26)', () => {
+    const periods = getRolling12Months(2026, 11);
+    expect(periods).toHaveLength(12);
+
+    // Bulan pertama (11 bulan sebelumnya): Des-25
+    expect(periods[0]).toEqual({
+      year: 2025,
+      month: 12,
+      label: 'Des-25',
+      periodIndex: 2025 * 12 + 12,
+    });
+
+    // Bulan terakhir (bulan referensi): Nov-26
+    expect(periods[11]).toEqual({
+      year: 2026,
+      month: 11,
+      label: 'Nov-26',
+      periodIndex: 2026 * 12 + 11,
+    });
+
+    // Label urutan yang tepat
+    const labels = periods.map((p) => p.label);
+    expect(labels).toEqual([
+      'Des-25', 'Jan-26', 'Feb-26', 'Mar-26', 'Apr-26', 'Mei-26',
+      'Jun-26', 'Jul-26', 'Ags-26', 'Sep-26', 'Okt-26', 'Nov-26',
+    ]);
+  });
+
+  it('Kasus 2: Bulan Januari (referensi Jan 2026 -> mengembalikan Feb-25 hingga Jan-26)', () => {
+    const periods = getRolling12Months(2026, 1);
+    expect(periods).toHaveLength(12);
+
+    // Bulan pertama: Feb-25
+    expect(periods[0]).toEqual({
+      year: 2025,
+      month: 2,
+      label: 'Feb-25',
+      periodIndex: 2025 * 12 + 2,
+    });
+
+    // Bulan terakhir: Jan-26
+    expect(periods[11]).toEqual({
+      year: 2026,
+      month: 1,
+      label: 'Jan-26',
+      periodIndex: 2026 * 12 + 1,
+    });
+
+    const labels = periods.map((p) => p.label);
+    expect(labels).toEqual([
+      'Feb-25', 'Mar-25', 'Apr-25', 'Mei-25', 'Jun-25', 'Jul-25',
+      'Ags-25', 'Sep-25', 'Okt-25', 'Nov-25', 'Des-25', 'Jan-26',
+    ]);
+  });
+
+  it('Kasus 3: Memastikan panjang tepat 12 elemen dan setiap objek memiliki year, month, label, periodIndex yang monotonik naik', () => {
+    const testCases = [
+      { year: 2024, month: 6 },
+      { year: 2025, month: 12 },
+      { year: 2027, month: 3 },
+    ];
+
+    for (const tc of testCases) {
+      const periods = getRolling12Months(tc.year, tc.month);
+      expect(periods).toHaveLength(12);
+
+      for (let i = 0; i < 12; i++) {
+        const p = periods[i];
+        expect(typeof p.year).toBe('number');
+        expect(typeof p.month).toBe('number');
+        expect(p.month).toBeGreaterThanOrEqual(1);
+        expect(p.month).toBeLessThanOrEqual(12);
+        expect(typeof p.label).toBe('string');
+        expect(p.periodIndex).toBe(p.year * 12 + p.month);
+
+        if (i > 0) {
+          expect(p.periodIndex).toBe(periods[i - 1].periodIndex + 1);
+        }
+      }
+    }
+  });
+});
+
+describe('Phase 73: getComplianceMatrixData - Rolling Window & Opening Balance Ledger', () => {
+  const mockDTypes = [
+    { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'POKOK', default_amount: 100000 },
+    { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'WAJIB', default_amount: 25000 },
+    { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'BELANJA', default_amount: 50000 },
+    { id: 'dt-lebaran', name: 'Simpanan Hari Raya', code: 'LEBARAN', default_amount: 50000 },
+  ];
+
+  it('Kasus transaksi sebelum periode 12 bulan bergulir: pastikan masuk ke openingBalance dan digulung ke kolom pertama', async () => {
+    const mockMembers = [
+      {
+        id: 'm-rolling-carry',
+        nrp: 'NRP-ROLL-1',
+        nama: 'Mayor Wahyudi',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+        created_at: '2024-01-01T00:00:00Z',
+      },
+    ];
+
+    // Jendela rolling dengan refMonth = 11 (Nov 2026):
+    // Window: Des 2025 (idx 0) s/d Nov 2026 (idx 11).
+    // windowStartIndex = 2025 * 12 + 12 = 24312.
+    // Transaksi sebelum Des 2025 (Mei 2025 & Ags 2025):
+    // Wajib: +500.000, Belanja: +200.000, Lebaran: +100.000, Belanja withdrawal: -50.000.
+    // Net Opening Balance expected: W = 500.000, B = 150.000, L = 100.000. Total = 750.000.
+    // Di bulan pertama jendela (Des 2025): setoran rutin W: 25.000, B: 50.000, L: 50.000.
+    const transactions = [
+      // Pokok (lunas)
+      {
+        id: 'tx-pokok-1',
+        amount: 100000,
+        transaction_type: 'deposit',
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-pokok' },
+      },
+      // Pre-window transactions (Mei 2025)
+      {
+        id: 'tx-pre-w',
+        amount: 500000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 5,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-wajib' },
+      },
+      {
+        id: 'tx-pre-b',
+        amount: 200000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 5,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-belanja' },
+      },
+      {
+        id: 'tx-pre-l',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 5,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-lebaran' },
+      },
+      // Pre-window withdrawal (Ags 2025)
+      {
+        id: 'tx-pre-b-wd',
+        amount: 50000,
+        transaction_type: 'withdrawal',
+        for_year: 2025,
+        for_month: 8,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-belanja' },
+      },
+      // Window month 0 (Desember 2025): for_year 2025, for_month 12
+      {
+        id: 'tx-win0-w',
+        amount: 25000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 12,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-wajib' },
+      },
+      {
+        id: 'tx-win0-b',
+        amount: 50000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 12,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-belanja' },
+      },
+      {
+        id: 'tx-win0-l',
+        amount: 50000,
+        transaction_type: 'deposit',
+        for_year: 2025,
+        for_month: 12,
+        member_deposits: { member_id: 'm-rolling-carry', deposit_type_id: 'dt-lebaran' },
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        const chainObj: any = {
+          eq: vi.fn().mockReturnThis(),
+          lte: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(chainObj) };
+      }
+      if (table === 'view_member_net_savings') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue(Promise.resolve({ data: transactions, error: null })),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await getComplianceMatrixData('rolling', undefined, 11);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+
+    // Validasi Opening Balance pra-jendela
+    expect(row.openingBalance).toEqual({
+      w: 500000,
+      b: 150000,
+      l: 100000,
+    });
+
+    // Validasi kolom 0 (Des 2025)
+    expect(row.months[0]).not.toBeNull();
+    expect(row.months[0]?.isOpeningBalanceMonth).toBe(true);
+    expect(row.months[0]?.w).toBe(25000);
+    expect(row.months[0]?.b).toBe(50000);
+    expect(row.months[0]?.l).toBe(50000);
+
+    // Running cumulative balance di kolom 0 harus memuat saldo bawaan + setoran bulan ini
+    expect(row.months[0]?.bal_w).toBe(525000); // 500k + 25k
+    expect(row.months[0]?.bal_b).toBe(200000); // 150k + 50k
+    expect(row.months[0]?.bal_l).toBe(150000); // 100k + 50k
+    expect(row.months[0]?.cum_w).toBe(525000);
+    expect(row.months[0]?.cum_b).toBe(200000);
+    expect(row.months[0]?.cum_l).toBe(150000);
+  });
+
+  it('Kasus akumulasi berantai: pastikan bal_w / bal_b / bal_l pada kolom bulan ke-11 seimbang dengan total mutasi kas riil anggota', async () => {
+    const mockMembers = [
+      {
+        id: 'm-chain',
+        nrp: 'NRP-CHAIN-1',
+        nama: 'Lettu Hendro',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+        created_at: '2023-01-01T00:00:00Z',
+      },
+    ];
+
+    // Window: Des 2025 (idx 0) s/d Nov 2026 (idx 11).
+    // Pre-window (2024):
+    // Wajib: 100.000, Belanja: 100.000, Lebaran: 100.000.
+    // Dalam jendela 12 bulan (bulan 0 s/d 11):
+    // Setiap bulan: Wajib +25.000, Belanja +50.000, Lebaran +50.000.
+    // Bulan 6 (Jun 2026): Belanja withdrawal -100.000.
+    // Total mutasi riil:
+    // Wajib: 100k + 12 * 25k = 400.000
+    // Belanja: 100k + 12 * 50k - 100k = 600.000
+    // Lebaran: 100k + 12 * 50k = 700.000
+    // Total: 1.700.000
+    const periods = getRolling12Months(2026, 11);
+    const txList: any[] = [
+      // Pokok (lunas)
+      {
+        id: 'tx-pokok-ch',
+        amount: 100000,
+        transaction_type: 'deposit',
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-pokok' },
+      },
+      // Pre-window 2024
+      {
+        id: 'tx-pre-w-ch',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: 2024,
+        for_month: 6,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-wajib' },
+      },
+      {
+        id: 'tx-pre-b-ch',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: 2024,
+        for_month: 6,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-belanja' },
+      },
+      {
+        id: 'tx-pre-l-ch',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: 2024,
+        for_month: 6,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-lebaran' },
+      },
+    ];
+
+    // Tambahkan transaksi untuk setiap bulan di jendela bergulir
+    periods.forEach((p, idx) => {
+      txList.push({
+        id: `tx-win-w-${idx}`,
+        amount: 25000,
+        transaction_type: 'deposit',
+        for_year: p.year,
+        for_month: p.month,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-wajib' },
+      });
+      txList.push({
+        id: `tx-win-b-${idx}`,
+        amount: 50000,
+        transaction_type: 'deposit',
+        for_year: p.year,
+        for_month: p.month,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-belanja' },
+      });
+      txList.push({
+        id: `tx-win-l-${idx}`,
+        amount: 50000,
+        transaction_type: 'deposit',
+        for_year: p.year,
+        for_month: p.month,
+        member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-lebaran' },
+      });
+
+      // Bulan ke-6 (Jun 2026): penarikan belanja 100k
+      if (idx === 6) {
+        txList.push({
+          id: 'tx-win-b-wd-6',
+          amount: 100000,
+          transaction_type: 'withdrawal',
+          for_year: p.year,
+          for_month: p.month,
+          member_deposits: { member_id: 'm-chain', deposit_type_id: 'dt-belanja' },
+        });
+      }
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        const chainObj: any = {
+          eq: vi.fn().mockReturnThis(),
+          lte: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(chainObj) };
+      }
+      if (table === 'view_member_net_savings') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue(Promise.resolve({ data: txList, error: null })),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await getComplianceMatrixData('rolling', undefined, 11);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+
+    // Pastikan saldo awal pra-jendela benar
+    expect(row.openingBalance).toEqual({ w: 100000, b: 100000, l: 100000 });
+
+    // Periksa saldo bulan terakhir (idx 11, Nov 2026)
+    const lastMonthCell = row.months[11];
+    expect(lastMonthCell).not.toBeNull();
+    expect(lastMonthCell?.bal_w).toBe(400000);
+    expect(lastMonthCell?.bal_b).toBe(600000);
+    expect(lastMonthCell?.bal_l).toBe(700000);
+    expect(lastMonthCell?.cum_w).toBe(400000);
+    expect(lastMonthCell?.cum_b).toBe(600000);
+    expect(lastMonthCell?.cum_l).toBe(700000);
+
+    // Total kas riil pada netSavings harus match persis dengan bal_w + bal_b + bal_l di bulan ke-11
+    expect(row.netSavings?.wajib).toBe(400000);
+    expect(row.netSavings?.belanja).toBe(600000);
+    expect(row.netSavings?.lebaran).toBe(700000);
+    expect(row.netSavings?.total).toBe(1700000);
+    expect(lastMonthCell!.bal_w + lastMonthCell!.bal_b + lastMonthCell!.bal_l).toBe(row.netSavings?.total);
+  });
+});
 

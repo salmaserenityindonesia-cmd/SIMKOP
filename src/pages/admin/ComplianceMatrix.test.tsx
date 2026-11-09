@@ -1508,6 +1508,80 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Rp 3.000.000');
       expect(html).toContain('100%');
     });
+
+    it('renders custom rolling periods passed via row.periods in table headers correctly', () => {
+      const customPeriods = [
+        { year: 2025, month: 12, label: 'Des-25', periodIndex: 2025 * 12 + 12 },
+        { year: 2026, month: 1, label: 'Jan-26', periodIndex: 2026 * 12 + 1 },
+        { year: 2026, month: 2, label: 'Feb-26', periodIndex: 2026 * 12 + 2 },
+        { year: 2026, month: 3, label: 'Mar-26', periodIndex: 2026 * 12 + 3 },
+        { year: 2026, month: 4, label: 'Apr-26', periodIndex: 2026 * 12 + 4 },
+        { year: 2026, month: 5, label: 'Mei-26', periodIndex: 2026 * 12 + 5 },
+        { year: 2026, month: 6, label: 'Jun-26', periodIndex: 2026 * 12 + 6 },
+        { year: 2026, month: 7, label: 'Jul-26', periodIndex: 2026 * 12 + 7 },
+        { year: 2026, month: 8, label: 'Ags-26', periodIndex: 2026 * 12 + 8 },
+        { year: 2026, month: 9, label: 'Sep-26', periodIndex: 2026 * 12 + 9 },
+        { year: 2026, month: 10, label: 'Okt-26', periodIndex: 2026 * 12 + 10 },
+        { year: 2026, month: 11, label: 'Nov-26', periodIndex: 2026 * 12 + 11 },
+      ];
+
+      const rowWithPeriods = {
+        member_id: 'm-periods',
+        nrp: 'NRP-PERIODS',
+        nama: 'Sersan Perdana',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 100000, b: 50000, l: 50000 },
+        periods: customPeriods,
+        months: Array(12).fill(null),
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithPeriods as any]} initialYear="2026" />
+      );
+
+      // Verify custom header labels are present
+      expect(html).toContain('Des-25');
+      expect(html).toContain('Mei-26');
+      expect(html).toContain('Nov-26');
+    });
+
+    it('handles zero or missing netSavings total gracefully in cumulative tooltip (omits percentage without NaN)', () => {
+      const rowZeroTotal = {
+        member_id: 'm-zero-tot',
+        nrp: 'NRP-ZERO-TOT',
+        nama: 'Prajurit Nol',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 0, b: 0, l: 0 },
+        netSavings: { wajib: 0, belanja: 0, lebaran: 0, total: 0 },
+        months: [
+          {
+            w: 0,
+            b: 0,
+            l: 0,
+            bal_w: 0,
+            bal_b: 0,
+            bal_l: 0,
+            cum_w: 0,
+            cum_b: 0,
+            cum_l: 0,
+          },
+          ...Array(11).fill(null),
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowZeroTotal as any]} initialYear="2026" />
+      );
+
+      expect(html).toContain('data-testid="tooltip-cumulative-summary"');
+      expect(html).toContain('Iuran Bulan Ini:');
+      expect(html).toContain('Rp 0');
+      expect(html).toContain('Akumulasi s/d Bulan Ini:');
+      expect(html).not.toContain('Pencapaian Saldo:');
+      expect(html).not.toContain('NaN%');
+    });
   });
 });
 

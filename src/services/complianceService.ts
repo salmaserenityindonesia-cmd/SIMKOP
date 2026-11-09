@@ -797,18 +797,21 @@ export async function getComplianceMatrixData(
       let txYear = 0;
       let txMonth = -1; // 0-indexed: 0 = Jan .. 11 = Des
 
-      if (tx.transaction_type === 'deposit') {
-        txYear = Number(tx.for_year) || (tx.created_at ? new Date(tx.created_at).getFullYear() : 0);
-        if (tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))) {
-          const rawM = Number(tx.for_month);
-          txMonth = rawM >= 1 && rawM <= 12 ? rawM - 1 : rawM;
-        } else if (tx.created_at) {
-          txMonth = new Date(tx.created_at).getMonth();
-        }
+      if (tx.for_year !== null && tx.for_year !== undefined && !isNaN(Number(tx.for_year))) {
+        txYear = Number(tx.for_year);
+      } else if (tx.created_at) {
+        txYear = new Date(tx.created_at).getFullYear();
       } else {
-        const d = tx.created_at ? new Date(tx.created_at) : new Date();
-        txYear = d.getFullYear();
-        txMonth = d.getMonth();
+        txYear = new Date().getFullYear();
+      }
+
+      if (tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))) {
+        const rawM = Number(tx.for_month);
+        txMonth = rawM >= 1 && rawM <= 12 ? rawM - 1 : rawM;
+      } else if (tx.created_at) {
+        txMonth = new Date(tx.created_at).getMonth();
+      } else {
+        txMonth = new Date().getMonth();
       }
 
       const txPeriodIndex = txYear * 12 + (txMonth + 1);
