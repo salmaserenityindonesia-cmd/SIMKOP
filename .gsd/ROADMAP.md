@@ -7,7 +7,7 @@ updated: 2026-10-30T20:50:00+07:00
 # Roadmap
 
 > **Current Phase:** 73 — Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan
-> **Status:** ⏳ In Progress
+> **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
 
@@ -1291,14 +1291,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 73: Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Mengimplementasikan jendela bergulir (rolling window) 12 bulan terakhir pada Matriks Kepatuhan Simpanan (`/admin/compliance-matrix`), merangkum transaksi masa lampau pra-12 bulan sebagai Saldo Bawaan (Opening Balance) yang digulung ke kolom bulan pertama yang tampil, dan mengakumulasikan saldo secara berantai bulan demi bulan hingga bulan berjalan sehingga saldo akhir tepat seimbang dengan total impor Excel per anggota.
 **Depends on:** Phase 72, Phase 54, Phase 52, Phase 50
 
 **Plans:**
-- [ ] Plan 73.1: Rolling 12-Month Window & Carry-Forward Ledger Engine
-- [ ] Plan 73.2: Dynamic Rolling Headers & Cumulative Tooltips in ComplianceMatrix
-- [ ] Plan 73.3: Static Verification, Full Test Suite, and Production Build Check
+- [x] Plan 73.1: Rolling 12-Month Window & Carry-Forward Ledger Engine
+- [x] Plan 73.2: Dynamic Rolling Headers & Cumulative Tooltips in ComplianceMatrix
+- [x] Plan 73.3: Static Verification, Full Test Suite, and Production Build Check
 
 **Deliverables:**
 - Generator `getRolling12Months` dan tipe data `MonthPeriod` di `src/services/complianceService.ts`
@@ -1442,7 +1442,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ✅ | 2/2 | 100% |
 | 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ✅ | 2/2 | 100% |
 | 72 | Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel | ✅ | 3/3 | 100% |
-| 73 | Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan | ⏳ | 0/3 | 0% |
+| 73 | Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1522,7 +1522,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 70 | 2026-11-09 | 2026-11-09 | 1 day |
 | 71 | 2026-11-09 | 2026-11-09 | 1 day |
 | 72 | 2026-11-09 | 2026-11-09 | 1 day |
-| 73 | 2026-11-09 | — | — |
+| 73 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
 
