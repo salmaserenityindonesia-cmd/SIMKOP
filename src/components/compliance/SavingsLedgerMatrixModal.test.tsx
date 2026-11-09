@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SavingsLedgerMatrixModal, {
   formatRateBadge,
   getBadgeColorClass,
+  getMonthName,
   isMonthBeforeJoin,
   generateMonthGrid,
   calculateTotalChecked,
@@ -715,6 +716,159 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('salah input lagi');
       // Teks default "Setoran Matriks WAJIB Ags 2026" tidak boleh tampil sebagai alasan pembatalan
       expect(html).not.toContain('Setoran Matriks WAJIB Ags 2026');
+    });
+  });
+
+  describe('Dinamisasi Keterangan Badge Tarif Aktif pada Modal Buku Besar', () => {
+    it('getMonthName converts month number (1-12) to Indonesian month name', () => {
+      expect(getMonthName(1)).toBe('Januari');
+      expect(getMonthName(5)).toBe('Mei');
+      expect(getMonthName(10)).toBe('Oktober');
+      expect(getMonthName(12)).toBe('Desember');
+      expect(getMonthName(0)).toBe('');
+      expect(getMonthName(undefined)).toBe('');
+    });
+
+    it('renders dynamic active rate tier badges and removes old hardcoded texts', () => {
+      const customTiers = [
+        {
+          id: 'tier-wajib-2026',
+          deposit_type_code: 'WAJIB',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        },
+        {
+          id: 'tier-belanja-2026',
+          deposit_type_code: 'BELANJA',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 50000
+        },
+        {
+          id: 'tier-lebaran-2026',
+          deposit_type_code: 'LEBARAN',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 300000
+        }
+      ];
+
+      // 1. Tab WAJIB
+      const htmlWajib = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-wajib"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2026-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="WAJIB"
+          initialRateTiers={customTiers}
+          initialLoading={false}
+        />
+      );
+
+      expect(htmlWajib).toContain('data-testid="legend-rate-tiers"');
+      expect(htmlWajib).toContain('Rp 200k (Mulai Januari 2026)');
+      // Memastikan teks hardcoded lama sudah bersih dan tidak muncul
+      expect(htmlWajib).not.toContain('Rp 150k (s/d Okt 2025)');
+      expect(htmlWajib).not.toContain('Rp 200k (Mulai Nov 2025)');
+
+      // 2. Tab BELANJA
+      const htmlBelanja = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-belanja"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2026-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="BELANJA"
+          initialRateTiers={customTiers}
+          initialLoading={false}
+        />
+      );
+
+      expect(htmlBelanja).toContain('Rp 50k (Mulai Januari 2026)');
+      expect(htmlBelanja).not.toContain('Rp 25k (Standar)');
+
+      // 3. Tab LEBARAN
+      const htmlLebaran = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-lebaran"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2026-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="LEBARAN"
+          initialRateTiers={customTiers}
+          initialLoading={false}
+        />
+      );
+
+      expect(htmlLebaran).toContain('Rp 300k (Mulai Januari 2026)');
+      expect(htmlLebaran).not.toContain('Rp 50k (Standar)');
+    });
+
+    it('renders historical range and active tier when multiple tiers exist in tab', () => {
+      const multiTiers = [
+        {
+          id: 'tier-wajib-old',
+          deposit_type_code: 'WAJIB',
+          start_year: 2024,
+          start_month: 1,
+          end_year: 2025,
+          end_month: 12,
+          monthly_rate: 150000
+        },
+        {
+          id: 'tier-wajib-new',
+          deposit_type_code: 'WAJIB',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-multi"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2024-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="WAJIB"
+          initialRateTiers={multiTiers}
+          initialLoading={false}
+        />
+      );
+
+      expect(html).toContain('Rp 150k (Januari 2024 - Desember 2025)');
+      expect(html).toContain('Rp 200k (Mulai Januari 2026)');
+    });
+
+    it('gracefully falls back when no tiers are available for the tab', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-fallback"
+          memberNrp="78010234"
+          memberName="Briptu Agus Susanto"
+          joinDate="2026-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="WAJIB"
+          initialRateTiers={[]}
+          initialLoading={false}
+        />
+      );
+
+      expect(html).toContain('Rp 200k (Mulai Januari 2026)');
     });
   });
 });

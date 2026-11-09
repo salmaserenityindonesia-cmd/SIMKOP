@@ -49,6 +49,7 @@ export interface SavingsLedgerMatrixModalProps {
   onClose: () => void;
   onSuccess?: () => void;
   initialActiveTab?: DepositTabType;
+  initialRateTiers?: SavingsRateTier[];
   initialDbBalances?: Partial<Record<DepositTabType, number>>;
   initialCheckedMonths?: Partial<Record<DepositTabType, string[]>>;
   initialMonthAmounts?: Partial<Record<DepositTabType, Record<string, number> | Map<string, number>>>;
@@ -73,6 +74,14 @@ export const FULL_MONTH_NAMES = [
 ];
 
 /**
+ * Helper untuk mendapatkan nama bulan (1-12)
+ */
+export const getMonthName = (monthNum: number | null | undefined): string => {
+  if (!monthNum || monthNum < 1 || monthNum > 12) return '';
+  return FULL_MONTH_NAMES[monthNum - 1] || MONTH_NAMES[monthNum - 1] || '';
+};
+
+/**
  * Format nominal tarif menjadi label ringkas (misal 150000 -> Rp 150k)
  */
 export function formatRateBadge(rate: number): string {
@@ -91,9 +100,27 @@ export function getBadgeColorClass(
   depositTypeCode: string,
   year: number,
   month: number,
-  _rate: number
+  _rate: number,
+  rateTiers?: SavingsRateTier[]
 ): string {
   const code = (depositTypeCode || '').toUpperCase();
+  if (rateTiers && rateTiers.length > 0) {
+    const targetIdx = year * 12 + month;
+    const matchingTier = rateTiers.find(t => {
+      if ((t.deposit_type_code || '').toUpperCase() !== code) return false;
+      const startIdx = t.start_year * 12 + t.start_month;
+      const endIdx = t.end_year && t.end_month ? t.end_year * 12 + t.end_month : Infinity;
+      return targetIdx >= startIdx && targetIdx <= endIdx;
+    });
+
+    if (matchingTier) {
+      if (!matchingTier.end_year) {
+        return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      }
+      return 'bg-amber-100 text-amber-800 border-amber-300';
+    }
+  }
+
   if (code === 'WAJIB') {
     if (year < 2025 || (year === 2025 && month <= 10)) {
       return 'bg-amber-100 text-amber-800 border-amber-300';
@@ -172,6 +199,7 @@ export default function SavingsLedgerMatrixModal({
   onClose,
   onSuccess,
   initialActiveTab = 'WAJIB',
+  initialRateTiers,
   initialDbBalances,
   initialCheckedMonths,
   initialMonthAmounts,
@@ -187,7 +215,20 @@ export default function SavingsLedgerMatrixModal({
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
   const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
-  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
+  const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || DEFAULT_RATE_TIERS);
+
+  useEffect(() => {
+    if (initialRateTiers && initialRateTiers.length > 0) {
+      setRateTiers(initialRateTiers);
+    }
+  }, [initialRateTiers]);
+
+  const activeTabRateTiers = useMemo(() => {
+    if (!rateTiers || rateTiers.length === 0) return [];
+    return rateTiers
+      .filter(t => (t.deposit_type_code || '').toUpperCase() === activeTab)
+      .sort((a, b) => (a.start_year * 12 + a.start_month) - (b.start_year * 12 + b.start_month));
+  }, [rateTiers, activeTab]);
 
   // State Dialog Bukti Setoran
   const [evidenceModalOpen, setEvidenceModalOpen] = useState(initialEvidenceModalOpen ?? false);
@@ -1093,26 +1134,39 @@ export default function SavingsLedgerMatrixModal({
                 <span className="font-medium">
                   Grid Matriks Bulan ({startYear} – {endYear})
                 </span>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap" data-testid="legend-rate-tiers">
                   <span className="text-[11px] text-slate-400">Keterangan Badge Tarif Aktif:</span>
-                  {activeTab === 'WAJIB' && (
-                    <>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                        Rp 150k (s/d Okt 2025)
-                      </span>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        Rp 200k (Mulai Nov 2025)
-                      </span>
-                    </>
-                  )}
-                  {activeTab === 'BELANJA' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-300">
-                      Rp 25k (Standar)
-                    </span>
-                  )}
-                  {activeTab === 'LEBARAN' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-300">
-                      Rp 50k (Standar)
+                  {activeTabRateTiers && activeTabRateTiers.length > 0 ? (
+                    activeTabRateTiers.map((tier, idx) => {
+                      const rateNum = Number(tier.monthly_rate ?? (tier as any).monthly_amount ?? 0);
+                      const rateK = rateNum >= 1000
+                        ? `Rp ${(rateNum / 1000).toLocaleString('id-ID')}k`
+                        : `Rp ${rateNum.toLocaleString('id-ID')}`;
+
+                      const startLabel = `${getMonthName(tier.start_month)} ${tier.start_year}`;
+                      const periodText = tier.end_year && tier.end_month
+                        ? `(${startLabel} - ${getMonthName(tier.end_month)} ${tier.end_year})`
+                        : `(Mulai ${startLabel})`;
+
+                      const isCurrentActive = !tier.end_year;
+                      return (
+                        <span
+                          key={tier.id || idx}
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                            isCurrentActive
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                              : 'bg-amber-50 border-amber-300 text-amber-800'
+                          }`}
+                        >
+                          {rateK} {periodText}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 border border-emerald-300 text-emerald-800">
+                      {activeTab === 'WAJIB' && 'Rp 200k (Mulai Januari 2026)'}
+                      {activeTab === 'BELANJA' && 'Rp 50k (Mulai Januari 2026)'}
+                      {activeTab === 'LEBARAN' && 'Rp 300k (Mulai Januari 2026)'}
                     </span>
                   )}
                 </div>
@@ -1169,7 +1223,7 @@ export default function SavingsLedgerMatrixModal({
                         const isPartial = isChecked && typeof txAmount === 'number' && txAmount > 0 && txAmount < rate;
                         const badgeClass = isPartial
                           ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
-                          : getBadgeColorClass(activeTab, m.year, m.month, rate);
+                          : getBadgeColorClass(activeTab, m.year, m.month, rate, rateTiers);
                         const badgeLabel = isPartial
                           ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} / ${Number(rate).toLocaleString('id-ID')}`
                           : formatRateBadge(rate);

@@ -1127,6 +1127,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           memberNrp={selectedMember.nrp}
           memberName={selectedMember.nama}
           joinDate={selectedMember.joinDate}
+          initialRateTiers={rateTiers}
           onClose={() => setSelectedMember(null)}
           onSuccess={() => {
             fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
