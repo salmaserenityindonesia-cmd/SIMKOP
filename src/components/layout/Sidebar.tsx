@@ -41,6 +41,64 @@ export interface NavigationGroup {
   items: NavigationItem[];
 }
 
+export const SIDEBAR_SCROLL_STORAGE_KEY = 'simkop_sidebar_scroll_top';
+
+export function saveSidebarScrollTop(scrollTop: number): void {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.setItem(SIDEBAR_SCROLL_STORAGE_KEY, String(scrollTop));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function getSavedSidebarScrollTop(): number | null {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const saved = window.sessionStorage.getItem(SIDEBAR_SCROLL_STORAGE_KEY);
+      return saved !== null && !isNaN(Number(saved)) ? Number(saved) : null;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function restoreSidebarScroll(
+  container: HTMLElement | null,
+  activeItem?: HTMLElement | null
+): boolean {
+  if (!container) return false;
+  const saved = getSavedSidebarScrollTop();
+  if (saved !== null) {
+    container.scrollTop = saved;
+    return true;
+  }
+  if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+    activeItem.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    return true;
+  }
+  return false;
+}
+
+export function handleSidebarItemClick(
+  e: { currentTarget: { closest?: (selector: string) => HTMLElement | Element | null } },
+  onItemClick?: () => void
+): void {
+  try {
+    const container = e.currentTarget.closest?.('.overflow-y-auto') as HTMLElement | null;
+    if (container && typeof container.scrollTop === 'number') {
+      saveSidebarScrollTop(container.scrollTop);
+    }
+  } catch {
+    // ignore
+  }
+  if (onItemClick) {
+    onItemClick();
+  }
+}
+
 export const navigationGroups: NavigationGroup[] = [
   {
     groupName: 'OPERASIONAL',
@@ -111,34 +169,16 @@ export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
   const navRef = useRef<HTMLElement | null>(null);
 
   const handleItemClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    try {
-      const container = e.currentTarget.closest('.overflow-y-auto') as HTMLElement | null;
-      if (container && typeof window !== 'undefined' && window.sessionStorage) {
-        sessionStorage.setItem('simkop_sidebar_scroll_top', String(container.scrollTop));
-      }
-    } catch {
-      // ignore storage errors
-    }
-    if (onItemClick) {
-      onItemClick();
-    }
+    handleSidebarItemClick(e, onItemClick);
   };
 
   useLayoutEffect(() => {
     try {
-      if (typeof window === 'undefined' || !window.sessionStorage) return;
       const container = navRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
-      const savedScrollTop = sessionStorage.getItem('simkop_sidebar_scroll_top');
-      if (container && savedScrollTop !== null) {
-        container.scrollTop = Number(savedScrollTop);
-      } else if (navRef.current) {
-        const activeItem = navRef.current.querySelector(
-          '[aria-current="page"], .border-secondary-fixed'
-        );
-        if (activeItem && typeof activeItem.scrollIntoView === 'function') {
-          activeItem.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-        }
-      }
+      const activeItem = navRef.current?.querySelector(
+        '[aria-current="page"], .border-secondary-fixed'
+      ) as HTMLElement | null;
+      restoreSidebarScroll(container, activeItem);
     } catch {
       // ignore errors
     }

@@ -1,8 +1,15 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect } from 'vitest';
-import Sidebar, { navigationGroups } from './Sidebar';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import Sidebar, {
+  navigationGroups,
+  SIDEBAR_SCROLL_STORAGE_KEY,
+  saveSidebarScrollTop,
+  getSavedSidebarScrollTop,
+  restoreSidebarScroll,
+  handleSidebarItemClick,
+} from './Sidebar';
 
 describe('Sidebar Navigation Hierarchy & Ordering', () => {
   it('places TOKO RETAIL & INVENTORI group directly above SIMPAN PINJAM (KSP / USP)', () => {
@@ -120,5 +127,107 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       </MemoryRouter>
     );
     expect(staffHtml).toContain('/admin/laporan-mutasi');
+  });
+});
+
+describe('Sidebar Scroll Persistence & Contextual Focus', () => {
+  let mockStorage: Record<string, string>;
+
+  beforeEach(() => {
+    mockStorage = {};
+    const mockSessionStorage = {
+      getItem: vi.fn((key: string) => mockStorage[key] ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        mockStorage[key] = String(value);
+      }),
+      removeItem: vi.fn((key: string) => {
+        delete mockStorage[key];
+      }),
+      clear: vi.fn(() => {
+        mockStorage = {};
+      }),
+    };
+
+    if (typeof globalThis.window === 'undefined') {
+      (globalThis as any).window = {};
+    }
+    (globalThis.window as any).sessionStorage = mockSessionStorage;
+    (globalThis as any).sessionStorage = mockSessionStorage;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses the canonical key simkop_sidebar_scroll_top', () => {
+    expect(SIDEBAR_SCROLL_STORAGE_KEY).toBe('simkop_sidebar_scroll_top');
+  });
+
+  it('saves scroll position to sessionStorage via saveSidebarScrollTop', () => {
+    saveSidebarScrollTop(320);
+    expect(window.sessionStorage.setItem).toHaveBeenCalledWith('simkop_sidebar_scroll_top', '320');
+    expect(getSavedSidebarScrollTop()).toBe(320);
+  });
+
+  it('captures scroll position and calls onItemClick when handleSidebarItemClick is invoked', () => {
+    const mockContainer = {
+      scrollTop: 450,
+    } as unknown as HTMLElement;
+
+    const mockEvent = {
+      currentTarget: {
+        closest: vi.fn((selector: string) => {
+          if (selector === '.overflow-y-auto') return mockContainer;
+          return null;
+        }),
+      },
+    };
+
+    const onItemClickMock = vi.fn();
+    handleSidebarItemClick(mockEvent, onItemClickMock);
+
+    expect(mockEvent.currentTarget.closest).toHaveBeenCalledWith('.overflow-y-auto');
+    expect(window.sessionStorage.setItem).toHaveBeenCalledWith('simkop_sidebar_scroll_top', '450');
+    expect(onItemClickMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores scroll position from sessionStorage when savedScrollTop is present', () => {
+    window.sessionStorage.setItem('simkop_sidebar_scroll_top', '560');
+
+    const mockContainer = { scrollTop: 0 } as unknown as HTMLElement;
+    const mockActiveItem = {
+      scrollIntoView: vi.fn(),
+    } as unknown as HTMLElement;
+
+    const restored = restoreSidebarScroll(mockContainer, mockActiveItem);
+
+    expect(restored).toBe(true);
+    expect(mockContainer.scrollTop).toBe(560);
+    expect(mockActiveItem.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('falls back to scrollIntoView on active element when savedScrollTop is null', () => {
+    const mockContainer = { scrollTop: 0 } as unknown as HTMLElement;
+    const mockActiveItem = {
+      scrollIntoView: vi.fn(),
+    } as unknown as HTMLElement;
+
+    const restored = restoreSidebarScroll(mockContainer, mockActiveItem);
+
+    expect(restored).toBe(true);
+    expect(mockContainer.scrollTop).toBe(0);
+    expect(mockActiveItem.scrollIntoView).toHaveBeenCalledWith({
+      block: 'nearest',
+      behavior: 'instant',
+    });
+  });
+
+  it('returns false safely when container is null', () => {
+    const mockActiveItem = {
+      scrollIntoView: vi.fn(),
+    } as unknown as HTMLElement;
+
+    const restored = restoreSidebarScroll(null, mockActiveItem);
+    expect(restored).toBe(false);
   });
 });

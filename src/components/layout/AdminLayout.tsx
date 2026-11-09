@@ -2,7 +2,10 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import AdminProfileModal from '../admin/AdminProfileModal';
-import Sidebar from './Sidebar';
+import Sidebar, {
+  saveSidebarScrollTop,
+  restoreSidebarScroll,
+} from './Sidebar';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
@@ -13,31 +16,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const navContainerRef = useRef<HTMLDivElement | null>(null);
 
   const handleNavScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        sessionStorage.setItem('simkop_sidebar_scroll_top', String(e.currentTarget.scrollTop));
-      }
-    } catch {
-      // ignore storage errors
-    }
+    saveSidebarScrollTop(e.currentTarget.scrollTop);
   };
 
   useLayoutEffect(() => {
     try {
-      if (typeof window === 'undefined' || !window.sessionStorage) return;
-      const savedScrollTop = sessionStorage.getItem('simkop_sidebar_scroll_top');
-      if (navContainerRef.current) {
-        if (savedScrollTop !== null) {
-          navContainerRef.current.scrollTop = Number(savedScrollTop);
-        } else {
-          const activeItem = navContainerRef.current.querySelector(
-            '[aria-current="page"], .border-secondary-fixed'
-          );
-          if (activeItem && typeof activeItem.scrollIntoView === 'function') {
-            activeItem.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-          }
-        }
-      }
+      const activeItem = navContainerRef.current?.querySelector(
+        '[aria-current="page"], .border-secondary-fixed'
+      ) as HTMLElement | null;
+      restoreSidebarScroll(navContainerRef.current, activeItem);
     } catch {
       // ignore errors
     }
