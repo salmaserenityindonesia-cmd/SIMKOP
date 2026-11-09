@@ -362,6 +362,34 @@ export interface MonthSavingsCell {
   lebaran: SavingsSubItem;
 }
 
+export interface MonthPeriod {
+  year: number;
+  month: number; // 1-12
+  label: string; // misal 'Des-25', 'Jan-26', ..., 'Nov-26'
+  periodIndex: number; // year * 12 + month
+}
+
+export function getRolling12Months(refYear: number, refMonth: number): MonthPeriod[] {
+  const periods: MonthPeriod[] = [];
+  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+
+  for (let i = 11; i >= 0; i--) {
+    let m = refMonth - i;
+    let y = refYear;
+    while (m <= 0) {
+      m += 12;
+      y -= 1;
+    }
+    periods.push({
+      year: y,
+      month: m,
+      label: `${MONTH_NAMES[m - 1]}-${String(y).slice(-2)}`,
+      periodIndex: y * 12 + m
+    });
+  }
+  return periods; // Mengembalikan tepat 12 bulan berurutan
+}
+
 export interface ComplianceMonthData {
   w: number;
   b: number;
@@ -369,6 +397,10 @@ export interface ComplianceMonthData {
   bal_w: number;
   bal_b: number;
   bal_l: number;
+  cum_w?: number;
+  cum_b?: number;
+  cum_l?: number;
+  isOpeningBalanceMonth?: boolean;
   wajib?: SavingsSubItem;
   belanja?: SavingsSubItem;
   lebaran?: SavingsSubItem;
@@ -388,6 +420,8 @@ export interface ComplianceMatrixRow {
   pokokLunas: boolean;
   compliance: number;
   balances: { w: number; b: number; l: number };
+  openingBalance?: { w: number; b: number; l: number };
+  periods?: MonthPeriod[];
   months: (ComplianceMonthData | null)[];
   created_at?: string;
   tgl_awal_anggota?: string;
@@ -402,6 +436,8 @@ export interface ComplianceMatrixResult {
     lebaran: number;
   };
   rateTiers?: SavingsRateTier[];
+  periods?: MonthPeriod[];
+  windowStartIndex?: number;
 }
 
 /**
