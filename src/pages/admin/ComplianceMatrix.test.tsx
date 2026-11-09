@@ -113,10 +113,14 @@ const { mockMatrixResult } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../../services/complianceService', () => ({
-  getSavingsComplianceAvailableYears: vi.fn().mockResolvedValue([2026, 2025, 2024, 2023]),
-  getComplianceMatrixData: vi.fn().mockImplementation(() => Promise.resolve(mockMatrixResult)),
-}));
+vi.mock('../../services/complianceService', async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    getSavingsComplianceAvailableYears: vi.fn().mockResolvedValue([2026, 2025, 2024, 2023]),
+    getComplianceMatrixData: vi.fn().mockImplementation(() => Promise.resolve(mockMatrixResult)),
+  };
+});
 
 vi.mock('../../services/matrixService', () => ({
   getComplianceMatrixData: vi.fn().mockImplementation(() => Promise.resolve(mockMatrixResult)),
@@ -823,6 +827,18 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Lunas (Hijau / Teal)');
       expect(html).toContain('Belum Bayar / Tunggakan (Merah)');
       expect(html).toContain('Belum Terdaftar / Tidak Berlaku');
+    });
+
+    it('renders dynamic rolling 12-month headers with Bln-YY labels and current month highlight', () => {
+      const html = renderToStaticMarkup(<ComplianceMatrix initialYear="2026" />);
+
+      // Verify rolling months format Bln-YY in headers
+      expect(html).toContain('Des-25');
+      expect(html).toContain('Jan-26');
+      expect(html).toContain('Nov-26');
+
+      // Verify current month highlight on column 11 (Nov-26)
+      expect(html).toContain('bg-emerald-50/50 border-x-2 border-x-emerald-200/50 text-emerald-900 font-bold');
     });
 
     it('renders green emerald styling for Hendra Gunawan paid months (Mei s/d Nov 2024)', () => {

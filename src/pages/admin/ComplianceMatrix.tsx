@@ -3,7 +3,7 @@
  * Halaman Matriks Kepatuhan Simpanan Anggota.
  * Menyediakan audit visual kepatuhan, ekspor Excel berformula, dan modal impor mutasi buku besar.
  */
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useMemo } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
@@ -28,6 +28,8 @@ import {
   getComplianceMatrixData,
   ComplianceMatrixRow,
   ComplianceMonthData,
+  MonthPeriod,
+  getRolling12Months,
   getSavingsComplianceAvailableYears,
   ImportSavingsMatrixLedgerResult
 } from '../../services/complianceService';
@@ -300,6 +302,22 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
   const [data, setData] = useState<ComplianceMatrixRow[]>(initialData || []);
+
+  const currentPeriod = useMemo(() => {
+    const now = new Date();
+    const selectedYear = parseInt(year, 10);
+    if (!isNaN(selectedYear) && selectedYear !== now.getFullYear()) {
+      return { year: selectedYear, month: 12 };
+    }
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  }, [year]);
+
+  const rollingMonths = useMemo(() => {
+    if (data.length > 0 && data[0]?.periods && data[0].periods.length === 12) {
+      return data[0].periods;
+    }
+    return getRolling12Months(currentPeriod.year, currentPeriod.month);
+  }, [data, currentPeriod]);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
   const [loading, setLoading] = useState(initialData === undefined);
@@ -395,8 +413,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     ? (data.reduce((acc, row) => acc + row.compliance, 0) / data.length).toFixed(1)
     : '100';
 
+  const currentMonthColIdx = rollingMonths.length - 1;
   const membersInArrears = data.filter(row => {
-    const currentMonthData = row.months[CURRENT_MONTH];
+    const currentMonthData = row.months[currentMonthColIdx] ?? row.months[CURRENT_MONTH];
     if (currentMonthData) {
       const isWajibArrears = currentMonthData.wajib ? currentMonthData.wajib.status === 'unpaid' : currentMonthData.w <= 0;
       const isBelanjaArrears = currentMonthData.belanja ? currentMonthData.belanja.status === 'unpaid' : currentMonthData.b <= 0;
@@ -855,11 +874,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                   Informasi Anggota
                 </th>
-                {MONTHS.map((month, idx) => (
-                  <th key={month} className={`py-3 px-2 border-b border-slate-200 text-center min-w-[95px] md:min-w-[105px] ${idx === CURRENT_MONTH ? 'bg-emerald-50/50 border-x-2 border-x-emerald-200/50' : ''}`}>
-                    {month}
-                  </th>
-                ))}
+                {rollingMonths.map((col, idx) => {
+                  const isCurrentMonth = idx === rollingMonths.length - 1;
+                  return (
+                    <th
+                      key={col.periodIndex}
+                      className={`py-3 px-2 border-b border-slate-200 text-center min-w-[95px] md:min-w-[105px] ${
+                        isCurrentMonth ? 'bg-emerald-50/50 border-x-2 border-x-emerald-200/50 text-emerald-900 font-bold' : ''
+                      }`}
+                    >
+                      <div>{col.label}</div>
+                    </th>
+                  );
+                })}
                 <th className="sticky right-0 bg-slate-50 z-10 py-3 px-4 border-b border-l border-slate-200 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] w-[160px] text-center">
                   Kepatuhan & Aksi
                 </th>
@@ -935,11 +962,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                     </div>
                   </td>
                   
-                  {row.months.map((month, idx) => (
-                    <td key={idx} className={`py-3 px-1 border-b border-slate-100 align-middle ${idx === CURRENT_MONTH ? 'bg-emerald-50/20 border-x-2 border-x-emerald-100/50' : ''}`}>
-                      {renderCell(month, idx, row)}
-                    </td>
-                  ))}
+                  {row.months.map((month, idx) => {
+                    const isCurrentMonth = idx === rollingMonths.length - 1;
+                    return (
+                      <td
+                        key={idx}
+                        className={`py-3 px-1 border-b border-slate-100 align-middle ${
+                          isCurrentMonth ? 'bg-emerald-50/20 border-x-2 border-x-emerald-100/50' : ''
+                        }`}
+                      >
+                        {renderCell(month, idx, row)}
+                      </td>
+                    );
+                  })}
 
                   <td className="sticky right-0 bg-white group-hover/row:bg-slate-50/90 z-10 py-3 px-4 border-b border-l border-slate-200 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                     <div className="flex items-center justify-between gap-3">
