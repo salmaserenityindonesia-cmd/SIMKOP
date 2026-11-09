@@ -11,7 +11,8 @@ import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
 import { formatCurrency } from '../../utils/formatCurrency';
-import { getActiveSavingsRateTiers } from '../../services/savingsRateService';
+import { getActiveSavingsRateTiers, getRateTiers } from '../../services/savingsRateService';
+import { TierRate } from '../../utils/memberMigrationParser';
 
 export async function triggerMemberExportExcel(
   memberIds: string[],
@@ -122,6 +123,7 @@ export default function ManajemenAnggota({
   const [parseResult, setParseResult] = useState<MemberParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [wajibRateTiers, setWajibRateTiers] = useState<TierRate[]>([]);
 
   // Reset Data State
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
@@ -262,6 +264,21 @@ export default function ManajemenAnggota({
     if (!file) return;
 
     try {
+      // Muat konfigurasi tarif bertingkat Simpanan Wajib
+      try {
+        const rawTiers = await getRateTiers('WAJIB');
+        const mapped: TierRate[] = (rawTiers || []).map(t => ({
+          startYear: t.start_year,
+          startMonth: t.start_month,
+          endYear: t.end_year,
+          endMonth: t.end_month,
+          monthlyAmount: t.monthly_rate,
+        }));
+        setWajibRateTiers(mapped);
+      } catch (rateErr) {
+        console.warn('Gagal memuat tarif bertingkat simpanan wajib:', rateErr);
+      }
+
       const result = await parseMemberUpload(file);
       setParseResult(result);
       setIsImportModalOpen(true);
@@ -661,6 +678,7 @@ export default function ManajemenAnggota({
       <MemberMigrationModal 
         isOpen={isImportModalOpen}
         parseResult={parseResult}
+        wajibRateTiers={wajibRateTiers}
         onClose={() => {
           if (!isImporting) {
             setIsImportModalOpen(false);

@@ -1,5 +1,7 @@
-import { X, AlertTriangle, CheckCircle, Upload, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { X, AlertTriangle, CheckCircle, Upload, Loader2, Info, Eye } from 'lucide-react';
 import { MemberParseResult } from '../../services/memberExcelService';
+import { TierRate, computeReverseWajibBreakdown, ReverseWajibBreakdownResult } from '../../utils/memberMigrationParser';
 
 interface Props {
   isOpen: boolean;
@@ -8,6 +10,7 @@ interface Props {
   parseResult: MemberParseResult | null;
   isImporting: boolean;
   importProgress?: { current: number; total: number } | null;
+  wajibRateTiers?: TierRate[];
 }
 
 export default function MemberMigrationModal({
@@ -17,10 +20,28 @@ export default function MemberMigrationModal({
   parseResult,
   isImporting,
   importProgress,
+  wajibRateTiers = [],
 }: Props) {
+  const [selectedInspection, setSelectedInspection] = useState<{
+    nama: string;
+    nrp: string;
+    tgl_awal_anggota: string | null;
+    breakdown: ReverseWajibBreakdownResult;
+  } | null>(null);
+
   if (!isOpen || !parseResult) return null;
 
   const { rows, errors } = parseResult;
+
+  // Hitung evaluasi selisih untuk seluruh baris anggota
+  const rowBreakdowns = rows.map(r => ({
+    row: r,
+    breakdown: computeReverseWajibBreakdown(r.tgl_awal_anggota, r.jumlah_simpanan_wajib, wajibRateTiers),
+  }));
+
+  const countWithDifference = rowBreakdowns.filter(b => b.breakdown.hasDifference).length;
+  const countPre2020 = rowBreakdowns.filter(b => b.breakdown.isPre2020Member).length;
+  const countBalanced = rowBreakdowns.filter(b => !b.breakdown.hasDifference && !b.breakdown.isPre2020Member).length;
 
   const totalPokok = rows.reduce((sum, r) => sum + r.jumlah_simpanan_pokok, 0);
   const totalWajib = rows.reduce((sum, r) => sum + r.jumlah_simpanan_wajib, 0);
@@ -45,6 +66,11 @@ export default function MemberMigrationModal({
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
+  };
+
+  const getMonthName = (m: number) => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return months[m - 1] || String(m);
   };
 
   return (
@@ -72,7 +98,7 @@ export default function MemberMigrationModal({
             </div>
           )}
 
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
               <p className="text-xs text-blue-600 font-medium">Total Anggota</p>
               <p className="text-xl font-bold text-blue-900">{rows.length}</p>
@@ -107,6 +133,25 @@ export default function MemberMigrationModal({
             </div>
           </div>
 
+          {/* Audit Rekonsiliasi Tarif Bertingkat Simpanan Wajib */}
+          <div className="flex flex-wrap items-center gap-2 mb-6 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+            <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+              <Info className="w-4 h-4 text-slate-500" />
+              Audit Tarif Bertingkat Simpanan Wajib:
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium">
+              Seimbang: {countBalanced}
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 font-medium">
+              Historis Pra-2020: {countPre2020}
+            </span>
+            {countWithDifference > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-semibold animate-pulse">
+                Terdapat Selisih: {countWithDifference} anggota
+              </span>
+            )}
+          </div>
+
           <div>
             <h3 className="text-lg font-semibold mb-3 flex items-center">
               <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
@@ -131,7 +176,7 @@ export default function MemberMigrationModal({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {rows.slice(0, 100).map((row, i) => (
+                  {rowBreakdowns.slice(0, 100).map(({ row, breakdown }, i) => (
                     <tr key={i} className="hover:bg-gray-50 group">
                       <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-gray-50 z-10 border-r border-gray-100 whitespace-nowrap">
                         <div className="font-medium text-gray-900">{row.nama}</div>
@@ -150,7 +195,50 @@ export default function MemberMigrationModal({
                         {formatRupiah(row.jumlah_simpanan_pokok)}
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-purple-600 whitespace-nowrap">
-                        {formatRupiah(row.jumlah_simpanan_wajib)}
+                        <div className="flex flex-col items-end">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold">{formatRupiah(row.jumlah_simpanan_wajib)}</span>
+                            {breakdown.monthsCount > 0 && (
+                              <button
+                                type="button"
+                                title="Lihat rincian penguraian bulanan"
+                                onClick={() => setSelectedInspection({
+                                  nama: row.nama,
+                                  nrp: row.nrp,
+                                  tgl_awal_anggota: row.tgl_awal_anggota,
+                                  breakdown,
+                                })}
+                                className="p-1 rounded text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Badge Peringatan Selisih / Info Historis */}
+                          {breakdown.isPre2020Member && (
+                            <span className="text-[10px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded mt-1 text-right">
+                              Pra-2020: Utuh {formatRupiah(breakdown.pre2020LumpSum)} + {breakdown.monthsCount} bln
+                            </span>
+                          )}
+
+                          {breakdown.hasDifference && (
+                            <div className="flex flex-col items-end gap-0.5 mt-1 text-right">
+                              <span className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                                Selisih: {breakdown.difference > 0 ? '+' : ''}{formatRupiah(breakdown.difference)}
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                (Ekspektasi sistem {breakdown.monthsCount} bln: {formatRupiah(breakdown.calculatedTotal)})
+                              </span>
+                            </div>
+                          )}
+
+                          {!breakdown.hasDifference && !breakdown.isPre2020Member && breakdown.monthsCount > 0 && (
+                            <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-1 text-right">
+                              Seimbang ({breakdown.monthsCount} bln)
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right text-gray-700 whitespace-nowrap">
                         {formatRupiah(row.jumlah_simpanan_belanja)}
@@ -242,6 +330,110 @@ export default function MemberMigrationModal({
           </button>
         </div>
       </div>
+
+      {/* Modal / Dialog Inspeksi Rincian Uraian Mundur */}
+      {selectedInspection && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-60 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="p-4 bg-slate-900 text-white flex justify-between items-center">
+              <div>
+                <h4 className="font-bold text-sm">Rincian Penguraian Simpanan Wajib</h4>
+                <p className="text-xs text-slate-300">{selectedInspection.nama} ({selectedInspection.nrp})</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedInspection(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
+              <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <div>
+                  <span className="text-slate-500">Tgl Awal Anggota:</span>
+                  <p className="font-semibold text-slate-800">{selectedInspection.tgl_awal_anggota || '-'}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Nominal di Excel:</span>
+                  <p className="font-bold text-purple-700">{formatRupiah(selectedInspection.breakdown.excelWajibAmount)}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Ekspektasi Uraian:</span>
+                  <p className="font-semibold text-slate-800">
+                    {formatRupiah(selectedInspection.breakdown.calculatedTotal)} ({selectedInspection.breakdown.monthsCount} bulan)
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Status Selisih:</span>
+                  <p className={`font-bold ${selectedInspection.breakdown.hasDifference ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {selectedInspection.breakdown.hasDifference
+                      ? `${selectedInspection.breakdown.difference > 0 ? '+' : ''}${formatRupiah(selectedInspection.breakdown.difference)}`
+                      : 'Seimbang (0)'}
+                  </p>
+                </div>
+              </div>
+
+              {selectedInspection.breakdown.isPre2020Member && (
+                <div className="p-2.5 bg-sky-50 border border-sky-200 rounded-lg text-xs text-sky-900 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">Anggota Pra-2020:</span> Periode sebelum Jan 2020 tidak diurai bulanan. Sisa saldo historis dicatat utuh sebesar <span className="font-bold">{formatRupiah(selectedInspection.breakdown.pre2020LumpSum)}</span>.
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <h5 className="text-xs font-semibold text-slate-700 mb-2">
+                  Uraian Bulan Mundur ({selectedInspection.breakdown.monthlyBreakdown.length} Bulan):
+                </h5>
+                <div className="border border-slate-200 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 text-slate-700 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-1.5 font-semibold">No</th>
+                        <th className="px-3 py-1.5 font-semibold">Periode Bulan</th>
+                        <th className="px-3 py-1.5 font-semibold text-right">Tarif Berlaku</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedInspection.breakdown.monthlyBreakdown.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="px-3 py-1.5 text-slate-500">{idx + 1}</td>
+                          <td className="px-3 py-1.5 font-medium text-slate-800">
+                            {getMonthName(item.month)} {item.year}
+                          </td>
+                          <td className="px-3 py-1.5 text-right font-semibold text-purple-700">
+                            {formatRupiah(item.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                      {selectedInspection.breakdown.monthlyBreakdown.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className="px-3 py-4 text-center text-slate-400">
+                            Tidak ada penguraian bulanan.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedInspection(null)}
+                className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-slate-700 transition"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
