@@ -1582,6 +1582,92 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).not.toContain('Pencapaian Saldo:');
       expect(html).not.toContain('NaN%');
     });
+
+    it('renders prior balance summary column header (Saldo Pra [Bln-YY]) and row cell with formatted W, B, L amounts', () => {
+      const customPeriods = [
+        { year: 2025, month: 11, label: 'Nov-25', periodIndex: 2025 * 12 + 11 },
+        { year: 2025, month: 12, label: 'Des-25', periodIndex: 2025 * 12 + 12 },
+        { year: 2026, month: 1, label: 'Jan-26', periodIndex: 2026 * 12 + 1 },
+        { year: 2026, month: 2, label: 'Feb-26', periodIndex: 2026 * 12 + 2 },
+        { year: 2026, month: 3, label: 'Mar-26', periodIndex: 2026 * 12 + 3 },
+        { year: 2026, month: 4, label: 'Apr-26', periodIndex: 2026 * 12 + 4 },
+        { year: 2026, month: 5, label: 'Mei-26', periodIndex: 2026 * 12 + 5 },
+        { year: 2026, month: 6, label: 'Jun-26', periodIndex: 2026 * 12 + 6 },
+        { year: 2026, month: 7, label: 'Jul-26', periodIndex: 2026 * 12 + 7 },
+        { year: 2026, month: 8, label: 'Ags-26', periodIndex: 2026 * 12 + 8 },
+        { year: 2026, month: 9, label: 'Sep-26', periodIndex: 2026 * 12 + 9 },
+        { year: 2026, month: 10, label: 'Okt-26', periodIndex: 2026 * 12 + 10 },
+      ];
+
+      const rowWithPriorSummary = {
+        member_id: 'm-prior-test',
+        nrp: 'NRP-PRIOR-1',
+        nama: 'Kopda Hendra',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 300000, b: 600000, l: 600000 },
+        periods: customPeriods,
+        priorSummary: {
+          wajib: 250000,
+          belanja: 120000,
+          lebaran: 75000,
+          total: 445000,
+        },
+        netSavings: {
+          wajib: 550000,
+          belanja: 720000,
+          lebaran: 675000,
+          total: 1945000,
+        },
+        months: Array(12).fill(null),
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithPriorSummary as any]} initialYear="2026" />
+      );
+
+      // Verify column header for prior balance
+      expect(html).toContain('Saldo Pra Nov-25');
+      expect(html).toContain('Akumulasi Lampau');
+
+      // Verify row cell data-testid and formatted amounts
+      expect(html).toContain('data-testid="prior-summary-NRP-PRIOR-1"');
+      expect(html).toContain('W: Rp 250.000');
+      expect(html).toContain('B: Rp 120.000');
+      expect(html).toContain('L: Rp 75.000');
+
+      // Verify 12 rolling month headers rendered
+      expect(html).toContain('Nov-25');
+      expect(html).toContain('Okt-26');
+    });
+
+    it('renders zero amounts in prior summary cell when priorSummary is undefined', () => {
+      const rowWithoutPriorSummary = {
+        member_id: 'm-no-prior',
+        nrp: 'NRP-NO-PRIOR',
+        nama: 'Prajurit Baru',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 0, b: 0, l: 0 },
+        months: Array(12).fill(null),
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithoutPriorSummary as any]} initialYear="2026" />
+      );
+
+      expect(html).toContain('data-testid="prior-summary-NRP-NO-PRIOR"');
+      expect(html).toContain('W: Rp 0');
+      expect(html).toContain('B: Rp 0');
+      expect(html).toContain('L: Rp 0');
+    });
+
+    it('renders empty table and loading states with colSpan 15', () => {
+      const emptyHtml = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[]} initialYear="2026" />
+      );
+      expect(emptyHtml).toContain('colSpan="15"');
+    });
   });
 });
 

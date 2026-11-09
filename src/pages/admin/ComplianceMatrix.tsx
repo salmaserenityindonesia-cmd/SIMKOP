@@ -30,6 +30,7 @@ import {
   ComplianceMonthData,
   MonthPeriod,
   getRolling12Months,
+  getRolling12MonthRange,
   getSavingsComplianceAvailableYears,
   ImportSavingsMatrixLedgerResult
 } from '../../services/complianceService';
@@ -316,7 +317,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     if (data.length > 0 && data[0]?.periods && data[0].periods.length === 12) {
       return data[0].periods;
     }
-    return getRolling12Months(currentPeriod.year, currentPeriod.month);
+    return getRolling12MonthRange(currentPeriod.year, currentPeriod.month);
   }, [data, currentPeriod]);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
@@ -922,6 +923,10 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                   Informasi Anggota
                 </th>
+                <th className="py-3 px-3 bg-slate-100/80 border-b border-r border-slate-200 text-center min-w-[120px] font-semibold text-slate-700 text-xs">
+                  <div>{rollingMonths.length > 0 ? `Saldo Pra ${rollingMonths[0].label}` : 'Saldo Awal'}</div>
+                  <div className="text-[10px] font-normal text-slate-500">Akumulasi Lampau</div>
+                </th>
                 {rollingMonths.map((col, idx) => {
                   const isCurrentMonth = idx === rollingMonths.length - 1;
                   return (
@@ -943,7 +948,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="text-center py-8 text-slate-500">
+                  <td colSpan={15} className="text-center py-8 text-slate-500">
                     <div className="flex flex-col items-center justify-center space-y-3">
                       <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
                       <p>Memuat data matriks...</p>
@@ -952,7 +957,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 </tr>
               ) : paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="text-center py-8 text-slate-500">
+                  <td colSpan={15} className="text-center py-8 text-slate-500">
                     {search.trim() ? `Tidak ada data anggota yang cocok dengan pencarian "${search}".` : 'Tidak ada data anggota ditemukan.'}
                   </td>
                 </tr>
@@ -1008,6 +1013,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         </div>
                       </div>
                     </div>
+                  </td>
+                  
+                  <td className="px-3 py-3 bg-slate-50/70 border-b border-r border-slate-200 text-xs select-none" data-testid={`prior-summary-${row.nrp}`}>
+                    <div className="font-semibold text-slate-700 whitespace-nowrap">W: Rp {Number(row.priorSummary?.wajib || 0).toLocaleString('id-ID')}</div>
+                    <div className="text-slate-500 whitespace-nowrap">B: Rp {Number(row.priorSummary?.belanja || 0).toLocaleString('id-ID')}</div>
+                    <div className="text-slate-500 whitespace-nowrap">L: Rp {Number(row.priorSummary?.lebaran || 0).toLocaleString('id-ID')}</div>
                   </td>
                   
                   {row.months.map((month, idx) => {
