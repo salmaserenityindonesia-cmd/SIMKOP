@@ -432,8 +432,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const renderCell = (monthData: ComplianceMonthData | null, monthIndex: number, row: ComplianceMatrixRow) => {
     if (!monthData) return <div className="text-gray-300 text-xs text-center">-</div>;
 
-    const yearNum = parseInt(year, 10);
-    const monthNum = monthIndex + 1;
+    const colPeriod = rollingMonths[monthIndex];
+    const yearNum = colPeriod?.year ?? parseInt(year, 10);
+    const monthNum = colPeriod?.month ?? (monthIndex + 1);
     const applicableTariffW = getApplicableTierRate(rateTiers, 'WAJIB', yearNum, monthNum) || (targets.wajib || 210000);
     const applicableTariffB = getApplicableTierRate(rateTiers, 'BELANJA', yearNum, monthNum) || (targets.belanja || 25000);
     const applicableTariffL = getApplicableTierRate(rateTiers, 'LEBARAN', yearNum, monthNum) || (targets.lebaran || 50000);
@@ -441,6 +442,24 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     const targetW = monthData.wajib?.targetAmount || applicableTariffW;
     const targetB = monthData.belanja?.targetAmount || applicableTariffB;
     const targetL = monthData.lebaran?.targetAmount || applicableTariffL;
+
+    const totalOpeningBal = row.openingBalance
+      ? Number(row.openingBalance.w || 0) + Number(row.openingBalance.b || 0) + Number(row.openingBalance.l || 0)
+      : 0;
+
+    const monthlyDepositTotal = Number(monthData.w || 0) + Number(monthData.b || 0) + Number(monthData.l || 0);
+    const cumW = monthData.cum_w !== undefined ? Number(monthData.cum_w) : Number(monthData.bal_w || 0);
+    const cumB = monthData.cum_b !== undefined ? Number(monthData.cum_b) : Number(monthData.bal_b || 0);
+    const cumL = monthData.cum_l !== undefined ? Number(monthData.cum_l) : Number(monthData.bal_l || 0);
+    const totalKumulatif = cumW + cumB + cumL;
+
+    const totalReferenceAmount = (row.netSavings?.total && row.netSavings.total > 0)
+      ? row.netSavings.total
+      : (row.balances ? (row.balances.w + row.balances.b + row.balances.l) : 0);
+
+    const percentageOfTotal = totalReferenceAmount > 0
+      ? Math.min(100, Math.round((totalKumulatif / totalReferenceAmount) * 100))
+      : 100;
 
     // Evaluasi fallback jika baris bulan belum memiliki sub-item eksplisit
     let fallbackStatusW: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' = 'unpaid';
@@ -495,6 +514,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         className="relative group flex flex-col gap-0.5 py-1 px-1.5 text-[11px] leading-tight font-mono select-none rounded hover:bg-slate-100/80 cursor-pointer transition-colors"
         title={`Klik untuk rincian buku besar ${row.nama} - ${MONTHS[monthIndex]} ${year}`}
       >
+        {monthIndex === 0 && totalOpeningBal > 0 && (
+          <span
+            className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.5 rounded border border-slate-200 block text-center truncate mb-0.5"
+            title={`Saldo Bawaan (pra-jendela): Rp ${totalOpeningBal.toLocaleString('id-ID')}`}
+            data-testid="opening-balance-indicator"
+          >
+            + Saldo Awal Rp {totalOpeningBal.toLocaleString('id-ID')}
+          </span>
+        )}
+
         {/* Baris Simpanan Wajib */}
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">wajib</span>
@@ -557,7 +586,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
         {/* Tooltip Hover Detail */}
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 bg-slate-800 text-white text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-3 pointer-events-none">
-          <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{MONTHS[monthIndex]} {year}</div>
+          <div className="font-semibold mb-2 text-slate-200 border-b border-slate-600 pb-1">{colPeriod?.label || `${MONTHS[monthIndex]} ${year}`}</div>
           <div className="space-y-1.5">
             <div className="flex justify-between items-center gap-2 border-b border-slate-700/50 pb-1.5 mb-1.5">
               <span>Wajib:</span>
@@ -635,6 +664,25 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Akumulasi Terbayar s/d Bulan Ini & Ringkasan */}
+          <div className="mt-2 pt-1.5 border-t border-slate-700/80 space-y-1" data-testid="tooltip-cumulative-summary">
+            <div className="flex justify-between items-center text-[11px] text-slate-300">
+              <span>Iuran Bulan Ini:</span>
+              <span className="font-semibold text-white">Rp {monthlyDepositTotal.toLocaleString('id-ID')}</span>
+            </div>
+            <div className="flex justify-between items-center text-[11px] text-emerald-400">
+              <span>Akumulasi s/d Bulan Ini:</span>
+              <span className="font-bold">Rp {totalKumulatif.toLocaleString('id-ID')}</span>
+            </div>
+            {totalReferenceAmount > 0 && (
+              <div className="flex justify-between items-center text-[10px] text-slate-400">
+                <span>Pencapaian Saldo:</span>
+                <span className="font-semibold text-slate-200">{percentageOfTotal}%</span>
+              </div>
+            )}
+          </div>
+
           {/* Arrow */}
           <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
         </div>

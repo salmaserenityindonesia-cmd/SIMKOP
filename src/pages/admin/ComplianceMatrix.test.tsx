@@ -1386,6 +1386,129 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('Bukti: SL-2026/01');
     });
   });
+
+  describe('Phase 73: Rolling 12-Month Window Opening Balance & Cumulative Tooltips', () => {
+    it('renders opening balance indicator in column index 0 when member has pre-window opening balance', () => {
+      const rowWithOpeningBal = {
+        member_id: 'm-carry',
+        nrp: 'NRP-CARRY',
+        nama: 'Kurniawan Dwi Yulianto',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 3000000, b: 1000000, l: 1000000 },
+        openingBalance: { w: 2000000, b: 500000, l: 500000 }, // Total = 3.000.000
+        netSavings: { wajib: 3000000, belanja: 1000000, lebaran: 1000000, total: 5000000 },
+        months: [
+          {
+            w: 200000,
+            b: 50000,
+            l: 50000,
+            bal_w: 2200000,
+            bal_b: 550000,
+            bal_l: 550000,
+            cum_w: 2200000,
+            cum_b: 550000,
+            cum_l: 550000,
+            isOpeningBalanceMonth: true,
+          },
+          ...Array(11).fill(null),
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowWithOpeningBal as any]} initialYear="2026" />
+      );
+
+      // Verify opening balance indicator
+      expect(html).toContain('data-testid="opening-balance-indicator"');
+      expect(html).toContain('+ Saldo Awal Rp 3.000.000');
+      expect(html).toContain('title="Saldo Bawaan (pra-jendela): Rp 3.000.000"');
+    });
+
+    it('does not render opening balance indicator when member has zero opening balance', () => {
+      const rowZeroOpening = {
+        member_id: 'm-zero',
+        nrp: 'NRP-ZERO',
+        nama: 'Anggota Baru',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 200000, b: 50000, l: 50000 },
+        openingBalance: { w: 0, b: 0, l: 0 },
+        months: [
+          {
+            w: 200000,
+            b: 50000,
+            l: 50000,
+            bal_w: 200000,
+            bal_b: 50000,
+            bal_l: 50000,
+          },
+          ...Array(11).fill(null),
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowZeroOpening as any]} initialYear="2026" />
+      );
+
+      expect(html).not.toContain('data-testid="opening-balance-indicator"');
+      expect(html).not.toContain('+ Saldo Awal');
+    });
+
+    it('renders cumulative tooltip with monthly deposit total, cumulative total, and percentage', () => {
+      const rowCumulative = {
+        member_id: 'm-cum',
+        nrp: 'NRP-CUM',
+        nama: 'Budi Darmawan',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 2000000, b: 500000, l: 500000 },
+        netSavings: { wajib: 2000000, belanja: 500000, lebaran: 500000, total: 3000000 },
+        months: [
+          {
+            w: 200000,
+            b: 50000,
+            l: 50000,
+            bal_w: 1000000,
+            bal_b: 250000,
+            bal_l: 250000,
+            cum_w: 1000000,
+            cum_b: 250000,
+            cum_l: 250000,
+          },
+          ...Array(10).fill(null),
+          {
+            w: 200000,
+            b: 50000,
+            l: 50000,
+            bal_w: 2000000,
+            bal_b: 500000,
+            bal_l: 500000,
+            cum_w: 2000000,
+            cum_b: 500000,
+            cum_l: 500000,
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowCumulative as any]} initialYear="2026" />
+      );
+
+      // Verify cumulative summary container
+      expect(html).toContain('data-testid="tooltip-cumulative-summary"');
+      expect(html).toContain('Iuran Bulan Ini:');
+      expect(html).toContain('Rp 300.000'); // 200k + 50k + 50k
+      expect(html).toContain('Akumulasi s/d Bulan Ini:');
+      expect(html).toContain('Rp 1.500.000'); // Month 0: 1000k + 250k + 250k
+      expect(html).toContain('Pencapaian Saldo:');
+      expect(html).toContain('50%'); // 1.500.000 / 3.000.000 = 50%
+
+      // On column 11 (right-most), total cumulative equals netSavings.total (3.000.000) and 100%
+      expect(html).toContain('Rp 3.000.000');
+      expect(html).toContain('100%');
+    });
+  });
 });
 
 
