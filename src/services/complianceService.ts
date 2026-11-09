@@ -369,25 +369,29 @@ export interface MonthPeriod {
   periodIndex: number; // year * 12 + month
 }
 
-export function getRolling12Months(refYear: number, refMonth: number): MonthPeriod[] {
-  const periods: MonthPeriod[] = [];
-  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+export function getRolling12MonthRange(endYear: number, endMonth: number): MonthPeriod[] {
+  const months: MonthPeriod[] = [];
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 
   for (let i = 11; i >= 0; i--) {
-    let m = refMonth - i;
-    let y = refYear;
+    let m = endMonth - i;
+    let y = endYear;
     while (m <= 0) {
       m += 12;
       y -= 1;
     }
-    periods.push({
+    months.push({
       year: y,
       month: m,
-      label: `${MONTH_NAMES[m - 1]}-${String(y).slice(-2)}`,
+      label: `${MONTH_LABELS[m - 1]}-${String(y).slice(-2)}`,
       periodIndex: y * 12 + m
     });
   }
-  return periods; // Mengembalikan tepat 12 bulan berurutan
+  return months;
+}
+
+export function getRolling12Months(refYear: number, refMonth: number): MonthPeriod[] {
+  return getRolling12MonthRange(refYear, refMonth);
 }
 
 export interface ComplianceMonthData {
@@ -413,6 +417,13 @@ export interface MemberNetSavings {
   total: number;
 }
 
+export interface PriorBalanceSummary {
+  wajib: number;
+  belanja: number;
+  lebaran: number;
+  total: number;
+}
+
 export interface ComplianceMatrixRow {
   member_id: string;
   nrp: string;
@@ -421,6 +432,7 @@ export interface ComplianceMatrixRow {
   compliance: number;
   balances: { w: number; b: number; l: number };
   openingBalance?: { w: number; b: number; l: number };
+  priorSummary?: PriorBalanceSummary;
   periods?: MonthPeriod[];
   months: (ComplianceMonthData | null)[];
   created_at?: string;
@@ -438,6 +450,7 @@ export interface ComplianceMatrixResult {
   rateTiers?: SavingsRateTier[];
   periods?: MonthPeriod[];
   windowStartIndex?: number;
+  cutoffIndex?: number;
 }
 
 /**
@@ -463,21 +476,6 @@ export async function getComplianceMatrixData(
     yearOrRolling === undefined ||
     (typeof yearOrRolling === 'string' && yearOrRolling.toLowerCase() === 'rolling') ||
     refMonth !== undefined;
-
-  let targetYear: number;
-  let periods: MonthPeriod[];
-
-  if (isRolling) {
-    targetYear = currentYear;
-    const targetRefMonth = refMonth !== undefined ? refMonth : currentMonth1Based;
-    periods = getRolling12Months(currentYear, targetRefMonth);
-  } else {
-    targetYear = typeof yearOrRolling === 'number' ? yearOrRolling : parseInt(String(yearOrRolling), 10) || currentYear;
-    // Mode kalender 12 bulan (Jan s/d Des untuk targetYear)
-    periods = getRolling12Months(targetYear, 12);
-  }
-
-  const windowStartIndex = periods[0].periodIndex;
 
   // 1. Ambil tipe simpanan
   const { data: dTypes } = await supabase.from('deposit_types').select('*');
@@ -515,7 +513,94 @@ export async function getComplianceMatrixData(
   if (belanjaId) belanjaTypeIds.add(belanjaId);
   if (lebaranId) lebaranTypeIds.add(lebaranId);
 
-  // 2. Ambil seluruh anggota dari public.anggota (BUKAN members)
+  // 2. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN) dengan paging
+  const { data: memberDepositsList } = await fetchAllPaged(
+    'member_deposits',
+    'id, member_id, deposit_type_id'
+  );
+  const mdMap = new Map<string, { member_id: string; deposit_type_id: string }>();
+  (memberDepositsList || []).forEach((md: any) => {
+    if (md.id) {
+      mdMap.set(md.id, { member_id: md.member_id, deposit_type_id: md.deposit_type_id });
+    }
+  });
+
+  const { data: transactions } = await fetchAllPaged(
+    'deposit_transactions',
+    'id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, reference_no, notes, member_deposits(member_id, deposit_type_id)'
+  );
+
+  // Helper untuk mengekstrak member_id dan deposit_type_id dari transaksi
+  const parseTxInfo = (tx: any) => {
+    const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+    const mdFromMap = tx.member_deposit_id ? mdMap.get(tx.member_deposit_id) : undefined;
+    const memberId = tx.member_id || md?.member_id || mdFromMap?.member_id;
+    const depositTypeId = tx.deposit_type_id || md?.deposit_type_id || mdFromMap?.deposit_type_id;
+    return { memberId, depositTypeId };
+  };
+
+  // 3. Tentukan jendela 12 bulan bergulir lintas tahun berdasarkan parameter atau transaksi setoran terakhir
+  let latestDepositYear = currentYear;
+  let latestDepositMonth = currentMonth1Based;
+  let hasDepositTx = false;
+  let maxDepositPeriod = -1;
+
+  if (transactions && Array.isArray(transactions) && transactions.length > 0) {
+    transactions.forEach((tx: any) => {
+      if (tx.transaction_type === 'deposit') {
+        let ty = 0;
+        let tm = -1;
+
+        if (tx.for_year !== null && tx.for_year !== undefined && !isNaN(Number(tx.for_year))) {
+          ty = Number(tx.for_year);
+        } else if (tx.created_at) {
+          ty = new Date(tx.created_at).getFullYear();
+        }
+
+        if (tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month))) {
+          const rawM = Number(tx.for_month);
+          tm = rawM >= 1 && rawM <= 12 ? rawM : rawM + 1;
+        } else if (tx.created_at) {
+          tm = new Date(tx.created_at).getMonth() + 1;
+        }
+
+        if (ty > 0 && tm >= 1 && tm <= 12) {
+          const pIdx = ty * 12 + tm;
+          if (pIdx > maxDepositPeriod) {
+            maxDepositPeriod = pIdx;
+            latestDepositYear = ty;
+            latestDepositMonth = tm;
+            hasDepositTx = true;
+          }
+        }
+      }
+    });
+  }
+
+  let targetYear: number;
+  let periods: MonthPeriod[];
+
+  if (refMonth !== undefined) {
+    targetYear = typeof yearOrRolling === 'number' ? yearOrRolling : currentYear;
+    periods = getRolling12MonthRange(targetYear, refMonth);
+  } else if (isRolling) {
+    if (hasDepositTx) {
+      targetYear = latestDepositYear;
+      periods = getRolling12MonthRange(latestDepositYear, latestDepositMonth);
+    } else {
+      targetYear = currentYear;
+      periods = getRolling12MonthRange(currentYear, currentMonth1Based);
+    }
+  } else {
+    targetYear = typeof yearOrRolling === 'number' ? yearOrRolling : parseInt(String(yearOrRolling), 10) || currentYear;
+    // Mode kalender 12 bulan (Jan s/d Des untuk targetYear)
+    periods = getRolling12MonthRange(targetYear, 12);
+  }
+
+  const cutoffIndex = periods[0].periodIndex;
+  const windowStartIndex = cutoffIndex;
+
+  // 4. Ambil seluruh anggota dari public.anggota (BUKAN members)
   // WAJIB mengambil seluruh anggota aktif dari public.anggota yang terdaftar pada atau sebelum akhir jendela periode
   const endPeriod = periods[11];
   const lastDayOfMonth = new Date(endPeriod.year, endPeriod.month, 0).getDate();
@@ -609,33 +694,7 @@ export async function getComplianceMatrixData(
     return isNaN(joinDate.getTime()) || joinDate <= windowEndDate;
   });
 
-  // 3. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN) dengan paging
-  const { data: memberDepositsList } = await fetchAllPaged(
-    'member_deposits',
-    'id, member_id, deposit_type_id'
-  );
-  const mdMap = new Map<string, { member_id: string; deposit_type_id: string }>();
-  (memberDepositsList || []).forEach((md: any) => {
-    if (md.id) {
-      mdMap.set(md.id, { member_id: md.member_id, deposit_type_id: md.deposit_type_id });
-    }
-  });
-
-  const { data: transactions } = await fetchAllPaged(
-    'deposit_transactions',
-    'id, member_deposit_id, amount, transaction_type, for_year, for_month, created_at, description, reference_no, notes, member_deposits(member_id, deposit_type_id)'
-  );
-
-  // Helper untuk mengekstrak member_id dan deposit_type_id dari transaksi
-  const parseTxInfo = (tx: any) => {
-    const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
-    const mdFromMap = tx.member_deposit_id ? mdMap.get(tx.member_deposit_id) : undefined;
-    const memberId = tx.member_id || md?.member_id || mdFromMap?.member_id;
-    const depositTypeId = tx.deposit_type_id || md?.deposit_type_id || mdFromMap?.deposit_type_id;
-    return { memberId, depositTypeId };
-  };
-
-  // Ambil transaksi pokok dengan paging
+  // 5. Ambil transaksi pokok dengan paging
   const { data: pokokTxs } = await fetchAllPaged(
     'deposit_transactions',
     'id, member_deposit_id, amount, transaction_type, member_deposits(member_id, deposit_type_id)'
@@ -921,6 +980,12 @@ export async function getComplianceMatrixData(
 
     // Saldo bawaan pra-jendela anggota
     const openBal = openingBalances[m.id] || { w: 0, b: 0, l: 0 };
+    const priorSummary: PriorBalanceSummary = {
+      wajib: openBal.w,
+      belanja: openBal.b,
+      lebaran: openBal.l,
+      total: openBal.w + openBal.b + openBal.l,
+    };
 
     // Deteksi transaksi dan status sisa parsial anggota pada 12 kolom periode ini
     let lastPaidColW = -1;
@@ -972,15 +1037,15 @@ export async function getComplianceMatrixData(
       }
     }
 
-    // Running cumulative balance yang mengalir dari opening balance
-    let runningCumW = openBal.w;
-    let runningCumB = openBal.b;
-    let runningCumL = openBal.l;
+    // Running cumulative balance yang mengalir dari priorSummary / opening balance
+    let runningCumW = priorSummary.wajib;
+    let runningCumB = priorSummary.belanja;
+    let runningCumL = priorSummary.lebaran;
 
     for (let i = 0; i < 12; i++) {
       const colPeriod = periods[i];
       const isBeforeJoin = colPeriod.periodIndex < joinPeriodIndex;
-      const isFuture = colPeriod.periodIndex > (currentYear * 12 + currentMonth1Based);
+      const isFuture = !isRolling && colPeriod.periodIndex > (currentYear * 12 + currentMonth1Based);
 
       const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
       const wDraw = withdrawalsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
@@ -1184,6 +1249,7 @@ export async function getComplianceMatrixData(
       compliance,
       balances: { w: 0, b: 0, l: 0 },
       openingBalance: openBal,
+      priorSummary,
       periods,
       months: monthsData,
       created_at: m.created_at,
@@ -1201,7 +1267,8 @@ export async function getComplianceMatrixData(
     },
     rateTiers,
     periods,
-    windowStartIndex,
+    windowStartIndex: cutoffIndex,
+    cutoffIndex,
   };
 }
 
