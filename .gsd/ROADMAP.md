@@ -1238,13 +1238,13 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 70: Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Iuran Bertingkat dan Integrasi Validasi Pengajuan Pinjaman
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Menyelaraskan nilai "Default Jumlah" pada halaman Master Produk Simpan Pinjam (`/admin/master-simpan-pinjam` di `src/pages/admin/ManajemenProdukSimpanPinjam.tsx`) agar secara dinamis mengambil tarif aktif dari "Konfigurasi Tarif Iuran Simpanan Bertingkat" (`savings_rate_tiers` / `savingsRateService`), tetap mempertahankan atribut master produk (`Kode`, `Nama`, `Frekuensi`, `Bisa Ditarik?`), serta mengintegrasikan nilai kewajiban simpanan rutin aktif tersebut sebagai komponen pengurang THP dalam validasi kelayakan plafon dan tenor pinjaman pada `/admin/pengajuan-pinjaman`.
 **Depends on:** Phase 69, Phase 4, Phase 67
 
 **Plans:**
 - [x] Plan 70.1: Dynamic Rate Resolver for Master Deposit Types & Display Effective Tier Amount
-- [ ] Plan 70.2: Integrate Active Savings Deductions & Tenor Constraints into Loan Application Validation
+- [x] Plan 70.2: Integrate Active Savings Deductions & Tenor Constraints into Loan Application Validation
 
 **Deliverables:**
 - Resolver tarif simpanan aktif (`getActiveSavingsRateTiers` / `getDepositTypes` diperluas dengan `effective_amount`) di `src/services/koperasiService.ts` dan `src/services/savingsRateService.ts`
@@ -1385,7 +1385,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 67 | Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval | ✅ | 1/1 | 100% |
 | 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ✅ | 2/2 | 100% |
 | 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
-| 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ⏳ | 1/2 | 50% |
+| 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1462,6 +1462,6 @@ updated: 2026-10-30T20:50:00+07:00
 | 67 | 2026-11-09 | 2026-11-09 | 1 day |
 | 68 | 2026-11-09 | 2026-11-09 | 1 day |
 | 69 | 2026-11-09 | 2026-11-09 | 1 day |
-| 70 | 2026-11-09 | — | — |
+| 70 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
