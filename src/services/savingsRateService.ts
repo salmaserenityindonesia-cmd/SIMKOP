@@ -1,8 +1,17 @@
 import { supabase } from '../lib/supabaseClient';
 
+export type DepositTypeCode = 'POKOK' | 'WAJIB' | 'BELANJA' | 'LEBARAN';
+
+export const DEPOSIT_TYPE_LABELS: Record<string, string> = {
+  POKOK: 'Simpanan Pokok',
+  WAJIB: 'Simpanan Wajib',
+  BELANJA: 'Simpanan Belanja',
+  LEBARAN: 'Simpanan Hari Raya (Lebaran)',
+};
+
 export interface SavingsRateTier {
   id: string;
-  deposit_type_code: string; // 'WAJIB' | 'BELANJA' | 'LEBARAN'
+  deposit_type_code: string; // 'POKOK' | 'WAJIB' | 'BELANJA' | 'LEBARAN'
   start_year: number;
   start_month: number;
   end_year: number | null;
@@ -25,6 +34,18 @@ export interface AddRateTierPayload {
 }
 
 export const DEFAULT_RATE_TIERS: SavingsRateTier[] = [
+  {
+    id: 'seed-pokok-tier-1',
+    deposit_type_code: 'POKOK',
+    start_year: 2024,
+    start_month: 1,
+    end_year: null,
+    end_month: null,
+    monthly_rate: 100000,
+    notes: 'Tarif Simpanan Pokok Standar (Rp 100.000)',
+    created_at: '2024-01-01T00:00:00.000Z',
+    updated_at: '2024-01-01T00:00:00.000Z'
+  },
   {
     id: 'seed-wajib-tier-1',
     deposit_type_code: 'WAJIB',
@@ -333,6 +354,9 @@ export function getApplicableRate(
 
   // Sediakan fallback acuan awal
   const getHardcodedFallback = () => {
+    if (code === 'POKOK' || code === 'SP') {
+      return 100000;
+    }
     if (code === 'WAJIB') {
       return (year < 2025 || (year === 2025 && month <= 10)) ? 150000 : 200000;
     }
@@ -346,7 +370,18 @@ export function getApplicableRate(
   };
 
   const pool = cachedTiers || (cachedRateTiers !== null ? cachedRateTiers : getStoredLocalRateTiers()) || [];
-  const matchingTiers = sortRateTiers(pool.filter(t => t.deposit_type_code.toUpperCase() === code));
+  const matchingTiers = sortRateTiers(pool.filter(t => {
+    const tCode = t.deposit_type_code.toUpperCase();
+    return tCode === code ||
+      (code === 'SP' && tCode === 'POKOK') ||
+      (code === 'POKOK' && tCode === 'SP') ||
+      (code === 'SW' && tCode === 'WAJIB') ||
+      (code === 'WAJIB' && tCode === 'SW') ||
+      (code === 'SB' && tCode === 'BELANJA') ||
+      (code === 'BELANJA' && tCode === 'SB') ||
+      (code === 'SL' && tCode === 'LEBARAN') ||
+      (code === 'LEBARAN' && tCode === 'SL');
+  }));
 
   if (matchingTiers.length === 0) {
     return getHardcodedFallback();
@@ -405,7 +440,7 @@ export async function getActiveSavingsRateTiers(
 
   try {
     const tiers = await getRateTiers();
-    const codes = new Set<string>(['WAJIB', 'BELANJA', 'LEBARAN']);
+    const codes = new Set<string>(['POKOK', 'WAJIB', 'BELANJA', 'LEBARAN']);
     for (const t of tiers) {
       if (t.deposit_type_code) {
         codes.add(t.deposit_type_code.toUpperCase());
@@ -419,7 +454,10 @@ export async function getActiveSavingsRateTiers(
       }
     }
 
-    // Dukung alias kode standar database ('SW' -> 'WAJIB', 'SB' -> 'BELANJA', 'SL' -> 'LEBARAN')
+    // Dukung alias kode standar database ('SP' -> 'POKOK', 'SW' -> 'WAJIB', 'SB' -> 'BELANJA', 'SL' -> 'LEBARAN')
+    if (result['POKOK'] !== undefined && result['SP'] === undefined) {
+      result['SP'] = result['POKOK'];
+    }
     if (result['WAJIB'] !== undefined && result['SW'] === undefined) {
       result['SW'] = result['WAJIB'];
     }
@@ -432,9 +470,12 @@ export async function getActiveSavingsRateTiers(
   } catch (err) {
     console.warn('Gagal memuat active savings rate tiers:', err);
     // Fallback default aman jika offline atau ada error
+    const pRate = getApplicableRate('POKOK', targetYear, targetMonth);
     const wRate = getApplicableRate('WAJIB', targetYear, targetMonth);
     const bRate = getApplicableRate('BELANJA', targetYear, targetMonth);
     const lRate = getApplicableRate('LEBARAN', targetYear, targetMonth);
+    result['POKOK'] = pRate;
+    result['SP'] = pRate;
     result['WAJIB'] = wRate;
     result['SW'] = wRate;
     result['BELANJA'] = bRate;

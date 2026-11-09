@@ -117,7 +117,8 @@ describe('savingsRateService', () => {
       expect(getApplicableRate('WAJIB', 2025, 11, [])).toBe(200000);
       expect(getApplicableRate('BELANJA', 2025, 1, [])).toBe(25000);
       expect(getApplicableRate('LEBARAN', 2025, 1, [])).toBe(50000);
-      expect(getApplicableRate('POKOK', 2025, 1, [])).toBe(0);
+      expect(getApplicableRate('POKOK', 2025, 1, [])).toBe(100000);
+      expect(getApplicableRate('SP', 2025, 1, [])).toBe(100000);
       expect(getApplicableRate('UNKNOWN', 2025, 1, [])).toBe(0);
     });
 
@@ -528,6 +529,8 @@ describe('savingsRateService', () => {
       });
 
       const rates = await getActiveSavingsRateTiers(2026, 5);
+      expect(rates['POKOK']).toBe(100000);
+      expect(rates['SP']).toBe(100000);
       expect(rates['WAJIB']).toBe(210000);
       expect(rates['SW']).toBe(210000);
       expect(rates['BELANJA']).toBe(45000);
@@ -546,6 +549,8 @@ describe('savingsRateService', () => {
       });
 
       const rates = await getActiveSavingsRateTiers(2026, 1);
+      expect(rates['POKOK']).toBe(100000);
+      expect(rates['SP']).toBe(100000);
       expect(rates['WAJIB']).toBe(200000);
       expect(rates['SW']).toBe(200000);
       expect(rates['BELANJA']).toBe(25000);
