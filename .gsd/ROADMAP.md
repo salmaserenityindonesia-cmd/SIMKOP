@@ -1243,7 +1243,7 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 69, Phase 4, Phase 67
 
 **Plans:**
-- [ ] Plan 70.1: Dynamic Rate Resolver for Master Deposit Types & Display Effective Tier Amount
+- [x] Plan 70.1: Dynamic Rate Resolver for Master Deposit Types & Display Effective Tier Amount
 - [ ] Plan 70.2: Integrate Active Savings Deductions & Tenor Constraints into Loan Application Validation
 
 **Deliverables:**
@@ -1385,7 +1385,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 67 | Tampilkan Riwayat Permohonan Pinjaman yang Sudah Diapprove di /admin/approval | ✅ | 1/1 | 100% |
 | 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ✅ | 2/2 | 100% |
 | 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
-| 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ⏳ | 0/2 | 0% |
+| 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ⏳ | 1/2 | 50% |
 
 ---
 
