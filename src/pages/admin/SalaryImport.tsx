@@ -66,7 +66,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
       // Query langsung ke Supabase dengan fallback field salary bila perlu
       let data: MemberSalaryAccountItem[] | null = null;
       try {
-        let res = await supabase
+        let res: any = await supabase
           .from('anggota')
           .select('id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary')
           .order('nama', { ascending: true });

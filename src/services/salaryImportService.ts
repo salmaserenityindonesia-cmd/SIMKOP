@@ -255,7 +255,7 @@ export function isFallbackError(error: any): boolean {
  */
 export async function fetchMemberSalaryData(): Promise<MemberSalaryAccountItem[]> {
   try {
-    let { data, error } = await supabase
+    let { data, error }: { data: any; error: any } = await supabase
       .from('anggota')
       .select('id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary')
       .order('nama', { ascending: true });
@@ -297,7 +297,7 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
 
   try {
     while (hasMore) {
-      let { data, error } = await supabase
+      let { data, error }: { data: any; error: any } = await supabase
         .from('anggota')
         .select(
           'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary, status, membership_status, created_at, updated_at'
