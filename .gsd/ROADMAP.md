@@ -1256,13 +1256,13 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 71: Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat di /admin/pengaturan
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Menambahkan opsi Simpanan Pokok (`POKOK`) ke modal konfigurasi tarif bertingkat di `/admin/pengaturan`, memetakan dan mengelola tarif bertingkat untuk Simpanan Pokok di `savingsRateService.ts`, serta menghubungkan tarif aktif Simpanan Pokok ke Master Produk Simpan Pinjam (`/admin/master-simpan-pinjam`) dan pendaftaran anggota baru.
 **Depends on:** Phase 70, Phase 50
 
 **Plans:**
 - [x] Plan 71.1: Support 'POKOK' in savingsRateService.ts & PengaturanKoperasi.tsx
-- [ ] Plan 71.2: Bind Active Pokok Rate to Master Products, Member Registration & Full Verification
+- [x] Plan 71.2: Bind Active Pokok Rate to Master Products, Member Registration & Full Verification
 
 **Deliverables:**
 - Penambahan tipe, label, default seed, dan helper resolusi tarif aktif untuk kode `POKOK` di `src/services/savingsRateService.ts`
@@ -1403,7 +1403,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ✅ | 2/2 | 100% |
 | 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
 | 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ✅ | 2/2 | 100% |
-| 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ⏳ | 1/2 | 50% |
+| 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1481,7 +1481,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 68 | 2026-11-09 | 2026-11-09 | 1 day |
 | 69 | 2026-11-09 | 2026-11-09 | 1 day |
 | 70 | 2026-11-09 | 2026-11-09 | 1 day |
-| 71 | 2026-11-09 | — | — |
+| 71 | 2026-11-09 | 2026-11-09 | 1 day |
 
 
 
