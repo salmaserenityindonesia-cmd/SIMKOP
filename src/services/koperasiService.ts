@@ -1353,6 +1353,8 @@ export async function getDepositTypes(): Promise<DepositType[]> {
           effectiveRate = activeRates['BELANJA'] || activeRates['SB'];
         } else if (codeUpper === 'SL' || nameLower.includes('lebaran') || nameLower.includes('hari raya')) {
           effectiveRate = activeRates['LEBARAN'] || activeRates['SL'];
+        } else if (codeUpper === 'SP' || codeUpper === 'POKOK' || nameLower.includes('pokok')) {
+          effectiveRate = activeRates['POKOK'] || activeRates['SP'];
         }
       }
 

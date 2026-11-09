@@ -360,6 +360,11 @@ export default function ManajemenProdukSimpanPinjam({
               <div className="space-y-1.5">
                 <label className="text-label-md font-label-md text-on-surface">Default Jumlah (Rp)</label>
                 <input required type="number" min="0" value={depositForm.default_amount || 0} onChange={e => setDepositForm({...depositForm, default_amount: Number(e.target.value)})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" />
+                {depositForm.effective_amount !== undefined && depositForm.effective_amount !== depositForm.default_amount && (
+                  <p className="text-xs text-emerald-600 font-medium">
+                    * Tarif efektif aktif: {formatCurrency(depositForm.effective_amount)} (Sinkron Tarif Bertingkat)
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-3 pt-2">
                 <input type="checkbox" id="can_be_withdrawn" checked={depositForm.can_be_withdrawn || false} onChange={e => setDepositForm({...depositForm, can_be_withdrawn: e.target.checked})} className="w-5 h-5 rounded border-outline-variant text-primary focus:ring-primary" />

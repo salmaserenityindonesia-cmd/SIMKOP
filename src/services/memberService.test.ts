@@ -6,8 +6,10 @@ import {
   resetAllMembersData,
   extractMemberTHP,
   getActiveMembersForLoan,
+  getActiveMemberDepositDefaults,
 } from './memberService';
 import { supabase } from '../lib/supabaseClient';
+import { clearTierCache } from './savingsRateService';
 
 vi.mock('../lib/supabaseClient', () => ({
   supabase: {
@@ -854,6 +856,57 @@ describe('memberService - extractMemberTHP and getActiveMembersForLoan', () => {
 
     const res = await getActiveMembersForLoan();
     expect(res).toEqual(mockData);
+  });
+});
+
+describe('memberService - getActiveMemberDepositDefaults', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearTierCache();
+  });
+
+  it('mengambil default pokok dan wajib dari active savings rate tiers jika tersedia', async () => {
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'savings_rate_tiers') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'tier-pokok-1', deposit_type_code: 'POKOK', start_year: 2024, start_month: 1, end_year: null, end_month: null, monthly_rate: 150000 },
+                  { id: 'tier-wajib-1', deposit_type_code: 'WAJIB', start_year: 2024, start_month: 1, end_year: null, end_month: null, monthly_rate: 200000 },
+                ],
+                error: null,
+              })
+            })
+          })
+        };
+      }
+      return {};
+    });
+
+    const defaults = await getActiveMemberDepositDefaults();
+    expect(defaults.pokok).toBe(150000);
+    expect(defaults.wajib).toBe(200000);
+  });
+
+  it('fallback ke nominal standar jika query gagal atau kosong', async () => {
+    (supabase.from as any) = vi.fn().mockImplementation(() => {
+      return {
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({
+              data: [],
+              error: null,
+            })
+          })
+        })
+      };
+    });
+
+    const defaults = await getActiveMemberDepositDefaults();
+    expect(defaults.pokok).toBe(100000);
+    expect(defaults.wajib).toBe(200000); // 200000 is DEFAULT_RATE_TIERS / fallback rate for WAJIB
   });
 });
 

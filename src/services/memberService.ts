@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import type { Anggota } from './koperasiService';
+import { getActiveSavingsRateTiers } from './savingsRateService';
 
 export interface CreateMemberInput {
   nrp: string;
@@ -48,11 +49,18 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
   }
 
   if (!dTypes || dTypes.length === 0) {
+    let activeRates: Record<string, number> = {};
+    try {
+      activeRates = await getActiveSavingsRateTiers();
+    } catch (e) {
+      console.warn('Gagal memuat tarif bertingkat saat seeding deposit_types:', e);
+    }
+
     const seeds = [
-      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
-      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
-      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
-      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true }
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: activeRates['POKOK'] || activeRates['SP'] || 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: activeRates['WAJIB'] || activeRates['SW'] || 50000, can_be_withdrawn: false, is_active: true },
+      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: activeRates['BELANJA'] || activeRates['SB'] || 25000, can_be_withdrawn: true, is_active: true },
+      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: activeRates['LEBARAN'] || activeRates['SL'] || 30000, can_be_withdrawn: true, is_active: true }
     ];
     const { error: seedErr } = await supabase.from('deposit_types').insert(seeds);
     if (seedErr) {
@@ -77,6 +85,31 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
   }
 
   return member as Anggota;
+}
+
+/**
+ * Mengambil nilai acuan tarif simpanan aktif (Simpanan Pokok, Wajib, Belanja, Lebaran)
+ * untuk digunakan pada pendaftaran anggota baru atau validasi default rekening simpanan.
+ */
+export async function getActiveMemberDepositDefaults(): Promise<{
+  pokok: number;
+  wajib: number;
+  belanja: number;
+  lebaran: number;
+}> {
+  let activeRates: Record<string, number> = {};
+  try {
+    activeRates = await getActiveSavingsRateTiers();
+  } catch (e) {
+    console.warn('Gagal memuat tarif bertingkat untuk default anggota:', e);
+  }
+
+  return {
+    pokok: activeRates['POKOK'] || activeRates['SP'] || 100000,
+    wajib: activeRates['WAJIB'] || activeRates['SW'] || 50000,
+    belanja: activeRates['BELANJA'] || activeRates['SB'] || 25000,
+    lebaran: activeRates['LEBARAN'] || activeRates['SL'] || 30000,
+  };
 }
 
 /**

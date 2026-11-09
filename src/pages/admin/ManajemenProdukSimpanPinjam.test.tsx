@@ -89,4 +89,30 @@ describe('ManajemenProdukSimpanPinjam Page Component', () => {
     expect(html).toContain('75.000');
     expect(html).not.toContain('* Sinkron Tarif Bertingkat');
   });
+
+  it('renders Simpanan Pokok with effective amount and badge when rate tier differs from default', () => {
+    const mockDepositTypes: DepositType[] = [
+      {
+        id: 'dep-sp',
+        code: 'SP',
+        name: 'Simpanan Pokok',
+        frequency_type: 'one_time',
+        default_amount: 100000,
+        effective_amount: 150000,
+        can_be_withdrawn: false,
+        is_active: true,
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ManajemenProdukSimpanPinjam
+        initialDepositTypes={mockDepositTypes}
+        initialLoading={false}
+      />
+    );
+
+    expect(html).toContain('150.000');
+    expect(html).toContain('* Sinkron Tarif Bertingkat');
+    expect(html).toContain('Simpanan Pokok');
+  });
 });

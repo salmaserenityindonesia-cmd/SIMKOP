@@ -143,6 +143,12 @@ export function saveStoredLocalRateTiers(tiers: SavingsRateTier[]): void {
 
 export function clearTierCache(): void {
   cachedRateTiers = null;
+  const storage = getStorage();
+  if (storage) {
+    try {
+      storage.removeItem(SAVINGS_RATE_TIERS_STORAGE_KEY);
+    } catch {}
+  }
 }
 
 /**
@@ -181,7 +187,19 @@ export async function getRateTiers(depositTypeCode?: string, forceRefresh = fals
   }
 
   try {
-    let query = supabase.from('savings_rate_tiers')
+    const tableObj: any = supabase.from('savings_rate_tiers');
+    if (!tableObj || typeof tableObj.select !== 'function') {
+      const stored = getStoredLocalRateTiers();
+      if (stored !== null) {
+        const filtered = normalizedCode
+          ? stored.filter(t => t.deposit_type_code.toUpperCase() === normalizedCode)
+          : stored;
+        return sortRateTiers(filtered);
+      }
+      return [];
+    }
+
+    let query = tableObj
       .select('*')
       .order('start_year', { ascending: true })
       .order('start_month', { ascending: true });

@@ -7,6 +7,7 @@ import {
   MemberImportInput,
 } from './koperasiService';
 import { supabase } from '../lib/supabaseClient';
+import { clearTierCache } from './savingsRateService';
 
 vi.mock('../lib/supabaseClient', () => {
   return {
@@ -19,6 +20,7 @@ vi.mock('../lib/supabaseClient', () => {
 describe('koperasiService - Chunked Import & Paged Fetching', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearTierCache();
   });
 
   describe('fetchAllAnggotaPaged', () => {
@@ -597,6 +599,44 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       const sp = types.find(t => t.code === 'SP');
       expect(sp?.default_amount).toBe(100000);
       expect(sp?.effective_amount).toBe(100000);
+    });
+
+    it('harus memperkaya Simpanan Pokok dengan effective_amount dari tarif bertingkat POKOK yang aktif', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-3', code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null })
+            })
+          };
+        }
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 't-pokok', deposit_type_code: 'POKOK', start_year: 2025, start_month: 1, end_year: null, end_month: null, monthly_rate: 150000 },
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const types = await getDepositTypes();
+      expect(types).toHaveLength(1);
+
+      const sp = types.find(t => t.code === 'SP');
+      expect(sp?.default_amount).toBe(100000);
+      expect(sp?.effective_amount).toBe(150000);
     });
 
     it('harus fallback ke default_amount jika query tabel savings_rate_tiers error', async () => {

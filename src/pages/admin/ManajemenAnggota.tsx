@@ -10,6 +10,8 @@ import MemberMigrationDetailModal from '../../components/members/MemberMigration
 import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { useFeedback } from '../../context/FeedbackContext';
+import { formatCurrency } from '../../utils/formatCurrency';
+import { getActiveSavingsRateTiers } from '../../services/savingsRateService';
 
 export async function triggerMemberExportExcel(
   memberIds: string[],
@@ -76,17 +78,20 @@ export async function triggerResetAllMembers(
 export interface ManajemenAnggotaProps {
   initialShowModal?: boolean;
   initialResetModalOpen?: boolean;
+  initialActivePokokRate?: number;
 }
 
 export default function ManajemenAnggota({
   initialShowModal = false,
   initialResetModalOpen = false,
+  initialActivePokokRate,
 }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [activePokokRate, setActivePokokRate] = useState<number | null>(initialActivePokokRate ?? null);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
@@ -129,8 +134,14 @@ export default function ManajemenAnggota({
   async function loadData() {
     try {
       setLoading(true);
-      const data = await fetchAllAnggotaPaged();
+      const [data, rates] = await Promise.all([
+        fetchAllAnggotaPaged(),
+        initialActivePokokRate !== undefined ? Promise.resolve(null) : getActiveSavingsRateTiers().catch(() => null)
+      ]);
       setAnggotaList(data);
+      if (rates && (rates['POKOK'] || rates['SP'])) {
+        setActivePokokRate(rates['POKOK'] || rates['SP']);
+      }
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data');
     } finally {
@@ -524,6 +535,17 @@ export default function ManajemenAnggota({
             
             <form onSubmit={handleSubmit} className="p-4">
               <div className="space-y-4">
+                {!editingAnggota && (
+                  <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-100 text-xs text-blue-800 flex items-start gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-blue-600 shrink-0 mt-0.5">info</span>
+                    <div>
+                      <p className="font-semibold text-blue-900">Inisialisasi Simpanan Anggota</p>
+                      <p className="text-blue-700 mt-0.5">
+                        Rekening Simpanan Pokok ({activePokokRate ? formatCurrency(activePokokRate) : 'Rp 100.000'}) dan Simpanan Wajib akan otomatis dihubungkan sesuai tarif aktif koperasi.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     NRP <span className="text-red-500">*</span>

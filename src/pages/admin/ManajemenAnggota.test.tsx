@@ -181,6 +181,19 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('Nama Lengkap');
       expect(html).toContain('Pangkat');
       expect(html).toContain('Gaji Pokok (Master THP)');
+
+      // Simpanan Pokok info banner
+      expect(html).toContain('Inisialisasi Simpanan Anggota');
+      expect(html).toContain('Simpanan Pokok');
+    });
+
+    it('renders Add Member modal with active Pokok rate when initialActivePokokRate is supplied', () => {
+      const html = renderToStaticMarkup(
+        <ManajemenAnggota initialShowModal={true} initialActivePokokRate={150000} />
+      );
+
+      expect(html).toContain('Inisialisasi Simpanan Anggota');
+      expect(html).toContain('150.000');
     });
   });
 
