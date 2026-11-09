@@ -210,5 +210,106 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
       expect(html).toContain('* Catatan: Data Master THP anggota ini masih Rp 0 di sistem. Silakan update THP anggota terlebih dahulu melalui menu Import Gaji atau Manajemen Anggota.');
     });
+
+    it('renders Iuran Simpanan Rutin line in simulation breakdown', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 1000000,
+        savings_deduction: 225000,
+        remaining_thp: 3775000
+      };
+      const html = renderToStaticMarkup(<SimulationPanel thpData={thpData} newInstallment={1000000} />);
+
+      expect(html).toContain('Iuran Simpanan Rutin');
+      expect(html).toContain('225.000');
+      expect(html).toContain('text-rose-600');
+      expect(html).toContain('3.775.000');
+    });
+
+    it('renders tenor recommendation when current tenor causes THP deficit but longer tenor is viable', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 2000000,
+        savings_deduction: 200000,
+        remaining_thp: 2800000
+      };
+      // Plafon 20M, Tenor 10 Bulan -> Cicilan 2M -> Sisa THP akhir 800k (Defisit 700k)
+      // Tenor 18 Bulan -> Cicilan 1.11M -> Sisa THP akhir 1.68M (>= 1.5M, Memenuhi Syarat!)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={2000000}
+          amount={20000000}
+          tenor={10}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).toContain('Rekomendasi:');
+      expect(html).toContain('Pilih tenor 18 bulan atau lebih agar cicilan per bulan menjadi lebih ringan');
+      expect(html).toContain('memenuhi syarat sisa THP minimal');
+    });
+
+    it('renders interactive apply recommendation button when onSelectTenor is provided', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 2000000,
+        savings_deduction: 200000,
+        remaining_thp: 2800000
+      };
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={2000000}
+          amount={20000000}
+          tenor={10}
+          onSelectTenor={() => {}}
+        />
+      );
+
+      expect(html).toContain('Terapkan Tenor 18 Bulan');
+    });
+
+    it('does not render recommendation when loan is already eligible', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 1000000,
+        savings_deduction: 200000,
+        remaining_thp: 3800000
+      };
+      // Plafon 12M, Tenor 12 -> Cicilan 1M -> Sisa 2.8M (Memenuhi Syarat)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={1000000}
+          amount={12000000}
+          tenor={12}
+        />
+      );
+
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).not.toContain('Rekomendasi:');
+    });
+
+    it('does not render recommendation when loan principal is too large for any tenor to qualify', () => {
+      const thpData = {
+        master_thp: 4000000,
+        active_installments: 2000000,
+        savings_deduction: 200000,
+        remaining_thp: 1800000
+      };
+      // Plafon 50M -> at tenor 36 = 1.38M/bln -> Sisa = 411k (< 1.5M, no tenor viable)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={5000000}
+          amount={50000000}
+          tenor={10}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).not.toContain('Rekomendasi:');
+    });
   });
 });

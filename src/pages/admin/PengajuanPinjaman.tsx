@@ -10,14 +10,42 @@ export const formatCurrency = (val: number) => {
 };
 
 export interface SimulationPanelProps {
-  thpData: { master_thp: number; active_installments: number; remaining_thp: number } | null;
+  thpData: { master_thp: number; active_installments: number; savings_deduction?: number; remaining_thp: number } | null;
   newInstallment: number;
+  amount?: number | '';
+  tenor?: number | '';
+  onSelectTenor?: (tenor: number) => void;
 }
 
-export function SimulationPanel({ thpData, newInstallment }: SimulationPanelProps) {
+export function SimulationPanel({
+  thpData,
+  newInstallment,
+  amount,
+  tenor,
+  onSelectTenor
+}: SimulationPanelProps) {
   const eligibility = thpData 
     ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, MIN_REMAINING_THP)
     : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
+
+  // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= Rp 1.500.000)
+  const availableTenors = [6, 10, 12, 18, 24, 30, 36];
+  let recommendedTenor: number | null = null;
+
+  const principal = typeof amount === 'number' && amount > 0
+    ? amount
+    : (newInstallment > 0 && typeof tenor === 'number' && tenor > 0 ? newInstallment * tenor : 0);
+
+  if (!eligibility.isEligible && thpData && principal > 0) {
+    const currentTenorNum = typeof tenor === 'number' ? tenor : 0;
+    const viable = availableTenors.filter(t => {
+      const monthly = principal / t;
+      return (thpData.remaining_thp - monthly) >= MIN_REMAINING_THP;
+    });
+
+    const higherViable = viable.find(t => t > currentTenorNum);
+    recommendedTenor = higherViable || (viable.length > 0 ? viable[0] : null);
+  }
 
   return (
     <div className="bg-gray-50 rounded-xl border border-gray-200 p-6 sticky top-6">
@@ -39,6 +67,10 @@ export function SimulationPanel({ thpData, newInstallment }: SimulationPanelProp
           <div className="flex justify-between pb-2 border-b border-gray-200 text-red-600">
             <span>Cicilan Berjalan</span>
             <span>- {formatCurrency(thpData.active_installments)}</span>
+          </div>
+          <div className="flex justify-between pb-2 border-b border-gray-200">
+            <span className="text-gray-600">Iuran Simpanan Rutin</span>
+            <span className="font-medium text-rose-600">- {formatCurrency(thpData.savings_deduction || 0)}</span>
           </div>
           <div className="flex justify-between pb-2 border-b border-gray-200">
             <span className="font-medium text-gray-700">Sisa THP Saat Ini</span>
@@ -87,6 +119,22 @@ export function SimulationPanel({ thpData, newInstallment }: SimulationPanelProp
                   </strong>
                   {' '}dari batas minimum {formatCurrency(MIN_REMAINING_THP)}).
                 </p>
+                {recommendedTenor && (
+                  <div className="mt-2.5 pt-2 border-t border-rose-200/80 text-rose-800">
+                    <div className="font-medium text-xs sm:text-sm text-amber-900 bg-amber-50/80 p-2.5 rounded-lg border border-amber-200/70">
+                      💡 <strong>Rekomendasi:</strong> Pilih tenor {recommendedTenor} bulan atau lebih agar cicilan per bulan menjadi lebih ringan dan memenuhi syarat sisa THP minimal {formatCurrency(MIN_REMAINING_THP)}.
+                      {onSelectTenor && (
+                        <button
+                          type="button"
+                          onClick={() => onSelectTenor(recommendedTenor!)}
+                          className="mt-1.5 block text-xs font-semibold text-blue-700 hover:text-blue-800 underline cursor-pointer"
+                        >
+                          Terapkan Tenor {recommendedTenor} Bulan
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {thpData.master_thp === 0 && (
                   <p className="text-[11px] text-rose-500 italic mt-1.5 pt-1 border-t border-rose-200/60">
                     * Catatan: Data Master THP anggota ini masih Rp 0 di sistem. Silakan update THP anggota terlebih dahulu melalui menu Import Gaji atau Manajemen Anggota.
@@ -104,7 +152,7 @@ export function SimulationPanel({ thpData, newInstallment }: SimulationPanelProp
 export interface PengajuanPinjamanProps {
   initialAnggotaList?: any[];
   initialSelectedAnggota?: string;
-  initialThpData?: { master_thp: number; active_installments: number; remaining_thp: number } | null;
+  initialThpData?: { master_thp: number; active_installments: number; savings_deduction?: number; remaining_thp: number } | null;
   initialAmount?: number | '';
   initialTenor?: number | '';
   initialPurpose?: string;
@@ -134,13 +182,19 @@ export default function PengajuanPinjaman({
     return 0;
   });
 
-  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, remaining_thp: number } | null>(() => {
+  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, savings_deduction?: number, remaining_thp: number } | null>(() => {
     if (initialThpData) return initialThpData;
     if (initialSelectedAnggota && initialAnggotaList) {
       const sel = initialAnggotaList.find(a => String(a.id) === String(initialSelectedAnggota));
       if (sel) {
         const num = extractMemberTHP(sel);
-        return { master_thp: num, active_installments: 0, remaining_thp: num };
+        const defaultSavings = 200000;
+        return {
+          master_thp: num,
+          active_installments: 0,
+          savings_deduction: defaultSavings,
+          remaining_thp: num - defaultSavings
+        };
       }
     }
     return null;
@@ -196,10 +250,12 @@ export default function PengajuanPinjaman({
       setMasterThp(numericThp);
 
       // Langsung render di panel Simulasi & Kelayakan
+      const defaultSavings = 200000;
       setThpData({
         master_thp: numericThp,
         active_installments: 0,
-        remaining_thp: numericThp
+        savings_deduction: defaultSavings,
+        remaining_thp: numericThp - defaultSavings
       });
     }
   };
@@ -215,10 +271,12 @@ export default function PengajuanPinjaman({
       }
 
       setMasterThp(numericThp);
+      const savingsDeduction = data.savings_deduction || 200000;
       setThpData({
         master_thp: numericThp,
         active_installments: data.active_installments,
-        remaining_thp: numericThp - data.active_installments
+        savings_deduction: savingsDeduction,
+        remaining_thp: numericThp - data.active_installments - savingsDeduction
       });
     } catch (err: any) {
       console.error(err);
@@ -341,7 +399,9 @@ export default function PengajuanPinjaman({
                     <option value="6">6 Bulan</option>
                     <option value="10">10 Bulan</option>
                     <option value="12">12 Bulan</option>
+                    <option value="18">18 Bulan</option>
                     <option value="24">24 Bulan</option>
+                    <option value="30">30 Bulan</option>
                     <option value="36">36 Bulan</option>
                   </select>
                 </div>
@@ -362,7 +422,13 @@ export default function PengajuanPinjaman({
         </div>
 
         <div className="lg:col-span-1">
-          <SimulationPanel thpData={thpData} newInstallment={calculateCicilan()} />
+          <SimulationPanel
+            thpData={thpData}
+            newInstallment={calculateCicilan()}
+            amount={amount}
+            tenor={tenor}
+            onSelectTenor={(t) => setTenor(t)}
+          />
         </div>
       </div>
     </AdminLayout>
