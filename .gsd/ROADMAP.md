@@ -1261,7 +1261,7 @@ updated: 2026-10-30T20:50:00+07:00
 **Depends on:** Phase 70, Phase 50
 
 **Plans:**
-- [ ] Plan 71.1: Support 'POKOK' in savingsRateService.ts & PengaturanKoperasi.tsx
+- [x] Plan 71.1: Support 'POKOK' in savingsRateService.ts & PengaturanKoperasi.tsx
 - [ ] Plan 71.2: Bind Active Pokok Rate to Master Products, Member Registration & Full Verification
 
 **Deliverables:**
@@ -1403,7 +1403,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 68 | Implementasi Menu Laporan Terintegrasi Pengawasan & Pencairan Simpanan | ✅ | 2/2 | 100% |
 | 69 | Pertahankan Posisi Scroll Sidebar Navigasi saat Berpindah Menu Halaman | ✅ | 1/1 | 100% |
 | 70 | Sinkronisasi Default Jumlah Master Simpan Pinjam dengan Tarif Bertingkat & Validasi Pinjaman | ✅ | 2/2 | 100% |
-| 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ⏳ | 0/2 | 0% |
+| 71 | Tambahkan Simpanan Pokok ke Konfigurasi Tarif Simpanan Bertingkat | ⏳ | 1/2 | 50% |
 
 ---
 
