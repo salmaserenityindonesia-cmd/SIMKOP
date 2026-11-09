@@ -71,7 +71,7 @@ const formatDisplayDate = (dateStr?: string | null) => {
 
 // ─── Deposit Type Badge ──────────────────────────────────────────────────────
 
-function DepositTypeBadge({ code, name }: { code: string; name: string }) {
+export function DepositTypeBadge({ code, name }: { code: string; name: string }) {
   const category = categorizeDepositType(code, name);
 
   switch (category) {
@@ -108,7 +108,24 @@ function DepositTypeBadge({ code, name }: { code: string; name: string }) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export default function LaporanPenarikanSimpanan() {
+export interface LaporanPenarikanSimpananProps {
+  initialItems?: WithdrawalLedgerItem[];
+  initialSummary?: WithdrawalSummary;
+  initialReceiptData?: {
+    transactionId: string;
+    member: { id: string; nama: string; nrp: string };
+    depositName: string;
+    amount: number;
+    paymentMethod: string;
+    date: string;
+  } | null;
+}
+
+export default function LaporanPenarikanSimpanan({
+  initialItems,
+  initialSummary,
+  initialReceiptData = null
+}: LaporanPenarikanSimpananProps = {}) {
   // Preset filter state: 'all' | 'today' | 'month' | 'quarter' | 'custom'
   const [datePreset, setDatePreset] = useState<'all' | 'today' | 'month' | 'quarter' | 'custom'>('month');
   const [startDate, setStartDate] = useState<string>(() => getStartOfMonthString());
@@ -121,21 +138,24 @@ export default function LaporanPenarikanSimpanan() {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Data state
-  const [items, setItems] = useState<WithdrawalLedgerItem[]>([]);
-  const [summary, setSummary] = useState<WithdrawalSummary>({
-    totalWithdrawalAmount: 0,
-    totalTransactions: 0,
-    uniqueMembers: 0,
-    breakdownByType: { lebaran: 0, belanja: 0, pokok_wajib: 0, sukarela_lainnya: 0 },
-    breakdownByMethod: {
-      tunai: { amount: 0, percentage: 0, count: 0 },
-      transfer: { amount: 0, percentage: 0, count: 0 }
-    },
-    membersWithActiveLoansCount: 0,
-    totalActiveLoansObligation: 0
+  const [items, setItems] = useState<WithdrawalLedgerItem[]>(() => initialItems || []);
+  const [summary, setSummary] = useState<WithdrawalSummary>(() => {
+    if (initialSummary) return initialSummary;
+    return {
+      totalWithdrawalAmount: 0,
+      totalTransactions: 0,
+      uniqueMembers: 0,
+      breakdownByType: { lebaran: 0, belanja: 0, pokok_wajib: 0, sukarela_lainnya: 0 },
+      breakdownByMethod: {
+        tunai: { amount: 0, percentage: 0, count: 0 },
+        transfer: { amount: 0, percentage: 0, count: 0 }
+      },
+      membersWithActiveLoansCount: 0,
+      totalActiveLoansObligation: 0
+    };
   });
 
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialItems);
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
   // Pagination state
@@ -150,7 +170,7 @@ export default function LaporanPenarikanSimpanan() {
     amount: number;
     paymentMethod: string;
     date: string;
-  } | null>(null);
+  } | null>(initialReceiptData);
 
   // Handler: Preset tanggal
   const handlePresetChange = (preset: 'all' | 'today' | 'month' | 'quarter' | 'custom') => {
@@ -196,9 +216,15 @@ export default function LaporanPenarikanSimpanan() {
     }
   }, [startDate, endDate, depositTypeCode, paymentMethod, hasActiveLoanOnly, searchQuery]);
 
+  const isInitialMount = React.useRef(true);
+
   useEffect(() => {
+    if (initialItems && isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
     loadReportData();
-  }, [loadReportData]);
+  }, [loadReportData, initialItems]);
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(items.length / itemsPerPage));

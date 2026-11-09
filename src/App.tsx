@@ -27,6 +27,7 @@ import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
 import LaporanMutasiBarang from './pages/admin/LaporanMutasiBarang';
+import LaporanPenarikanSimpanan from './pages/admin/LaporanPenarikanSimpanan';
 import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
 import PengaturanKasir from './pages/admin/PengaturanKasir';
 import { FeedbackProvider } from './context/FeedbackContext';
@@ -97,6 +98,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <PenarikanSimpanan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/laporan-penarikan" 
+          element={
+            <ProtectedRoute>
+              <LaporanPenarikanSimpanan />
             </ProtectedRoute>
           } 
         />

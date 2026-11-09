@@ -68,6 +68,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       'Pusat Terima Setoran',
       'Tagihan Simpanan',
       'Penarikan Simpanan',
+      'Laporan Penarikan',
       'Pengajuan Pinjaman',
       'Approval Pinjaman',
       'Matriks Simpanan',

@@ -69,6 +69,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Pusat Terima Setoran', icon: Wallet, href: '/admin/setoran' },
       { label: 'Tagihan Simpanan', icon: Receipt, href: '/admin/simpanan' },
       { label: 'Penarikan Simpanan', icon: ArrowUpRight, href: '/admin/penarikan-simpanan' },
+      { label: 'Laporan Penarikan', icon: FileSpreadsheet, href: '/admin/laporan-penarikan' },
       { label: 'Pengajuan Pinjaman', icon: FileText, href: '/admin/pengajuan-pinjaman' },
       { label: 'Approval Pinjaman', icon: CheckSquare, href: '/admin/approval', adminOnly: true },
       { label: 'Matriks Simpanan', icon: Grid, href: '/admin/compliance-matrix' },
