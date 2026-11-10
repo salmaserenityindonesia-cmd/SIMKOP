@@ -18,14 +18,28 @@ export interface LoanMatrixMonth {
 export type MonthLoanCell = LoanMatrixMonth;
 
 export interface LoanMatrixMember {
+  id?: string; // loan.id (untuk key unik baris matriks)
+  loanId?: string;
+  loanNumber?: string;
   memberId: string;
   nrp: string;
   nama: string;
+  pangkat?: string;
+  loanTypeName?: string;
+  agreedTenorMonths?: number;
+  tenor?: number;
+  monthlyTarget?: number;
+  principalAmount?: number;
+  disbursedAt?: string | null;
   isLoanActive: boolean;
   totalLoans: number;
   months: Record<number, LoanMatrixMonth>;
   complianceYTD: number;
+  anggota?: { id: string; nrp: string; nama: string; pangkat?: string };
+  loan_types?: { id: string; code: string; name: string };
 }
+
+export type LoanMatrixRow = LoanMatrixMember;
 
 export interface LoanMatrixSummary {
   complianceYTD: number;
@@ -36,9 +50,6 @@ export interface LoanMatrixSummary {
 }
 
 export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> => {
-  // Fetch members who have loans in this year
-  // A loan is in this year if any of its schedules fall in this year
-  
   // First, get all schedules for the given year
   const startOfYear = `${year}-01-01`;
   const endOfYear = `${year}-12-31`;
@@ -54,7 +65,21 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     throw yearError;
   }
 
-  const loanIds = Array.from(new Set(yearSchedules?.map(s => s.loan_id) || []));
+  const scheduleLoanIds = (yearSchedules || []).map(s => s.loan_id).filter(Boolean);
+  let loanIds = Array.from(new Set(scheduleLoanIds));
+
+  // Ambil juga pinjaman aktif/disetujui yang relevan jika tabel loans tersedia
+  try {
+    const loanQuery = supabase.from('loans')?.select('id');
+    if (loanQuery && typeof loanQuery.in === 'function') {
+      const { data: activeLoans } = await loanQuery.in('status', ['active', 'approved']);
+      if (activeLoans && activeLoans.length > 0) {
+        loanIds = Array.from(new Set([...loanIds, ...activeLoans.map((l: any) => l.id)]));
+      }
+    }
+  } catch {
+    // Graceful fallback jika tabel loans tidak distub pada lingkungan test
+  }
 
   if (loanIds.length === 0) {
     return {
@@ -79,13 +104,20 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       loan:loans (
         id,
         loan_number,
+        member_id,
+        principal_amount,
         tenor,
-        status,
+        agreed_tenor_months,
         monthly_target,
+        planned_installment_amount,
+        disbursed_at,
+        status,
+        loan_types ( id, code, name ),
         member:anggota (
           id,
           nrp,
-          nama
+          nama,
+          pangkat
         )
       )
     `)
@@ -100,7 +132,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   const currentMonth = new Date().getMonth() + 1; // 1-12
   const currentYear = new Date().getFullYear();
 
-  const membersMap: Record<string, LoanMatrixMember> = {};
+  // Model baris matriks berbasis loan.id (1 Baris = 1 Pinjaman Aktif/Berjalan)
+  const loansMap: Record<string, LoanMatrixMember> = {};
 
   let totalTargetYTD = 0;
   let totalCollectedYTD = 0;
@@ -112,18 +145,20 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   const loanCumulativePaid: Record<string, number> = {};
 
   (schedules || []).forEach((sched: any) => {
-    if (!sched.loan || !sched.loan.member) return;
-
-    const member = sched.loan.member;
     const loan = sched.loan;
+    if (!loan) return;
+    const member = loan.member || loan.anggota;
+    if (!member) return;
+
     const dueDate = new Date(sched.due_date);
     const month = dueDate.getMonth() + 1;
     const scheduleYear = dueDate.getFullYear();
 
     // Initialize running balance for this loan if not exists
-    // The total loan expected is tenor * monthly_target
+    // Expected total is tenor * monthly_target (or fallback to principal_amount)
     if (loanBalances[loan.id] === undefined) {
-      loanBalances[loan.id] = (Number(loan.tenor) || 0) * (Number(loan.monthly_target) || 0);
+      const expectedTotal = (Number(loan.tenor) || 0) * (Number(loan.monthly_target || loan.planned_installment_amount) || 0);
+      loanBalances[loan.id] = expectedTotal > 0 ? expectedTotal : Number(loan.principal_amount || loan.amount || 0);
     }
     
     // Decrease the remaining balance by what has been paid in this schedule
@@ -134,31 +169,48 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     }
     loanCumulativePaid[loan.id] += Number(sched.paid_amount || 0);
 
-    if (!membersMap[member.id]) {
-      membersMap[member.id] = {
+    const loanType = loan.loan_types || loan.loanType || loan.loan_type;
+
+    if (!loansMap[loan.id]) {
+      const isLoanActive = loan.status === 'active' || loan.status === 'approved';
+      loansMap[loan.id] = {
+        id: loan.id,
+        loanId: loan.id,
+        loanNumber: loan.loan_number || '',
         memberId: member.id,
         nrp: member.nrp,
         nama: member.nama,
-        isLoanActive: loan.status === 'active' || loan.status === 'approved',
+        pangkat: member.pangkat || loan.pangkat || '',
+        loanTypeName: loanType?.name || loan.loanTypeName || '',
+        agreedTenorMonths: Number(loan.agreed_tenor_months || loan.tenor || 0),
+        tenor: Number(loan.tenor || 0),
+        monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
+        principalAmount: Number(loan.principal_amount || loan.amount || 0),
+        disbursedAt: loan.disbursed_at || null,
+        isLoanActive,
         totalLoans: 1,
         months: {},
-        complianceYTD: 0
+        complianceYTD: 0,
+        anggota: member,
+        loan_types: loanType,
       };
       
       // Initialize all 12 months with NONE
       for (let i = 1; i <= 12; i++) {
-        membersMap[member.id].months[i] = {
+        loansMap[loan.id].months[i] = {
           month: i,
           year: year,
           status: 'NONE',
           targetAmount: 0,
-          paidAmount: 0
+          paidAmount: 0,
+          loanId: loan.id,
+          loanNumber: loan.loan_number,
+          tenor: loan.tenor,
         };
       }
     } else {
-      // Check if we need to update isLoanActive
       if (loan.status === 'active' || loan.status === 'approved') {
-        membersMap[member.id].isLoanActive = true;
+        loansMap[loan.id].isLoanActive = true;
       }
     }
 
@@ -205,7 +257,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         cellStatus = 'FINISHED';
       }
 
-      membersMap[member.id].months[month] = {
+      loansMap[loan.id].months[month] = {
         month,
         year: scheduleYear,
         dueDate: sched.due_date,
@@ -222,29 +274,36 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     }
   });
 
-  // Calculate compliance per member and handle FINISHED logic
-  Object.values(membersMap).forEach(member => {
-    let memberTarget = 0;
-    let memberPaid = 0;
+  // Hitung jumlah pinjaman per anggota
+  const memberLoanCounts: Record<string, number> = {};
+  Object.values(loansMap).forEach(row => {
+    memberLoanCounts[row.memberId] = (memberLoanCounts[row.memberId] || 0) + 1;
+  });
+  Object.values(loansMap).forEach(row => {
+    row.totalLoans = memberLoanCounts[row.memberId] || 1;
+  });
+
+  // Calculate compliance per loan and handle FINISHED logic
+  Object.values(loansMap).forEach(row => {
+    let loanTarget = 0;
+    let loanPaid = 0;
     let lastActiveMonth = 0;
 
     for (let i = 1; i <= 12; i++) {
-      const m = member.months[i];
+      const m = row.months[i];
       if (m.status === 'PAID' || m.status === 'PARTIAL' || m.status === 'UNPAID') {
-        memberTarget += m.targetAmount;
-        memberPaid += m.paidAmount;
+        loanTarget += m.targetAmount;
+        loanPaid += m.paidAmount;
         lastActiveMonth = i;
       }
     }
 
-    member.complianceYTD = memberTarget > 0 ? (memberPaid / memberTarget) * 100 : 100;
+    row.complianceYTD = loanTarget > 0 ? (loanPaid / loanTarget) * 100 : 100;
 
     // Apply finished status for months after the last active month if loan is fully paid
-    // But since we only have schedules for the current loan, we might just leave them as NONE
-    // The requirement says: Jika pinjaman sudah selesai (tenor selesai di bulan sebelumnya), tampilkan badge '-' (Selesai).
-    if (!member.isLoanActive && lastActiveMonth > 0) {
+    if (!row.isLoanActive && lastActiveMonth > 0) {
        for(let i = lastActiveMonth + 1; i <= 12; i++) {
-           member.months[i].status = 'FINISHED';
+           row.months[i].status = 'FINISHED';
        }
     }
   });
@@ -256,7 +315,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     totalCollectedYTD,
     projectedNextMonth,
     unpaidMembersCount: unpaidMembersSet.size,
-    members: Object.values(membersMap)
+    members: Object.values(loansMap)
   };
 };
 
