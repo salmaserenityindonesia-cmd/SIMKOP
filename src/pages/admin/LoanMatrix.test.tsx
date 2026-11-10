@@ -761,5 +761,22 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('data-nrp="96316880"');
       expect(html).toContain('data-name="Yanto Santoso"');
     });
+
+    it('gracefully renders fallback badge when loanTypeName and loan_types are missing', () => {
+      const fallbackSummary: LoanMatrixSummary = {
+        ...multiLoanMemberSummary,
+        members: [
+          {
+            ...multiLoanMemberSummary.members[0],
+            loanTypeName: undefined,
+            loan_types: undefined,
+            agreedTenorMonths: 10,
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(<LoanMatrix initialData={fallbackSummary} />);
+      expect(html).toContain('Pinjaman (10 Bln)');
+    });
   });
 });
