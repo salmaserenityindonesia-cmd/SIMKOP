@@ -510,9 +510,9 @@ describe('LoanScheduleModal Component Tests', () => {
       expect(html).toContain('data-testid="evidence-method-select"');
       expect(html).toContain('<option value="potong_gaji" selected="">Potong Gaji</option>');
 
-      // Verify receipt number generated
+      // Verify receipt number generated with anti-collision format
       expect(html).toContain('data-testid="evidence-receipt-input"');
-      expect(html).toContain('value="KW-PINJ/PJ-2026-001/B4"');
+      expect(html).toMatch(/value="KW-PINJ\/PJ-2026-001\/B4\/\d{8}-[A-Z0-9]{3}"/);
 
       // Verify helper deficit info display
       expect(html).toContain('data-testid="evidence-deficit-info"');
@@ -559,6 +559,84 @@ describe('LoanScheduleModal Component Tests', () => {
 
       // Notes textarea empty
       expect(html).toContain('data-testid="evidence-notes-input"></textarea>');
+    });
+
+    it('rounds floating-point raw target amount (e.g. 238095.23809523694) to clean integer and sets step="any"', () => {
+      const floatPeriod = {
+        id: 'sched-float-42',
+        loanId: 'loan-123',
+        periodNumber: 42,
+        dueDate: '2026-12-15',
+        targetAmount: 238095.23809523694,
+        paidAmount: 0,
+        status: 'UNPAID' as const,
+        label: 'Bulan 42 [Des-26]',
+        isCurrentMonth: false,
+        repayments: [],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Joko Arifin"
+          onClose={vi.fn()}
+          initialData={mockLoanGridData}
+          initialEvidencePeriod={floatPeriod}
+        />
+      );
+
+      // Verify evidence modal is open
+      expect(html).toContain('data-testid="loan-evidence-modal"');
+      expect(html).toContain('Bulan 42 [Des-26]');
+
+      // Input nominal must be rounded integer 238095, not long float
+      expect(html).toContain('data-testid="evidence-amount-input"');
+      expect(html).toContain('value="238095"');
+      expect(html).not.toContain('238095.238095');
+
+      // Input must have step="any" to prevent HTML5 constraint validation error
+      expect(html).toContain('step="any"');
+      expect(html).toContain('min="1"');
+    });
+
+    it('renders receipt number with standard format when opening period for evidence', () => {
+      const periodWithReceipt = {
+        id: 'sched-rec-1',
+        loanId: 'loan-123',
+        periodNumber: 5,
+        dueDate: '2026-06-15',
+        targetAmount: 277778,
+        paidAmount: 277778,
+        status: 'PAID' as const,
+        label: 'Bulan 5 [Jun-26]',
+        isCurrentMonth: false,
+        repayments: [
+          {
+            id: 'rep-rec-1',
+            amountPaid: 277778,
+            paymentDate: '2026-06-10T11:00:00Z',
+            paymentMethod: 'potong_gaji',
+            notes: 'Potong gaji Juni',
+            receiptNumber: 'KW-PINJ/PJ-2026-001/B5/20260610-XYZ',
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Ahmad Fadli"
+          onClose={vi.fn()}
+          initialData={mockLoanGridData}
+          initialEvidencePeriod={periodWithReceipt}
+        />
+      );
+
+      // Verify evidence modal receipt input auto-filled with KW-PINJ prefix and anti-collision suffix
+      expect(html).toContain('data-testid="evidence-receipt-input"');
+      expect(html).toMatch(/value="KW-PINJ\/PJ-2026-001\/B5\/\d{8}-[A-Z0-9]{3}"/);
     });
   });
 });

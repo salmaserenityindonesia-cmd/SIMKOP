@@ -60,7 +60,9 @@ export const calculateRemainingInstallmentDeficit = (
   targetAmount: number,
   paidAmount: number
 ): number => {
-  return Math.max(0, Number(targetAmount || 0) - Number(paidAmount || 0));
+  const target = Number(targetAmount || 0);
+  const paid = Number(paidAmount || 0);
+  return Math.max(0, Math.round(target - paid));
 };
 
 export type LoanApplicationStatusTab = 'PENDING' | 'APPROVED' | 'ALL';
@@ -345,7 +347,148 @@ export const loanService = {
     return true;
   },
 
-  async makePayment(loanId: string, amountPaid: number, paymentMethod: string, notes?: string) {
+  /**
+   * Pembayaran angsuran terisolasi khusus pada satu baris jadwal tertentu (scheduleId)
+   */
+  async paySchedule(
+    loanId: string,
+    scheduleId: string,
+    paymentAmount: number,
+    paymentMethod: string = 'CASH',
+    notes?: string,
+    receiptNumber?: string
+  ) {
+    // 1. Ambil data baris loan_schedules yang sedang aktif berdasarkan id = scheduleId
+    const { data: schedule, error: schErr } = await supabase
+      .from('loan_schedules')
+      .select('id, target_amount, paid_amount, status')
+      .eq('id', scheduleId)
+      .single();
+
+    if (schErr || !schedule) throw schErr || new Error('Jadwal angsuran tidak ditemukan');
+
+    // 2. Hitung total bayar baru HANYA untuk baris ini
+    const paymentAmountClean = Math.round(Number(paymentAmount));
+    const currentPaid = Math.round(Number(schedule.paid_amount || 0));
+    const newPaid = currentPaid + paymentAmountClean;
+    const target = Math.round(Number(schedule.target_amount || 0));
+    // Beri toleransi pembulatan +/- 5 Rupiah untuk pelunasan akhir
+    const isFullyPaid = (newPaid >= target) || (Math.abs(target - newPaid) <= 5);
+    const newPaidTotal = isFullyPaid ? target : newPaid;
+    const newStatus = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
+
+    // 3. Lakukan UPDATE HANYA pada satu baris jadwal tersebut (ISOLASI KETAT)
+    const { error: updateErr } = await supabase
+      .from('loan_schedules')
+      .update({
+        paid_amount: newPaidTotal,
+        status: newStatus
+      })
+      .eq('id', scheduleId);
+
+    if (updateErr) throw new Error(updateErr.message || 'Gagal memperbarui jadwal angsuran');
+
+    // 4. Catat mutasi di tabel loan_repayments dengan mengaitkan schedule_id: selectedScheduleId
+    const { error: repayErr } = await supabase
+      .from('loan_repayments')
+      .insert([{
+        loan_id: loanId,
+        schedule_id: scheduleId,
+        amount_paid: paymentAmountClean,
+        payment_method: paymentMethod || 'CASH',
+        notes: notes || 'Pelunasan parsial jadwal periode terkait',
+        receipt_number: receiptNumber?.trim() || undefined
+      }]);
+
+    if (repayErr) throw new Error(repayErr.message || 'Gagal mencatat mutasi pembayaran');
+
+    // 5. Perbarui nilai akumulasi pinjaman induk (loans)
+    const { data: allSchedules, error: allSchedulesErr } = await supabase
+      .from('loan_schedules')
+      .select('id, target_amount, paid_amount, status')
+      .eq('loan_id', loanId);
+
+    if (!allSchedulesErr && allSchedules) {
+      const { data: loanData } = await supabase
+        .from('loans')
+        .select('id, amount, principal_amount, status, member_id')
+        .eq('id', loanId)
+        .single();
+
+      const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
+      const totalPaidAll = allSchedules.reduce((sum, s) => {
+        const val = s.id === scheduleId ? newPaidTotal : Number(s.paid_amount || 0);
+        return sum + val;
+      }, 0);
+
+      const sisaPinjaman = Math.max(0, principalAmount - totalPaidAll);
+      const isAllPaid = allSchedules.every(s => 
+        s.id === scheduleId ? newStatus === 'paid' : (s.status === 'paid' || Math.round(Number(s.paid_amount || 0)) >= Math.round(Number(s.target_amount || 0)) || Math.abs(Math.round(Number(s.target_amount || 0)) - Math.round(Number(s.paid_amount || 0))) <= 5)
+      );
+
+      const newLoanStatus = isAllPaid ? 'paid_off' : 'active';
+
+      // Update loans status & sisa_pinjaman
+      const { error: updateLoanErr } = await supabase
+        .from('loans')
+        .update({
+          status: newLoanStatus,
+          sisa_pinjaman: sisaPinjaman
+        })
+        .eq('id', loanId);
+
+      if (updateLoanErr) {
+        // Fallback jika database belum mendukung status 'paid_off' atau kolom sisa_pinjaman
+        await supabase
+          .from('loans')
+          .update({
+            status: isAllPaid ? 'completed' : 'active'
+          })
+          .eq('id', loanId);
+      }
+
+      // Auto-Detection for Final Resignation Approval jika lunas
+      if (isAllPaid && loanData?.member_id) {
+        const { data: otherLoans } = await supabase
+          .from('loans')
+          .select('id')
+          .eq('member_id', loanData.member_id)
+          .in('status', ['approved', 'active']);
+          
+        if (!otherLoans || otherLoans.length === 0) {
+          const { data: memberData } = await supabase.from('anggota').select('membership_status').eq('id', loanData.member_id).single();
+          if (memberData && memberData.membership_status === 'PENDING_RESIGNED') {
+            await supabase.from('anggota').update({ membership_status: 'READY_TO_RESIGN' }).eq('id', loanData.member_id);
+          }
+        }
+      }
+
+      return {
+        success: true,
+        newStatus,
+        newPaidTotal,
+        sisaPinjaman,
+        isAllPaid
+      };
+    }
+
+    return { success: true, newStatus, newPaidTotal };
+  },
+
+  async makePayment(
+    loanId: string, 
+    amountPaid: number, 
+    paymentMethod: string, 
+    notes?: string,
+    scheduleId?: string,
+    receiptNumber?: string
+  ) {
+    if (scheduleId) {
+      return receiptNumber !== undefined
+        ? this.paySchedule(loanId, scheduleId, amountPaid, paymentMethod, notes, receiptNumber)
+        : this.paySchedule(loanId, scheduleId, amountPaid, paymentMethod, notes);
+    }
+
     let remainingPayment = amountPaid;
     
     // Get all unpaid/partial schedules ordered by period_number (FIFO)
@@ -397,32 +540,49 @@ export const loanService = {
     // Check if all schedules are paid
     const { data: allSchedules, error: allSchedulesError } = await supabase
       .from('loan_schedules')
-      .select('status')
+      .select('status, paid_amount')
       .eq('loan_id', loanId);
 
-    if (!allSchedulesError && allSchedules.every(s => s.status === 'paid')) {
+    const isAllPaid = !allSchedulesError && (allSchedules || []).length > 0 && allSchedules.every(s => s.status === 'paid');
+
+    const { data: loanData } = await supabase
+      .from('loans')
+      .select('id, amount, principal_amount, status, member_id')
+      .eq('id', loanId)
+      .single();
+
+    const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
+    const totalPaidAll = (allSchedules || []).reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
+    const sisaPinjaman = Math.max(0, principalAmount - totalPaidAll);
+    const newLoanStatus = isAllPaid ? 'paid_off' : 'active';
+
+    const { error: loanUpdateErr } = await supabase
+      .from('loans')
+      .update({
+        status: newLoanStatus,
+        sisa_pinjaman: sisaPinjaman
+      })
+      .eq('id', loanId);
+
+    if (loanUpdateErr) {
       await supabase
         .from('loans')
-        .update({ status: 'completed' })
+        .update({ status: isAllPaid ? 'completed' : 'active' })
         .eq('id', loanId);
+    }
 
+    if (isAllPaid && loanData?.member_id) {
       // Auto-Detection for Final Resignation Approval
-      const { data: loanInfo } = await supabase.from('loans').select('member_id').eq('id', loanId).single();
-      if (loanInfo) {
-        // We only want to set READY_TO_RESIGN if ALL active loans for this member are completed, but
-        // since PENDING_RESIGNED means they're just paying off their final consolidation, checking this single loan is generally enough.
-        // For robustness, let's check if they have any other active loans.
-        const { data: otherLoans } = await supabase
-          .from('loans')
-          .select('id')
-          .eq('member_id', loanInfo.member_id)
-          .in('status', ['approved', 'active']);
-          
-        if (!otherLoans || otherLoans.length === 0) {
-          const { data: memberData } = await supabase.from('anggota').select('membership_status').eq('id', loanInfo.member_id).single();
-          if (memberData && memberData.membership_status === 'PENDING_RESIGNED') {
-            await supabase.from('anggota').update({ membership_status: 'READY_TO_RESIGN' }).eq('id', loanInfo.member_id);
-          }
+      const { data: otherLoans } = await supabase
+        .from('loans')
+        .select('id')
+        .eq('member_id', loanData.member_id)
+        .in('status', ['approved', 'active']);
+        
+      if (!otherLoans || otherLoans.length === 0) {
+        const { data: memberData } = await supabase.from('anggota').select('membership_status').eq('id', loanData.member_id).single();
+        if (memberData && memberData.membership_status === 'PENDING_RESIGNED') {
+          await supabase.from('anggota').update({ membership_status: 'READY_TO_RESIGN' }).eq('id', loanData.member_id);
         }
       }
     }

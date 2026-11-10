@@ -597,8 +597,8 @@ describe('loanMatrixService - getLoanInteractiveGrid', () => {
     ];
 
     const mockRepayments = [
-      { id: 'rep-1', loan_id: 'loan-101', schedule_id: 'sc-1', amount_paid: 1000000, payment_date: '2026-01-14T10:00:00Z', payment_method: 'transfer', notes: 'Kwitansi 001' },
-      { id: 'rep-2', loan_id: 'loan-101', schedule_id: 'sc-2', amount_paid: 500000, payment_date: '2026-02-14T10:00:00Z', payment_method: 'cash', notes: 'Sebagian' }
+      { id: 'rep-1', loan_id: 'loan-101', schedule_id: 'sc-1', amount_paid: 1000000, payment_date: '2026-01-14T10:00:00Z', payment_method: 'transfer', notes: 'Kwitansi 001', receipt_number: 'KW-PINJ/PINJ-2026-001/B1/20260114-A1B' },
+      { id: 'rep-2', loan_id: 'loan-101', schedule_id: 'sc-2', amount_paid: 500000, payment_date: '2026-02-14T10:00:00Z', payment_method: 'cash', notes: 'Sebagian', receipt_number: null }
     ];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -651,6 +651,7 @@ describe('loanMatrixService - getLoanInteractiveGrid', () => {
     expect(result.periods[0].isCurrentMonth).toBe(false);
     expect(result.periods[0].repayments).toHaveLength(1);
     expect(result.periods[0].repayments[0].amountPaid).toBe(1000000);
+    expect(result.periods[0].repayments[0].receiptNumber).toBe('KW-PINJ/PINJ-2026-001/B1/20260114-A1B');
 
     // Period 2: PARTIAL
     expect(result.periods[1].status).toBe('PARTIAL');
@@ -806,7 +807,8 @@ describe('loanMatrixService - toggleLoanSchedulePaid', () => {
       schedule_id: 'sched-1',
       amount_paid: 1000000,
       payment_method: 'transfer',
-      notes: 'Kwitansi: KW-123 - Lunas Transfer Bank'
+      notes: 'Kwitansi: KW-123 - Lunas Transfer Bank',
+      receipt_number: 'KW-123'
     }));
 
     expect(updateScheduleMock).toHaveBeenCalledWith({
@@ -939,14 +941,15 @@ describe('loanMatrixService - toggleLoanSchedulePaid', () => {
       paymentMethod: 'potong_gaji'
     });
 
-    // Verifikasi loan_repayments mencatat nominal riil setoran Rp 7
+    // Verifikasi loan_repayments mencatat nominal riil setoran Rp 7 dan nomor kwitansi
     expect(insertMock).toHaveBeenCalledTimes(1);
     expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({
       loan_id: 'loan-1',
       schedule_id: 'sched-partial-1',
       amount_paid: 7,
       payment_method: 'potong_gaji',
-      notes: 'Kwitansi: KW-SELISIH-02 - Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-2'
+      notes: 'Kwitansi: KW-SELISIH-02 - Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-2',
+      receipt_number: 'KW-SELISIH-02'
     }));
 
     // Verifikasi loan_schedules diakumulasikan ke target penuh 277778 dan berstatus 'paid'
@@ -960,12 +963,74 @@ describe('loanMatrixService - toggleLoanSchedulePaid', () => {
       status: 'completed'
     });
   });
+
+  it('melunasi jadwal dengan toleransi pembulatan +/- 5 Rupiah atau target floating point (contoh: 238095.23809523694)', async () => {
+    const updateScheduleMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const insertMock = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'sched-float-42',
+                  loan_id: 'loan-42',
+                  target_amount: 238095.23809523694,
+                  paid_amount: 0,
+                  status: 'unpaid'
+                },
+                error: null
+              }),
+              mockResolvedValue: {
+                data: [{ id: 'sched-float-42', status: 'paid', paid_amount: 238095, target_amount: 238095.23809523694 }],
+                error: null
+              }
+            })
+          }),
+          update: updateScheduleMock
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          insert: insertMock
+        };
+      }
+      if (table === 'loans') {
+        return {
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null })
+          })
+        };
+      }
+      return {};
+    });
+
+    await toggleLoanSchedulePaid('sched-float-42', true, {
+      amount: 238095,
+      receiptNo: 'KW-42',
+      paymentMethod: 'potong_gaji'
+    });
+
+    // Harus lunas ('paid') dan target dibulatkan rapi ke 238095
+    expect(updateScheduleMock).toHaveBeenCalledWith({
+      paid_amount: 238095,
+      status: 'paid'
+    });
+  });
 });
 
 describe('loanMatrixService - calculateRemainingInstallmentDeficit', () => {
   it('menghitung sisa kekurangan angsuran secara presisi (target - paid)', () => {
     // Skenario pembulatan angsuran (misal 277.778 vs 277.771 -> defisit 7)
     expect(calculateRemainingInstallmentDeficit(277778, 277771)).toBe(7);
+
+    // Skenario floating point (misal 238095.23809523694 -> 238095)
+    expect(calculateRemainingInstallmentDeficit(238095.23809523694, 0)).toBe(238095);
+    expect(calculateRemainingInstallmentDeficit(238095.23809523694, 238095)).toBe(0);
 
     // Belum dibayar sama sekali
     expect(calculateRemainingInstallmentDeficit(500000, 0)).toBe(500000);

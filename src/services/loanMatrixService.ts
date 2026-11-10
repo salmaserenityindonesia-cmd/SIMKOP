@@ -363,6 +363,7 @@ export interface LoanGridPeriod {
     paymentDate: string;
     paymentMethod: string;
     notes: string | null;
+    receiptNumber?: string | null;
   }>;
 }
 
@@ -462,11 +463,15 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     const sMonth = d.getMonth() + 1;
     const isCurrentMonth = sYear === currentYear && sMonth === currentMonth;
 
-    const targetAmount = Number(sched.target_amount || 0);
-    const paidAmount = Number(sched.paid_amount || 0);
+    const targetAmount = Math.round(Number(sched.target_amount || 0));
+    const paidAmount = Math.round(Number(sched.paid_amount || 0));
 
     let status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED';
-    if (paidAmount >= targetAmount && targetAmount > 0) {
+    const isSettled = sched.status === 'paid' ||
+      (paidAmount >= targetAmount && targetAmount > 0) ||
+      (targetAmount > 0 && Math.abs(targetAmount - paidAmount) <= 5);
+
+    if (isSettled) {
       status = 'PAID';
     } else if (paidAmount > 0) {
       status = 'PARTIAL';
@@ -487,7 +492,8 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
         amountPaid: Number(r.amount_paid || 0),
         paymentDate: r.payment_date,
         paymentMethod: r.payment_method || 'transfer',
-        notes: r.notes || null
+        notes: r.notes || null,
+        receiptNumber: r.receipt_number || null
       }));
 
     return {
@@ -528,7 +534,9 @@ export const calculateRemainingInstallmentDeficit = (
   targetAmount: number,
   paidAmount: number
 ): number => {
-  return Math.max(0, Number(targetAmount || 0) - Number(paidAmount || 0));
+  const target = Number(targetAmount || 0);
+  const paid = Number(paidAmount || 0);
+  return Math.max(0, Math.round(target - paid));
 };
 
 export const toggleLoanSchedulePaid = async (
@@ -555,7 +563,8 @@ export const toggleLoanSchedulePaid = async (
   const loanId = schedule.loan_id;
 
   if (paid) {
-    const payAmount = payload?.amount !== undefined ? payload.amount : Number(schedule.target_amount || 0);
+    const rawPayAmount = payload?.amount !== undefined ? payload.amount : Number(schedule.target_amount || 0);
+    const payAmount = Math.round(Number(rawPayAmount));
     const notesDetail = [
       payload?.receiptNo ? `Kwitansi: ${payload.receiptNo}` : '',
       payload?.notes || ''
@@ -567,7 +576,8 @@ export const toggleLoanSchedulePaid = async (
       amount_paid: payAmount,
       payment_date: new Date().toISOString(),
       payment_method: payload?.paymentMethod || 'transfer',
-      notes: notesDetail
+      notes: notesDetail,
+      receipt_number: payload?.receiptNo?.trim() || undefined
     });
 
     if (repayErr) {
@@ -575,12 +585,14 @@ export const toggleLoanSchedulePaid = async (
       throw repayErr;
     }
 
-    const currentPaid = Number(schedule.paid_amount || 0);
-    const newPaidAmount = Math.min(
-      Number(schedule.target_amount || 0),
-      currentPaid + payAmount
-    );
-    const newStatus = newPaidAmount >= Number(schedule.target_amount) ? 'paid' : (newPaidAmount > 0 ? 'partial' : 'unpaid');
+    const currentPaid = Math.round(Number(schedule.paid_amount || 0));
+    const newPaid = currentPaid + payAmount;
+    const target = Math.round(Number(schedule.target_amount || 0));
+    // Beri toleransi pembulatan +/- 5 Rupiah untuk pelunasan akhir
+    const isFullyPaid = (newPaid >= target) || (Math.abs(target - newPaid) <= 5);
+    const newPaidAmount = isFullyPaid ? target : newPaid;
+    const newStatus = isFullyPaid ? 'paid' : (newPaidAmount > 0 ? 'partial' : 'unpaid');
+
     const { error: updateSchedErr } = await supabase
       .from('loan_schedules')
       .update({
@@ -601,7 +613,9 @@ export const toggleLoanSchedulePaid = async (
       .eq('loan_id', loanId);
 
     const allPaid = (allSchedules || []).length > 0 && (allSchedules || []).every((s: any) =>
-      s.id === scheduleId ? (newStatus === 'paid') : (s.status === 'paid' || Number(s.paid_amount) >= Number(s.target_amount))
+      s.id === scheduleId
+        ? (newStatus === 'paid')
+        : (s.status === 'paid' || Math.round(Number(s.paid_amount)) >= Math.round(Number(s.target_amount)) || Math.abs(Math.round(Number(s.target_amount || 0)) - Math.round(Number(s.paid_amount || 0))) <= 5)
     );
 
     if (allPaid) {
