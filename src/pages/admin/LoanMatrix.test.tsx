@@ -38,7 +38,14 @@ vi.mock('exceljs', () => ({
 
 // Mock LoanLedgerModal
 vi.mock('../../components/members/LoanLedgerModal', () => ({
-  default: () => <div data-testid="loan-ledger-modal" />,
+  default: (props: any) => (
+    <div
+      data-testid="loan-ledger-modal"
+      data-loan-id={props.loanId}
+      data-nrp={props.memberNrp}
+      data-name={props.memberName}
+    />
+  ),
 }));
 
 // Mock loanMatrixService
@@ -641,6 +648,118 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
 
       // Export excel button styling
       expect(html).toContain('bg-slate-700 hover:bg-slate-800');
+    });
+  });
+
+  describe('Multi-Loan per Member UI Rendering & Ledger Modal Integration (Phase 77)', () => {
+    const multiLoanMemberSummary: LoanMatrixSummary = {
+      complianceYTD: 85,
+      totalCollectedYTD: 25000000,
+      projectedNextMonth: 3500000,
+      unpaidMembersCount: 1,
+      members: [
+        {
+          id: 'loan-yanto-reguler',
+          loanId: 'loan-yanto-reguler',
+          loanNumber: 'PJ-2026-001',
+          memberId: 'mem-yanto',
+          nrp: '96316880',
+          nama: 'Yanto Santoso',
+          loanTypeName: 'Pinjaman Reguler',
+          agreedTenorMonths: 12,
+          tenor: 12,
+          isLoanActive: true,
+          totalLoans: 2,
+          complianceYTD: 100,
+          months: Array.from({ length: 12 }, (_, i) => ({
+            month: i + 1,
+            status: 'PAID' as const,
+            targetAmount: 1000000,
+            paidAmount: 1000000,
+            loanId: 'loan-yanto-reguler',
+            loanNumber: 'PJ-2026-001',
+            tenor: 12,
+          })).reduce((acc, m) => ({ ...acc, [m.month]: m }), {}),
+        },
+        {
+          id: 'loan-yanto-khusus',
+          loanId: 'loan-yanto-khusus',
+          loanNumber: 'PJ-2026-002',
+          memberId: 'mem-yanto',
+          nrp: '96316880',
+          nama: 'Yanto Santoso',
+          loanTypeName: 'Pinjaman Khusus',
+          agreedTenorMonths: 24,
+          tenor: 24,
+          isLoanActive: true,
+          totalLoans: 2,
+          complianceYTD: 70,
+          months: Array.from({ length: 12 }, (_, i) => ({
+            month: i + 1,
+            status: i < 6 ? ('PAID' as const) : ('UNPAID' as const),
+            targetAmount: 1500000,
+            paidAmount: i < 6 ? 1500000 : 0,
+            loanId: 'loan-yanto-khusus',
+            loanNumber: 'PJ-2026-002',
+            tenor: 24,
+          })).reduce((acc, m) => ({ ...acc, [m.month]: m }), {}),
+        },
+      ],
+    };
+
+    it('renders 2 distinct rows for a member who has 2 active loans simultaneously', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
+
+      // Both rows should show Yanto Santoso and NRP
+      const yantoMatches = html.match(/Yanto Santoso/g);
+      expect(yantoMatches).toHaveLength(2);
+
+      const nrpMatches = html.match(/96316880/g);
+      expect(nrpMatches).toHaveLength(2);
+
+      // Pagination accurately reflects 2 loans from 1 unique member
+      expect(html).toContain('dari 2 pinjaman (1 anggota)');
+    });
+
+    it('renders distinct loan type badges, tenors, and loan numbers on each row', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
+
+      // First loan: Pinjaman Reguler (12 Bln) & PJ-2026-001
+      expect(html).toContain('Pinjaman Reguler (12 Bln)');
+      expect(html).toContain('PJ-2026-001');
+
+      // Second loan: Pinjaman Khusus (24 Bln) & PJ-2026-002
+      expect(html).toContain('Pinjaman Khusus (24 Bln)');
+      expect(html).toContain('PJ-2026-002');
+    });
+
+    it('renders action buttons with specific loanId targets for each row', () => {
+      const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
+
+      // First row button points to loan-yanto-reguler
+      expect(html).toContain('data-testid="view-ledger-loan-yanto-reguler"');
+
+      // Second row button points to loan-yanto-khusus
+      expect(html).toContain('data-testid="view-ledger-loan-yanto-khusus"');
+    });
+
+    it('opens loan ledger modal with the exact loanId and member credentials', () => {
+      const html = renderToStaticMarkup(
+        <LoanMatrix
+          initialData={multiLoanMemberSummary}
+          initialSelectedLoan={{
+            loanId: 'loan-yanto-khusus',
+            nrp: '96316880',
+            nama: 'Yanto Santoso',
+          }}
+        />
+      );
+
+      // Verify modal is rendered with the second loan credentials
+      expect(html).toContain('data-testid="loan-ledger-modal"');
+      expect(html).toContain('data-loan-id="loan-yanto-khusus"');
+      expect(html).toContain('data-nrp="96316880"');
+      expect(html).toContain('data-name="Yanto Santoso"');
     });
   });
 });

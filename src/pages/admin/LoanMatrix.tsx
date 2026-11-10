@@ -89,6 +89,7 @@ export interface LoanMatrixProps {
   initialYear?: number;
   initialAvailableYears?: number[];
   initialData?: LoanMatrixSummary | null;
+  initialSelectedLoan?: { loanId: string; nrp: string; nama: string } | null;
   onYearChange?: (year: number) => void;
 }
 
@@ -131,6 +132,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   initialYear,
   initialAvailableYears,
   initialData,
+  initialSelectedLoan,
   onYearChange,
 }) => {
   const currentYear = new Date().getFullYear();
@@ -143,7 +145,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   
   const [loading, setLoading] = useState(initialData !== undefined ? false : true);
   const [data, setData] = useState<LoanMatrixSummary | null>(initialData ?? null);
-  const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(null);
+  const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(initialSelectedLoan ?? null);
   const feedback = useContext(FeedbackContext);
 
   // Bulk Actions State: Centang Semua s/d Bulan Ini
