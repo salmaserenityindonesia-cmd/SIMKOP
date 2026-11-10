@@ -364,27 +364,21 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
         code: 'DARURAT',
         name: 'Pinjaman Darurat',
         max_duration_months: 6,
-        is_active: true,
-        interest_rate: 0,
-        created_at: '2026-01-01'
+        is_active: true
       },
       {
         id: 'lt-reguler',
         code: 'REGULER',
         name: 'Pinjaman Reguler',
         max_duration_months: 12,
-        is_active: true,
-        interest_rate: 0,
-        created_at: '2026-01-01'
+        is_active: true
       },
       {
         id: 'lt-konsumtif',
         code: 'KONSUMTIF',
         name: 'Pinjaman Konsumtif',
         max_duration_months: 36,
-        is_active: true,
-        interest_rate: 0,
-        created_at: '2026-01-01'
+        is_active: true
       }
     ];
 
