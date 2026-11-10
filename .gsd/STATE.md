@@ -1,24 +1,24 @@
 ## Current Position
-- **Phase**: 76 (Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru)
-- **Task**: Phase 76 Complete
-- **Status**: Ready for Verification / Complete Phase
+- **Phase**: 77 (Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
-## Plans Created (Phase 76)
-- [x] **Plan 76.1**: Active Loan Types Service & Dynamic Tenor State Generation
+## Plans Created (Phase 77)
+- [ ] **Plan 77.1**: Restructure Loan Matrix Data Contract (Per-Loan Rows)
   - Wave: 1
-  - Files: `src/services/loanService.ts`, `src/pages/admin/PengajuanPinjaman.tsx`
-- [x] **Plan 76.2**: UI Form Field Integration & Submission Payload Binding
+  - Files: `src/services/loanMatrixService.ts`, `src/services/loanMatrixService.test.ts`
+- [ ] **Plan 77.2**: Render Multi-Loan Rows and Update Statistics in UI & Modal
   - Wave: 2
-  - Files: `src/pages/admin/PengajuanPinjaman.tsx`
-- [x] **Plan 76.3**: Comprehensive Unit Testing, Static Verification & Production Build
+  - Files: `src/pages/admin/LoanMatrix.tsx`, `src/components/loans/LoanScheduleModal.tsx`, `src/pages/admin/LoanMatrix.test.tsx`
+- [ ] **Plan 77.3**: Static Verification & Build Integrity
   - Wave: 3
-  - Files: `src/pages/admin/PengajuanPinjaman.test.tsx`, `src/services/loanService.test.ts`, `src/`
+  - Files: `src/`
 
-## Last Session Summary
-Seluruh rangkaian eksekusi Phase 76 telah selesai 100%:
-1. **Wave 1 (Plan 76.1)**: Menambahkan kueri `getActiveLoanTypes()` pada `loanService.ts`, mendukung `loanTypeId` pada `applyLoan()`, dan menghitung batas tenor dinamis `availableTenors` di `PengajuanPinjaman.tsx` serta capping rekomendasi tenor di `SimulationPanel`.
-2. **Wave 2 (Plan 76.2)**: Mengintegrasikan elemen dropdown "Jenis Pinjaman" di antarmuka form pengajuan, menghubungkan dropdown tenor dinamis dengan atribut disabled saat jenis pinjaman belum dipilih, serta memperketat validasi dan mengikat `loan_type_id` pada payload pengajuan pinjaman baru.
-3. **Wave 3 (Plan 76.3)**: Memperluas cakupan unit test (59 test passing di pengujian pinjaman & form, 866 unit tests passing di seluruh 61 file proyek), pemeriksaan tipe statis TypeScript (`tsc --noEmit`) tanpa error, dan build produksi Vite (`npm run build`) sukses sempurna.
+## Context & Objectives
+Menangani kasus anggota (seperti "Yanto Santoso", NRP: 96316880) yang memiliki 2 atau lebih pinjaman aktif berjalan bersamaan:
+1. Menghilangkan deduplikasi baris berbasis `member_id` di `loanMatrixService.ts` dan menggantinya dengan model baris berbasis `loan.id`.
+2. Menyajikan informasi identitas pinjaman yang jelas (NRP, nama, badge jenis pinjaman + tenor, dan nomor pinjaman) pada setiap baris di tabel `LoanMatrix.tsx`.
+3. Memastikan aksi buku bantu mengarah ke `loanId` yang spesifik dan kartu ringkasan KPI (Proyeksi Bulan Depan, Realisasi YTD, Kepatuhan YTD) mengakumulasi seluruh pinjaman secara menyeluruh.
 
 ## Next Steps
-1. Verifikasi menyeluruh via `/verify 76`.
+1. Eksekusi Wave 1 (Plan 77.1) via `/execute 77`.

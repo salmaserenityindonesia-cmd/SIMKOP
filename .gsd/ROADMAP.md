@@ -6,8 +6,8 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 76 — Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru
-> **Status:** ✅ Complete
+> **Current Phase:** 77 — Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman (/admin/loan-matrix)
+> **Status:** 🟡 In Progress
 
 ## Must-Haves (from SPEC)
 
@@ -1364,6 +1364,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 77: Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman (/admin/loan-matrix)
+**Status:** 🟡 In Progress
+**Objective:** Mendukung anggota yang memiliki lebih dari satu pinjaman aktif yang berjalan bersamaan pada Matriks Pinjaman (`/admin/loan-matrix`). Mengubah model data dari deduplikasi berbasis `member_id` menjadi berbasis pinjaman (`1 Baris = 1 Pinjaman Berjalan`), merender label jenis pinjaman & tenor di bawah nama anggota, mengarahkan tombol aksi buku bantu ke pinjaman spesifik, serta mengonsolidasi seluruh proyeksi dan kepatuhan angsuran secara presisi.
+**Depends on:** Phase 76
+
+**Plans:**
+- [ ] Plan 77.1: Restructure Loan Matrix Data Contract (Per-Loan Rows)
+- [ ] Plan 77.2: Render Multi-Loan Rows and Update Statistics in UI & Modal
+- [ ] Plan 77.3: Static Verification & Build Integrity
+
+**Deliverables:**
+- Penyesuaian query dan struktur data pada `src/services/loanMatrixService.ts` untuk menghasilkan baris per pinjaman unik
+- Penyajian multi-baris pinjaman dengan badge jenis pinjaman dan tenor di `src/pages/admin/LoanMatrix.tsx`
+- Integrasi peninjauan buku bantu pinjaman spesifik di `src/components/loans/LoanScheduleModal.tsx`
+- Unit testing komprehensif pada `loanMatrixService.test.ts` & `LoanMatrix.test.tsx` serta verifikasi build produksi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1501,6 +1519,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 74 | Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan | ✅ | 3/3 | 100% |
 | 75 | Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok | ✅ | 4/4 | 100% |
 | 76 | Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru | ✅ | 3/3 | 100% |
+| 77 | Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman | ⏳ | 0/3 | 0% |
 
 ---
 
@@ -1584,6 +1603,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 74 | 2026-11-10 | 2026-11-10 | 1 day |
 | 75 | 2026-11-10 | 2026-11-10 | 1 day |
 | 76 | 2026-11-10 | 2026-11-10 | 1 day |
+| 77 | 2026-11-10 | — | — |
 
 
 
