@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 73 — Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan
+> **Current Phase:** 76 — Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru
 > **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
@@ -1346,6 +1346,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 76: Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru
+**Status:** ✅ Complete
+**Objective:** Menambahkan pemilih "Jenis Pinjaman" dinamis dari `public.loan_types` pada form pengajuan pinjaman baru (`/admin/pengajuan-pinjaman`), membatasi dropdown tenor secara dinamis mengikuti `max_duration_months` produk (misal: maks 6 bulan untuk DARURAT, 12 bulan untuk REGULER), dan mengikat `loan_type_id` pada payload simpan pinjaman tanpa memengaruhi tenor pinjaman lama yang sudah berjalan.
+**Depends on:** Phase 75
+
+**Plans:**
+- [x] Plan 76.1: Active Loan Types Service & Dynamic Tenor State Generation
+- [x] Plan 76.2: UI Form Field Integration & Submission Payload Binding
+- [x] Plan 76.3: Comprehensive Unit Testing, Static Verification & Production Build
+
+**Deliverables:**
+- Penambahan fungsi `getActiveLoanTypes` dan dukungan `loanTypeId` pada `loanService.ts`
+- Form kontrol Jenis Pinjaman dan kalkulasi dinamis batas tenor di `PengajuanPinjaman.tsx`
+- Validasi submit dan binding `loan_type_id` pada payload pembuatan pinjaman baru
+- Unit test terverifikasi di `PengajuanPinjaman.test.tsx` & `loanService.test.ts`, lolos `tsc --noEmit` dan `npm run build`
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1482,6 +1500,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 73 | Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan | ✅ | 3/3 | 100% |
 | 74 | Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan | ✅ | 3/3 | 100% |
 | 75 | Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok | ✅ | 4/4 | 100% |
+| 76 | Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1564,6 +1583,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 73 | 2026-11-09 | 2026-11-09 | 1 day |
 | 74 | 2026-11-10 | 2026-11-10 | 1 day |
 | 75 | 2026-11-10 | 2026-11-10 | 1 day |
+| 76 | 2026-11-10 | 2026-11-10 | 1 day |
 
 
 

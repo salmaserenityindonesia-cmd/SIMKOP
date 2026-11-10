@@ -1,24 +1,24 @@
 ## Current Position
-- **Phase**: 75 (Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok)
-- **Task**: Phase 75 Complete
+- **Phase**: 76 (Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru)
+- **Task**: Phase 76 Complete
 - **Status**: Ready for Verification / Complete Phase
 
-## Plans Created (Phase 75)
-- [x] **Plan 75.1**: Database Integrity & Auto-Fallback Trigger (PostgreSQL)
+## Plans Created (Phase 76)
+- [x] **Plan 76.1**: Active Loan Types Service & Dynamic Tenor State Generation
   - Wave: 1
-  - Files: `supabase/migrations/041_add_loan_repayments_receipt_trigger.sql`
-- [x] **Plan 75.2**: Standardize Frontend Receipt Generator Utility
+  - Files: `src/services/loanService.ts`, `src/pages/admin/PengajuanPinjaman.tsx`
+- [x] **Plan 76.2**: UI Form Field Integration & Submission Payload Binding
   - Wave: 2
-  - Files: `src/utils/receiptGenerator.ts`, `src/utils/receiptGenerator.test.ts`
-- [x] **Plan 75.3**: Connect Generator to Repayment Modal & Service Layer
+  - Files: `src/pages/admin/PengajuanPinjaman.tsx`
+- [x] **Plan 76.3**: Comprehensive Unit Testing, Static Verification & Production Build
   - Wave: 3
-  - Files: `src/components/loans/LoanScheduleModal.tsx`, `src/services/loanMatrixService.ts`, `src/services/loanScheduleService.ts`, `src/components/loans/LoanScheduleModal.test.tsx`, `src/services/loanMatrixService.test.ts`
-- [x] **Plan 75.4**: Static Verification, Full Test Suite, and Production Build Check
-  - Wave: 4
-  - Files: `src/`
+  - Files: `src/pages/admin/PengajuanPinjaman.test.tsx`, `src/services/loanService.test.ts`, `src/`
 
 ## Last Session Summary
-Plan 75.4 dieksekusi dengan sukses. Seluruh rangkaian pengujian unit sistem (61 test files, 847 tests) berhasil lulus 100% tanpa kegagalan. Pemeriksaan tipe statis TypeScript (`tsc --noEmit`) dan build produksi Vite (`npm run build`) berjalan bersih tanpa error dengan exit code 0. Seluruh modul Phase 75 terverifikasi siap produksi.
+Seluruh rangkaian eksekusi Phase 76 telah selesai 100%:
+1. **Wave 1 (Plan 76.1)**: Menambahkan kueri `getActiveLoanTypes()` pada `loanService.ts`, mendukung `loanTypeId` pada `applyLoan()`, dan menghitung batas tenor dinamis `availableTenors` di `PengajuanPinjaman.tsx` serta capping rekomendasi tenor di `SimulationPanel`.
+2. **Wave 2 (Plan 76.2)**: Mengintegrasikan elemen dropdown "Jenis Pinjaman" di antarmuka form pengajuan, menghubungkan dropdown tenor dinamis dengan atribut disabled saat jenis pinjaman belum dipilih, serta memperketat validasi dan mengikat `loan_type_id` pada payload pengajuan pinjaman baru.
+3. **Wave 3 (Plan 76.3)**: Memperluas cakupan unit test (59 test passing di pengujian pinjaman & form, 866 unit tests passing di seluruh 61 file proyek), pemeriksaan tipe statis TypeScript (`tsc --noEmit`) tanpa error, dan build produksi Vite (`npm run build`) sukses sempurna.
 
 ## Next Steps
-1. Verifikasi akhir dan penutupan Phase 75 via `/verify 75`
+1. Verifikasi menyeluruh via `/verify 76`.
