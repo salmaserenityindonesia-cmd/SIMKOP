@@ -1,8 +1,9 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import PengajuanPinjaman, { SimulationPanel, formatCurrency, calculateAvailableTenors } from './PengajuanPinjaman';
-import { MIN_REMAINING_THP } from '../../services/loanService';
+import PengajuanPinjaman, { SimulationPanel, formatCurrency, calculateAvailableTenors, submitLoanApplication } from './PengajuanPinjaman';
+import { loanService, MIN_REMAINING_THP } from '../../services/loanService';
+import { LoanType } from '../../services/koperasiService';
 
 // Mock AdminLayout
 vi.mock('../../components/layout/AdminLayout', () => ({
@@ -353,6 +354,199 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
 
     it('filters tenor list up to 36 months for long term loan', () => {
       expect(calculateAvailableTenors(36)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36]);
+    });
+  });
+
+  describe('Dynamic Loan Types & Tenor Filtering Form Integration', () => {
+    const mockLoanTypes: LoanType[] = [
+      {
+        id: 'lt-darurat',
+        code: 'DARURAT',
+        name: 'Pinjaman Darurat',
+        max_duration_months: 6,
+        is_active: true,
+        interest_rate: 0,
+        created_at: '2026-01-01'
+      },
+      {
+        id: 'lt-reguler',
+        code: 'REGULER',
+        name: 'Pinjaman Reguler',
+        max_duration_months: 12,
+        is_active: true,
+        interest_rate: 0,
+        created_at: '2026-01-01'
+      },
+      {
+        id: 'lt-konsumtif',
+        code: 'KONSUMTIF',
+        name: 'Pinjaman Konsumtif',
+        max_duration_months: 36,
+        is_active: true,
+        interest_rate: 0,
+        created_at: '2026-01-01'
+      }
+    ];
+
+    it('renders loan types dropdown with correct options', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman initialLoanTypes={mockLoanTypes} />
+      );
+
+      expect(html).toContain('Jenis Pinjaman');
+      expect(html).toContain('-- Pilih Jenis Pinjaman --');
+      expect(html).toContain('Pinjaman Darurat (Maks. 6 Bulan)');
+      expect(html).toContain('Pinjaman Reguler (Maks. 12 Bulan)');
+      expect(html).toContain('Pinjaman Konsumtif (Maks. 36 Bulan)');
+    });
+
+    it('disables tenor dropdown and prompts to select loan type when no loan type is selected', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman initialLoanTypes={mockLoanTypes} initialSelectedLoanTypeId="" />
+      );
+
+      expect(html).toContain('-- Pilih Jenis Pinjaman Terlebih Dahulu --');
+      expect(html).toMatch(/<select[^>]*disabled=""[^>]*>/);
+    });
+
+    it('enables tenor dropdown and restricts options to max 6 months when DARURAT loan type is selected', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-darurat"
+        />
+      );
+
+      expect(html).toContain('-- Pilih Tenor --');
+      expect(html).not.toContain('-- Pilih Jenis Pinjaman Terlebih Dahulu --');
+      expect(html).toContain('<option value="1">1 Bulan</option>');
+      expect(html).toContain('<option value="6">6 Bulan</option>');
+      expect(html).not.toContain('<option value="7">7 Bulan</option>');
+      expect(html).not.toContain('<option value="10">10 Bulan</option>');
+      expect(html).not.toContain('<option value="12">12 Bulan</option>');
+      expect(html).not.toContain('<option value="18">18 Bulan</option>');
+      expect(html).not.toContain('<option value="24">24 Bulan</option>');
+      expect(html).not.toContain('<option value="36">36 Bulan</option>');
+    });
+
+    it('restricts options to max 12 months when REGULER loan type is selected (no 18, 24, 30, 36)', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+        />
+      );
+
+      expect(html).toContain('-- Pilih Tenor --');
+      expect(html).toContain('<option value="12">12 Bulan</option>');
+      expect(html).not.toContain('<option value="18">18 Bulan</option>');
+      expect(html).not.toContain('<option value="24">24 Bulan</option>');
+      expect(html).not.toContain('<option value="30">30 Bulan</option>');
+      expect(html).not.toContain('<option value="36">36 Bulan</option>');
+    });
+
+    it('ensures simulation panel does not recommend tenor exceeding selected product maxTenor', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-darurat"
+          initialAmount={20000000}
+          initialTenor={4}
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 2000000,
+            savings_deduction: 200000,
+            remaining_thp: 2800000
+          }}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).not.toContain('Rekomendasi:');
+      expect(html).not.toContain('18 bulan');
+    });
+
+    it('disables submit button if loan type is not selected', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId=""
+          initialPurpose="Beli Laptop"
+          initialAmount={5000000}
+          initialTenor={5}
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 0,
+            remaining_thp: 4800000
+          }}
+        />
+      );
+
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+
+    it('enables submit button when all fields including loan type are valid and THP eligible', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-darurat"
+          initialPurpose="Beli Laptop"
+          initialAmount={5000000}
+          initialTenor={5}
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 0,
+            remaining_thp: 4800000
+          }}
+        />
+      );
+
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+      expect(html).toContain('Ajukan Pinjaman');
+    });
+
+    it('submits loan application with selected loan_type_id via submitLoanApplication', async () => {
+      const spyApplyLoan = vi.spyOn(loanService, 'applyLoan').mockResolvedValueOnce({
+        id: 'loan-xyz',
+        loan_number: 'LOAN-123',
+        status: 'draft'
+      } as any);
+
+      const result = await submitLoanApplication(
+        'm-1',
+        'Beli Komputer',
+        6000000,
+        6,
+        'lt-darurat',
+        6
+      );
+
+      expect(spyApplyLoan).toHaveBeenCalledWith(
+        'm-1',
+        'Beli Komputer',
+        6000000,
+        6,
+        'lt-darurat'
+      );
+      expect(result.id).toBe('loan-xyz');
+    });
+
+    it('rejects submitLoanApplication when loan_type_id is missing', async () => {
+      await expect(
+        submitLoanApplication('m-1', 'Beli Komputer', 6000000, 6, '', 6)
+      ).rejects.toThrow('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
+    });
+
+    it('rejects submitLoanApplication when tenor exceeds maxTenor', async () => {
+      await expect(
+        submitLoanApplication('m-1', 'Beli Komputer', 6000000, 10, 'lt-darurat', 6)
+      ).rejects.toThrow('Tenor yang dipilih (10 bulan) melebihi batas maksimal 6 bulan untuk jenis pinjaman ini.');
     });
   });
 });

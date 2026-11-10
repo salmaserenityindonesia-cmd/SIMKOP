@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loanService, calculateTHPEligibility, MIN_REMAINING_THP } from './loanService';
+import { loanService, calculateTHPEligibility, MIN_REMAINING_THP, getActiveLoanTypes } from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -405,6 +405,61 @@ describe('loanService', () => {
       
       const res = await loanService.applyLoan('member-1', 'Beli Laptop', 12000000, 12);
       expect(res.status).toBe('draft');
+    });
+
+    it('should apply loan with explicit loanTypeId and bind it to loan record without fetching fallback type', async () => {
+      const mockSupabase = supabase.from as any;
+      
+      // 1. Anggota
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: 5000000 }, error: null })
+          })
+        })
+      }));
+
+      // 2. Loans (active)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // 3. Member deposits
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // 4. insert loan directly (no fallback loan_types query!)
+      let insertedLoanPayload: any = null;
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockImplementation((payload) => {
+          insertedLoanPayload = payload;
+          return {
+            select: () => ({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'loan-custom', status: 'draft', loan_type_id: 'lt-darurat-99' },
+                error: null
+              })
+            })
+          };
+        })
+      }));
+
+      const res = await loanService.applyLoan('member-1', 'Beli Kebutuhan Darurat', 6000000, 6, 'lt-darurat-99');
+      expect(res.status).toBe('draft');
+      expect(insertedLoanPayload).toHaveLength(1);
+      expect(insertedLoanPayload[0].loan_type_id).toBe('lt-darurat-99');
+      expect(insertedLoanPayload[0].principal_amount).toBe(6000000);
+      expect(insertedLoanPayload[0].agreed_tenor_months).toBe(6);
+      expect(insertedLoanPayload[0].notes).toBe('Beli Kebutuhan Darurat');
     });
   });
 
@@ -816,6 +871,49 @@ describe('loanService', () => {
       const result = await loanService.getPendingLoans();
       expect(spy).toHaveBeenCalledWith('PENDING');
       expect(result).toEqual([{ id: 'pending-legacy', status: 'draft' }]);
+    });
+  });
+
+  describe('getActiveLoanTypes', () => {
+    it('should query active loan types ordered by code ascending', async () => {
+      const mockTypes = [
+        { id: 'lt-1', code: 'DARURAT', name: 'Pinjaman Darurat', max_duration_months: 6, is_active: true },
+        { id: 'lt-2', code: 'REGULER', name: 'Pinjaman Reguler', max_duration_months: 12, is_active: true }
+      ];
+      const mockOrder = vi.fn().mockResolvedValue({ data: mockTypes, error: null });
+      const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      const result = await loanService.getActiveLoanTypes();
+
+      expect(supabase.from).toHaveBeenCalledWith('loan_types');
+      expect(mockSelect).toHaveBeenCalledWith('id, code, name, max_duration_months, is_active');
+      expect(mockEq).toHaveBeenCalledWith('is_active', true);
+      expect(mockOrder).toHaveBeenCalledWith('code', { ascending: true });
+      expect(result).toEqual(mockTypes);
+    });
+
+    it('should query via standalone getActiveLoanTypes exported function identically', async () => {
+      const mockTypes = [
+        { id: 'lt-1', code: 'DARURAT', name: 'Pinjaman Darurat', max_duration_months: 6, is_active: true }
+      ];
+      const mockOrder = vi.fn().mockResolvedValue({ data: mockTypes, error: null });
+      const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      const result = await getActiveLoanTypes();
+      expect(result).toEqual(mockTypes);
+    });
+
+    it('should throw error when database query fails', async () => {
+      const mockOrder = vi.fn().mockResolvedValue({ data: null, error: { message: 'Database query failed' } });
+      const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
+
+      await expect(loanService.getActiveLoanTypes()).rejects.toThrow('Database query failed');
     });
   });
 });

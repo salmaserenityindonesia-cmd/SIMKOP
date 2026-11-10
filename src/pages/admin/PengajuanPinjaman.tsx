@@ -161,6 +161,25 @@ export function SimulationPanel({
   );
 }
 
+export async function submitLoanApplication(
+  selectedAnggota: string,
+  purpose: string,
+  amount: number | '',
+  tenor: number | '',
+  selectedLoanTypeId: string,
+  maxTenor: number
+) {
+  if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
+    throw new Error('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
+  }
+
+  if (Number(tenor) > maxTenor) {
+    throw new Error(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
+  }
+
+  return await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId);
+}
+
 export interface PengajuanPinjamanProps {
   initialAnggotaList?: any[];
   initialSelectedAnggota?: string;
@@ -342,21 +361,11 @@ export default function PengajuanPinjaman({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
-      setError('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
-      return;
-    }
-
-    if (Number(tenor) > maxTenor) {
-      setError(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
-      return;
-    }
-
     setError(null);
     setSuccess(null);
     setSubmitting(true);
     try {
-      await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId);
+      await submitLoanApplication(selectedAnggota, purpose, amount, tenor, selectedLoanTypeId, maxTenor);
       setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
       
       // Reset form
