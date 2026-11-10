@@ -1,25 +1,18 @@
 ## Current Position
-- **Phase**: 77 (verified)
+- **Phase**: 78 (verified)
 - **Status**: ✅ Complete and verified
 
 ## Last Session Summary
-Codebase mapping complete via `/map`.
-- Components identified: 4 architectural layers (Presentation views, Services layer, Client state stores, Database schema & 41 migrations)
-- Dependencies analyzed: 11 production dependencies, 8 development tools
-- Technical debt items cataloged: 2 architecture/reliability items remaining (client-side multi-table writes in POS, transient fallback schema handling). Note: Service role key exposure resolved via 042 migration & userService.ts.
-- Documentation written: `.gsd/ARCHITECTURE.md` and `.gsd/STACK.md`
+Phase 78 complete: Selesaikan Technical Debt Migrasi Transaksi Multi-Tabel POS ke Atomic RPC Supabase (`process_pos_checkout`).
+- Database RPC `public.process_pos_checkout` dibangun di `supabase/migrations/033_create_atomic_pos_checkout_rpc.sql` membungkus mutasi sales, sale_items, stok products, potongan deposit simpanan belanja, dan cash_flow dalam satu transaksi ACID ber-lock `FOR UPDATE`.
+- Kontrak data didefinisikan di `src/types/pos.ts`.
+- `posCheckoutService.ts` direfaktor untuk memanggil RPC atomik dengan penanganan error responsif dan fallback kompatibilitas.
+- Unit testing di `posCheckoutService.test.ts` (9 tests) diselaraskan dan lulus 100%.
+- Seluruh 63 test file (896 unit test) dan build produksi Vite lulus 100% tanpa regresi.
 
-## Verification Summary (Phase 77)
+## Verification Summary (Phase 78)
 - **Status**: PASS (7/7 must-haves verified)
-- **Report**: `.gsd/phases/77/VERIFICATION.md`
-- **Key Results**:
-  1. `getLoanMatrix` menghasilkan baris per pinjaman unik (`loansMap[loan.id]`), mengisolasi saldo berjalan & kumulatif angsuran secara presisi.
-  2. UI Matriks Pinjaman (`src/pages/admin/LoanMatrix.tsx`) merender baris independen per pinjaman aktif dengan badge jenis pinjaman & tenor serta status aktif/selesai.
-  3. Tombol aksi buku bantu (Eye icon) membuka `LoanLedgerModal` / `LoanScheduleModal` terikat ke `loanId` spesifik untuk baris tersebut.
-  4. Kartu metrik KPI dan footer pagination mengakumulasi proyeksi seluruh pinjaman dan menghitung anggota unik secara akurat.
-  5. Fitur ekspor Excel pada Matriks Pinjaman mencatat rincian per pinjaman secara akurat dengan kolom nomor dan jenis pinjaman.
-  6. TypeScript compiler (`tsc --noEmit`) bebas dari error diagnostik tipe.
-  7. Bundler produksi Vite (`npm run build`) dan test suite penuh lulus tanpa regresi (874 tests di 61 test files passing).
+- **Report**: `.gsd/phases/78/VERIFICATION.md`
 
 ## Next Steps
-1. Phase 77 selesai 100%. Siap untuk fase berikutnya atau tugas pengujian lanjutan.
+1. Phase 78 selesai 100%. Technical debt multi-table client mutations pada POS telah tereliminasi. Siap untuk fase berikutnya atau tugas pengujian lanjutan.

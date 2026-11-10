@@ -1382,6 +1382,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 78: Migrasi Transaksi Multi-Tabel POS ke Atomic RPC Supabase
+**Status:** ✅ Complete
+**Objective:** Mengeliminasi technical debt eksekusi checkout POS bertahap dari client-side dengan membungkus seluruh mutasi (validasi stok, insert sales, insert sale_items, pengurangan stok products, pemotongan deposit_transactions simpanan belanja, dan pencatatan cash_flow) ke dalam fungsi atomic PostgreSQL RPC `process_pos_checkout` dengan blok transaksi ACID.
+**Depends on:** Phase 77
+
+**Plans:**
+- [x] Plan 78.1: Create Atomic Checkout PostgreSQL RPC
+- [x] Plan 78.2: Types & Client-Side Refactoring in posCheckoutService.ts
+- [x] Plan 78.3: Test Suite Alignment, Static Analysis & Build Verification
+
+**Deliverables:**
+- Berkas migrasi database `supabase/migrations/033_create_atomic_pos_checkout_rpc.sql` mendefinisikan RPC `process_pos_checkout`
+- Antarmuka TypeScript `src/types/pos.ts` untuk payload dan respon transaksi RPC
+- Refactor `src/services/posCheckoutService.ts` untuk memanggil `supabase.rpc('process_pos_checkout')`
+- Penyelarasan pengujian unit pada `src/services/posCheckoutService.test.ts` dan verifikasi integritas build Vite
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1604,6 +1622,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 75 | 2026-11-10 | 2026-11-10 | 1 day |
 | 76 | 2026-11-10 | 2026-11-10 | 1 day |
 | 77 | 2026-11-10 | 2026-11-10 | 1 day |
+| 78 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
