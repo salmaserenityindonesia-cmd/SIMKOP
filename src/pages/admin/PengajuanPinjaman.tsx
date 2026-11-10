@@ -193,8 +193,7 @@ export default function PengajuanPinjaman({
 
   const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
   const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 12;
-  const baseTenors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36];
-  const availableTenors = selectedLoanType ? baseTenors.filter(t => t <= maxTenor) : [];
+  const availableTenors = calculateAvailableTenors(selectedLoanType?.max_duration_months);
 
   const handleLoanTypeChange = (newTypeId: string) => {
     setSelectedLoanTypeId(newTypeId);
@@ -411,6 +410,25 @@ export default function PengajuanPinjaman({
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Jenis Pinjaman <span className="text-red-500">*</span>
+                </label>
+                <select 
+                  required
+                  value={selectedLoanTypeId}
+                  onChange={e => handleLoanTypeChange(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">-- Pilih Jenis Pinjaman --</option>
+                  {loanTypes.map(lt => (
+                    <option key={lt.id} value={lt.id}>
+                      {lt.name} (Maks. {lt.max_duration_months} Bulan)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Keperluan Pinjaman (Tujuan Pembelian)</label>
                 <input 
                   type="text"
@@ -439,17 +457,16 @@ export default function PengajuanPinjaman({
                   <select 
                     required
                     value={tenor}
+                    disabled={!selectedLoanTypeId}
                     onChange={e => setTenor(Number(e.target.value) || '')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
                   >
-                    <option value="">-- Pilih Tenor --</option>
-                    <option value="6">6 Bulan</option>
-                    <option value="10">10 Bulan</option>
-                    <option value="12">12 Bulan</option>
-                    <option value="18">18 Bulan</option>
-                    <option value="24">24 Bulan</option>
-                    <option value="30">30 Bulan</option>
-                    <option value="36">36 Bulan</option>
+                    <option value="">
+                      {!selectedLoanTypeId ? '-- Pilih Jenis Pinjaman Terlebih Dahulu --' : '-- Pilih Tenor --'}
+                    </option>
+                    {availableTenors.map(t => (
+                      <option key={t} value={t}>{t} Bulan</option>
+                    ))}
                   </select>
                 </div>
               </div>
