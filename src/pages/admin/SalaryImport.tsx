@@ -183,6 +183,11 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
       console.error('Error saving reconciliation:', err);
       toast.error(`Gagal menyimpan konfirmasi: ${err.message}`);
       setErrorMsg('Gagal menyimpan konfirmasi: ' + err.message);
+      try {
+        await fetchMemberSalaryData();
+      } catch {
+        // Abaikan kegagalan refresh tabel master
+      }
     } finally {
       setIsConfirming(false);
     }

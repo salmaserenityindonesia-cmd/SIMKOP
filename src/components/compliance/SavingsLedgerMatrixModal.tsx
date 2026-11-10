@@ -37,6 +37,7 @@ import {
   MonthAuditHistoryItem
 } from '../../services/savingsMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { SavingsDifferenceAuditModal } from './SavingsDifferenceAuditModal';
 
 export type DepositTabType = 'WAJIB' | 'BELANJA' | 'LEBARAN';
 export type { MonthAuditHistoryItem, CheckMonthPayload };
@@ -61,6 +62,7 @@ export interface SavingsLedgerMatrixModalProps {
   initialHistoryModalOpen?: boolean;
   initialSelectedCellForHistory?: { year: number; month: number; label: string } | null;
   initialAuditHistory?: MonthAuditHistoryItem[];
+  initialDiffModalOpen?: boolean;
 }
 
 export const MONTH_NAMES = [
@@ -210,9 +212,11 @@ export default function SavingsLedgerMatrixModal({
   initialSelectedCellForUncheck,
   initialHistoryModalOpen,
   initialSelectedCellForHistory,
-  initialAuditHistory
+  initialAuditHistory,
+  initialDiffModalOpen
 }: SavingsLedgerMatrixModalProps) {
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
+  const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(initialDiffModalOpen ?? false);
   const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || DEFAULT_RATE_TIERS);
@@ -1054,13 +1058,23 @@ export default function SavingsLedgerMatrixModal({
                   Sesuai / Seimbang
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                  Selisih {formatCurrency(Math.abs(balanceDifference))}{' '}
-                  {totalChecked === 0 && targetDbBalance > 0
-                    ? '(Belum Dialokasikan)'
-                    : `(${balanceDifference > 0 ? 'Lebih' : 'Kurang'})`}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsDiffModalOpen(true)}
+                  title="Klik untuk melihat rincian faktor penyebab selisih"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-300 bg-amber-50 text-amber-800 text-xs font-semibold hover:bg-amber-100 hover:border-amber-400 transition-all cursor-pointer shadow-xs group"
+                >
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
+                  <span>
+                    Selisih {formatCurrency(Math.abs(balanceDifference))}{' '}
+                    {totalChecked === 0 && targetDbBalance > 0
+                      ? '(Belum Dialokasikan)'
+                      : `(${balanceDifference > 0 ? 'Lebih' : 'Kurang'})`}
+                  </span>
+                  <span className="text-[10px] bg-amber-200/70 text-amber-900 px-1.5 py-0.5 rounded-full font-medium ml-1">
+                    Lihat Faktor ↗
+                  </span>
+                </button>
               )}
             </div>
           </div>
@@ -1663,6 +1677,22 @@ export default function SavingsLedgerMatrixModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal Drill-Down Faktor Selisih Simpanan */}
+      {isDiffModalOpen && (
+        <SavingsDifferenceAuditModal
+          isOpen={isDiffModalOpen}
+          onClose={() => setIsDiffModalOpen(false)}
+          memberId={memberId}
+          memberNrp={memberNrp}
+          memberName={memberName}
+          depositTypeCode={activeTab}
+          memberDepositId={memberDepositMap[activeTab]}
+          totalChecked={totalChecked}
+          dbBalance={targetDbBalance}
+          difference={balanceDifference}
+        />
       )}
 
     </div>

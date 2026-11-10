@@ -1689,3 +1689,320 @@ export async function getMonthAuditHistory(
   return allItems;
 }
 
+export interface DiscrepancyWithdrawalItem {
+  id: string;
+  created_at: string;
+  transaction_date?: string;
+  amount: number;
+  reference_no?: string;
+  description?: string;
+  payment_method?: string;
+  created_by?: string;
+  cashier_name?: string;
+  notes?: string;
+  is_pos_sale?: boolean;
+  source?: string;
+}
+
+export interface SavingsDiscrepancyBreakdown {
+  withdrawals: DiscrepancyWithdrawalItem[];
+  totalSpent: number;
+}
+
+/**
+ * Mengambil rincian faktor pengeluaran/penarikan simpanan yang menyebabkan selisih
+ * antara Total Tercentang (Iuran) dengan Saldo Riil Database (misal: belanja POS atau penarikan tunai).
+ * Mendukung signature:
+ * - getSavingsDiscrepancyBreakdown(memberId: string, memberDepositId?: string, depositTypeCode?: string)
+ * - getSavingsDiscrepancyBreakdown(memberDepositId: string, depositTypeCode?: string, memberId?: string)
+ */
+export async function getSavingsDiscrepancyBreakdown(
+  memberId: string,
+  memberDepositId?: string,
+  depositTypeCode?: string
+): Promise<SavingsDiscrepancyBreakdown>;
+export async function getSavingsDiscrepancyBreakdown(
+  memberDepositId: string,
+  depositTypeCode?: string,
+  memberId?: string
+): Promise<SavingsDiscrepancyBreakdown>;
+export async function getSavingsDiscrepancyBreakdown(
+  arg1: string,
+  arg2?: string,
+  arg3: string = 'BELANJA'
+): Promise<SavingsDiscrepancyBreakdown> {
+  if (!arg1 && !arg2 && !arg3) {
+    return { withdrawals: [], totalSpent: 0 };
+  }
+
+  // 1. Deteksi variasi signature parameter (lama vs baru)
+  const KNOWN_CODES = ['BELANJA', 'WAJIB', 'LEBARAN', 'POKOK', 'SUKARELA', 'SB', 'SW', 'SP'];
+  const isArg2TypeCode = typeof arg2 === 'string' &&
+    (KNOWN_CODES.includes(arg2.toUpperCase()) || /^[A-Z_]{2,10}$/.test(arg2.trim()));
+
+  let memberId = '';
+  let memberDepositId = '';
+  let depositTypeCode = 'BELANJA';
+
+  if (isArg2TypeCode) {
+    // Signature lama: (memberDepositId, depositTypeCode, memberId)
+    memberDepositId = arg1 || '';
+    depositTypeCode = arg2 || 'BELANJA';
+    memberId = (arg3 && arg3 !== 'BELANJA') ? arg3 : '';
+  } else {
+    // Signature baru: (memberId, memberDepositId, depositTypeCode)
+    memberId = arg1 || '';
+    memberDepositId = arg2 || '';
+    depositTypeCode = arg3 || 'BELANJA';
+  }
+
+  if (!memberId && !memberDepositId) {
+    return { withdrawals: [], totalSpent: 0 };
+  }
+
+  // 2. Sinkronkan orphan sales POS jika tipe simpanan adalah BELANJA
+  if (depositTypeCode?.toUpperCase() === 'BELANJA' || !depositTypeCode) {
+    try {
+      const { syncOrphanSalesToDepositLedger } = await import('./shoppingSavingsLedgerService');
+      await syncOrphanSalesToDepositLedger();
+    } catch {
+      // Abaikan jika service tidak dapat dipanggil
+    }
+  }
+
+  // 3. Resolusi identitas akun simpanan (targetDepositId & targetMemberId)
+  let targetDepositId = memberDepositId;
+  let targetMemberId = memberId;
+
+  // Jika memberDepositId ada tapi memberId kosong, cari member_id-nya
+  if (targetDepositId && !targetMemberId) {
+    try {
+      const { data: md } = await supabase
+        .from('member_deposits')
+        .select('id, member_id')
+        .eq('id', targetDepositId)
+        .maybeSingle();
+      if (md?.member_id) {
+        targetMemberId = md.member_id;
+      }
+    } catch {
+      // Abaikan
+    }
+  }
+
+  // Jika targetDepositId kosong namun targetMemberId ada:
+  // Cek apakah targetMemberId sebenarnya adalah ID di tabel member_deposits
+  if (!targetDepositId && targetMemberId) {
+    try {
+      const { data: mdDirect } = await supabase
+        .from('member_deposits')
+        .select('id, member_id')
+        .eq('id', targetMemberId)
+        .maybeSingle();
+      if (mdDirect?.id) {
+        targetDepositId = mdDirect.id;
+        if (mdDirect.member_id) targetMemberId = mdDirect.member_id;
+      }
+    } catch {
+      // Abaikan
+    }
+  }
+
+  // Jika targetDepositId masih kosong namun targetMemberId & depositTypeCode ada, cari ID member_deposits
+  if (!targetDepositId && targetMemberId && depositTypeCode) {
+    try {
+      const { data: depTypes } = await supabase
+        .from('deposit_types')
+        .select('id, code')
+        .ilike('code', `%${depositTypeCode}%`);
+
+      const depTypeId = depTypes?.[0]?.id;
+      if (depTypeId) {
+        const { data: md } = await supabase
+          .from('member_deposits')
+          .select('id')
+          .eq('member_id', targetMemberId)
+          .eq('deposit_type_id', depTypeId)
+          .maybeSingle();
+        if (md?.id) targetDepositId = md.id;
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  const rawList: any[] = [];
+
+  // 4. Kueri Transaksi Pengurang dari deposit_transactions
+  if (targetDepositId) {
+    let txQuery: any = supabase
+      .from('deposit_transactions')
+      .select(`
+        id,
+        created_at,
+        amount,
+        reference_no,
+        description,
+        payment_method,
+        created_by,
+        notes
+      `)
+      .eq('member_deposit_id', targetDepositId);
+
+    // Kriteria transaksi pengeluaran (pada PostgreSQL enum deposit_tx_type: 'withdrawal')
+    if (typeof txQuery.in === 'function') {
+      txQuery = txQuery.in('transaction_type', ['withdrawal']);
+    }
+    if (typeof txQuery.order === 'function') {
+      txQuery = txQuery.order('created_at', { ascending: false });
+    }
+
+    const { data: withdrawals, error: txError } = await txQuery;
+    if (txError) throw txError;
+
+    if (withdrawals && withdrawals.length > 0) {
+      rawList.push(...withdrawals);
+    } else {
+      // Fallback kueri deposit_transactions untuk kriteria amount < 0, description ilike, atau payment_method
+      try {
+        const { data: altTx } = await supabase
+          .from('deposit_transactions')
+          .select(`
+            id,
+            created_at,
+            amount,
+            reference_no,
+            description,
+            payment_method,
+            created_by,
+            notes
+          `)
+          .eq('member_deposit_id', targetDepositId)
+          .or('amount.lt.0,description.ilike.%belanja%,description.ilike.%tarik%,payment_method.eq.potong_simpanan_belanja')
+          .order('created_at', { ascending: false });
+        if (altTx && altTx.length > 0) {
+          rawList.push(...altTx);
+        }
+      } catch {
+        // Abaikan jika query or tidak didukung di mock / env
+      }
+    }
+  }
+
+  // 5. Fallback & Rekonsiliasi ke Tabel Penjualan Kasir POS (public.sales)
+  // Digunakan jika transaksi belanja di deposit_transactions kosong atau ada penjualan kasir yang belum tersinkron
+  if (targetMemberId && (depositTypeCode?.toUpperCase() === 'BELANJA' || !depositTypeCode)) {
+    try {
+      // Coba query dengan invoice_number terlebih dahulu sesuai spec
+      let { data: posSales, error: salesErr } = await supabase
+        .from('sales')
+        .select('id, invoice_number, created_at, paid_deposit, total_amount, payment_scheme, cashier_id')
+        .eq('member_id', targetMemberId)
+        .gt('paid_deposit', 0)
+        .order('created_at', { ascending: false });
+
+      // Jika kolom invoice_number tidak ada di schema (menggunakan sale_number), lakukan fallback
+      if (salesErr) {
+        const { data: salesByNumber, error: numErr } = await supabase
+          .from('sales')
+          .select('id, sale_number, created_at, paid_deposit, total_amount, payment_scheme, cashier_id')
+          .eq('member_id', targetMemberId)
+          .gt('paid_deposit', 0)
+          .order('created_at', { ascending: false });
+        if (!numErr && salesByNumber) {
+          posSales = salesByNumber;
+          salesErr = null;
+        }
+      }
+
+      if (!salesErr && posSales && posSales.length > 0) {
+        const existingRefs = new Set(
+          rawList.map(w => (w.reference_no || '').toUpperCase().trim()).filter(Boolean)
+        );
+
+        for (const sale of posSales) {
+          const invNo = (sale as any).invoice_number || (sale as any).sale_number || `INV-${sale.id}`;
+          if (!existingRefs.has(invNo.toUpperCase().trim())) {
+            const amount = Math.abs(Number(sale.paid_deposit || 0));
+            if (amount > 0) {
+              rawList.push({
+                id: sale.id,
+                created_at: sale.created_at || new Date().toISOString(),
+                transaction_date: sale.created_at || new Date().toISOString(),
+                amount,
+                reference_no: invNo,
+                description: `Belanja Kasir POS (Struk ${invNo})`,
+                payment_method: 'potong_simpanan_belanja',
+                created_by: sale.cashier_id,
+                is_pos_sale: true,
+                source: 'sales_pos'
+              });
+              existingRefs.add(invNo.toUpperCase().trim());
+            }
+          }
+        }
+      }
+    } catch {
+      // Abaikan jika tabel sales tidak dapat diakses
+    }
+  }
+
+  if (rawList.length === 0 && !targetDepositId && !targetMemberId) {
+    return { withdrawals: [], totalSpent: 0 };
+  }
+
+  // 6. Ambil data nama kasir/pengelola untuk setiap created_by
+  const cashierIds = Array.from(new Set(rawList.map(w => w.created_by).filter(Boolean)));
+  const cashierMap = new Map<string, string>();
+  if (cashierIds.length > 0) {
+    try {
+      const { data: cashiers } = await supabase
+        .from('pengelola')
+        .select('id, nama')
+        .in('id', cashierIds);
+      (cashiers || []).forEach((c: any) => {
+        if (c?.id && c?.nama) cashierMap.set(c.id, c.nama);
+      });
+    } catch {
+      // Abaikan jika tabel pengelola tidak dapat diakses
+    }
+  }
+
+  // 7. Transformasi dan penandaan is_pos_sale
+  const items: DiscrepancyWithdrawalItem[] = rawList.map(w => {
+    const desc = (w.description || '').toLowerCase();
+    const ref = (w.reference_no || '').toUpperCase();
+    const pm = (w.payment_method || '').toLowerCase();
+    const isPos =
+      w.is_pos_sale ??
+      (desc.includes('belanja') ||
+        desc.includes('pos') ||
+        desc.includes('kasir') ||
+        ref.startsWith('INV') ||
+        pm === 'potong_simpanan_belanja');
+
+    return {
+      id: w.id,
+      created_at: w.created_at,
+      transaction_date: w.transaction_date || w.created_at,
+      amount: Math.abs(Number(w.amount || 0)),
+      reference_no: w.reference_no || undefined,
+      description: w.description || undefined,
+      payment_method: w.payment_method || undefined,
+      created_by: w.created_by || undefined,
+      cashier_name: w.created_by ? cashierMap.get(w.created_by) : undefined,
+      notes: w.notes || undefined,
+      is_pos_sale: isPos,
+      source: w.source
+    };
+  });
+
+  const totalSpent = items.reduce((acc, curr) => acc + curr.amount, 0);
+
+  return {
+    withdrawals: items,
+    totalSpent
+  };
+}
+
+

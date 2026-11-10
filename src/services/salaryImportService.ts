@@ -153,6 +153,8 @@ export type FinalReconciliationPayload = {
 export const applySalaryReconciliation = async (
   previewRows: (ReconciliationItemPayload | ReconciliationResult | FinalReconciliationPayload)[]
 ): Promise<boolean> => {
+  const errors: string[] = [];
+
   for (const item of previewRows) {
     const rawThp = (item as any).thp ?? item.take_home_pay;
     const thpNumeric = cleanNumber(rawThp);
@@ -164,13 +166,11 @@ export const applySalaryReconciliation = async (
       ''
     ).trim();
 
-    const updatePayload: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    };
+    const updatePayload: Record<string, any> = {};
 
     if (thpNumeric > 0) {
-      updatePayload.take_home_pay = thpNumeric;
       updatePayload.master_thp = thpNumeric;
+      updatePayload.take_home_pay = thpNumeric;
       updatePayload.salary = thpNumeric;
     }
 
@@ -178,25 +178,46 @@ export const applySalaryReconciliation = async (
       updatePayload.bank_account_number = bankAcc;
     }
 
+    if (Object.keys(updatePayload).length === 0) {
+      continue;
+    }
+
     let { error } = await supabase
       .from('anggota')
       .update(updatePayload)
       .eq('nrp', String(item.nrp).trim());
 
-    // Jika kolom 'salary' tidak ada dalam skema database, lakukan retry tanpa kolom salary
-    if (error && error.message && error.message.toLowerCase().includes('salary')) {
-      delete updatePayload.salary;
-      const retryResult = await supabase
-        .from('anggota')
-        .update(updatePayload)
-        .eq('nrp', String(item.nrp).trim());
-      error = retryResult.error;
+    // Defensive retry jika kolom 'salary' atau 'updated_at' belum ada di skema database / schema cache
+    if (error && error.message) {
+      const errMsg = error.message.toLowerCase();
+      let needsRetry = false;
+
+      if (errMsg.includes('salary') && 'salary' in updatePayload) {
+        delete updatePayload.salary;
+        needsRetry = true;
+      }
+      if (errMsg.includes('updated_at') && 'updated_at' in updatePayload) {
+        delete updatePayload.updated_at;
+        needsRetry = true;
+      }
+
+      if (needsRetry) {
+        const retryResult = await supabase
+          .from('anggota')
+          .update(updatePayload)
+          .eq('nrp', String(item.nrp).trim());
+        error = retryResult.error;
+      }
     }
 
     if (error) {
       console.error(`Gagal update anggota NRP ${item.nrp}:`, error);
-      throw new Error(`Gagal update NRP ${item.nrp}: ${error.message}`);
+      errors.push(`Gagal update NRP ${item.nrp}: ${error.message}`);
     }
+  }
+
+  if (errors.length > 0) {
+    throw new Error(errors.join('; '));
   }
 
   return true;
@@ -300,7 +321,7 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
       let { data, error }: { data: any; error: any } = await supabase
         .from('anggota')
         .select(
-          'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary, status, membership_status, created_at, updated_at'
+          'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary, status, membership_status, created_at'
         )
         .order('nama', { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
@@ -309,7 +330,7 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
         const retry = await supabase
           .from('anggota')
           .select(
-            'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, status, membership_status, created_at, updated_at'
+            'id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, status, membership_status, created_at'
           )
           .order('nama', { ascending: true })
           .range(from, from + PAGE_SIZE - 1);

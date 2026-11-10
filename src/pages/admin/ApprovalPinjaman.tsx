@@ -5,6 +5,7 @@ import { Loader2, CheckCircle, XCircle, Download, FileText, Eye } from 'lucide-r
 import StatusBadge, { StatusType } from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
+import LoanDetailModal from '../../components/loans/LoanDetailModal';
 
 interface ApprovalPinjamanProps {
   initialTab?: LoanApplicationStatusTab;
@@ -26,6 +27,7 @@ export default function ApprovalPinjaman({
   const [counts, setCounts] = useState<{ pending: number; approved: number }>(
     initialCounts || { pending: 0, approved: 0 }
   );
+  const [selectedLoanIdForModal, setSelectedLoanIdForModal] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialPinjamanList === undefined) {
@@ -338,6 +340,12 @@ export default function ApprovalPinjaman({
                           )}
                           <a 
                             href={`/admin/pinjaman/${p.id}`}
+                            onClick={(e) => {
+                              if (!e.ctrlKey && !e.metaKey && e.button === 0) {
+                                e.preventDefault();
+                                setSelectedLoanIdForModal(p.id);
+                              }
+                            }}
                             className="flex items-center gap-1 px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-md text-xs font-medium"
                           >
                             <Eye className="w-3 h-3" />
@@ -353,6 +361,13 @@ export default function ApprovalPinjaman({
           </table>
         </div>
       </div>
+
+      <LoanDetailModal
+        isOpen={selectedLoanIdForModal !== null}
+        loanId={selectedLoanIdForModal}
+        onClose={() => setSelectedLoanIdForModal(null)}
+        onSuccess={() => loadData(activeTab)}
+      />
     </AdminLayout>
   );
 }

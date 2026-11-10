@@ -253,6 +253,36 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('(Belum Dialokasikan)');
     });
 
+    it('renders difference badge as clickable button with "Lihat Faktor ↗" affordance and opens difference modal when enabled', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-yanto"
+          memberNrp="123456"
+          memberName="Yanto Santoso"
+          joinDate="2022-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="BELANJA"
+          initialDbBalances={{ BELANJA: 1709000 }}
+          initialCheckedMonths={{
+            BELANJA: [
+              '2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06',
+              '2024-07', '2024-08', '2024-09', '2024-10', '2024-11', '2024-12'
+            ]
+          }}
+          initialDiffModalOpen={true}
+        />
+      );
+
+      // Verify button has affordance label
+      expect(html).toContain('Lihat Faktor ↗');
+      expect(html).toContain('Klik untuk melihat rincian faktor penyebab selisih');
+
+      // Verify SavingsDifferenceAuditModal is rendered
+      expect(html).toContain('Rincian Faktor Selisih Simpanan');
+      expect(html).toContain('Yanto Santoso');
+      expect(html).toContain('Simpanan Belanja');
+    });
+
     it('renders partial badge and balanced status for partial remainder month (e.g. Agus Susanto Rp 60.000)', () => {
       const html = renderToStaticMarkup(
         <SavingsLedgerMatrixModal

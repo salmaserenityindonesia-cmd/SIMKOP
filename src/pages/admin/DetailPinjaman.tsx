@@ -13,14 +13,16 @@ function PaymentModal({
   onSubmit, 
   defaultAmount, 
   title, 
-  description 
+  description,
+  scheduleId
 }: { 
   isOpen: boolean, 
   onClose: () => void, 
-  onSubmit: (amount: number) => Promise<void>, 
+  onSubmit: (amount: number, scheduleId?: string) => Promise<void>, 
   defaultAmount: number,
   title: string,
-  description: string
+  description: string,
+  scheduleId?: string
 }) {
   const { showToast } = useFeedback();
   const [amountStr, setAmountStr] = useState(defaultAmount.toString());
@@ -43,7 +45,7 @@ function PaymentModal({
     }
     setLoading(true);
     try {
-      await onSubmit(val);
+      await onSubmit(val, scheduleId);
       showToast('Pembayaran berhasil disimpan', 'success');
       onClose();
     } catch (err: any) {
@@ -140,12 +142,17 @@ export default function DetailPinjaman() {
     }
   };
 
-  const handleProcessPayment = async (amount: number) => {
+  const handleProcessPayment = async (amount: number, scheduleId?: string) => {
     if (!id) return;
     
-    await loanService.makePayment(id, amount, 'cash', 'Pembayaran cicilan pinjaman (Admin)');
+    const targetScheduleId = scheduleId || activePayment?.schedule_id;
+    if (targetScheduleId) {
+      await loanService.paySchedule(id, targetScheduleId, amount, 'CASH', 'Pelunasan parsial jadwal periode terkait');
+    } else {
+      await loanService.makePayment(id, amount, 'CASH', 'Pembayaran cicilan pinjaman (Admin)');
+    }
 
-    // Reload
+    // Reload latest state from Supabase
     await loadData(id);
   };
 
@@ -168,8 +175,12 @@ export default function DetailPinjaman() {
   }
 
   const schedule = schedules;
-  let lunasCount = schedules.filter(s => s.status === 'paid').length;
-  const sisaCicilan = (pinjaman.tenor || 0) - lunasCount;
+  const lunasCount = schedules.filter(s => s.status === 'paid').length;
+  const sisaCicilan = Math.max(0, (pinjaman.tenor || 0) - lunasCount);
+  const totalPaid = schedules.reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
+  const totalTarget = schedules.reduce((sum, s) => sum + Number(s.target_amount || 0), 0);
+  const principalAmount = Number(pinjaman.principal_amount || pinjaman.amount || totalTarget);
+  const sisaPinjaman = Math.max(0, principalAmount - totalPaid);
 
   return (
     <AdminLayout>
@@ -206,7 +217,7 @@ export default function DetailPinjaman() {
             <div>
               <p className="text-sm text-gray-500 mb-1">Total Pinjaman</p>
               <p className="text-xl font-bold text-gray-900">
-                Rp {Number(pinjaman.amount).toLocaleString('id-ID')}
+                Rp {principalAmount.toLocaleString('id-ID')}
               </p>
             </div>
             <div>
@@ -218,7 +229,10 @@ export default function DetailPinjaman() {
             <div>
               <p className="text-sm text-gray-500 mb-1">Sisa Cicilan</p>
               <p className="text-xl font-bold text-gray-900">
-                {sisaCicilan} Bulan
+                Rp {sisaPinjaman.toLocaleString('id-ID')}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {sisaCicilan} Bulan tersisa
               </p>
             </div>
           </div>
@@ -258,7 +272,7 @@ export default function DetailPinjaman() {
                       Rp {Number(item.paid_amount).toLocaleString('id-ID')}
                     </td>
                     <td className="px-6 py-4 text-red-500 font-medium">
-                      Rp {Math.max(0, Number(item.target_amount) - Number(item.paid_amount)).toLocaleString('id-ID')}
+                      Rp {Math.max(0, Math.round(Number(item.target_amount) - Number(item.paid_amount))).toLocaleString('id-ID')}
                     </td>
                     <td className="px-6 py-4">
                       {item.status === 'paid' ? (
@@ -278,7 +292,10 @@ export default function DetailPinjaman() {
                     <td className="px-6 py-4 text-right">
                       {item.status !== 'paid' && (
                         <button
-                          onClick={() => setActivePayment({ schedule_id: item.id, remaining: Number(item.target_amount) - Number(item.paid_amount) })}
+                          onClick={() => setActivePayment({ 
+                            schedule_id: item.id, 
+                            remaining: Math.max(0, Math.round(Number(item.target_amount) - Number(item.paid_amount))) 
+                          })}
                           className="inline-flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-100 transition-colors"
                         >
                           Bayar Parsial
@@ -305,6 +322,7 @@ export default function DetailPinjaman() {
         onClose={() => setActivePayment(null)}
         onSubmit={handleProcessPayment}
         defaultAmount={activePayment ? activePayment.remaining : 0}
+        scheduleId={activePayment?.schedule_id}
         title="Pembayaran Cicilan Pinjaman"
         description={activePayment ? `Pembayaran cicilan untuk tagihan Rp ${activePayment.remaining.toLocaleString('id-ID')}` : ''}
       />

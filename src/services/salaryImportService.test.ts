@@ -264,11 +264,45 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
           master_thp: 5000000,
           salary: 5000000,
           bank_account_number: '987654321',
-          updated_at: expect.any(String),
+        })
+      );
+      // Memastikan updated_at tidak disertakan agar tidak memicu schema cache error
+      expect(mockUpdate).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          updated_at: expect.anything(),
         })
       );
       expect(mockEq).toHaveBeenCalledWith('nrp', '12345');
       expect(mockEq).toHaveBeenCalledWith('nrp', '67890');
+    });
+
+    it('melanjutkan proses baris anggota lain saat salah satu NRP gagal dan melaporkan semua NRP yang gagal', async () => {
+      const mockEq = vi.fn().mockImplementation((col: string, val: string) => {
+        if (val === '11111') {
+          return Promise.resolve({
+            error: { message: "Could not find the 'updated_at' column of 'anggota' in the schema cache" },
+          });
+        }
+        return Promise.resolve({ error: null });
+      });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const previewRows = [
+        { nrp: '11111', thp: 5000000 },
+        { nrp: '22222', thp: 6000000 },
+      ];
+
+      await expect(applySalaryReconciliation(previewRows)).rejects.toThrow(
+        /Gagal update NRP 11111/
+      );
+      // Pastikan NRP 22222 tetap dieksekusi meskipun baris pertama gagal
+      expect(mockEq).toHaveBeenCalledWith('nrp', '22222');
     });
 
     it('melakukan retry tanpa kolom salary jika kolom salary tidak ada di skema database', async () => {

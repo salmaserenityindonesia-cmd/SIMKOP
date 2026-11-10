@@ -13,6 +13,7 @@ import {
   saveMonthDepositWithEvidence,
   cancelMonthDepositWithReason,
   getMonthAuditHistory,
+  getSavingsDiscrepancyBreakdown,
   CheckMonthPayload,
   MonthAuditHistoryItem
 } from './savingsMatrixService';
@@ -1935,6 +1936,232 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(history).toHaveLength(1);
       expect(history[0].id).toBe('log-user-custom-reason');
       expect(history[0].notes).toBe('salah input lagi');
+    });
+  });
+
+  describe('getSavingsDiscrepancyBreakdown', () => {
+    it('returns empty breakdown when both memberDepositId and memberId are empty', async () => {
+      const res = await getSavingsDiscrepancyBreakdown('', 'BELANJA', '');
+      expect(res.withdrawals).toEqual([]);
+      expect(res.totalSpent).toBe(0);
+    });
+
+    it('fetches withdrawal and pos_spend transactions, enriches cashier name, and identifies POS sales', async () => {
+      const mockWithdrawals = [
+        {
+          id: 'tx-pos-1',
+          created_at: '2026-11-01T10:00:00Z',
+          transaction_date: '2026-11-01T10:00:00Z',
+          amount: 41000,
+          reference_no: 'INV-20261101-001',
+          description: 'Belanja Kasir POS (INV-20261101-001)',
+          payment_method: 'potong_simpanan_belanja',
+          created_by: 'user-cashier-1',
+          notes: 'Belanja sembako'
+        },
+        {
+          id: 'tx-wd-1',
+          created_at: '2026-10-15T08:30:00Z',
+          transaction_date: '2026-10-15T08:30:00Z',
+          amount: 50000,
+          reference_no: 'WD-001',
+          description: 'Penarikan simpanan tunai',
+          payment_method: 'cash',
+          created_by: 'user-cashier-2',
+          notes: 'Penarikan langsung di teller'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: mockWithdrawals, error: null })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'user-cashier-1', nama: 'Siti Rahma' },
+                  { id: 'user-cashier-2', nama: 'Budi Teller' }
+                ],
+                error: null
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await getSavingsDiscrepancyBreakdown('md-belanja-yanto', 'BELANJA');
+
+      expect(res.totalSpent).toBe(91000);
+      expect(res.withdrawals).toHaveLength(2);
+
+      // Verify POS transaction
+      expect(res.withdrawals[0].id).toBe('tx-pos-1');
+      expect(res.withdrawals[0].amount).toBe(41000);
+      expect(res.withdrawals[0].is_pos_sale).toBe(true);
+      expect(res.withdrawals[0].cashier_name).toBe('Siti Rahma');
+      expect(res.withdrawals[0].reference_no).toBe('INV-20261101-001');
+
+      // Verify non-POS withdrawal
+      expect(res.withdrawals[1].id).toBe('tx-wd-1');
+      expect(res.withdrawals[1].amount).toBe(50000);
+      expect(res.withdrawals[1].is_pos_sale).toBe(false);
+      expect(res.withdrawals[1].cashier_name).toBe('Budi Teller');
+    });
+
+    it('resolves memberDepositId from memberId and depositTypeCode if memberDepositId is empty', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              ilike: vi.fn().mockResolvedValue({ data: [{ id: 'dt-belanja', code: 'BELANJA' }] })
+            })
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'md-auto-resolved' } })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      {
+                        id: 'tx-1',
+                        amount: 41000,
+                        description: 'Belanja POS',
+                        created_at: '2026-11-01T10:00:00Z'
+                      }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await getSavingsDiscrepancyBreakdown('', 'BELANJA', 'member-yanto-123');
+      expect(res.totalSpent).toBe(41000);
+      expect(res.withdrawals).toHaveLength(1);
+    });
+
+    it('throws error when query to deposit_transactions fails', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: null, error: new Error('DB Connection Error') })
+                })
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      await expect(getSavingsDiscrepancyBreakdown('md-1', 'BELANJA')).rejects.toThrow('DB Connection Error');
+    });
+
+    it('falls back to sales table when deposit_transactions has 0 transactions for member', async () => {
+      const mockSales = [
+        {
+          id: 'sale-yanto-1',
+          invoice_number: 'INV-20261101-001',
+          created_at: '2026-11-01T09:00:00Z',
+          paid_deposit: 41000,
+          total_amount: 55000,
+          payment_scheme: 'split',
+          cashier_id: 'cashier-kasir-1'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'md-belanja-yanto', member_id: 'member-yanto-uuid' } }),
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'md-belanja-yanto', member_id: 'member-yanto-uuid' } })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: [], error: null })
+                }),
+                or: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: [], error: null })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: mockSales, error: null })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'cashier-kasir-1', nama: 'Kasir Utama Toko' }],
+                error: null
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      // Calling with new signature (memberId, memberDepositId, depositTypeCode)
+      const res = await getSavingsDiscrepancyBreakdown('member-yanto-uuid', 'md-belanja-yanto', 'BELANJA');
+
+      expect(res.totalSpent).toBe(41000);
+      expect(res.withdrawals).toHaveLength(1);
+      expect(res.withdrawals[0].id).toBe('sale-yanto-1');
+      expect(res.withdrawals[0].reference_no).toBe('INV-20261101-001');
+      expect(res.withdrawals[0].description).toBe('Belanja Kasir POS (Struk INV-20261101-001)');
+      expect(res.withdrawals[0].payment_method).toBe('potong_simpanan_belanja');
+      expect(res.withdrawals[0].cashier_name).toBe('Kasir Utama Toko');
+      expect(res.withdrawals[0].source).toBe('sales_pos');
     });
   });
 });
