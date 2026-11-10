@@ -1909,7 +1909,10 @@ export async function getSavingsDiscrepancyBreakdown(
           .gt('paid_deposit', 0)
           .order('created_at', { ascending: false });
         if (!numErr && salesByNumber) {
-          posSales = salesByNumber;
+          posSales = salesByNumber.map(s => ({
+            ...s,
+            invoice_number: (s as any).sale_number
+          }));
           salesErr = null;
         }
       }

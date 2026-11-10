@@ -74,7 +74,7 @@ SIMKOP (Sistem Informasi Manajemen Koperasi) is an enterprise cooperative manage
 ## Technical Debt & Architecture Risks
 
 - **Client-Side Orchestration of Multi-Table Writes:** In `posCheckoutService.ts`, sales and sale items are created via sequential client-side queries rather than an atomic database RPC ([`src/services/posCheckoutService.ts:36-58`](file:///src/services/posCheckoutService.ts#L36-L58)). Network interruptions between steps can result in orphaned sale headers.
-- **Service Role Key Exposure in Vite Environment:** `supabaseAdmin` client imports `VITE_SUPABASE_SERVICE_ROLE_KEY` via `import.meta.env` ([`src/lib/supabaseClient.ts:13-22`](file:///src/lib/supabaseClient.ts#L13-L22)). In production builds, embedding service role keys in client bundles bypasses RLS and poses security risks if deployed to public frontends.
+- **Service Role Key Exposure in Vite Environment [RESOLVED]:** `supabaseAdmin` direct browser instantiation has been deprecated and removed from client bundles. Privileged user management (creating/deleting users, role toggles) is now isolated behind database RPCs ([`supabase/migrations/042_admin_user_management.sql`](file:///supabase/migrations/042_admin_user_management.sql)), Supabase Edge Function (`supabase/functions/manage-users/index.ts`), and Cloudflare Pages Functions (`functions/api/manage-users.ts`), accessed securely via [`src/services/userService.ts`](file:///src/services/userService.ts).
 - **Fallback Schema Handling:** `koperasiService.ts` uses client-side fallback parsing when schema cache errors or table mismatches occur ([`src/services/koperasiService.ts:1-5`](file:///src/services/koperasiService.ts#L1-L5)), indicating transient database schema drift.
 
 ## Conventions

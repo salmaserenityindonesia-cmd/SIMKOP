@@ -6,7 +6,7 @@
 Codebase mapping complete via `/map`.
 - Components identified: 4 architectural layers (Presentation views, Services layer, Client state stores, Database schema & 41 migrations)
 - Dependencies analyzed: 11 production dependencies, 8 development tools
-- Technical debt items cataloged: 3 architecture/security risk items (client-side multi-table writes in POS, Vite service role key exposure, transient fallback schema handling)
+- Technical debt items cataloged: 2 architecture/reliability items remaining (client-side multi-table writes in POS, transient fallback schema handling). Note: Service role key exposure resolved via 042 migration & userService.ts.
 - Documentation written: `.gsd/ARCHITECTURE.md` and `.gsd/STACK.md`
 
 ## Verification Summary (Phase 77)

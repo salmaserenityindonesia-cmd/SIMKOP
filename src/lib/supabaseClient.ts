@@ -9,14 +9,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder');
 
-// Optional: Service role client for backend operations
-const supabaseServiceKey = (import.meta as any).env?.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
-export const supabaseAdmin = supabaseServiceKey 
-  ? createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false
-      }
-    })
-  : null;
+/**
+ * @deprecated Service role client has been removed from client-side bundles for security.
+ * Privileged operations are now handled via database RPCs (042_admin_user_management.sql)
+ * or serverless Edge/Cloudflare functions in src/services/userService.ts.
+ */
+export const supabaseAdmin = null;

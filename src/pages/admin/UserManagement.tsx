@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { supabaseAdmin } from '../../lib/supabaseClient';
+import { createSystemUser, deleteSystemUser, updateSystemUserRole } from '../../services/userService';
 import { getPengelolaList, Pengelola } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
 
@@ -39,11 +39,6 @@ export default function UserManagement() {
     e.preventDefault();
     setMessage({ type: '', text: '' });
 
-    if (!supabaseAdmin) {
-      setMessage({ type: 'error', text: 'Service Role Key tidak dikonfigurasi. Tidak dapat membuat user baru.' });
-      return;
-    }
-
     if (password.length < 6) {
       setMessage({ type: 'error', text: 'Kata sandi minimal 6 karakter.' });
       return;
@@ -52,37 +47,9 @@ export default function UserManagement() {
     setIsLoading(true);
 
     try {
-      // 1. Create user in auth.users
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: { nama },
-        app_metadata: { role }
-      });
-
-      if (authError) throw authError;
-
-      if (authData.user) {
-        // 2. Insert into public.pengelola using supabaseAdmin
-        const { error: dbError } = await supabaseAdmin
-          .from('pengelola')
-          .insert([
-            { id: authData.user.id, nama, role }
-          ]);
-        
-        if (dbError) {
-          console.error('Error inserting into pengelola:', dbError);
-          const { error: upsertError } = await supabaseAdmin
-            .from('pengelola')
-            .upsert([
-              { id: authData.user.id, nama, role }
-            ]);
-            
-          if(upsertError) {
-            console.error('Upsert failed:', upsertError);
-          }
-        }
+      const res = await createSystemUser({ email, password, nama, role });
+      if (!res.success) {
+        throw new Error(res.error || 'Gagal mendaftarkan user');
       }
 
       setMessage({ type: 'success', text: `User ${nama} berhasil didaftarkan sebagai ${role}.` });
@@ -101,11 +68,6 @@ export default function UserManagement() {
   };
 
   const handleDeleteUser = async (id: string, namaUser: string) => {
-    if (!supabaseAdmin) {
-      showToast('Service Role Key tidak dikonfigurasi.', 'error');
-      return;
-    }
-    
     const confirmed = await showConfirm({
       title: 'Hapus Pengelola',
       message: `Apakah Anda yakin ingin menghapus pengelola "${namaUser}" secara permanen?`,
@@ -115,8 +77,10 @@ export default function UserManagement() {
 
     if (confirmed) {
       try {
-        const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
-        if (error) throw error;
+        const res = await deleteSystemUser(id);
+        if (!res.success) {
+          throw new Error(res.error || 'Gagal menghapus user');
+        }
         
         showToast(`Pengelola "${namaUser}" berhasil dihapus.`, 'success');
         // Trigger refetch
@@ -128,11 +92,6 @@ export default function UserManagement() {
   };
 
   const handleToggleRole = async (user: Pengelola) => {
-    if (!supabaseAdmin) {
-      showToast('Service Role Key tidak dikonfigurasi.', 'error');
-      return;
-    }
-
     const newRole = user.role === 'admin' ? 'operator' : 'admin';
     const confirmed = await showConfirm({
       title: 'Ubah Hak Akses',
@@ -142,19 +101,10 @@ export default function UserManagement() {
 
     if (confirmed) {
       try {
-        // 1. Update auth.users metadata
-        const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-          app_metadata: { role: newRole }
-        });
-        if (authError) throw authError;
-
-        // 2. Update pengelola table
-        const { error: dbError } = await supabaseAdmin
-          .from('pengelola')
-          .update({ role: newRole })
-          .eq('id', user.id);
-        
-        if (dbError) throw dbError;
+        const res = await updateSystemUserRole(user.id, newRole);
+        if (!res.success) {
+          throw new Error(res.error || 'Gagal mengubah role');
+        }
 
         showToast(`Hak akses "${user.nama}" berhasil diubah menjadi ${newRole.toUpperCase()}.`, 'success');
         fetchUsers();
