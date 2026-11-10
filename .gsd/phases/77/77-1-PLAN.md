@@ -112,3 +112,4 @@ Load these files for context:
 - [ ] Anggota dengan multi-pinjaman aktif menghasilkan jumlah baris yang sesuai dengan jumlah pinjamannya.
 - [ ] Saldo berjalan dan kumulatif angsuran terisolasi secara akurat per `loan.id`.
 - [ ] Akumulasi proyeksi dan realisasi global mencakup seluruh pinjaman aktif.
+

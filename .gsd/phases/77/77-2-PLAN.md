@@ -97,3 +97,4 @@ Load these files for context:
 - [ ] Mengklik tombol mata pada salah satu baris membuka buku bantu pinjaman spesifik tersebut.
 - [ ] Ekspor Excel menghasilkan rincian per pinjaman secara akurat.
 - [ ] Seluruh unit test UI pada `LoanMatrix.test.tsx` lulus.
+
