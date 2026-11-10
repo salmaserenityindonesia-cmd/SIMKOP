@@ -29,6 +29,7 @@ import {
   MONTH_NAMES,
 } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { generateLoanReceiptNumber } from '../../utils/receiptGenerator';
 
 export interface LoanScheduleModalProps {
   loanId: string;
@@ -122,11 +123,11 @@ export default function LoanScheduleModal({
     initialData ? getImportedRepaidBalance(initialData) : 0
   );
 
+  const initialTarget = Number(initialEvidencePeriod?.targetAmount || 0);
+  const initialPaid = Number(initialEvidencePeriod?.paidAmount || 0);
+  const initialRoundedRemaining = Math.max(0, Math.round(initialTarget - initialPaid));
   const initialDeficit = initialEvidencePeriod
-    ? calculateRemainingInstallmentDeficit(
-        initialEvidencePeriod.targetAmount,
-        initialEvidencePeriod.paidAmount
-      )
+    ? (initialRoundedRemaining > 0 ? initialRoundedRemaining : Math.round(initialTarget))
     : 0;
 
   // Sub-modal state: Input Bukti Pelunasan / Setoran Angsuran
@@ -134,19 +135,17 @@ export default function LoanScheduleModal({
   const [selectedPeriodForEvidence, setSelectedPeriodForEvidence] = useState<LoanGridPeriod | null>(
     initialEvidencePeriod || null
   );
-  const [evidenceAmount, setEvidenceAmount] = useState<number>(
-    initialEvidencePeriod
-      ? (initialDeficit > 0 ? initialDeficit : initialEvidencePeriod.targetAmount)
-      : 0
+  const [evidenceAmount, setEvidenceAmount] = useState<number | string>(
+    initialEvidencePeriod ? initialDeficit : 0
   );
   const [evidenceReceiptNo, setEvidenceReceiptNo] = useState(
     initialEvidencePeriod
-      ? `KW-PINJ/${initialData?.loanNumber || '01'}/B${initialEvidencePeriod.periodNumber}`
+      ? generateLoanReceiptNumber(initialData?.loanNumber || data?.loanNumber, initialEvidencePeriod.periodNumber)
       : ''
   );
   const [evidencePaymentMethod, setEvidencePaymentMethod] = useState('potong_gaji');
   const [evidenceNotes, setEvidenceNotes] = useState(
-    initialEvidencePeriod && initialDeficit > 0 && initialEvidencePeriod.paidAmount > 0
+    initialEvidencePeriod && initialRoundedRemaining > 0 && initialPaid > 0
       ? `Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-${initialEvidencePeriod.periodNumber}`
       : ''
   );
@@ -294,12 +293,13 @@ export default function LoanScheduleModal({
       setSelectedPeriodForEvidence(period);
       const target = Number(period.targetAmount || 0);
       const paid = Number(period.paidAmount || 0);
-      const remainingDeficit = calculateRemainingInstallmentDeficit(target, paid);
-      const defaultNominal = remainingDeficit > 0 ? remainingDeficit : target;
+      // Bulatkan ke rupiah utuh (integer)
+      const roundedRemaining = Math.max(0, Math.round(target - paid));
+      const defaultNominal = roundedRemaining > 0 ? roundedRemaining : Math.round(target);
       setEvidenceAmount(defaultNominal);
-      setEvidenceReceiptNo(`KW-PINJ/${data?.loanNumber || '01'}/B${period.periodNumber}`);
+      setEvidenceReceiptNo(generateLoanReceiptNumber(data?.loanNumber, period.periodNumber));
       setEvidencePaymentMethod('potong_gaji');
-      if (remainingDeficit > 0 && paid > 0) {
+      if (roundedRemaining > 0 && paid > 0) {
         setEvidenceNotes(`Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-${period.periodNumber}`);
       } else {
         setEvidenceNotes('');
@@ -315,8 +315,9 @@ export default function LoanScheduleModal({
 
     setSavingEvidence(true);
     try {
+      const paymentAmount = Math.round(Number(evidenceAmount));
       await toggleLoanSchedulePaid(selectedPeriodForEvidence.id, true, {
-        amount: Number(evidenceAmount) > 0 ? Number(evidenceAmount) : selectedPeriodForEvidence.targetAmount,
+        amount: paymentAmount > 0 ? paymentAmount : Math.round(Number(selectedPeriodForEvidence.targetAmount || 0)),
         receiptNo: evidenceReceiptNo.trim() || undefined,
         paymentMethod: evidencePaymentMethod,
         notes: evidenceNotes.trim() || undefined,
@@ -719,15 +720,16 @@ export default function LoanScheduleModal({
                 </label>
                 <input
                   type="number"
-                  value={evidenceAmount}
-                  onChange={e => setEvidenceAmount(Number(e.target.value))}
+                  step="any"
                   min={1}
+                  value={evidenceAmount}
+                  onChange={(e) => setEvidenceAmount(e.target.value ? Math.round(Number(e.target.value)) : '')}
                   required
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
                   data-testid="evidence-amount-input"
                 />
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Target angsuran periode ini: {formatCurrency(selectedPeriodForEvidence.targetAmount)}
+                  Target angsuran periode ini: {formatCurrency(Math.round(selectedPeriodForEvidence.targetAmount))}
                 </p>
                 {selectedPeriodForEvidence.paidAmount > 0 && (
                   <p
@@ -735,7 +737,7 @@ export default function LoanScheduleModal({
                     className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200/60 rounded px-2.5 py-1.5 mt-1.5 flex items-center justify-between"
                   >
                     <span>
-                      Sudah terbayar: {formatCurrency(selectedPeriodForEvidence.paidAmount)}
+                      Sudah terbayar: {formatCurrency(Math.round(selectedPeriodForEvidence.paidAmount))}
                     </span>
                     <span className="text-amber-400">|</span>
                     <span>
@@ -802,7 +804,7 @@ export default function LoanScheduleModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={savingEvidence || evidenceAmount <= 0}
+                  disabled={savingEvidence || !evidenceAmount || Number(evidenceAmount) <= 0}
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold shadow-xs disabled:opacity-50"
                   data-testid="submit-evidence-btn"
                 >
@@ -965,10 +967,16 @@ export default function LoanScheduleModal({
                           })}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2 text-slate-600">
+                      <div className="flex items-center gap-2 text-slate-600 flex-wrap">
                         <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 text-[10px] uppercase font-semibold">
                           {rep.paymentMethod || 'transfer'}
                         </span>
+                        {((rep as any).receiptNumber) && (
+                          <span className="font-mono text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded flex items-center gap-1">
+                            <Receipt className="w-3 h-3 text-indigo-500 shrink-0" />
+                            {(rep as any).receiptNumber}
+                          </span>
+                        )}
                         {rep.notes && <span className="text-slate-500 truncate">{rep.notes}</span>}
                       </div>
                     </div>
