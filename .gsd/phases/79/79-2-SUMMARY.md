@@ -13,3 +13,4 @@
   - Memanggil PostgreSQL RPC atomik `public.record_loan_repayment_atomic` dengan `p_schedule_id: null` untuk alokasi FIFO otomatis.
   - Dilengkapi fallback ke alur perulangan FIFO klien jika RPC tidak tersedia.
 - Seluruh 29 unit test yang sudah ada di `src/services/loanService.test.ts` tetap lulus 100% tanpa regresi.
+

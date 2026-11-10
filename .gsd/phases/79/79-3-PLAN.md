@@ -9,3 +9,4 @@ Memastikan seluruh pengujian otomatis, analisis statis TypeScript, dan build pro
    - `src/pages/admin/LoanMatrix.test.tsx`
 3. Menjalankan typecheck `npx tsc --noEmit` dan bundler build `npm run build`.
 4. Memastikan 100% tes lulus di seluruh 63+ file tes Vitest.
+

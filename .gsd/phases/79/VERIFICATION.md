@@ -22,3 +22,4 @@
 - [x] Full test suite `npm test`: 63 test files, 903 tests PASS.
 - [x] `npx tsc --noEmit`: Exit code 0 (no TypeScript errors).
 - [x] `npm run build`: Production bundle generated successfully.
+

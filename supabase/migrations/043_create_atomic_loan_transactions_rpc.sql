@@ -318,3 +318,4 @@ GRANT EXECUTE ON FUNCTION public.record_loan_repayment_atomic(UUID, NUMERIC, TEX
 
 COMMENT ON FUNCTION public.approve_loan_atomic IS 'Menyetujui pinjaman dan menghasilkan seluruh baris loan_schedules dalam satu transaksi ACID';
 COMMENT ON FUNCTION public.record_loan_repayment_atomic IS 'Mencatat pembayaran cicilan angsuran (terisolasi per jadwal atau FIFO), mengupdate sisa pinjaman dan status resign anggota dalam satu transaksi ACID';
+

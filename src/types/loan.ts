@@ -56,3 +56,4 @@ export interface MakePaymentResult {
   sisaPinjaman?: number;
   isAllPaid?: boolean;
 }
+

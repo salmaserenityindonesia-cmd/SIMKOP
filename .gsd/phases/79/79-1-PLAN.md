@@ -24,3 +24,4 @@ Membangun berkas migrasi Supabase `supabase/migrations/043_create_atomic_loan_tr
    - Mengembalikan detail hasil pembayaran dalam format JSONB:
      `{ success: true, new_status, new_paid_total, sisa_pinjaman, is_all_paid, excess_amount, repayment_id, receipt_number }`
    - Memberikan hak eksekusi RLS (`GRANT EXECUTE ON FUNCTION ... TO authenticated, anon, service_role`)
+

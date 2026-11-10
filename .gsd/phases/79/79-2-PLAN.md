@@ -11,3 +11,4 @@ Memperbarui layer service `src/services/loanService.ts` agar memanfaatkan RPC at
    - Mengembalikan format respon yang selaras dengan ekspektasi caller (`{ success: true, newStatus, newPaidTotal, sisaPinjaman, isAllPaid }`).
    - Menyediakan fallback kompatibilitas ke alur client-side queries jika RPC belum diterapkan atau error schema cache.
 3. Memastikan fungsi wrapper `loanScheduleService.paySchedule` dan modal/caller frontend tetap berfungsi 100% tanpa breaking changes pada antarmuka publiknya.
+
