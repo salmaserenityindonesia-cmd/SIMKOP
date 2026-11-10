@@ -292,7 +292,12 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const filteredMembers = useMemo(() => {
     if (!data) return [];
     return data.members.filter(m => {
-      const matchSearch = m.nrp.toLowerCase().includes(search.toLowerCase()) || m.nama.toLowerCase().includes(search.toLowerCase());
+      const matchSearch = 
+        m.nrp.toLowerCase().includes(search.toLowerCase()) || 
+        m.nama.toLowerCase().includes(search.toLowerCase()) ||
+        (m.loanNumber || '').toLowerCase().includes(search.toLowerCase()) ||
+        (m.loan_number || '').toLowerCase().includes(search.toLowerCase()) ||
+        (m.loanTypeName || '').toLowerCase().includes(search.toLowerCase());
       const matchStatus = 
         statusFilter === 'ALL' ? true :
         statusFilter === 'ACTIVE' ? m.isLoanActive :
@@ -301,6 +306,12 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       return matchSearch && matchStatus;
     });
   }, [data, search, statusFilter]);
+
+  // Unique members count for accurate pagination display
+  const uniqueMembersCount = useMemo(() => {
+    const ids = new Set(filteredMembers.map(m => m.memberId || m.nrp));
+    return ids.size;
+  }, [filteredMembers]);
 
   // Reset page when search or filter changes
   useEffect(() => {
@@ -319,6 +330,9 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
     worksheet.columns = [
       { header: 'NRP', key: 'nrp', width: 15 },
       { header: 'Nama', key: 'nama', width: 25 },
+      { header: 'No. Pinjaman', key: 'loanNumber', width: 20 },
+      { header: 'Jenis Pinjaman', key: 'loanType', width: 20 },
+      { header: 'Tenor (Bulan)', key: 'tenor', width: 15 },
       { header: 'Status Pinjaman', key: 'status', width: 15 },
       ...MONTHS.map((m, i) => ({ header: m, key: `m${i+1}`, width: 15 })),
       { header: 'Kepatuhan YTD (%)', key: 'compliance', width: 20 },
@@ -326,8 +340,11 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
     filteredMembers.forEach(m => {
       const row: any = {
-        nrp: m.nrp,
-        nama: m.nama,
+        nrp: m.anggota?.nrp || m.nrp,
+        nama: m.anggota?.nama || m.nama,
+        loanNumber: m.loan_number || m.loanNumber || '-',
+        loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman',
+        tenor: m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || '-',
         status: m.isLoanActive ? 'Aktif' : 'Selesai',
         compliance: m.complianceYTD.toFixed(1) + '%'
       };
@@ -536,115 +553,128 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   <td colSpan={14} className="text-center py-8 text-slate-500">Tidak ada data untuk tahun {year}</td>
                 </tr>
               ) : (
-                paginatedMembers.map(member => (
-                  <tr key={member.memberId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                      <div className="font-semibold text-slate-800">{member.nama}</div>
-                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
-                        <span>{member.nrp}</span>
-                        {member.isLoanActive ? (
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium">Aktif</span>
-                        ) : (
-                          <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full text-[10px] font-medium">Selesai</span>
+                paginatedMembers.map(row => {
+                  const rowKey = row.id || row.loanId || `${row.memberId}-${row.loanNumber || row.loan_number || ''}`;
+                  const targetLoanId = row.loanId || row.id || Object.values(row.months).find(m => m.loanId)?.loanId;
+                  const tenorDisplay = row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || 0;
+
+                  return (
+                    <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                        <div className="font-semibold text-slate-800">{row.anggota?.nama || row.nama}</div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+                          <span>NRP: {row.anggota?.nrp || row.nrp}</span>
+                          <span>•</span>
+                          <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[11px]">
+                            {row.loan_types?.name || row.loanTypeName || 'Pinjaman'} ({tenorDisplay} Bln)
+                          </span>
+                          {row.isLoanActive ? (
+                            <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium">Aktif</span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded-full text-[10px] font-medium">Selesai</span>
+                          )}
+                        </div>
+                        {(row.loan_number || row.loanNumber) && (
+                          <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                            {row.loan_number || row.loanNumber}
+                          </div>
                         )}
-                      </div>
-                    </td>
-                    
-                    {Array.from({length: 12}, (_, i) => i + 1).map(m => {
-                      const cell = member.months[m];
-                      return (
-                        <td key={m} className="px-2 py-2 border-l border-slate-100 text-center">
-                          {(() => {
-                            const badge = getCellBadge(cell);
-                            const normStatus = (cell?.status || '').toUpperCase();
-                            if (normStatus === 'NONE' || normStatus === 'NOT_APPLICABLE' || !cell) {
+                      </td>
+                      
+                      {Array.from({length: 12}, (_, i) => i + 1).map(m => {
+                        const cell = row.months[m];
+                        return (
+                          <td key={m} className="px-2 py-2 border-l border-slate-100 text-center">
+                            {(() => {
+                              const badge = getCellBadge(cell);
+                              const normStatus = (cell?.status || '').toUpperCase();
+                              if (normStatus === 'NONE' || normStatus === 'NOT_APPLICABLE' || !cell) {
+                                return (
+                                  <div className="w-full py-1.5 text-center text-slate-300 font-normal select-none">
+                                    -
+                                  </div>
+                                );
+                              }
                               return (
-                                <div className="w-full py-1.5 text-center text-slate-300 font-normal select-none">
-                                  -
+                                <div className="relative group cursor-help">
+                                  <div className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}`}>
+                                    {badge.text}
+                                  </div>
+                                  {/* Rich Tooltip */}
+                                  <div className="opacity-0 invisible group-hover:opacity-100 group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50 transition-all pointer-events-none">
+                                    <div className="font-semibold mb-1 border-b border-slate-600 pb-1">
+                                      No: {cell.loanNumber || '-'}
+                                    </div>
+                                    <div className="flex justify-between mt-1">
+                                      <span className="text-slate-300">Status:</span>
+                                      <span className="font-medium">{badge.statusLabel}</span>
+                                    </div>
+                                    <div className="flex justify-between mt-1">
+                                      <span className="text-slate-300">Tenor:</span>
+                                      <span>{cell.periodNumber ? `${cell.periodNumber} / ${cell.tenor}` : '-'}</span>
+                                    </div>
+                                    {cell.dueDate && (
+                                      <div className="flex justify-between mt-1 text-slate-300">
+                                        <span>Jatuh Tempo:</span>
+                                        <span>{cell.dueDate}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between mt-1">
+                                      <span className="text-slate-300">Target:</span>
+                                      <span>Rp {formatAmount(cell.targetAmount)}</span>
+                                    </div>
+                                    {(() => {
+                                      const cumulativePaid = cell.cumulativePaidAmount !== undefined
+                                        ? cell.cumulativePaidAmount
+                                        : getCumulativePaidUpToMonth(row, m, year);
+                                      return (
+                                        <div className="flex justify-between mt-1 text-emerald-400">
+                                          <span>Terbayar:</span>
+                                          <span>Rp {formatAmount(cumulativePaid)}</span>
+                                        </div>
+                                      );
+                                    })()}
+                                    {cell.remainingBalance !== undefined && (
+                                      <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
+                                        <span>Sisa Angsuran:</span>
+                                        <span>Rp {formatAmount(cell.remainingBalance)}</span>
+                                      </div>
+                                    )}
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
+                                  </div>
                                 </div>
                               );
-                            }
-                            return (
-                              <div className="relative group cursor-help">
-                                <div className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}`}>
-                                  {badge.text}
-                                </div>
-                                {/* Rich Tooltip */}
-                                <div className="opacity-0 invisible group-hover:opacity-100 group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50 transition-all pointer-events-none">
-                                  <div className="font-semibold mb-1 border-b border-slate-600 pb-1">
-                                    No: {cell.loanNumber || '-'}
-                                  </div>
-                                  <div className="flex justify-between mt-1">
-                                    <span className="text-slate-300">Status:</span>
-                                    <span className="font-medium">{badge.statusLabel}</span>
-                                  </div>
-                                  <div className="flex justify-between mt-1">
-                                    <span className="text-slate-300">Tenor:</span>
-                                    <span>{cell.periodNumber ? `${cell.periodNumber} / ${cell.tenor}` : '-'}</span>
-                                  </div>
-                                  {cell.dueDate && (
-                                    <div className="flex justify-between mt-1 text-slate-300">
-                                      <span>Jatuh Tempo:</span>
-                                      <span>{cell.dueDate}</span>
-                                    </div>
-                                  )}
-                                  <div className="flex justify-between mt-1">
-                                    <span className="text-slate-300">Target:</span>
-                                    <span>Rp {formatAmount(cell.targetAmount)}</span>
-                                  </div>
-                                  {(() => {
-                                    const cumulativePaid = cell.cumulativePaidAmount !== undefined
-                                      ? cell.cumulativePaidAmount
-                                      : getCumulativePaidUpToMonth(member, m, year);
-                                    return (
-                                      <div className="flex justify-between mt-1 text-emerald-400">
-                                        <span>Terbayar:</span>
-                                        <span>Rp {formatAmount(cumulativePaid)}</span>
-                                      </div>
-                                    );
-                                  })()}
-                                  {cell.remainingBalance !== undefined && (
-                                    <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
-                                      <span>Sisa Angsuran:</span>
-                                      <span>Rp {formatAmount(cell.remainingBalance)}</span>
-                                    </div>
-                                  )}
-                                  <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </td>
-                      );
-                    })}
+                            })()}
+                          </td>
+                        );
+                      })}
 
-                    <td className="px-4 py-3 border-l border-slate-100 bg-white group-hover:bg-slate-50 text-center">
-                      <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
-                        member.complianceYTD >= 100 ? 'bg-emerald-100 text-emerald-700' :
-                        member.complianceYTD >= 50 ? 'bg-amber-100 text-amber-700' :
-                        'bg-rose-100 text-rose-700'
-                      }`}>
-                        {member.complianceYTD.toFixed(0)}%
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 sticky right-0 bg-white group-hover:bg-slate-50 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
-                      {(() => {
-                        const loanId = Object.values(member.months).find(m => m.loanId)?.loanId;
-                        return loanId ? (
+                      <td className="px-4 py-3 border-l border-slate-100 bg-white group-hover:bg-slate-50 text-center">
+                        <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
+                          row.complianceYTD >= 100 ? 'bg-emerald-100 text-emerald-700' :
+                          row.complianceYTD >= 50 ? 'bg-amber-100 text-amber-700' :
+                          'bg-rose-100 text-rose-700'
+                        }`}>
+                          {row.complianceYTD.toFixed(0)}%
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 sticky right-0 bg-white group-hover:bg-slate-50 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
+                        {targetLoanId ? (
                           <button 
-                            onClick={() => setSelectedLoan({ loanId, nrp: member.nrp, nama: member.nama })}
-                            className="inline-flex p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            onClick={() => setSelectedLoan({ loanId: targetLoanId, nrp: row.anggota?.nrp || row.nrp, nama: row.anggota?.nama || row.nama })}
+                            className="inline-flex p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                             title="Lihat Buku Bantu Angsuran"
+                            data-testid={`view-ledger-${targetLoanId}`}
                           >
                             <Eye className="w-5 h-5" />
                           </button>
                         ) : (
                           <span className="text-slate-300">-</span>
-                        );
-                      })()}
-                    </td>
-                  </tr>
-                ))
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -656,7 +686,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         <div className="flex items-center gap-2 text-slate-500">
           <span>
             Menampilkan {totalFiltered === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}-
-            {Math.min(currentPage * itemsPerPage, totalFiltered)} dari {totalFiltered} anggota
+            {Math.min(currentPage * itemsPerPage, totalFiltered)} dari {totalFiltered} pinjaman ({uniqueMembersCount} anggota)
           </span>
           <select 
             value={itemsPerPage}

@@ -21,12 +21,14 @@ export interface LoanMatrixMember {
   id?: string; // loan.id (untuk key unik baris matriks)
   loanId?: string;
   loanNumber?: string;
+  loan_number?: string;
   memberId: string;
   nrp: string;
   nama: string;
   pangkat?: string;
   loanTypeName?: string;
   agreedTenorMonths?: number;
+  agreed_tenor_months?: number;
   tenor?: number;
   monthlyTarget?: number;
   principalAmount?: number;
