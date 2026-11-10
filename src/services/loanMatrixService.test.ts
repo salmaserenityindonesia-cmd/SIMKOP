@@ -830,6 +830,99 @@ describe('loanMatrixService - Multi-Loan Support per Member', () => {
     // Tetapi hanya 1 anggota unik yang menunggak
     expect(result.unpaidMembersCount).toBe(1);
   });
+
+  it('mendukung 3 atau lebih pinjaman aktif bersamaan per anggota dengan totalLoans dan proyeksi yang terakumulasi sempurna', async () => {
+    const memberBudi = {
+      id: 'mem-budi',
+      nrp: '12345678',
+      nama: 'Budi Prasetyo',
+      pangkat: 'Koptu',
+    };
+
+    const loans = [
+      {
+        id: 'loan-budi-reg',
+        loan_number: 'PINJ-REG-01',
+        member_id: 'mem-budi',
+        tenor: 24,
+        monthly_target: 500000,
+        status: 'active',
+        loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+        member: memberBudi,
+      },
+      {
+        id: 'loan-budi-khs',
+        loan_number: 'PINJ-KHS-02',
+        member_id: 'mem-budi',
+        tenor: 12,
+        monthly_target: 300000,
+        status: 'active',
+        loan_types: { id: 'lt-2', code: 'KHS', name: 'Pinjaman Khusus' },
+        member: memberBudi,
+      },
+      {
+        id: 'loan-budi-brg',
+        loan_number: 'PINJ-BRG-03',
+        member_id: 'mem-budi',
+        tenor: 6,
+        monthly_target: 200000,
+        status: 'active',
+        loan_types: { id: 'lt-3', code: 'BRG', name: 'Pinjaman Barang' },
+        member: memberBudi,
+      },
+    ];
+
+    const mockSchedules = loans.map((l, idx) => ({
+      id: `sc-budi-${idx + 1}`,
+      loan_id: l.id,
+      period_number: 7,
+      due_date: '2026-07-10',
+      target_amount: l.monthly_target,
+      paid_amount: 0,
+      status: 'unpaid',
+      loan: l,
+    }));
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: loans.map(l => ({ loan_id: l.id })),
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: mockSchedules,
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await getLoanMatrix(2026);
+
+    expect(result.members.length).toBe(3);
+    result.members.forEach(row => {
+      expect(row.memberId).toBe('mem-budi');
+      expect(row.totalLoans).toBe(3);
+      expect(row.nama).toBe('Budi Prasetyo');
+    });
+
+    // Proyeksi bulan depan (Bulan 7 / Juli 2026): 500k + 300k + 200k = 1.000.000
+    expect(result.projectedNextMonth).toBe(1000000);
+  });
 });
 
 describe('loanMatrixService - getLoanInteractiveGrid', () => {
