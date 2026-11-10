@@ -4,6 +4,7 @@ import {
   fetchAllAnggotaPaged,
   getAnggota,
   getDepositTypes,
+  catatRestockFaktur,
   MemberImportInput,
 } from './koperasiService';
 import { supabase } from '../lib/supabaseClient';
@@ -13,6 +14,7 @@ vi.mock('../lib/supabaseClient', () => {
   return {
     supabase: {
       from: vi.fn(),
+      rpc: vi.fn(),
     },
   };
 });
@@ -668,6 +670,124 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(types).toHaveLength(1);
       // Hardcoded fallback rate for WAJIB is 200000, which will be picked if fallback is returned, or default_amount if completely failed
       expect(types[0].effective_amount).toBeGreaterThan(0);
+    });
+  });
+
+  describe('catatRestockFaktur - Atomic RPC & Fallback', () => {
+    it('harus memvalidasi nomor faktur dan item produk sebelum mengeksekusi', async () => {
+      await expect(catatRestockFaktur({
+        noFaktur: '   ',
+        tanggal: '2026-11-11',
+        items: [{ produkId: 'p1', qty: 10, hargaBeli: 5000 }]
+      })).rejects.toThrow('Nomor Faktur (noFaktur) harus diisi');
+
+      await expect(catatRestockFaktur({
+        noFaktur: 'FAKTUR-001',
+        tanggal: '2026-11-11',
+        items: []
+      })).rejects.toThrow('Faktur pembelian harus memiliki minimal satu item produk.');
+    });
+
+    it('harus memanggil create_purchase_invoice_atomic RPC ketika RPC tersedia dan berhasil', async () => {
+      const mockRpcResponse = {
+        success: true,
+        id: 'purchase-uuid-123',
+        noFaktur: 'FAKTUR-RESTOCK-99',
+        tanggal: '2026-11-11',
+        totalNilai: 150000
+      };
+
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: mockRpcResponse,
+        error: null
+      });
+
+      const input = {
+        noFaktur: 'FAKTUR-RESTOCK-99',
+        tanggal: '2026-11-11',
+        items: [
+          { produkId: 'prod-1', namaProduk: 'Beras Premium 5kg', qty: 10, hargaBeli: 15000 }
+        ]
+      };
+
+      const result = await catatRestockFaktur(input);
+
+      expect(supabase.rpc).toHaveBeenCalledWith('create_purchase_invoice_atomic', {
+        p_invoice_number: 'FAKTUR-RESTOCK-99',
+        p_purchase_date: '2026-11-11',
+        p_items: [
+          { product_id: 'prod-1', qty: 10, buy_price: 15000 }
+        ]
+      });
+
+      expect(result.id).toBe('purchase-uuid-123');
+      expect(result.noFaktur).toBe('FAKTUR-RESTOCK-99');
+      expect(result.totalNilai).toBe(150000);
+      expect(result.items).toHaveLength(1);
+    });
+
+    it('harus melempar error jika create_purchase_invoice_atomic mengembalikan error bisnis', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Produk dengan ID prod-missing tidak ditemukan' }
+      });
+
+      const input = {
+        noFaktur: 'FAKTUR-ERR',
+        tanggal: '2026-11-11',
+        items: [
+          { produkId: 'prod-missing', qty: 5, hargaBeli: 20000 }
+        ]
+      };
+
+      await expect(catatRestockFaktur(input)).rejects.toThrow('Produk dengan ID prod-missing tidak ditemukan');
+    });
+
+    it('harus beralih ke fallback sekuensial tabel jika RPC tidak ditemukan (PGRST202)', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function create_purchase_invoice_atomic' }
+      });
+
+      const mockPurchase = {
+        id: 'purch-seq-01',
+        invoice_number: 'FAKTUR-SEQ',
+        purchase_date: '2026-11-11',
+        total_amount: 50000
+      };
+
+      const mockPurchSingle = vi.fn().mockResolvedValue({ data: mockPurchase, error: null });
+      const mockPurchSelect = vi.fn().mockReturnValue({ single: mockPurchSingle });
+      const mockPurchInsert = vi.fn().mockReturnValue({ select: mockPurchSelect });
+
+      const mockItemsInsert = vi.fn().mockResolvedValue({ error: null });
+
+      const mockProdSingle = vi.fn().mockResolvedValue({ data: { stock: 15 }, error: null });
+      const mockProdSelect = vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: mockProdSingle }) });
+      const mockProdUpdate = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'purchases') return { insert: mockPurchInsert };
+        if (table === 'purchase_items') return { insert: mockItemsInsert };
+        if (table === 'products') return { select: mockProdSelect, update: mockProdUpdate };
+        return {};
+      });
+
+      const input = {
+        noFaktur: 'FAKTUR-SEQ',
+        tanggal: '2026-11-11',
+        items: [
+          { produkId: 'prod-abc', qty: 5, hargaBeli: 10000 }
+        ]
+      };
+
+      const result = await catatRestockFaktur(input);
+
+      expect(result.id).toBe('purch-seq-01');
+      expect(result.noFaktur).toBe('FAKTUR-SEQ');
+      expect(result.totalNilai).toBe(50000);
+      expect(mockPurchInsert).toHaveBeenCalled();
+      expect(mockItemsInsert).toHaveBeenCalled();
     });
   });
 });

@@ -6,6 +6,7 @@ function shouldFallback(e: any): boolean {
 
 import { supabase } from '../lib/supabaseClient';
 import { getActiveSavingsRateTiers } from './savingsRateService';
+import { CreatePurchaseInvoiceRpcResponse } from '../types/purchase';
 
 export interface Pengelola {
   id: string;
@@ -1077,7 +1078,7 @@ export async function deleteProduk(id: string): Promise<void> {
 }
 
 export interface RestockItem {
-  id: string;
+  id?: string;
   produkId: string;
   qty: number;
   hargaBeli: number;
@@ -1140,9 +1141,55 @@ export async function catatRestockFaktur(faktur: Omit<FakturPembelian, 'id' | 't
     throw new Error('Nomor Faktur (noFaktur) harus diisi');
   }
 
+  if (!faktur.items || !Array.isArray(faktur.items) || faktur.items.length === 0) {
+    throw new Error('Faktur pembelian harus memiliki minimal satu item produk.');
+  }
+
   const totalNilai = faktur.items.reduce((sum, item) => sum + (item.qty * item.hargaBeli), 0);
-  
-  // 1. Insert ke purchases
+  const purchaseDate = faktur.tanggal || new Date().toISOString().split('T')[0];
+
+  // 1. Eksekusi Atomic RPC create_purchase_invoice_atomic
+  if (supabase.rpc && typeof supabase.rpc === 'function') {
+    try {
+      const rpcPayload = {
+        p_invoice_number: faktur.noFaktur.trim(),
+        p_purchase_date: purchaseDate,
+        p_items: faktur.items.map(item => ({
+          product_id: item.produkId,
+          qty: item.qty,
+          buy_price: item.hargaBeli
+        }))
+      };
+
+      const rpcRes = (await supabase.rpc('create_purchase_invoice_atomic', rpcPayload as any)) as any;
+
+      if (rpcRes) {
+        const { data, error } = rpcRes;
+        if (error) {
+          const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
+          if (!isMissingFunction) {
+            throw new Error(error.message || 'Gagal menyimpan faktur restock');
+          }
+        } else if (data) {
+          const responseData = data as CreatePurchaseInvoiceRpcResponse;
+          if (responseData.success === false) {
+            throw new Error(responseData.message || 'Penyimpanan faktur restock ditolak');
+          }
+          return {
+            ...faktur,
+            id: responseData.id || `faktur-${Date.now()}`,
+            totalNilai: Number(responseData.totalNilai || responseData.total_amount || totalNilai)
+          };
+        }
+      }
+    } catch (err: any) {
+      if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+        throw err;
+      }
+    }
+  }
+
+  // 2. Fallback: sequential client-side mutations (for environments without create_purchase_invoice_atomic RPC)
   const { data: purchaseData, error: purchaseError } = await supabase
     .from('purchases')
     .insert([{
@@ -1175,7 +1222,7 @@ export async function catatRestockFaktur(faktur: Omit<FakturPembelian, 'id' | 't
     throw new Error(`Gagal menyimpan faktur: ${purchaseError.message}`);
   }
 
-  // 2. Insert ke purchase_items
+  // 3. Insert ke purchase_items
   const itemsToInsert = faktur.items.map(item => ({
     purchase_id: purchaseData.id,
     product_id: item.produkId,
@@ -1185,12 +1232,11 @@ export async function catatRestockFaktur(faktur: Omit<FakturPembelian, 'id' | 't
 
   const { error: itemsError } = await supabase.from('purchase_items').insert(itemsToInsert);
   if (itemsError) {
-    // Ideally we should rollback the purchase here, but Supabase standard API doesn't support atomic transactions from client yet without RPC.
     console.error('Failed to insert items:', itemsError.message);
     throw new Error(`Faktur tersimpan, tetapi gagal menyimpan item: ${itemsError.message}`);
   }
 
-  // 3. Update stock in products table
+  // 4. Update stock in products table
   for (const item of faktur.items) {
     const { data: prodData } = await supabase.from('products').select('stock').eq('id', item.produkId).single();
     if (prodData) {

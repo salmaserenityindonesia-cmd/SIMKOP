@@ -1417,6 +1417,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 80: Migrasi Restock Faktur Pembelian ke Atomic PostgreSQL RPC (create_purchase_invoice_atomic)
+**Status:** ✅ Complete
+**Objective:** Mengeliminasi technical debt pencatatan restock barang bertahap dari sisi klien (`catatRestockFaktur`) dengan membungkus seluruh mutasi (insert `purchases`, insert `purchase_items`, update stok & harga beli `products` dengan row locking `FOR UPDATE`, dan pencatatan jejak audit `audit_logs`) ke dalam fungsi atomic PostgreSQL RPC `create_purchase_invoice_atomic` dengan proteksi ACID menyeluruh.
+**Depends on:** Phase 79
+
+**Plans:**
+- [x] Plan 80.1: Database Migration & Atomic Stored Function (PostgreSQL)
+- [x] Plan 80.2: Service Layer Refactoring & Compatibility Fallbacks in koperasiService.ts
+- [x] Plan 80.3: Unit Testing Alignment, Static Analysis & Build Verification
+
+**Deliverables:**
+- File migrasi Supabase `supabase/migrations/044_create_atomic_purchase_invoice_rpc.sql` mendefinisikan RPC `create_purchase_invoice_atomic`
+- Refactor `catatRestockFaktur` di `src/services/koperasiService.ts` untuk memanggil RPC atomik dengan fallback kompatibilitas
+- Rangkaian pengujian unit di `src/services/koperasiService.test.ts` / `src/services/purchaseService.test.ts` dan build Vite tanpa regresi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1557,6 +1574,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 77 | Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 78 | Migrasi Transaksi Multi-Tabel POS ke Atomic RPC Supabase | ✅ | 3/3 | 100% |
 | 79 | Migrasi Transaksi Simpan Pinjam ke Atomic RPC Supabase (approveLoan & recordRepayment) | ✅ | 3/3 | 100% |
+| 80 | Migrasi Restock Faktur Pembelian ke Atomic PostgreSQL RPC (create_purchase_invoice_atomic) | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1643,6 +1661,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 77 | 2026-11-10 | 2026-11-10 | 1 day |
 | 78 | 2026-11-11 | 2026-11-11 | 1 day |
 | 79 | 2026-11-11 | 2026-11-11 | 1 day |
+| 80 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
