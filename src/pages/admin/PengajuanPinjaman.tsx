@@ -11,9 +11,9 @@ export const formatCurrency = (val: number) => {
 };
 
 export const calculateAvailableTenors = (maxTenor?: number): number[] => {
-  const baseTenors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36];
-  if (typeof maxTenor !== 'number') return [];
-  return baseTenors.filter(t => t <= maxTenor);
+  if (typeof maxTenor !== 'number' || maxTenor <= 0) return [];
+  const baseRange = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36, 48, 60];
+  return baseRange.filter(t => t <= maxTenor);
 };
 
 export interface SimulationPanelProps {
@@ -38,10 +38,9 @@ export function SimulationPanel({
     : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
 
   // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= Rp 1.500.000)
-  const baseAvailableTenors = [6, 10, 12, 18, 24, 30, 36];
-  const availableTenors = typeof maxTenor === 'number'
-    ? baseAvailableTenors.filter(t => t <= maxTenor)
-    : baseAvailableTenors;
+  // Bersumber dinamis dari master produk pinjaman (default hingga 36 bulan jika standalone)
+  const effectiveMaxTenor = typeof maxTenor === 'number' ? maxTenor : 36;
+  const availableTenors = calculateAvailableTenors(effectiveMaxTenor);
   let recommendedTenor: number | null = null;
 
   const principal = typeof amount === 'number' && amount > 0
@@ -211,7 +210,7 @@ export default function PengajuanPinjaman({
   const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
 
   const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
-  const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 12;
+  const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 0;
   const availableTenors = calculateAvailableTenors(selectedLoanType?.max_duration_months);
 
   const handleLoanTypeChange = (newTypeId: string) => {
@@ -476,7 +475,13 @@ export default function PengajuanPinjaman({
                     required
                     value={tenor}
                     disabled={!selectedLoanTypeId}
-                    onChange={e => setTenor(Number(e.target.value) || '')}
+                    onChange={e => {
+                      const val = Number(e.target.value) || '';
+                      if (typeof val === 'number' && maxTenor > 0 && val > maxTenor) {
+                        return;
+                      }
+                      setTenor(val);
+                    }}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <option value="">

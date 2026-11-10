@@ -33,68 +33,8 @@ export interface AddRateTierPayload {
   notes?: string | null;
 }
 
-export const DEFAULT_RATE_TIERS: SavingsRateTier[] = [
-  {
-    id: 'seed-pokok-tier-1',
-    deposit_type_code: 'POKOK',
-    start_year: 2024,
-    start_month: 1,
-    end_year: null,
-    end_month: null,
-    monthly_rate: 100000,
-    notes: 'Tarif Simpanan Pokok Standar (Rp 100.000)',
-    created_at: '2024-01-01T00:00:00.000Z',
-    updated_at: '2024-01-01T00:00:00.000Z'
-  },
-  {
-    id: 'seed-wajib-tier-1',
-    deposit_type_code: 'WAJIB',
-    start_year: 2024,
-    start_month: 1,
-    end_year: 2025,
-    end_month: 10,
-    monthly_rate: 150000,
-    notes: 'Tarif Simpanan Wajib Lama (Rp 150.000)',
-    created_at: '2024-01-01T00:00:00.000Z',
-    updated_at: '2024-01-01T00:00:00.000Z'
-  },
-  {
-    id: 'seed-wajib-tier-2',
-    deposit_type_code: 'WAJIB',
-    start_year: 2025,
-    start_month: 11,
-    end_year: null,
-    end_month: null,
-    monthly_rate: 200000,
-    notes: 'Tarif Simpanan Wajib Baru (Rp 200.000)',
-    created_at: '2025-11-01T00:00:00.000Z',
-    updated_at: '2025-11-01T00:00:00.000Z'
-  },
-  {
-    id: 'seed-belanja-tier-1',
-    deposit_type_code: 'BELANJA',
-    start_year: 2024,
-    start_month: 1,
-    end_year: null,
-    end_month: null,
-    monthly_rate: 25000,
-    notes: 'Tarif Simpanan Belanja Standar (Rp 25.000)',
-    created_at: '2024-01-01T00:00:00.000Z',
-    updated_at: '2024-01-01T00:00:00.000Z'
-  },
-  {
-    id: 'seed-lebaran-tier-1',
-    deposit_type_code: 'LEBARAN',
-    start_year: 2024,
-    start_month: 1,
-    end_year: null,
-    end_month: null,
-    monthly_rate: 50000,
-    notes: 'Tarif Simpanan Hari Raya/Lebaran Standar (Rp 50.000)',
-    created_at: '2024-01-01T00:00:00.000Z',
-    updated_at: '2024-01-01T00:00:00.000Z'
-  }
-];
+export const DEFAULT_RATE_TIERS: SavingsRateTier[] = [];
+export const DEFAULT_TIERS: SavingsRateTier[] = DEFAULT_RATE_TIERS;
 
 export const SAVINGS_RATE_TIERS_STORAGE_KEY = 'simkop_savings_rate_tiers';
 

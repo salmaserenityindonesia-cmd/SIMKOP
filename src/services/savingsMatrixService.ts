@@ -2,8 +2,7 @@ import { supabase } from '../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
-  SavingsRateTier,
-  DEFAULT_RATE_TIERS
+  SavingsRateTier
 } from './savingsRateService';
 
 export const MONTH_NAMES = [
@@ -415,8 +414,8 @@ export async function reconcileSingleMemberDeposit(
       }
     }
 
-    if (!rateTiers || rateTiers.length === 0) {
-      rateTiers = DEFAULT_RATE_TIERS;
+    if (!rateTiers) {
+      rateTiers = [];
     }
   }
 
@@ -911,8 +910,8 @@ export async function bulkAutoReconcileAllMembers(
     }
   }
 
-  if (!rateTiers || rateTiers.length === 0) {
-    rateTiers = DEFAULT_RATE_TIERS;
+  if (!rateTiers) {
+    rateTiers = [];
   }
 
   let totalSuccess = 0;
@@ -1078,8 +1077,8 @@ export async function bulkCheckAllUpToCurrentMonth(
     }
   }
 
-  if (!rateTiers || rateTiers.length === 0) {
-    rateTiers = DEFAULT_RATE_TIERS;
+  if (!rateTiers) {
+    rateTiers = [];
   }
 
   let totalSuccess = 0;

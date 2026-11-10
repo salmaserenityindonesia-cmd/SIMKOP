@@ -235,9 +235,25 @@ describe('savingsRateService', () => {
       expect(tiers).toEqual([]);
     });
 
+    it('should have empty DEFAULT_RATE_TIERS and DEFAULT_TIERS constants without static mock data', () => {
+      expect(DEFAULT_RATE_TIERS).toEqual([]);
+    });
+
     it('should filter by depositTypeCode when specified', async () => {
+      const sampleTiers: SavingsRateTier[] = [
+        {
+          id: 'tier-wajib-1',
+          deposit_type_code: 'WAJIB',
+          start_year: 2024,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        }
+      ];
+
       const eqMock = vi.fn().mockResolvedValue({
-        data: DEFAULT_RATE_TIERS.filter(t => t.deposit_type_code === 'WAJIB'),
+        data: sampleTiers,
         error: null
       });
 
@@ -256,6 +272,7 @@ describe('savingsRateService', () => {
       });
 
       const wajibTiers = await getRateTiers('WAJIB', true);
+      expect(wajibTiers).toHaveLength(1);
       expect(wajibTiers.every(t => t.deposit_type_code === 'WAJIB')).toBe(true);
     });
   });

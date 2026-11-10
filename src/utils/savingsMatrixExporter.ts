@@ -11,8 +11,7 @@ import { supabase } from '../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
-  SavingsRateTier,
-  DEFAULT_RATE_TIERS
+  SavingsRateTier
 } from '../services/savingsRateService';
 import {
   isMonthBeforeJoin,
@@ -239,9 +238,8 @@ export async function generateSavingsMatrixWorkbook(
       }
     }
 
-    if (!rateTiers || rateTiers.length === 0) {
-      rateTiers = DEFAULT_RATE_TIERS.filter(t => t.deposit_type_code === depositTypeCode);
-      if (rateTiers.length === 0) rateTiers = DEFAULT_RATE_TIERS;
+    if (!rateTiers) {
+      rateTiers = [];
     }
   }
 
