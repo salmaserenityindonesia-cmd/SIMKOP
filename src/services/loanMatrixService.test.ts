@@ -5,6 +5,7 @@ import {
   MonthLoanCell,
   LoanMatrixMonth,
   LoanMatrixMember,
+  LoanMatrixRow,
   getCumulativePaidUpToMonth,
   getLoanInteractiveGrid,
   toggleLoanSchedulePaid,
@@ -556,6 +557,278 @@ describe('loanMatrixService - cumulativePaidAmount & getCumulativePaidUpToMonth'
     expect(getCumulativePaidUpToMonth(member, 1)).toBe(1000000);
     expect(getCumulativePaidUpToMonth(member, 2)).toBe(1750000);
     expect(getCumulativePaidUpToMonth(member, 3)).toBe(2000000);
+  });
+});
+
+describe('loanMatrixService - Multi-Loan Support per Member', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('menghasilkan baris independen per pinjaman aktif untuk anggota yang memiliki multi-pinjaman berjalan', async () => {
+    const memberYanto = {
+      id: 'mem-yanto',
+      nrp: '96316880',
+      nama: 'Yanto Santoso',
+      pangkat: 'Serda',
+    };
+
+    const loan1 = {
+      id: 'loan-yanto-1',
+      loan_number: 'PINJ-2026-YNT1',
+      member_id: 'mem-yanto',
+      tenor: 30,
+      agreed_tenor_months: 30,
+      monthly_target: 333333,
+      principal_amount: 10000000,
+      status: 'active',
+      loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+      member: memberYanto,
+    };
+
+    const loan2 = {
+      id: 'loan-yanto-2',
+      loan_number: 'PINJ-2026-YNT2',
+      member_id: 'mem-yanto',
+      tenor: 12,
+      agreed_tenor_months: 12,
+      monthly_target: 166667,
+      principal_amount: 2000000,
+      status: 'active',
+      loan_types: { id: 'lt-2', code: 'KHS', name: 'Pinjaman Khusus' },
+      member: memberYanto,
+    };
+
+    const mockSchedules = [
+      // Loan 1 (Tenor 30 bulan, 333.333/bln)
+      {
+        id: 'sc-y1-1',
+        loan_id: 'loan-yanto-1',
+        period_number: 1,
+        due_date: '2026-01-10',
+        target_amount: 333333,
+        paid_amount: 333333,
+        status: 'paid',
+        loan: loan1,
+      },
+      {
+        id: 'sc-y1-6',
+        loan_id: 'loan-yanto-1',
+        period_number: 6,
+        due_date: '2026-06-10',
+        target_amount: 333333,
+        paid_amount: 333333,
+        status: 'paid',
+        loan: loan1,
+      },
+      {
+        id: 'sc-y1-7',
+        loan_id: 'loan-yanto-1',
+        period_number: 7,
+        due_date: '2026-07-10',
+        target_amount: 333333,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: loan1,
+      },
+
+      // Loan 2 (Tenor 12 bulan, 166.667/bln)
+      {
+        id: 'sc-y2-1',
+        loan_id: 'loan-yanto-2',
+        period_number: 1,
+        due_date: '2026-01-15',
+        target_amount: 166667,
+        paid_amount: 166667,
+        status: 'paid',
+        loan: loan2,
+      },
+      {
+        id: 'sc-y2-6',
+        loan_id: 'loan-yanto-2',
+        period_number: 6,
+        due_date: '2026-06-15',
+        target_amount: 166667,
+        paid_amount: 166667,
+        status: 'paid',
+        loan: loan2,
+      },
+      {
+        id: 'sc-y2-7',
+        loan_id: 'loan-yanto-2',
+        period_number: 7,
+        due_date: '2026-07-15',
+        target_amount: 166667,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: loan2,
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-yanto-1' }, { loan_id: 'loan-yanto-2' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: mockSchedules,
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await getLoanMatrix(2026);
+
+    // Verifikasi result.members.length === 2 (1 Baris per Pinjaman Aktif)
+    expect(result.members.length).toBe(2);
+
+    const rowLoan1: LoanMatrixRow | undefined = result.members.find(m => m.loanId === 'loan-yanto-1');
+    const rowLoan2: LoanMatrixRow | undefined = result.members.find(m => m.loanId === 'loan-yanto-2');
+
+    expect(rowLoan1).toBeDefined();
+    expect(rowLoan2).toBeDefined();
+
+    // Verifikasi Baris 1: Pinjaman 30 bulan
+    expect(rowLoan1?.id).toBe('loan-yanto-1');
+    expect(rowLoan1?.loanId).toBe('loan-yanto-1');
+    expect(rowLoan1?.loanNumber).toBe('PINJ-2026-YNT1');
+    expect(rowLoan1?.memberId).toBe('mem-yanto');
+    expect(rowLoan1?.nama).toBe('Yanto Santoso');
+    expect(rowLoan1?.nrp).toBe('96316880');
+    expect(rowLoan1?.pangkat).toBe('Serda');
+    expect(rowLoan1?.loanTypeName).toBe('Pinjaman Reguler');
+    expect(rowLoan1?.tenor).toBe(30);
+    expect(rowLoan1?.monthlyTarget).toBe(333333);
+    expect(rowLoan1?.totalLoans).toBe(2);
+    expect(rowLoan1?.months[1].targetAmount).toBe(333333);
+    expect(rowLoan1?.months[1].paidAmount).toBe(333333);
+    expect(rowLoan1?.months[1].status).toBe('PAID');
+    expect(rowLoan1?.months[7].targetAmount).toBe(333333);
+    expect(rowLoan1?.months[7].status).toBe('PROJECTED');
+
+    // Verifikasi Baris 2: Pinjaman 12 bulan
+    expect(rowLoan2?.id).toBe('loan-yanto-2');
+    expect(rowLoan2?.loanId).toBe('loan-yanto-2');
+    expect(rowLoan2?.loanNumber).toBe('PINJ-2026-YNT2');
+    expect(rowLoan2?.memberId).toBe('mem-yanto');
+    expect(rowLoan2?.nama).toBe('Yanto Santoso');
+    expect(rowLoan2?.nrp).toBe('96316880');
+    expect(rowLoan2?.pangkat).toBe('Serda');
+    expect(rowLoan2?.loanTypeName).toBe('Pinjaman Khusus');
+    expect(rowLoan2?.tenor).toBe(12);
+    expect(rowLoan2?.monthlyTarget).toBe(166667);
+    expect(rowLoan2?.totalLoans).toBe(2);
+    expect(rowLoan2?.months[1].targetAmount).toBe(166667);
+    expect(rowLoan2?.months[1].paidAmount).toBe(166667);
+    expect(rowLoan2?.months[1].status).toBe('PAID');
+    expect(rowLoan2?.months[7].targetAmount).toBe(166667);
+    expect(rowLoan2?.months[7].status).toBe('PROJECTED');
+
+    // Verifikasi proyeksi bulan depan (Bulan 7 / Juli 2026) mengakumulasikan kedua pinjaman berjalan
+    // Rp 333.333 + Rp 166.667 = Rp 500.000
+    expect(result.projectedNextMonth).toBe(333333 + 166667);
+  });
+
+  it('mengisolasi unpaidMembersCount per anggota unik meskipun kedua pinjaman menunggak di bulan berjalan', async () => {
+    const memberYanto = {
+      id: 'mem-yanto',
+      nrp: '96316880',
+      nama: 'Yanto Santoso',
+    };
+
+    const mockSchedules = [
+      {
+        id: 'sc-1',
+        loan_id: 'loan-1',
+        period_number: 6,
+        due_date: '2026-06-10',
+        target_amount: 500000,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: {
+          id: 'loan-1',
+          loan_number: 'P-1',
+          tenor: 12,
+          monthly_target: 500000,
+          status: 'active',
+          member: memberYanto,
+        },
+      },
+      {
+        id: 'sc-2',
+        loan_id: 'loan-2',
+        period_number: 6,
+        due_date: '2026-06-10',
+        target_amount: 300000,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: {
+          id: 'loan-2',
+          loan_number: 'P-2',
+          tenor: 6,
+          monthly_target: 300000,
+          status: 'active',
+          member: memberYanto,
+        },
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-1' }, { loan_id: 'loan-2' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: mockSchedules,
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await getLoanMatrix(2026);
+
+    // Dua baris pinjaman
+    expect(result.members.length).toBe(2);
+    // Tetapi hanya 1 anggota unik yang menunggak
+    expect(result.unpaidMembersCount).toBe(1);
   });
 });
 
