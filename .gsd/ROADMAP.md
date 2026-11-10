@@ -1327,6 +1327,25 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 75: Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok
+**Status:** ⏳ Not Started
+**Objective:** Menerapkan standarisasi format deterministik dan dinamis penomoran kwitansi cicilan pinjaman (`KW-PINJ/{loan_number}/B{period}/{YYYYMMDD}-{RAND3}`) di frontend modal pelunasan (`LoanScheduleModal`), serta mengamankan integritas transaksi database PostgreSQL Supabase dengan trigger fallback otomatis anti-bentrok pada tabel `loan_repayments`.
+**Depends on:** Phase 74
+
+**Plans:**
+- [ ] Plan 75.1: Database Integrity & Auto-Fallback Trigger (PostgreSQL)
+- [ ] Plan 75.2: Standardize Frontend Receipt Generator Utility
+- [ ] Plan 75.3: Connect Generator to Repayment Modal & Service Layer
+- [ ] Plan 75.4: Static Verification, Full Test Suite, and Production Build Check
+
+**Deliverables:**
+- Skrip migrasi Supabase `supabase/migrations/041_add_loan_repayments_receipt_trigger.sql` dengan trigger function `fn_ensure_loan_receipt_number`
+- Generator utilitas kwitansi terpusat `src/utils/receiptGenerator.ts` beserta unit test `src/utils/receiptGenerator.test.ts`
+- Integrasi generator pada modal bukti pelunasan `src/components/loans/LoanScheduleModal.tsx` dan service layer `loanMatrixService.ts` / `loanScheduleService.ts`
+- Verifikasi komprehensif seluruh test suite dan build produksi Vite
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1462,6 +1481,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 72 | Penguraian Mundur Simpanan Wajib Bertingkat dan Validasi Selisih Impor Excel | ✅ | 3/3 | 100% |
 | 73 | Implementasi Windowing 12 Bulan Bergulir dengan Saldo Bawaan Akumulatif pada Matriks Tracking Simpanan | ✅ | 3/3 | 100% |
 | 74 | Terapkan Jendela 12 Bulan Bergulir Lintas Tahun Berdasarkan Bulan Pembayaran Terakhir Anggota di Matriks Simpanan | ✅ | 3/3 | 100% |
+| 75 | Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok | ⏳ | 0/4 | 0% |
 
 ---
 
@@ -1543,6 +1563,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 72 | 2026-11-09 | 2026-11-09 | 1 day |
 | 73 | 2026-11-09 | 2026-11-09 | 1 day |
 | 74 | 2026-11-10 | 2026-11-10 | 1 day |
+| 75 | 2026-11-10 | — | — |
 
 
 
