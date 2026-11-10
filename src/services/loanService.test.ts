@@ -480,6 +480,237 @@ describe('loanService', () => {
       expect(res.success).toBe(true);
       expect(res.excess_amount).toBe(0);
     });
+
+    it('should delegate to paySchedule when scheduleId is passed to makePayment', async () => {
+      const spy = vi.spyOn(loanService, 'paySchedule').mockResolvedValueOnce({
+        success: true,
+        newStatus: 'paid',
+        newPaidTotal: 555556,
+        sisaPinjaman: 2222222,
+        isAllPaid: false
+      });
+
+      const res = await loanService.makePayment('loan-1', 6222, 'CASH', 'Pelunasan parsial', 'sch-14');
+      expect(spy).toHaveBeenCalledWith('loan-1', 'sch-14', 6222, 'CASH', 'Pelunasan parsial');
+      expect(res.success).toBe(true);
+    });
+  });
+
+  describe('paySchedule - Isolated Single Schedule Repayment', () => {
+    it('should strictly isolate repayment to the selected schedule ID and NOT affect subsequent schedules', async () => {
+      const mockSupabase = supabase.from as any;
+
+      const scheduleUpdates: any[] = [];
+      const repaymentInserts: any[] = [];
+      let loanUpdatePayload: any = null;
+
+      // Mock sequence for paySchedule:
+      // 1. Ambil data baris loan_schedules yang sedang aktif berdasarkan id = scheduleId
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'sch-14',
+                target_amount: 555556,
+                paid_amount: 555334,
+                status: 'partial'
+              },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 2. Update ONLY sch-14
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          scheduleUpdates.push(payload);
+          return {
+            eq: vi.fn().mockImplementation((col, val) => {
+              expect(col).toBe('id');
+              expect(val).toBe('sch-14');
+              return Promise.resolve({ error: null });
+            })
+          };
+        })
+      }));
+
+      // 3. Insert into loan_repayments with schedule_id = sch-14
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockImplementation((payload) => {
+          repaymentInserts.push(payload);
+          return Promise.resolve({ error: null });
+        })
+      }));
+
+      // 4. Query allSchedules for recalculating balance
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'sch-1', target_amount: 555556, paid_amount: 555556, status: 'paid' },
+              { id: 'sch-14', target_amount: 555556, paid_amount: 555334, status: 'partial' },
+              { id: 'sch-15', target_amount: 555556, paid_amount: 0, status: 'unpaid' },
+              { id: 'sch-16', target_amount: 555556, paid_amount: 0, status: 'unpaid' }
+            ],
+            error: null
+          })
+        })
+      }));
+
+      // 5. Query loan parent info
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'loan-asep',
+                amount: 10000000,
+                principal_amount: 10000000,
+                status: 'active',
+                member_id: 'm-asep'
+              },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 6. Update loan status and sisa_pinjaman
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          loanUpdatePayload = payload;
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null })
+          };
+        })
+      }));
+
+      // Eksekusi pembayaran sisa tagihan baris ke-14 sebesar Rp 222
+      const result = await loanService.paySchedule(
+        'loan-asep',
+        'sch-14',
+        222,
+        'CASH',
+        'Pelunasan parsial jadwal periode terkait'
+      );
+
+      // Verifikasi baris ke-14 terisolasi:
+      expect(result.success).toBe(true);
+      expect(result.newStatus).toBe('paid');
+      expect(result.newPaidTotal).toBe(555556);
+
+      // Pastikan HANYA 1 update jadwal yang dijalankan (sch-14)
+      expect(scheduleUpdates).toHaveLength(1);
+      expect(scheduleUpdates[0]).toEqual({
+        paid_amount: 555556,
+        status: 'paid'
+      });
+
+      // Pastikan mutasi repayment mencatat schedule_id = sch-14
+      expect(repaymentInserts).toHaveLength(1);
+      expect(repaymentInserts[0]).toEqual([{
+        loan_id: 'loan-asep',
+        schedule_id: 'sch-14',
+        amount_paid: 222,
+        payment_method: 'CASH',
+        notes: 'Pelunasan parsial jadwal periode terkait'
+      }]);
+
+      // Pastikan pinjaman induk di-update ke 'active' (karena sch-15, sch-16 belum lunas)
+      expect(loanUpdatePayload.status).toBe('active');
+      // Sisa pinjaman = 10.000.000 - (555.556 + 555.556) = 8.888.888
+      expect(result.sisaPinjaman).toBe(10000000 - (555556 + 555556));
+    });
+
+    it('should set loan status to paid_off when the last unpaid schedule is paid', async () => {
+      const mockSupabase = supabase.from as any;
+
+      let loanUpdatePayload: any = null;
+
+      // 1. Single schedule
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'sch-final', target_amount: 500000, paid_amount: 400000, status: 'partial' },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 2. Update single schedule
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null })
+        })
+      }));
+
+      // 3. Insert repayment
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockResolvedValue({ error: null })
+      }));
+
+      // 4. All schedules (all are paid now)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'sch-1', target_amount: 500000, paid_amount: 500000, status: 'paid' },
+              { id: 'sch-final', target_amount: 500000, paid_amount: 400000, status: 'partial' }
+            ],
+            error: null
+          })
+        })
+      }));
+
+      // 5. Loan data
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'loan-1', amount: 1000000, principal_amount: 1000000, status: 'active', member_id: 'm-1' },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 6. Update loan
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          loanUpdatePayload = payload;
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null })
+          };
+        })
+      }));
+
+      // 7. Check other loans for resignation auto-detect
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+
+      // 8. Anggota check
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { membership_status: 'ACTIVE' }, error: null })
+          })
+        })
+      }));
+
+      const res = await loanService.paySchedule('loan-1', 'sch-final', 100000, 'CASH');
+      expect(res.isAllPaid).toBe(true);
+      expect(loanUpdatePayload.status).toBe('paid_off');
+      expect(loanUpdatePayload.sisa_pinjaman).toBe(0);
+    });
   });
 
   describe('fullPayoff', () => {
