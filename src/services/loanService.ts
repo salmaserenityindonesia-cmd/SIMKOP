@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { getActiveSavingsRateTiers } from './savingsRateService';
+import { LoanType } from './koperasiService';
 
 export interface Loan {
   id: string;
@@ -65,9 +66,20 @@ export const calculateRemainingInstallmentDeficit = (
   return Math.max(0, Math.round(target - paid));
 };
 
+export async function getActiveLoanTypes(): Promise<LoanType[]> {
+  const { data, error } = await supabase
+    .from('loan_types')
+    .select('id, code, name, max_duration_months, is_active')
+    .eq('is_active', true)
+    .order('code', { ascending: true });
+  if (error) throw error;
+  return (data || []) as LoanType[];
+}
+
 export type LoanApplicationStatusTab = 'PENDING' | 'APPROVED' | 'ALL';
 
 export const loanService = {
+  getActiveLoanTypes,
   async getLoanApplications(statusTab: LoanApplicationStatusTab = 'PENDING') {
     let query: any = supabase
       .from('loans')
@@ -253,7 +265,7 @@ export const loanService = {
     };
   },
 
-  async applyLoan(memberId: string, purpose: string, amount: number, tenor: number) {
+  async applyLoan(memberId: string, purpose: string, amount: number, tenor: number, loanTypeId?: string) {
     const monthlyTarget = amount / tenor;
     
     const { remaining_thp } = await this.getMemberTHP(memberId);
@@ -264,19 +276,22 @@ export const loanService = {
       );
     }
 
-    // Fetch a default loan type to satisfy the NOT NULL constraint on loan_type_id
-    const { data: loanTypes } = await supabase.from('loan_types').select('id').eq('is_active', true).limit(1);
-    if (!loanTypes || loanTypes.length === 0) {
-      throw new Error('Tidak ada Tipe Pinjaman (Loan Type) yang aktif di sistem.');
+    let targetLoanTypeId = loanTypeId;
+    if (!targetLoanTypeId) {
+      // Fetch a default loan type to satisfy the NOT NULL constraint on loan_type_id
+      const { data: loanTypes } = await supabase.from('loan_types').select('id').eq('is_active', true).limit(1);
+      if (!loanTypes || loanTypes.length === 0) {
+        throw new Error('Tidak ada Tipe Pinjaman (Loan Type) yang aktif di sistem.');
+      }
+      targetLoanTypeId = loanTypes[0].id;
     }
-    const loanTypeId = loanTypes[0].id;
 
     const { data, error } = await supabase
       .from('loans')
       .insert([{
         loan_number: `LOAN-${Date.now()}`,
         member_id: memberId,
-        loan_type_id: loanTypeId,
+        loan_type_id: targetLoanTypeId,
         principal_amount: amount,
         agreed_tenor_months: tenor,
         planned_installment_amount: monthlyTarget,
