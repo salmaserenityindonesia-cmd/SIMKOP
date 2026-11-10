@@ -1400,6 +1400,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 79: Migrasi Transaksi Simpan Pinjam ke Atomic RPC Supabase (approveLoan & recordRepayment)
+**Status:** ✅ Complete
+**Objective:** Membungkus mutasi approval pinjaman (`approveLoan` beserta auto-generate jadwal angsuran `loan_schedules`) dan mutasi pencatatan angsuran (`recordRepayment` / `paySchedule` / `makePayment` beserta update jadwal, insert repayment, kalkulasi sisa hutang pinjaman, dan pembaruan status resign anggota) ke dalam fungsi PostgreSQL RPC atomik (`approve_loan_atomic` dan `record_loan_repayment_atomic`) dengan proteksi ACID dan baris berkunci `FOR UPDATE`.
+**Depends on:** Phase 78
+
+**Plans:**
+- [x] Plan 79.1: Database Migration & Atomic Stored Functions (PostgreSQL)
+- [x] Plan 79.2: Service Layer Refactoring & Compatibility Fallbacks in loanService.ts
+- [x] Plan 79.3: Unit Testing Alignment, Static Analysis & Build Verification
+
+**Deliverables:**
+- File migrasi Supabase `supabase/migrations/043_create_atomic_loan_transactions_rpc.sql` mendefinisikan RPC `approve_loan_atomic` dan `record_loan_repayment_atomic`
+- Refactor `src/services/loanService.ts` untuk memanggil RPC atomik dengan penanganan fallback jika RPC belum tersedia
+- Rangkaian pengujian unit pada `src/services/loanService.test.ts` dan verifikasi integritas build Vite tanpa regresi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1538,6 +1555,8 @@ updated: 2026-10-30T20:50:00+07:00
 | 75 | Standarisasi Penomoran Otomatis Kwitansi Pelunasan Angsuran (KW-PINJ) Anti-Bentrok | ✅ | 4/4 | 100% |
 | 76 | Integrasi Pilihan Jenis Pinjaman dan Pembatasan Tenor Dinamis pada Pengajuan Pinjaman Baru | ✅ | 3/3 | 100% |
 | 77 | Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman | ✅ | 3/3 | 100% |
+| 78 | Migrasi Transaksi Multi-Tabel POS ke Atomic RPC Supabase | ✅ | 3/3 | 100% |
+| 79 | Migrasi Transaksi Simpan Pinjam ke Atomic RPC Supabase (approveLoan & recordRepayment) | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1623,6 +1642,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 76 | 2026-11-10 | 2026-11-10 | 1 day |
 | 77 | 2026-11-10 | 2026-11-10 | 1 day |
 | 78 | 2026-11-11 | 2026-11-11 | 1 day |
+| 79 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 

@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabaseClient';
 vi.mock('../lib/supabaseClient', () => {
   return {
     supabase: {
+      rpc: vi.fn(),
       from: vi.fn(() => ({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
@@ -914,6 +915,166 @@ describe('loanService', () => {
       (supabase.from as any).mockImplementationOnce(() => ({ select: mockSelect }));
 
       await expect(loanService.getActiveLoanTypes()).rejects.toThrow('Database query failed');
+    });
+  });
+
+  describe('approveLoan - Atomic RPC & Fallback', () => {
+    it('should call approve_loan_atomic RPC and return structured loan data when RPC succeeds', async () => {
+      const mockRpcResponse = {
+        success: true,
+        id: 'loan-123',
+        member_id: 'member-456',
+        status: 'approved',
+        disbursed_at: '2026-11-01',
+        amount: 5000000,
+        tenor: 10,
+        monthly_target: 500000,
+        schedules_count: 10
+      };
+
+      (supabase.rpc as any).mockResolvedValueOnce({ data: mockRpcResponse, error: null });
+
+      const result = await loanService.approveLoan('loan-123', '2026-11-01');
+
+      expect(supabase.rpc).toHaveBeenCalledWith('approve_loan_atomic', {
+        p_loan_id: 'loan-123',
+        p_start_date: '2026-11-01'
+      });
+      expect(result.id).toBe('loan-123');
+      expect(result.member_id).toBe('member-456');
+      expect(result.status).toBe('approved');
+      expect(result.amount).toBe(5000000);
+      expect(result.monthly_target).toBe(500000);
+    });
+
+    it('should throw error when approve_loan_atomic RPC returns a business validation error', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Pinjaman tidak dapat disetujui karena berstatus active' }
+      });
+
+      await expect(loanService.approveLoan('loan-123', '2026-11-01'))
+        .rejects.toThrow('Pinjaman tidak dapat disetujui karena berstatus active');
+    });
+
+    it('should fall back to sequential table mutations when approve_loan_atomic RPC does not exist (PGRST202)', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function approve_loan_atomic' }
+      });
+
+      const mockLoan = {
+        id: 'loan-fallback',
+        tenor: 2,
+        monthly_target: 1000000,
+        status: 'approved',
+        disbursed_at: '2026-11-01'
+      };
+
+      const mockSingle = vi.fn().mockResolvedValue({ data: mockLoan, error: null });
+      const mockSelect = vi.fn().mockReturnValue({ single: mockSingle });
+      const mockEq = vi.fn().mockReturnValue({ select: mockSelect });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      const mockInsert = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') return { update: mockUpdate };
+        if (table === 'loan_schedules') return { insert: mockInsert };
+        return {};
+      });
+
+      const result = await loanService.approveLoan('loan-fallback', '2026-11-01');
+
+      expect(result.id).toBe('loan-fallback');
+      expect(mockInsert).toHaveBeenCalled();
+    });
+  });
+
+  describe('paySchedule - Atomic RPC', () => {
+    it('should call record_loan_repayment_atomic RPC and return structured repayment result when RPC succeeds', async () => {
+      const mockRpcResponse = {
+        success: true,
+        newStatus: 'paid',
+        newPaidTotal: 500000,
+        sisaPinjaman: 1500000,
+        isAllPaid: false,
+        repayment_id: 'repay-1',
+        receipt_number: 'KW-PINJ/loan-1/B1/20261111-ABC'
+      };
+
+      (supabase.rpc as any).mockResolvedValueOnce({ data: mockRpcResponse, error: null });
+
+      const result = await loanService.paySchedule(
+        'loan-1',
+        'sch-1',
+        500000,
+        'TRANSFER',
+        'Cicilan bulan 1',
+        'KW-PINJ/loan-1/B1/20261111-ABC'
+      );
+
+      expect(supabase.rpc).toHaveBeenCalledWith('record_loan_repayment_atomic', {
+        p_loan_id: 'loan-1',
+        p_amount_paid: 500000,
+        p_payment_method: 'TRANSFER',
+        p_schedule_id: 'sch-1',
+        p_notes: 'Cicilan bulan 1',
+        p_receipt_number: 'KW-PINJ/loan-1/B1/20261111-ABC'
+      });
+      expect(result.success).toBe(true);
+      expect(result.newStatus).toBe('paid');
+      expect(result.newPaidTotal).toBe(500000);
+      expect(result.sisaPinjaman).toBe(1500000);
+      expect(result.isAllPaid).toBe(false);
+      expect(result.receiptNumber).toBe('KW-PINJ/loan-1/B1/20261111-ABC');
+    });
+
+    it('should throw error when record_loan_repayment_atomic RPC returns business error', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Jadwal angsuran tidak ditemukan untuk pinjaman ini' }
+      });
+
+      await expect(loanService.paySchedule('loan-1', 'sch-invalid', 100000))
+        .rejects.toThrow('Jadwal angsuran tidak ditemukan untuk pinjaman ini');
+    });
+  });
+
+  describe('makePayment - Atomic RPC', () => {
+    it('should call record_loan_repayment_atomic RPC with p_schedule_id null for FIFO allocation when RPC succeeds', async () => {
+      const mockRpcResponse = {
+        success: true,
+        excess_amount: 50000,
+        sisaPinjaman: 0,
+        isAllPaid: true
+      };
+
+      (supabase.rpc as any).mockResolvedValueOnce({ data: mockRpcResponse, error: null });
+
+      const result = await loanService.makePayment('loan-1', 1050000, 'CASH', 'Pelunasan FIFO');
+
+      expect(supabase.rpc).toHaveBeenCalledWith('record_loan_repayment_atomic', {
+        p_loan_id: 'loan-1',
+        p_amount_paid: 1050000,
+        p_payment_method: 'CASH',
+        p_schedule_id: null,
+        p_notes: 'Pelunasan FIFO',
+        p_receipt_number: null
+      });
+      expect(result.success).toBe(true);
+      expect(result.excess_amount).toBe(50000);
+      expect(result.sisaPinjaman).toBe(0);
+      expect(result.isAllPaid).toBe(true);
+    });
+
+    it('should throw error when record_loan_repayment_atomic returns error for makePayment', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Jumlah pembayaran harus lebih besar dari 0' }
+      });
+
+      await expect(loanService.makePayment('loan-1', 0, 'CASH'))
+        .rejects.toThrow('Jumlah pembayaran harus lebih besar dari 0');
     });
   });
 });

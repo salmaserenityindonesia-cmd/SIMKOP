@@ -1,6 +1,12 @@
 import { supabase } from '../lib/supabaseClient';
 import { getActiveSavingsRateTiers } from './savingsRateService';
 import { LoanType } from './koperasiService';
+import {
+  ApproveLoanRpcResponse,
+  RecordLoanRepaymentRpcResponse,
+  PayScheduleResult,
+  MakePaymentResult
+} from '../types/loan';
 
 export interface Loan {
   id: string;
@@ -309,7 +315,46 @@ export const loanService = {
   },
 
   async approveLoan(loanId: string, startDate: string) {
-    
+    if (supabase.rpc && typeof supabase.rpc === 'function') {
+      try {
+        const rpcRes = (await supabase.rpc('approve_loan_atomic', {
+          p_loan_id: loanId,
+          p_start_date: startDate
+        } as any)) as any;
+
+        if (rpcRes) {
+          const { data, error } = rpcRes;
+          if (error) {
+            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
+            if (!isMissingFunction) {
+              throw new Error(error.message || 'Gagal menyetujui pinjaman via atomic RPC');
+            }
+          } else if (data) {
+            const responseData = data as ApproveLoanRpcResponse;
+            if (responseData.success === false) {
+              throw new Error(responseData.message || 'Persetujuan pinjaman ditolak');
+            }
+            return {
+              id: responseData.id || loanId,
+              member_id: responseData.member_id || '',
+              notes: '',
+              amount: Number(responseData.amount || 0),
+              tenor: Number(responseData.tenor || 0),
+              monthly_target: Number(responseData.monthly_target || 0),
+              status: 'approved',
+              disbursed_at: responseData.disbursed_at || startDate,
+              created_at: new Date().toISOString()
+            } as Loan;
+          }
+        }
+      } catch (err: any) {
+        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+          throw err;
+        }
+      }
+    }
+
+    // Fallback: sequential client-side mutations (for environments without approve_loan_atomic RPC)
     const { data: loan, error: loanError } = await supabase
       .from('loans')
       .update({
@@ -372,7 +417,49 @@ export const loanService = {
     paymentMethod: string = 'CASH',
     notes?: string,
     receiptNumber?: string
-  ) {
+  ): Promise<PayScheduleResult> {
+    if (supabase.rpc && typeof supabase.rpc === 'function') {
+      try {
+        const rpcRes = (await supabase.rpc('record_loan_repayment_atomic', {
+          p_loan_id: loanId,
+          p_amount_paid: paymentAmount,
+          p_payment_method: paymentMethod || 'CASH',
+          p_schedule_id: scheduleId,
+          p_notes: notes || 'Pelunasan parsial jadwal periode terkait',
+          p_receipt_number: receiptNumber?.trim() || null
+        } as any)) as any;
+
+        if (rpcRes) {
+          const { data, error } = rpcRes;
+          if (error) {
+            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
+            if (!isMissingFunction) {
+              throw new Error(error.message || 'Gagal memproses pembayaran angsuran via atomic RPC');
+            }
+          } else if (data) {
+            const responseData = data as RecordLoanRepaymentRpcResponse;
+            if (responseData.success === false) {
+              throw new Error(responseData.message || 'Pembayaran angsuran ditolak');
+            }
+            return {
+              success: true,
+              newStatus: responseData.newStatus,
+              newPaidTotal: Number(responseData.newPaidTotal),
+              sisaPinjaman: Number(responseData.sisaPinjaman),
+              isAllPaid: Boolean(responseData.isAllPaid),
+              repaymentId: responseData.repayment_id,
+              receiptNumber: responseData.receipt_number
+            };
+          }
+        }
+      } catch (err: any) {
+        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+          throw err;
+        }
+      }
+    }
+
+    // Fallback: sequential client-side execution (for environments without record_loan_repayment_atomic RPC)
     // 1. Ambil data baris loan_schedules yang sedang aktif berdasarkan id = scheduleId
     const { data: schedule, error: schErr } = await supabase
       .from('loan_schedules')
@@ -497,13 +584,52 @@ export const loanService = {
     notes?: string,
     scheduleId?: string,
     receiptNumber?: string
-  ) {
+  ): Promise<MakePaymentResult> {
     if (scheduleId) {
       return receiptNumber !== undefined
         ? this.paySchedule(loanId, scheduleId, amountPaid, paymentMethod, notes, receiptNumber)
         : this.paySchedule(loanId, scheduleId, amountPaid, paymentMethod, notes);
     }
 
+    if (supabase.rpc && typeof supabase.rpc === 'function') {
+      try {
+        const rpcRes = (await supabase.rpc('record_loan_repayment_atomic', {
+          p_loan_id: loanId,
+          p_amount_paid: amountPaid,
+          p_payment_method: paymentMethod || 'CASH',
+          p_schedule_id: null,
+          p_notes: notes || 'Pembayaran angsuran pinjaman (FIFO)',
+          p_receipt_number: receiptNumber?.trim() || null
+        } as any)) as any;
+
+        if (rpcRes) {
+          const { data, error } = rpcRes;
+          if (error) {
+            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
+            if (!isMissingFunction) {
+              throw new Error(error.message || 'Gagal memproses pembayaran angsuran via atomic RPC');
+            }
+          } else if (data) {
+            const responseData = data as RecordLoanRepaymentRpcResponse;
+            if (responseData.success === false) {
+              throw new Error(responseData.message || 'Pembayaran angsuran ditolak');
+            }
+            return {
+              success: true,
+              excess_amount: Number(responseData.excess_amount || 0),
+              sisaPinjaman: Number(responseData.sisaPinjaman),
+              isAllPaid: Boolean(responseData.isAllPaid)
+            };
+          }
+        }
+      } catch (err: any) {
+        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+          throw err;
+        }
+      }
+    }
+
+    // Fallback: sequential client-side execution (for environments without record_loan_repayment_atomic RPC)
     let remainingPayment = amountPaid;
     
     // Get all unpaid/partial schedules ordered by period_number (FIFO)
