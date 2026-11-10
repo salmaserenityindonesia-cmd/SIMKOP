@@ -342,16 +342,25 @@ export default function PengajuanPinjaman({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedAnggota || !purpose || !amount || !tenor) return;
+    if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
+      setError('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
+      return;
+    }
+
+    if (Number(tenor) > maxTenor) {
+      setError(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
+      return;
+    }
 
     setError(null);
     setSuccess(null);
     setSubmitting(true);
     try {
-      await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor));
+      await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId);
       setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
       
       // Reset form
+      setSelectedLoanTypeId('');
       setPurpose('');
       setAmount('');
       setTenor('');
@@ -474,7 +483,7 @@ export default function PengajuanPinjaman({
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota || (thpData !== null && !isTHPEligible())}
+                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
