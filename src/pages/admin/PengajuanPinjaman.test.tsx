@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import PengajuanPinjaman, { SimulationPanel, formatCurrency } from './PengajuanPinjaman';
+import PengajuanPinjaman, { SimulationPanel, formatCurrency, calculateAvailableTenors } from './PengajuanPinjaman';
 import { MIN_REMAINING_THP } from '../../services/loanService';
 
 // Mock AdminLayout
@@ -310,6 +310,49 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
 
       expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
       expect(html).not.toContain('Rekomendasi:');
+    });
+
+    it('respects maxTenor limit and does not recommend tenor exceeding maxTenor', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 2000000,
+        savings_deduction: 200000,
+        remaining_thp: 2800000
+      };
+      // Plafon 20M, Tenor 10 Bulan -> cicilan 2M -> sisa 800k (< 1.5M).
+      // Normal recommendation would be 18 Bulan, but maxTenor is 12 Bulan.
+      // Since no tenor <= 12 can satisfy THP >= 1.5M, no recommendation should be rendered.
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={2000000}
+          amount={20000000}
+          tenor={10}
+          maxTenor={12}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).not.toContain('Rekomendasi:');
+      expect(html).not.toContain('18 bulan');
+    });
+  });
+
+  describe('calculateAvailableTenors helper', () => {
+    it('returns empty array when maxTenor is undefined', () => {
+      expect(calculateAvailableTenors()).toEqual([]);
+    });
+
+    it('filters tenor list up to 6 months for emergency loan', () => {
+      expect(calculateAvailableTenors(6)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it('filters tenor list up to 12 months for regular loan', () => {
+      expect(calculateAvailableTenors(12)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    });
+
+    it('filters tenor list up to 36 months for long term loan', () => {
+      expect(calculateAvailableTenors(36)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36]);
     });
   });
 });

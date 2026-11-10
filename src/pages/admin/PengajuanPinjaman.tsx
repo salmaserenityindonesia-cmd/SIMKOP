@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { loanService, MIN_REMAINING_THP, calculateTHPEligibility } from '../../services/loanService';
+import { loanService, MIN_REMAINING_THP, calculateTHPEligibility, getActiveLoanTypes } from '../../services/loanService';
+import { LoanType } from '../../services/koperasiService';
 import { extractMemberTHP } from '../../services/memberService';
 import { supabase } from '../../lib/supabaseClient';
 import { Loader2, Plus, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
@@ -9,12 +10,19 @@ export const formatCurrency = (val: number) => {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val);
 };
 
+export const calculateAvailableTenors = (maxTenor?: number): number[] => {
+  const baseTenors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36];
+  if (typeof maxTenor !== 'number') return [];
+  return baseTenors.filter(t => t <= maxTenor);
+};
+
 export interface SimulationPanelProps {
   thpData: { master_thp: number; active_installments: number; savings_deduction?: number; remaining_thp: number } | null;
   newInstallment: number;
   amount?: number | '';
   tenor?: number | '';
   onSelectTenor?: (tenor: number) => void;
+  maxTenor?: number;
 }
 
 export function SimulationPanel({
@@ -22,14 +30,18 @@ export function SimulationPanel({
   newInstallment,
   amount,
   tenor,
-  onSelectTenor
+  onSelectTenor,
+  maxTenor
 }: SimulationPanelProps) {
   const eligibility = thpData 
     ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, MIN_REMAINING_THP)
     : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
 
   // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= Rp 1.500.000)
-  const availableTenors = [6, 10, 12, 18, 24, 30, 36];
+  const baseAvailableTenors = [6, 10, 12, 18, 24, 30, 36];
+  const availableTenors = typeof maxTenor === 'number'
+    ? baseAvailableTenors.filter(t => t <= maxTenor)
+    : baseAvailableTenors;
   let recommendedTenor: number | null = null;
 
   const principal = typeof amount === 'number' && amount > 0
@@ -156,6 +168,8 @@ export interface PengajuanPinjamanProps {
   initialAmount?: number | '';
   initialTenor?: number | '';
   initialPurpose?: string;
+  initialLoanTypes?: LoanType[];
+  initialSelectedLoanTypeId?: string;
 }
 
 export default function PengajuanPinjaman({
@@ -164,14 +178,35 @@ export default function PengajuanPinjaman({
   initialThpData,
   initialAmount,
   initialTenor,
-  initialPurpose
+  initialPurpose,
+  initialLoanTypes,
+  initialSelectedLoanTypeId
 }: PengajuanPinjamanProps = {}) {
+  const [loanTypes, setLoanTypes] = useState<LoanType[]>(initialLoanTypes || []);
+  const [selectedLoanTypeId, setSelectedLoanTypeId] = useState<string>(initialSelectedLoanTypeId || '');
   const [anggotaList, setAnggotaList] = useState<any[]>(initialAnggotaList || []);
   const [selectedAnggota, setSelectedAnggota] = useState<string>(initialSelectedAnggota || '');
   
   const [purpose, setPurpose] = useState(initialPurpose || '');
   const [amount, setAmount] = useState<number | ''>(initialAmount ?? '');
   const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
+
+  const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
+  const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 12;
+  const baseTenors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36];
+  const availableTenors = selectedLoanType ? baseTenors.filter(t => t <= maxTenor) : [];
+
+  const handleLoanTypeChange = (newTypeId: string) => {
+    setSelectedLoanTypeId(newTypeId);
+    if (!newTypeId) {
+      setTenor('');
+      return;
+    }
+    const newType = loanTypes.find(lt => String(lt.id) === String(newTypeId));
+    if (newType && typeof tenor === 'number' && tenor > newType.max_duration_months) {
+      setTenor('');
+    }
+  };
   
   const [masterThp, setMasterThp] = useState<number>(() => {
     if (initialThpData) return initialThpData.master_thp;
@@ -206,7 +241,19 @@ export default function PengajuanPinjaman({
 
   useEffect(() => {
     loadAnggota();
+    if (initialLoanTypes === undefined) {
+      loadLoanTypes();
+    }
   }, []);
+
+  async function loadLoanTypes() {
+    try {
+      const types = await getActiveLoanTypes();
+      if (types) setLoanTypes(types);
+    } catch (err) {
+      console.error('Gagal memuat jenis pinjaman:', err);
+    }
+  }
 
   useEffect(() => {
     if (selectedAnggota) {
@@ -428,6 +475,7 @@ export default function PengajuanPinjaman({
             amount={amount}
             tenor={tenor}
             onSelectTenor={(t) => setTenor(t)}
+            maxTenor={selectedLoanType ? selectedLoanType.max_duration_months : undefined}
           />
         </div>
       </div>
