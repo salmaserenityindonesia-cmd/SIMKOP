@@ -1,18 +1,14 @@
-Created At: 2026-11-11T07:56:58+07:00
-Completed At: 2026-11-11T07:56:58+07:00
-
 ## Current Position
-- **Phase**: 82 (completed)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 83
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
-Phase 82 complete: Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan.
-- `supabase/migrations/045_add_min_remaining_thp_to_koperasi_profile.sql`: migrasi idempotent menambahkan kolom `min_remaining_thp` (default: 1.500.000) dan `min_thp_rat_notes` pada tabel `public.koperasi_profile`.
-- `src/services/settingsService.ts`: fungsi `getLoanSettings()` dan `updateLoanSettings()` dengan strategi persistensi multi-tier (Supabase `koperasi_profile` -> localStorage `KOPERASI_PROFILE_STORAGE_KEY` fallback -> default 1.500.000) dan pengujian unit komprehensif di `src/services/settingsService.test.ts`.
-- `src/pages/admin/PengaturanKoperasi.tsx`: kartu konfigurasi "Kebijakan Kelayakan Pinjaman (Keputusan RAT)" dengan input Rupiah dinamis, nomor SK/catatan ketetapan RAT, serta notifikasi toast.
-- `src/pages/admin/PengajuanPinjaman.tsx`: integrasi dinamis acuan sisa THP minimum pada kalkulasi kelayakan pinjaman, penentuan rekomendasi tenor, penyesuaian pesan visual box hijau & merah, dan proteksi validasi form. Disertai pengujian unit dinamis di `src/pages/admin/PengajuanPinjaman.test.tsx`.
-- Verifikasi independen (`gsd-verifier`): 5/5 must-haves verified (100% PASS), 65 test files, 930 unit tests PASS, `tsc --noEmit` exit 0, dan production build bundler sukses.
+Phase 83 planned: Implementasi Input Fleksibel dan Modal Konfirmasi Ketik Teks untuk Perubahan Batas Minimum THP.
+- 3 plans created across 3 waves (`83-1-PLAN.md`, `83-2-PLAN.md`, `83-3-PLAN.md`).
+- Wave 1: Menghapus batasan `min="1"` dan `step="50000"` pada input sisa THP dan memasang atribut ramah nominal (`step="any"`, `min="0"`).
+- Wave 2: Membangun Modal Konfirmasi Tindakan Kritis (Keputusan RAT) dengan komparasi nominal lama vs baru dan kata kunci verifikasi `SETUJU`.
+- Wave 3: Pengujian unit otomatis (Vitest), validasi statis TypeScript (`tsc --noEmit`), dan kompilasi build produksi Vite.
 
 ## Next Steps
-All phases up to Phase 82 complete and verified. No remaining phases in roadmap.
+1. /execute 83

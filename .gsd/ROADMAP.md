@@ -6,8 +6,8 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 82 — Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan
-> **Status:** ✅ Complete
+> **Current Phase:** 83 — Implementasi Input Fleksibel dan Modal Konfirmasi Ketik Teks untuk Perubahan Batas Minimum THP
+> **Status:** 🔄 Ready to Execute
 
 ## Must-Haves (from SPEC)
 
@@ -1472,6 +1472,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 83: Implementasi Input Fleksibel dan Modal Konfirmasi Ketik Teks untuk Perubahan Batas Minimum THP
+**Status:** ⬜ Not Started
+**Objective:** Menghapus batasan step kaku peramban pada input Batas Minimum Sisa THP di halaman Pengaturan Koperasi, serta menerapkan pengaman tingkat tinggi berupa Modal Konfirmasi Tindakan Kritis dengan kewajiban mengetik frasa 'SETUJU' dan perbandingan nominal sebelum disimpan ke database.
+**Depends on:** Phase 82
+
+**Plans:**
+- [ ] Plan 83.1: Remove Rigid Step Constraint on Minimum THP Input
+- [ ] Plan 83.2: Build Type-to-Confirm Modal for Strategic Threshold Changes
+- [ ] Plan 83.3: Unit Testing, Static Verification & Production Build
+
+**Deliverables:**
+- Atribut input fleksibel (`step="any"`, `min="0"`) pada field `minRemainingThp` di `src/pages/admin/PengaturanKoperasi.tsx`
+- Modal dialog konfirmasi tindakan kritis dengan validasi ketik kata `SETUJU` dan komparasi nilai lama vs baru
+- Suite pengujian unit Vitest dan kelulusan build produksi Vite tanpa error
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1615,6 +1632,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 80 | Migrasi Restock Faktur Pembelian ke Atomic PostgreSQL RPC (create_purchase_invoice_atomic) | ✅ | 3/3 | 100% |
 | 81 | Modularisasi & Pemisahan Monolith koperasiService.ts ke Domain Services Terpisah | ✅ | 3/3 | 100% |
 | 82 | Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan | ✅ | 3/3 | 100% |
+| 83 | Input Fleksibel & Modal Konfirmasi THP | ⬜ | 0/3 | 0% |
 
 ---
 
@@ -1704,6 +1722,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 80 | 2026-11-11 | 2026-11-11 | 1 day |
 | 81 | 2026-11-11 | 2026-11-11 | 1 day |
 | 82 | 2026-11-11 | 2026-11-11 | 1 day |
+| 83 | 2026-11-11 | — | — |
 
 
 
