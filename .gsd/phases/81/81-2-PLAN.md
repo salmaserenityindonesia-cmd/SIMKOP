@@ -17,3 +17,4 @@ Mengekstrak seluruh fungsionalitas konfigurasi jenis simpanan, komitmen bulanan,
    - `getMonthlyDepositCommitments(month?: number, year?: number)`
 3. Mengintegrasikan dengan `savingsRateService` untuk resolusi tarif berjenjang yang akurat.
 4. Membuat unit test terdedikasi `src/services/depositManagementService.test.ts`.
+

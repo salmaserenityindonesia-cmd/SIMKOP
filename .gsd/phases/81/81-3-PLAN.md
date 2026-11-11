@@ -16,3 +16,4 @@ Mengkonsolidasikan seluruh fungsi domain anggota di `src/services/memberService.
    - Unit tests vitest (907+ tests).
    - Analisis statis TypeScript `npx tsc --noEmit`.
    - Build produksi Vite `npm run build`.
+

@@ -236,3 +236,4 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
 
   return riwayat;
 }
+

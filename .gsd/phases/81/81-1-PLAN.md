@@ -9,3 +9,4 @@ Mengekstrak seluruh fungsionalitas faktur pembelian dan restock inventori dari `
    - `getRiwayatStok(produkId: string): Promise<RiwayatStok[]>`
 3. Menyediakan unit test mandiri `src/services/purchaseInvoiceService.test.ts`.
 4. Memastikan fallback in-memory dan integrasi RPC `create_purchase_invoice_atomic` tetap utuh.
+

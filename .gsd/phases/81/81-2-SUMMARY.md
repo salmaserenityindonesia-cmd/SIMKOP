@@ -9,3 +9,4 @@
   - Mengintegrasikan penyesuaian tarif bertingkat (`getActiveSavingsRateTiers`) dengan fallback aman.
 - Dibuat unit test mandiri `src/services/depositManagementService.test.ts` (8 tes unit) yang menguji query, sinkronisasi tarif, CRUD jenis simpanan, kalkulasi sisa tagihan simpanan, mutasi setoran, dan komitmen bulanan.
 - Seluruh 8 tes unit lulus 100%.
+
