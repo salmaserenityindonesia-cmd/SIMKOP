@@ -62,8 +62,8 @@ export default function BatchUpdater() {
     setIsConfirming(true);
     setErrorMsg(null);
     try {
-      await executeBatchUpdate(results, updateType, month, year);
-      setSuccessMsg('Update massal berhasil dieksekusi!');
+      const res = await executeBatchUpdate(results, updateType, month, year);
+      setSuccessMsg(res?.message || 'Update massal berhasil dieksekusi!');
       setResults([]);
       setFile(null);
     } catch (err: any) {
@@ -73,8 +73,14 @@ export default function BatchUpdater() {
     }
   };
 
+  const isPokokTagihan = (tag: string) => {
+    const t = (tag || '').trim().toUpperCase();
+    return t === 'POKOK' || t === 'SP';
+  };
+
   const totalCollected = results.reduce((sum, r) => sum + r.nominal_baru, 0);
   const validRows = results.filter(r => r.status === 'READY').length;
+  const pokokRowsCount = results.filter(r => r.status === 'READY' && isPokokTagihan(r.jenis_tagihan)).length;
 
   const totalPages = Math.ceil(results.length / itemsPerPage);
   const paginatedResults = results.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -182,9 +188,17 @@ export default function BatchUpdater() {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="text-title-md font-title-md text-on-surface">Modal Konfirmasi Pratinjau</h3>
-                <div className="flex gap-6 mt-2 text-sm text-on-surface-variant">
+                <div className="flex flex-wrap gap-4 sm:gap-6 mt-2 text-sm text-on-surface-variant">
                     <div>Total Baris: <span className="font-semibold text-on-surface">{results.length}</span></div>
                     <div>Baris Valid: <span className="font-semibold text-success">{validRows}</span></div>
+                    {pokokRowsCount > 0 && (
+                        <div className="flex items-center gap-1.5">
+                            <span>Simpanan Pokok:</span>
+                            <span className="font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded text-xs border border-indigo-200 dark:border-indigo-800/50">
+                                {pokokRowsCount} baris
+                            </span>
+                        </div>
+                    )}
                     <div>Baris Error/Konflik: <span className="font-semibold text-error">{results.length - validRows}</span></div>
                     <div>Total Nominal: <span className="font-semibold text-primary">Rp {totalCollected.toLocaleString('id-ID')}</span></div>
                 </div>
@@ -232,25 +246,45 @@ export default function BatchUpdater() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-outline-variant/20">
-                  {paginatedResults.map((r, idx) => (
-                    <tr key={idx} className="hover:bg-surface-container-lowest/50">
-                      <td className="px-4 py-3">{r.nrp}</td>
-                      <td className="px-4 py-3">{r.nama}</td>
-                      <td className="px-4 py-3">{r.periode}</td>
-                      <td className="px-4 py-3">{r.jenis_tagihan}</td>
-                      <td className="px-4 py-3 text-right">Rp {r.nominal_lama.toLocaleString('id-ID')}</td>
-                      <td className="px-4 py-3 text-right font-medium text-primary">Rp {r.nominal_baru.toLocaleString('id-ID')}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold tracking-wider ${
-                            r.status === 'READY' ? 'bg-success/20 text-success' :
-                            r.status === 'MISMATCH' ? 'bg-error/20 text-error' :
-                            'bg-error text-on-error'
-                        }`}>
-                            {r.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {paginatedResults.map((r, idx) => {
+                    const isPokok = isPokokTagihan(r.jenis_tagihan);
+                    return (
+                      <tr
+                        key={idx}
+                        className={isPokok
+                          ? "bg-indigo-50/40 hover:bg-indigo-50/70 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/30 transition-colors"
+                          : "hover:bg-surface-container-lowest/50 transition-colors"
+                        }
+                      >
+                        <td className="px-4 py-3">{r.nrp}</td>
+                        <td className="px-4 py-3">{r.nama}</td>
+                        <td className="px-4 py-3">{r.periode}</td>
+                        <td className="px-4 py-3">
+                          {isPokok ? (
+                            <div className="inline-flex items-center gap-1.5">
+                              <span className="font-semibold text-indigo-700 dark:text-indigo-300">POKOK</span>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700">
+                                Simpanan Pokok
+                              </span>
+                            </div>
+                          ) : (
+                            <span>{r.jenis_tagihan}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">Rp {r.nominal_lama.toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3 text-right font-medium text-primary">Rp {r.nominal_baru.toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-bold tracking-wider ${
+                              r.status === 'READY' ? 'bg-success/20 text-success' :
+                              r.status === 'MISMATCH' ? 'bg-error/20 text-error' :
+                              'bg-error text-on-error'
+                          }`}>
+                              {r.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
