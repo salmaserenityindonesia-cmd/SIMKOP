@@ -1,7 +1,7 @@
 ## Current Position
-- **Phase**: 86 (completed)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 87 (Pembakuan Tenor Kelipatan 6 Bulan pada Form Pengajuan Pinjaman Baru)
+- **Task**: Planning complete
+- **Status**: Ready for execution
 
 ## Last Session Summary
 Phase 86 complete: Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan.
@@ -10,4 +10,4 @@ Phase 86 complete: Dinamisasi Dropdown Filter Jenis Simpanan dari Master Databas
 - `86-3-PLAN.md` (Wave 3): Verifikasi menyeluruh: TypeScript type check (`tsc --noEmit` exit 0), Vitest test suite (70 test files passed, 984 unit tests passing, 0 failed), dan Vite production build (`npm run build` exit 0) (commit: `e7ccff3b`).
 
 ## Next Steps
-All phases up to Phase 86 complete and verified. No remaining phases in roadmap.
+1. /execute 87 — Execute Phase 87 plans (Wave 1: Tenor logic & unit tests, Wave 2: Static verification & production build).
