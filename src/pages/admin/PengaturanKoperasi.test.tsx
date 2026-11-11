@@ -41,7 +41,9 @@ vi.mock('../../services/settingsService', () => ({
     telepon: '08123456789',
     terminal_name: 'POS-01',
     footer_notes: 'Struk Pengujian Unit',
-    logo_url: null
+    logo_url: null,
+    min_remaining_thp: 1500000,
+    min_thp_rat_notes: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
   }),
   updateKoperasiProfile: vi.fn().mockResolvedValue({
     success: true,
@@ -51,9 +53,23 @@ vi.mock('../../services/settingsService', () => ({
       telepon: '08123456789',
       terminal_name: 'POS-01',
       footer_notes: 'Struk Pengujian Unit',
-      logo_url: null
+      logo_url: null,
+      min_remaining_thp: 1500000,
+      min_thp_rat_notes: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
     }
   }),
+  getLoanSettings: vi.fn().mockResolvedValue({
+    minRemainingThp: 1500000,
+    ratNotes: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
+  }),
+  updateLoanSettings: vi.fn().mockImplementation((payload) => Promise.resolve({
+    success: true,
+    data: {
+      id: 'profile-1',
+      min_remaining_thp: payload.minRemainingThp,
+      min_thp_rat_notes: payload.ratNotes
+    }
+  })),
   isTableMigratedInSupabase: vi.fn().mockResolvedValue(true),
   DEFAULT_KOPERASI_PROFILE: {
     nama_koperasi: 'KOPERASI PEGAWAI REPUBLIK INDONESIA',
@@ -61,8 +77,12 @@ vi.mock('../../services/settingsService', () => ({
     telepon: '08123456789',
     terminal_name: 'POS-01',
     footer_notes: 'Terima kasih',
-    logo_url: null
-  }
+    logo_url: null,
+    min_remaining_thp: 1500000,
+    min_thp_rat_notes: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
+  },
+  DEFAULT_MIN_REMAINING_THP: 1500000,
+  DEFAULT_RAT_NOTES: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
 }));
 
 // Mock savingsRateService with vi.hoisted
@@ -342,6 +362,60 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       const res = await savingsRateService.deleteRateTier('tier-wajib-1');
       expect(savingsRateService.deleteRateTier).toHaveBeenCalledWith('tier-wajib-1');
       expect(res).toBe(true);
+    });
+  });
+
+  describe('Kebijakan Kelayakan Pinjaman (Keputusan RAT) UI', () => {
+    it('renders the Loan Eligibility Policy card title, descriptions, and inputs', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialMinRemainingThp={1500000}
+          initialMinThpRatNotes="Keputusan RAT Tahun Buku 2025 No. 04/RAT/2026"
+        />
+      );
+
+      expect(html).toContain('Kebijakan Kelayakan Pinjaman (Keputusan RAT)');
+      expect(html).toContain('Batas Minimum Sisa THP (Rp)');
+      expect(html).toContain('Preview Nominal:');
+      expect(html).toContain('1.500.000');
+      expect(html).toContain('Catatan Keputusan / Nomor SK RAT');
+      expect(html).toContain('Keputusan RAT Tahun Buku 2025 No. 04/RAT/2026');
+      expect(html).toContain('Simpan Kebijakan Kelayakan');
+      expect(html).toContain('Validasi Otomatis Kelayakan:');
+    });
+
+    it('renders custom initial values for minimum THP and notes', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialMinRemainingThp={2000000}
+          initialMinThpRatNotes="SK Pengurus No 12/2026"
+        />
+      );
+
+      expect(html).toContain('value="2000000"');
+      expect(html).toContain('2.000.000');
+      expect(html).toContain('value="SK Pengurus No 12/2026"');
+    });
+
+    it('integrates with settingsService.getLoanSettings and updateLoanSettings', async () => {
+      const settings = await settingsService.getLoanSettings();
+      expect(settings).toEqual({
+        minRemainingThp: 1500000,
+        ratNotes: 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000'
+      });
+      expect(settingsService.getLoanSettings).toHaveBeenCalled();
+
+      const updateRes = await settingsService.updateLoanSettings({
+        minRemainingThp: 1750000,
+        ratNotes: 'RAT 2026 penyesuaian inflasi'
+      });
+      expect(updateRes.success).toBe(true);
+      expect(settingsService.updateLoanSettings).toHaveBeenCalledWith({
+        minRemainingThp: 1750000,
+        ratNotes: 'RAT 2026 penyesuaian inflasi'
+      });
     });
   });
 });

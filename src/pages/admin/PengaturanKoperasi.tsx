@@ -6,7 +6,11 @@ import {
   updateKoperasiProfile,
   isTableMigratedInSupabase,
   KoperasiProfile,
-  DEFAULT_KOPERASI_PROFILE
+  DEFAULT_KOPERASI_PROFILE,
+  getLoanSettings,
+  updateLoanSettings,
+  DEFAULT_MIN_REMAINING_THP,
+  DEFAULT_RAT_NOTES
 } from '../../services/settingsService';
 import { uploadLogoToCloudinary } from '../../services/cloudinaryService';
 import {
@@ -27,7 +31,8 @@ import {
   Layers,
   Plus,
   X,
-  Calendar
+  Calendar,
+  ShieldCheck
 } from 'lucide-react';
 import {
   getRateTiers,
@@ -103,13 +108,17 @@ export interface PengaturanKoperasiProps {
   initialRateTiers?: SavingsRateTier[];
   initialAddModalOpen?: boolean;
   initialTierCode?: string;
+  initialMinRemainingThp?: number;
+  initialMinThpRatNotes?: string;
 }
 
 export default function PengaturanKoperasi({
   initialLoading = false,
   initialRateTiers,
   initialAddModalOpen = false,
-  initialTierCode
+  initialTierCode,
+  initialMinRemainingThp,
+  initialMinThpRatNotes
 }: PengaturanKoperasiProps = {}) {
   const { showToast } = useFeedback();
 
@@ -120,6 +129,15 @@ export default function PengaturanKoperasi({
   const [isLocalOnly, setIsLocalOnly] = useState(false);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Loan Eligibility Policy (RAT) State
+  const [minRemainingThp, setMinRemainingThp] = useState<number>(
+    initialMinRemainingThp ?? DEFAULT_MIN_REMAINING_THP
+  );
+  const [minThpRatNotes, setMinThpRatNotes] = useState<string>(
+    initialMinThpRatNotes ?? DEFAULT_RAT_NOTES
+  );
+  const [isSavingLoanSettings, setIsSavingLoanSettings] = useState<boolean>(false);
 
   // Savings Rate Tiers State
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || []);
@@ -140,7 +158,53 @@ export default function PengaturanKoperasi({
   useEffect(() => {
     loadProfile();
     loadRateTiers();
+    loadLoanSettings();
   }, []);
+
+  const loadLoanSettings = async () => {
+    try {
+      const data = await getLoanSettings(true);
+      if (data) {
+        setMinRemainingThp(data.minRemainingThp);
+        setMinThpRatNotes(data.ratNotes);
+      }
+    } catch (err: any) {
+      console.error('Failed to load loan settings:', err);
+    }
+  };
+
+  const handleSaveLoanSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = Number(minRemainingThp);
+    if (isNaN(val) || val <= 0) {
+      showToast('Batas minimum sisa THP harus lebih besar dari Rp 0', 'warning');
+      return;
+    }
+
+    setIsSavingLoanSettings(true);
+    try {
+      const res = await updateLoanSettings({
+        minRemainingThp: val,
+        ratNotes: minThpRatNotes.trim()
+      });
+
+      if (res.success && res.data) {
+        if (res.data.min_remaining_thp) {
+          setMinRemainingThp(res.data.min_remaining_thp);
+        }
+        if (res.data.min_thp_rat_notes !== undefined) {
+          setMinThpRatNotes(res.data.min_thp_rat_notes);
+        }
+        showToast('Kebijakan kelayakan pinjaman berhasil diperbarui!', 'success');
+      } else {
+        showToast(res.error || 'Gagal menyimpan kebijakan kelayakan pinjaman', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Terjadi kesalahan sistem saat menyimpan kebijakan', 'error');
+    } finally {
+      setIsSavingLoanSettings(false);
+    }
+  };
 
   const loadRateTiers = async () => {
     setIsLoadingTiers(true);
@@ -801,6 +865,109 @@ export default function PengaturanKoperasi({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Kebijakan Kelayakan Pinjaman (Keputusan RAT) */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-slate-800 text-base">Kebijakan Kelayakan Pinjaman (Keputusan RAT)</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Atur ambang batas minimum sisa gaji (Take Home Pay) per bulan bagi anggota yang mengajukan pinjaman sesuai ketetapan RAT.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveLoanSettings} className="p-6 space-y-5">
+              <div className="bg-emerald-50/60 border border-emerald-200 rounded-lg p-3.5 text-xs text-emerald-800 flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-emerald-900">Validasi Otomatis Kelayakan:</span> Setiap pengajuan pinjaman baru akan divalidasi secara real-time. Jika sisa gaji anggota (THP dikurangi total angsuran) berada di bawah ambang batas ini, sistem akan menolak pengajuan pinjaman demi menjaga kesehatan finansial anggota.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Batas Minimum Sisa THP */}
+                <div>
+                  <label htmlFor="minRemainingThp" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Batas Minimum Sisa THP (Rp) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-xs font-semibold text-slate-400 pointer-events-none">
+                      Rp
+                    </span>
+                    <input
+                      id="minRemainingThp"
+                      name="minRemainingThp"
+                      type="number"
+                      min="1"
+                      step="50000"
+                      required
+                      value={minRemainingThp || ''}
+                      onChange={(e) => setMinRemainingThp(Number(e.target.value))}
+                      className="w-full pl-10 pr-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-semibold text-slate-800"
+                      placeholder="1500000"
+                    />
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">Preview Nominal:</span>
+                    <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {formatRupiah(minRemainingThp || 0)}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Default standar koperasi adalah Rp 1.500.000 (dapat disesuaikan berdasarkan hasil keputusan RAT).
+                  </p>
+                </div>
+
+                {/* Catatan Keputusan / Ketetapan RAT */}
+                <div>
+                  <label htmlFor="minThpRatNotes" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Catatan Keputusan / Nomor SK RAT
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="minThpRatNotes"
+                      name="minThpRatNotes"
+                      type="text"
+                      value={minThpRatNotes}
+                      onChange={(e) => setMinThpRatNotes(e.target.value)}
+                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all text-slate-800"
+                      placeholder="Contoh: Keputusan RAT Tahun Buku 2025 No. 04/RAT/2026"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-2">
+                    Keterangan nomor ketetapan atau berita acara RAT sebagai referensi audit kepatuhan.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Button */}
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingLoanSettings}
+                  className="px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {isSavingLoanSettings ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Menyimpan Kebijakan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>Simpan Kebijakan Kelayakan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </>
       )}
