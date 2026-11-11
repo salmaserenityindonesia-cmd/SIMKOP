@@ -538,7 +538,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <thead className="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-4 py-3 sticky left-0 bg-slate-50 z-30 min-w-[250px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Anggota</th>
-                <th className="px-4 py-3 text-left font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[140px]">
+                <th className="px-3 py-3 text-left font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[145px] whitespace-nowrap">
                   <div>Saldo Pra Jan-{String(year).slice(-2)}</div>
                   <div className="text-[10px] font-normal text-slate-500">Akumulasi Lampau</div>
                 </th>
@@ -587,23 +587,23 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                         )}
                       </td>
                       
-                      <td className="px-4 py-3 border-r border-slate-200 bg-slate-50/40 text-xs" data-testid={`prior-summary-${row.memberId}`}>
+                      <td className="px-3 py-2.5 border-r border-slate-200 bg-slate-50/40 text-[11px] whitespace-nowrap select-none font-mono" data-testid={`prior-summary-${row.memberId}`}>
                         <div className="space-y-0.5">
-                          <div className="text-slate-500 flex justify-between gap-1">
-                            <span>P:</span>
-                            <span className="font-semibold text-slate-700">
+                          <div className="text-slate-500 flex items-center justify-between gap-1.5 whitespace-nowrap">
+                            <span className="font-sans text-[10px] text-slate-400">P:</span>
+                            <span className="font-semibold text-slate-700 whitespace-nowrap tabular-nums">
                               Rp {Number(row.principalAmount || 0).toLocaleString('id-ID')}
                             </span>
                           </div>
-                          <div className="text-emerald-700 flex justify-between gap-1">
-                            <span>Lunas:</span>
-                            <span className="font-bold">
+                          <div className="text-emerald-700 flex items-center justify-between gap-1.5 whitespace-nowrap">
+                            <span className="font-sans text-[10px] text-emerald-600">Lunas:</span>
+                            <span className="font-bold text-emerald-700 whitespace-nowrap tabular-nums">
                               Rp {Number(row.priorYearPaid || 0).toLocaleString('id-ID')}
                             </span>
                           </div>
-                          <div className="text-amber-700 flex justify-between gap-1 border-t border-slate-200 pt-0.5">
-                            <span>Sisa:</span>
-                            <span className="font-semibold">
+                          <div className="text-amber-700 flex items-center justify-between gap-1.5 border-t border-slate-200 pt-0.5 whitespace-nowrap">
+                            <span className="font-sans text-[10px] text-amber-600">Sisa:</span>
+                            <span className="font-semibold text-amber-800 whitespace-nowrap tabular-nums">
                               Rp {Number(row.priorYearRemaining || 0).toLocaleString('id-ID')}
                             </span>
                           </div>
