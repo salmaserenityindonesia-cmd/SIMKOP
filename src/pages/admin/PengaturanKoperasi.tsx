@@ -32,7 +32,9 @@ import {
   Plus,
   X,
   Calendar,
-  ShieldCheck
+  ShieldCheck,
+  ShieldAlert,
+  ArrowRight
 } from 'lucide-react';
 import {
   getRateTiers,
@@ -110,6 +112,9 @@ export interface PengaturanKoperasiProps {
   initialTierCode?: string;
   initialMinRemainingThp?: number;
   initialMinThpRatNotes?: string;
+  initialConfirmModalOpen?: boolean;
+  initialConfirmationInputText?: string;
+  initialOriginalMinThp?: number;
 }
 
 export default function PengaturanKoperasi({
@@ -118,7 +123,10 @@ export default function PengaturanKoperasi({
   initialAddModalOpen = false,
   initialTierCode,
   initialMinRemainingThp,
-  initialMinThpRatNotes
+  initialMinThpRatNotes,
+  initialConfirmModalOpen = false,
+  initialConfirmationInputText = '',
+  initialOriginalMinThp
 }: PengaturanKoperasiProps = {}) {
   const { showToast } = useFeedback();
 
@@ -134,10 +142,15 @@ export default function PengaturanKoperasi({
   const [minRemainingThp, setMinRemainingThp] = useState<number>(
     initialMinRemainingThp ?? DEFAULT_MIN_REMAINING_THP
   );
+  const [initialMinThp, setInitialMinThp] = useState<number>(
+    initialOriginalMinThp ?? initialMinRemainingThp ?? DEFAULT_MIN_REMAINING_THP
+  );
   const [minThpRatNotes, setMinThpRatNotes] = useState<string>(
     initialMinThpRatNotes ?? DEFAULT_RAT_NOTES
   );
   const [isSavingLoanSettings, setIsSavingLoanSettings] = useState<boolean>(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(initialConfirmModalOpen);
+  const [confirmationInputText, setConfirmationInputText] = useState<string>(initialConfirmationInputText);
 
   // Savings Rate Tiers State
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || []);
@@ -165,11 +178,47 @@ export default function PengaturanKoperasi({
     try {
       const data = await getLoanSettings(true);
       if (data) {
-        setMinRemainingThp(data.minRemainingThp);
-        setMinThpRatNotes(data.ratNotes);
+        if (initialMinRemainingThp === undefined) {
+          setMinRemainingThp(data.minRemainingThp);
+        }
+        if (initialOriginalMinThp === undefined && initialMinRemainingThp === undefined) {
+          setInitialMinThp(data.minRemainingThp);
+        }
+        if (initialMinThpRatNotes === undefined) {
+          setMinThpRatNotes(data.ratNotes);
+        }
       }
     } catch (err: any) {
       console.error('Failed to load loan settings:', err);
+    }
+  };
+
+  const executeSaveLoanSettings = async (val: number, notes: string) => {
+    setIsSavingLoanSettings(true);
+    try {
+      const res = await updateLoanSettings({
+        minRemainingThp: val,
+        ratNotes: notes.trim()
+      });
+
+      if (res.success && res.data) {
+        if (res.data.min_remaining_thp) {
+          setMinRemainingThp(res.data.min_remaining_thp);
+          setInitialMinThp(res.data.min_remaining_thp);
+        }
+        if (res.data.min_thp_rat_notes !== undefined) {
+          setMinThpRatNotes(res.data.min_thp_rat_notes);
+        }
+        showToast('Kebijakan kelayakan pinjaman berhasil diperbarui!', 'success');
+        setIsConfirmModalOpen(false);
+        setConfirmationInputText('');
+      } else {
+        showToast(res.error || 'Gagal menyimpan kebijakan kelayakan pinjaman', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Terjadi kesalahan sistem saat menyimpan kebijakan', 'error');
+    } finally {
+      setIsSavingLoanSettings(false);
     }
   };
 
@@ -181,29 +230,26 @@ export default function PengaturanKoperasi({
       return;
     }
 
-    setIsSavingLoanSettings(true);
-    try {
-      const res = await updateLoanSettings({
-        minRemainingThp: val,
-        ratNotes: minThpRatNotes.trim()
-      });
-
-      if (res.success && res.data) {
-        if (res.data.min_remaining_thp) {
-          setMinRemainingThp(res.data.min_remaining_thp);
-        }
-        if (res.data.min_thp_rat_notes !== undefined) {
-          setMinThpRatNotes(res.data.min_thp_rat_notes);
-        }
-        showToast('Kebijakan kelayakan pinjaman berhasil diperbarui!', 'success');
-      } else {
-        showToast(res.error || 'Gagal menyimpan kebijakan kelayakan pinjaman', 'error');
-      }
-    } catch (err: any) {
-      showToast(err.message || 'Terjadi kesalahan sistem saat menyimpan kebijakan', 'error');
-    } finally {
-      setIsSavingLoanSettings(false);
+    if (val === initialMinThp) {
+      await executeSaveLoanSettings(val, minThpRatNotes);
+      return;
     }
+
+    setConfirmationInputText('');
+    setIsConfirmModalOpen(true);
+  };
+
+  const handleConfirmCriticalThresholdChange = async () => {
+    if (confirmationInputText.trim().toUpperCase() !== 'SETUJU') {
+      return;
+    }
+    const val = Number(minRemainingThp);
+    await executeSaveLoanSettings(val, minThpRatNotes);
+  };
+
+  const handleCancelConfirmModal = () => {
+    setIsConfirmModalOpen(false);
+    setConfirmationInputText('');
   };
 
   const loadRateTiers = async () => {
@@ -1164,6 +1210,137 @@ export default function PengaturanKoperasi({
                     <>
                       <Save className="w-3.5 h-3.5" />
                       <span>Simpan Tarif</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Kebijakan Strategis (Keputusan RAT) */}
+      {isConfirmModalOpen && (
+        <div
+          data-testid="critical-confirm-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-amber-50/70">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-base">Konfirmasi Perubahan Batas Kelayakan Pinjaman</h3>
+                  <p className="text-xs text-amber-800 font-medium">Tindakan Kritis • Keputusan RAT</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCancelConfirmModal}
+                disabled={isSavingLoanSettings}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer disabled:opacity-50"
+                title="Tutup dialog"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmCriticalThresholdChange();
+              }}
+              className="p-6 space-y-5 text-sm"
+            >
+              {/* Peringatan Dampak */}
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <span className="font-bold text-rose-900 block mb-0.5">Peringatan Dampak Kritis:</span>
+                  Perubahan ini merupakan keputusan strategis hasil RAT. Angka baru ini akan langsung memengaruhi analisis kelayakan pengajuan pinjaman seluruh anggota selanjutnya.
+                </div>
+              </div>
+
+              {/* Badging & Diff Nominal */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2.5">
+                  Perbandingan Ambang Batas Minimum THP:
+                </div>
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3.5 rounded-lg border border-slate-200/80 shadow-2xs">
+                  <div className="w-full sm:w-auto text-center sm:text-left">
+                    <span className="block text-[11px] text-slate-400 font-medium">Nominal Lama</span>
+                    <span
+                      data-testid="diff-old-nominal"
+                      className="font-bold text-slate-700 text-sm line-through decoration-rose-500/70"
+                    >
+                      {formatRupiah(initialMinThp)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-center p-1.5 bg-slate-100 rounded-full text-slate-400">
+                    <ArrowRight className="w-4 h-4" />
+                  </div>
+                  <div className="w-full sm:w-auto text-center sm:text-right">
+                    <span className="block text-[11px] text-emerald-600 font-semibold">Nominal Baru</span>
+                    <span
+                      data-testid="diff-new-nominal"
+                      className="font-extrabold text-emerald-700 text-base"
+                    >
+                      {formatRupiah(minRemainingThp)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Type-to-Confirm Input */}
+              <div className="space-y-2">
+                <label htmlFor="confirmKeywordInput" className="block text-xs font-semibold text-slate-700">
+                  Ketik <span className="font-mono font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">SETUJU</span> untuk mengonfirmasi perubahan kebijakan:
+                </label>
+                <input
+                  id="confirmKeywordInput"
+                  data-testid="confirm-keyword-input"
+                  type="text"
+                  value={confirmationInputText}
+                  onChange={(e) => setConfirmationInputText(e.target.value)}
+                  placeholder="Ketik SETUJU di sini"
+                  className="w-full px-4 py-2.5 font-mono text-center uppercase tracking-widest text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-600 font-bold text-slate-800 transition-all placeholder:font-sans placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-400 text-center">
+                  Frasa verifikasi bersifat case-insensitive (huruf besar atau kecil diterima).
+                </p>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  data-testid="btn-cancel-critical-threshold"
+                  onClick={handleCancelConfirmModal}
+                  disabled={isSavingLoanSettings}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  data-testid="btn-confirm-critical-threshold"
+                  disabled={confirmationInputText.trim().toUpperCase() !== 'SETUJU' || isSavingLoanSettings}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isSavingLoanSettings ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Menerapkan Kebijakan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      <span>Konfirmasi & Terapkan Kebijakan</span>
                     </>
                   )}
                 </button>

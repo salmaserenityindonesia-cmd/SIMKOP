@@ -420,5 +420,92 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
         ratNotes: 'RAT 2026 penyesuaian inflasi'
       });
     });
+
+    describe('Modal Konfirmasi Tindakan Kritis (Keputusan RAT)', () => {
+      it('does not render confirmation modal by default when not triggered', () => {
+        const html = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialMinRemainingThp={1500000}
+            initialConfirmModalOpen={false}
+          />
+        );
+
+        expect(html).not.toContain('data-testid="critical-confirm-modal"');
+        expect(html).not.toContain('Konfirmasi Perubahan Batas Kelayakan Pinjaman');
+      });
+
+      it('renders modal with diff comparison, impact warning, and disabled button when keyword is empty', () => {
+        const html = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialOriginalMinThp={1500000}
+            initialMinRemainingThp={1000000}
+            initialConfirmModalOpen={true}
+            initialConfirmationInputText=""
+          />
+        );
+
+        expect(html).toContain('data-testid="critical-confirm-modal"');
+        expect(html).toContain('Konfirmasi Perubahan Batas Kelayakan Pinjaman');
+        expect(html).toContain('Tindakan Kritis • Keputusan RAT');
+        expect(html).toContain('Peringatan Dampak Kritis:');
+        expect(html).toContain(
+          'Perubahan ini merupakan keputusan strategis hasil RAT. Angka baru ini akan langsung memengaruhi analisis kelayakan pengajuan pinjaman seluruh anggota selanjutnya.'
+        );
+        expect(html).toContain('Nominal Lama');
+        expect(html).toContain('1.500.000');
+        expect(html).toContain('Nominal Baru');
+        expect(html).toContain('1.000.000');
+        expect(html).toContain('placeholder="Ketik SETUJU di sini"');
+        // Button is disabled when text is empty
+        expect(html).toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
+        expect(html).toContain('data-testid="btn-cancel-critical-threshold"');
+      });
+
+      it('enables the confirm button when confirmationInputText matches SETUJU (case-insensitive)', () => {
+        const htmlUpper = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialOriginalMinThp={1500000}
+            initialMinRemainingThp={1000000}
+            initialConfirmModalOpen={true}
+            initialConfirmationInputText="SETUJU"
+          />
+        );
+
+        // Button should not be disabled
+        expect(htmlUpper).toContain('data-testid="btn-confirm-critical-threshold"');
+        expect(htmlUpper).not.toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
+
+        const htmlLower = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialOriginalMinThp={1500000}
+            initialMinRemainingThp={1000000}
+            initialConfirmModalOpen={true}
+            initialConfirmationInputText="setuju"
+          />
+        );
+
+        // Case-insensitive: 'setuju' also unlocks the button
+        expect(htmlLower).toContain('data-testid="btn-confirm-critical-threshold"');
+        expect(htmlLower).not.toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
+      });
+
+      it('keeps the confirm button disabled when arbitrary text is typed', () => {
+        const html = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialOriginalMinThp={1500000}
+            initialMinRemainingThp={1000000}
+            initialConfirmModalOpen={true}
+            initialConfirmationInputText="OKE DEH"
+          />
+        );
+
+        expect(html).toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
+      });
+    });
   });
 });
