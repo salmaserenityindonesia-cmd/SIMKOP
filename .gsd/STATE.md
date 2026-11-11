@@ -1,14 +1,18 @@
-Created At: 2026-11-11T07:05:05+07:00
-Completed At: 2026-11-11T07:05:05+07:00
+Created At: 2026-11-11T07:56:58+07:00
+Completed At: 2026-11-11T07:56:58+07:00
 
 ## Current Position
-- **Phase**: 81
-- **Status**: ✅ Complete: Modularisasi & Pemisahan Monolith `koperasiService.ts` ke Domain Services Terpisah
+- **Phase**: 82 (completed)
+- **Task**: All tasks complete
+- **Status**: Verified
 
 ## Last Session Summary
-Phase 81 complete: Modularisasi & Pemisahan Monolith `koperasiService.ts` ke Domain Services Terpisah.
-- `src/services/purchaseInvoiceService.ts`: domain faktur pembelian, pencatatan restock, dan riwayat stok diekstrak lengkap beserta 6 unit test.
-- `src/services/depositManagementService.ts`: domain jenis simpanan, tagihan simpanan, auto-enrollment, mutasi, dan komitmen bulanan diekstrak lengkap beserta 8 unit test.
-- `src/services/memberService.ts`: konsolidasi master anggota, paged fetching (>1000 baris), agregasi simpanan, dan impor massal chunked diekstrak lengkap beserta 29 unit test.
-- `src/services/koperasiService.ts`: direfaktor menjadi fasad ramping (~480 baris dari sebelumnya 1.747 baris) dengan re-export menyeluruh yang 100% backward-compatible bagi 32+ file pemanggil.
-- Verifikasi komprehensif: 65 test files, 927 unit tests 100% PASS, `npx tsc --noEmit` exit 0, dan `npm run build` sukses.
+Phase 82 complete: Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan.
+- `supabase/migrations/045_add_min_remaining_thp_to_koperasi_profile.sql`: migrasi idempotent menambahkan kolom `min_remaining_thp` (default: 1.500.000) dan `min_thp_rat_notes` pada tabel `public.koperasi_profile`.
+- `src/services/settingsService.ts`: fungsi `getLoanSettings()` dan `updateLoanSettings()` dengan strategi persistensi multi-tier (Supabase `koperasi_profile` -> localStorage `KOPERASI_PROFILE_STORAGE_KEY` fallback -> default 1.500.000) dan pengujian unit komprehensif di `src/services/settingsService.test.ts`.
+- `src/pages/admin/PengaturanKoperasi.tsx`: kartu konfigurasi "Kebijakan Kelayakan Pinjaman (Keputusan RAT)" dengan input Rupiah dinamis, nomor SK/catatan ketetapan RAT, serta notifikasi toast.
+- `src/pages/admin/PengajuanPinjaman.tsx`: integrasi dinamis acuan sisa THP minimum pada kalkulasi kelayakan pinjaman, penentuan rekomendasi tenor, penyesuaian pesan visual box hijau & merah, dan proteksi validasi form. Disertai pengujian unit dinamis di `src/pages/admin/PengajuanPinjaman.test.tsx`.
+- Verifikasi independen (`gsd-verifier`): 5/5 must-haves verified (100% PASS), 65 test files, 930 unit tests PASS, `tsc --noEmit` exit 0, dan production build bundler sukses.
+
+## Next Steps
+All phases up to Phase 82 complete and verified. No remaining phases in roadmap.

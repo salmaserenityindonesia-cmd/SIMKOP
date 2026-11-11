@@ -6,7 +6,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 # Roadmap
 
-> **Current Phase:** 77 — Dukung Multi-Pinjaman Berjalan per Anggota pada Matriks Pinjaman (/admin/loan-matrix)
+> **Current Phase:** 82 — Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan
 > **Status:** ✅ Complete
 
 ## Must-Haves (from SPEC)
@@ -1453,6 +1453,25 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 82: Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan
+**Status:** ✅ Complete
+**Objective:** Menjadikan batas minimum sisa THP pada simulasi dan validasi pengajuan pinjaman bersifat dinamis sesuai keputusan RAT dengan menyediakan form konfigurasi di menu Pengaturan (`/admin/pengaturan`), persistensi database & offline fallback di `settingsService.ts` / `loanService.ts`, serta konsumsi otomatis di halaman `/admin/pengajuan-pinjaman`.
+**Depends on:** Phase 81
+
+**Plans:**
+- [x] Plan 82.1: Persistence Layer & Database Migration for Dynamic Minimum THP Setting
+- [x] Plan 82.2: Add Minimum THP Configuration Box in Pengaturan Page
+- [x] Plan 82.3: Bind Dynamic Threshold to Pengajuan Pinjaman & Verification
+
+**Deliverables:**
+- File migrasi `supabase/migrations/045_add_min_remaining_thp_to_koperasi_profile.sql`
+- Layanan pembacaan & penyimpanan `getLoanSettings()` dan `updateLoanSettings()` di `src/services/settingsService.ts`
+- Kartu konfigurasi Kebijakan Kelayakan Pinjaman (Keputusan RAT) di `src/pages/admin/PengaturanKoperasi.tsx`
+- Pengikatan ambang batas dinamis ke panel simulasi dan kelayakan pengajuan di `src/pages/admin/PengajuanPinjaman.tsx`
+- Rangkaian pengujian unit dan verifikasi build tanpa regresi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1595,6 +1614,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 79 | Migrasi Transaksi Simpan Pinjam ke Atomic RPC Supabase (approveLoan & recordRepayment) | ✅ | 3/3 | 100% |
 | 80 | Migrasi Restock Faktur Pembelian ke Atomic PostgreSQL RPC (create_purchase_invoice_atomic) | ✅ | 3/3 | 100% |
 | 81 | Modularisasi & Pemisahan Monolith koperasiService.ts ke Domain Services Terpisah | ✅ | 3/3 | 100% |
+| 82 | Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1683,6 +1703,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 79 | 2026-11-11 | 2026-11-11 | 1 day |
 | 80 | 2026-11-11 | 2026-11-11 | 1 day |
 | 81 | 2026-11-11 | 2026-11-11 | 1 day |
+| 82 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
