@@ -549,9 +549,16 @@ export async function getLebaranDisbursementCycles(): Promise<LebaranDisbursemen
  */
 export async function getLastCompletedLebaranCycle(): Promise<LebaranDisbursementCycle | null> {
   try {
-    const { data, error } = await supabase
-      .from('lebaran_disbursement_cycles')
-      .select('*')
+    const tableQuery: any = supabase.from('lebaran_disbursement_cycles');
+    if (!tableQuery || typeof tableQuery.select !== 'function') {
+      return null;
+    }
+    const selQuery = tableQuery.select('*');
+    if (!selQuery || typeof selQuery.eq !== 'function') {
+      return null;
+    }
+
+    const { data, error } = await selQuery
       .eq('status', 'COMPLETED')
       .order('cut_off_date', { ascending: false })
       .limit(1)

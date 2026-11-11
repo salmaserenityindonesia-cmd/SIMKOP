@@ -4,6 +4,7 @@ import {
   getApplicableRate,
   SavingsRateTier
 } from './savingsRateService';
+import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
 
 export const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
@@ -74,6 +75,7 @@ export interface ReconcileSingleMemberOptions {
   endYear?: number;
   memberDeposits?: any[];
   targetBalance?: number;
+  lastLebaranCutOffDate?: string | null;
 }
 
 export interface ReconcileSingleMemberResult {
@@ -125,6 +127,57 @@ export function isMonthBeforeJoin(
 
   return targetIndex < joinIndex;
 }
+
+/**
+ * Memeriksa apakah suatu periode (tahun, bulan) berada sebelum atau tepat pada tanggal cut-off siklus pencairan
+ */
+export function isMonthSettledByCutOff(
+  year: number,
+  month: number,
+  cutOffDate?: string | Date | null
+): boolean {
+  if (!cutOffDate) return false;
+  let cutOffYear: number;
+  let cutOffMonth: number;
+
+  if (typeof cutOffDate === 'string') {
+    const parts = cutOffDate.slice(0, 10).split('-');
+    if (parts.length >= 2) {
+      cutOffYear = parseInt(parts[0], 10);
+      cutOffMonth = parseInt(parts[1], 10);
+      if (isNaN(cutOffYear) || isNaN(cutOffMonth)) return false;
+    } else {
+      const d = new Date(cutOffDate);
+      if (isNaN(d.getTime())) return false;
+      cutOffYear = d.getFullYear();
+      cutOffMonth = d.getMonth() + 1;
+    }
+  } else {
+    if (isNaN(cutOffDate.getTime())) return false;
+    cutOffYear = cutOffDate.getFullYear();
+    cutOffMonth = cutOffDate.getMonth() + 1;
+  }
+
+  const targetIndex = year * 12 + month;
+  const cutOffIndex = cutOffYear * 12 + cutOffMonth;
+
+  return targetIndex <= cutOffIndex;
+}
+
+/**
+ * Helper untuk mengambil cut-off date siklus pencairan lebaran terakhir yang COMPLETED
+ */
+export async function getLastCompletedLebaranCutOff(): Promise<string | null> {
+  try {
+    const cycle = await getLastCompletedLebaranCycle();
+    return cycle?.cut_off_date || null;
+  } catch (err) {
+    console.warn('Gagal mengambil cut-off date lebaran terakhir:', err);
+    return null;
+  }
+}
+
+export { getLastCompletedLebaranCycle };
 
 /**
  * Menghasilkan daftar bulan dalam format grid (default terurut kronologis asc, atau desc)
@@ -198,7 +251,8 @@ export function calculateFifoAllocation(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
-  memberDepositId?: string
+  memberDepositId?: string,
+  cutOffDate?: string | Date | null
 ): FifoAllocationResult {
   if (targetBalance <= 0) {
     return {
@@ -222,6 +276,10 @@ export function calculateFifoAllocation(
   for (let i = 0; i < sortedMonths.length; i++) {
     const m = sortedMonths[i];
     if (isMonthBeforeJoin(m.year, m.month, joinDate)) {
+      continue;
+    }
+    // Abaikan bulan yang berada pada atau sebelum cut-off date jika tipe simpanan LEBARAN
+    if (depositTypeCode === 'LEBARAN' && isMonthSettledByCutOff(m.year, m.month, cutOffDate)) {
       continue;
     }
 
@@ -268,11 +326,31 @@ export function calculateFifoAllocation(
       nextMonth = lastProcessedMonth.month === 12 ? 1 : lastProcessedMonth.month + 1;
       nextKey = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
     } else {
-      const firstValid = sortedMonths.find(m => !isMonthBeforeJoin(m.year, m.month, joinDate));
+      const firstValid = sortedMonths.find(m => {
+        if (isMonthBeforeJoin(m.year, m.month, joinDate)) return false;
+        if (depositTypeCode === 'LEBARAN' && isMonthSettledByCutOff(m.year, m.month, cutOffDate)) return false;
+        return true;
+      });
       if (firstValid) {
         nextYear = firstValid.year;
         nextMonth = firstValid.month;
         nextKey = firstValid.key;
+      } else if (depositTypeCode === 'LEBARAN' && cutOffDate) {
+        let cYear = new Date().getFullYear();
+        let cMonth = new Date().getMonth() + 1;
+        if (typeof cutOffDate === 'string') {
+          const parts = cutOffDate.slice(0, 10).split('-');
+          if (parts.length >= 2) {
+            cYear = parseInt(parts[0], 10);
+            cMonth = parseInt(parts[1], 10);
+          }
+        } else {
+          cYear = cutOffDate.getFullYear();
+          cMonth = cutOffDate.getMonth() + 1;
+        }
+        nextYear = cMonth === 12 ? cYear + 1 : cYear;
+        nextMonth = cMonth === 12 ? 1 : cMonth + 1;
+        nextKey = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
       } else {
         const now = new Date();
         nextYear = now.getFullYear();
@@ -322,7 +400,7 @@ export function matchAutomaticFifo(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
-  options?: { includePartial?: boolean }
+  options?: { includePartial?: boolean; cutOffDate?: string | Date | null }
 ): string[] {
   const includePartial = options?.includePartial ?? true;
   const res = calculateFifoAllocation(
@@ -330,7 +408,9 @@ export function matchAutomaticFifo(
     months,
     depositTypeCode,
     rateTiers,
-    joinDate
+    joinDate,
+    undefined,
+    options?.cutOffDate
   );
   if (!includePartial && res.partialTransaction) {
     return res.matchedKeys.filter(k => k !== res.partialTransaction?.key);
@@ -389,6 +469,22 @@ export async function reconcileSingleMemberDeposit(
 
   const resolved = resolveDepositTypeCode(rawType);
   const targetType = (resolved || rawType.toUpperCase()) as 'WAJIB' | 'BELANJA' | 'LEBARAN';
+
+  // Dapatkan cut-off date simpanan lebaran jika memproses LEBARAN
+  let effectiveLebaranCutOff = options?.lastLebaranCutOffDate;
+  if (targetType === 'LEBARAN' && effectiveLebaranCutOff === undefined) {
+    try {
+      const cycle = await getLastCompletedLebaranCycle();
+      if (cycle && cycle.cut_off_date) {
+        effectiveLebaranCutOff = cycle.cut_off_date;
+      } else {
+        effectiveLebaranCutOff = null;
+      }
+    } catch (err) {
+      console.warn('Gagal memuat getLastCompletedLebaranCycle di reconcileSingleMemberDeposit:', err);
+      effectiveLebaranCutOff = null;
+    }
+  }
 
   // 1. Ambil master rate tiers jika tidak disediakan
   let rateTiers = options?.rateTiers;
@@ -591,34 +687,104 @@ export async function reconcileSingleMemberDeposit(
 
   const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
 
+  // Jika effectiveLebaranCutOff belum terisi, coba deteksi dari transaksi penarikan massal yang ada di txs
+  if (targetType === 'LEBARAN' && !effectiveLebaranCutOff) {
+    const massWithdrawalTx = txs.find((t: any) => {
+      const desc = (t.description || '').toLowerCase();
+      const notes = (t.notes || '').toLowerCase();
+      return (
+        t.transaction_type === 'withdrawal' &&
+        (desc.includes('pencairan') ||
+          desc.includes('lebaran') ||
+          desc.includes('thr') ||
+          notes.includes('pencairan') ||
+          notes.includes('lebaran'))
+      );
+    });
+    if (massWithdrawalTx) {
+      effectiveLebaranCutOff = massWithdrawalTx.transaction_date || massWithdrawalTx.created_at || null;
+    }
+  }
+
   // 5. Tentukan saldo impor/migrasi persis seperti alur modal individual
   let targetBalance = options?.targetBalance ?? 0;
   if (!targetBalance || targetBalance <= 0) {
-    const migrationTx = txs.find((t: any) => {
-      const d = (t.description || '').toLowerCase();
-      return (
-        d.includes('migra') ||
-        d.includes('saldo awal') ||
-        d.includes('historical') ||
-        d.includes('one-time') ||
-        d.includes('belum teralokasi')
-      );
-    });
-
-    if (migrationTx) {
-      targetBalance = Number(migrationTx.amount || 0);
-    } else {
-      let net = 0;
+    if (targetType === 'LEBARAN') {
+      let runningBalance = 0;
       for (const t of txs) {
         const amt = Number(t.amount || 0);
-        if (t.transaction_type === 'withdrawal') net -= amt;
-        else net += amt;
+        if (t.transaction_type === 'withdrawal') {
+          runningBalance -= amt;
+        } else {
+          runningBalance += amt;
+        }
       }
-      targetBalance = Math.max(0, net);
+      targetBalance = Math.max(0, runningBalance);
+    } else {
+      const migrationTx = txs.find((t: any) => {
+        const d = (t.description || '').toLowerCase();
+        return (
+          d.includes('migra') ||
+          d.includes('saldo awal') ||
+          d.includes('historical') ||
+          d.includes('one-time') ||
+          d.includes('belum teralokasi')
+        );
+      });
+
+      if (migrationTx) {
+        let totalWithdrawals = 0;
+        for (const t of txs) {
+          if (t.transaction_type === 'withdrawal') {
+            totalWithdrawals += Number(t.amount || 0);
+          }
+        }
+        targetBalance = Math.max(0, Number(migrationTx.amount || 0) - totalWithdrawals);
+      } else {
+        let net = 0;
+        for (const t of txs) {
+          const amt = Number(t.amount || 0);
+          if (t.transaction_type === 'withdrawal') net -= amt;
+          else net += amt;
+        }
+        targetBalance = Math.max(0, net);
+      }
     }
   }
 
   if (targetBalance <= 0) {
+    if (targetType === 'LEBARAN') {
+      const unsettledRoutineTxIds = txs
+        .filter((t: any) => {
+          if (t.transaction_type !== 'deposit') return false;
+          if (effectiveLebaranCutOff) {
+            if (t.for_year && t.for_month && isMonthSettledByCutOff(t.for_year, t.for_month, effectiveLebaranCutOff)) {
+              return false;
+            }
+            if (t.transaction_date && new Date(t.transaction_date) <= new Date(effectiveLebaranCutOff)) {
+              return false;
+            }
+            if (t.created_at && new Date(t.created_at) <= new Date(effectiveLebaranCutOff)) {
+              return false;
+            }
+          }
+          const desc = (t.description || '').toLowerCase();
+          return desc.includes('setoran matriks') || desc.includes('rekonsiliasi otomatis');
+        })
+        .map((t: any) => t.id)
+        .filter(Boolean);
+
+      if (unsettledRoutineTxIds.length > 0) {
+        try {
+          const delInQuery: any = supabase.from('deposit_transactions').delete();
+          if (typeof delInQuery.in === 'function') {
+            await delInQuery.in('id', unsettledRoutineTxIds);
+          }
+        } catch (e) {
+          console.warn('Gagal membersihkan mutasi LEBARAN unsettled:', e);
+        }
+      }
+    }
     return { success: true, memberDepositId: md.id, matchedKeys: [], insertedCount: 0 };
   }
 
@@ -641,7 +807,8 @@ export async function reconcileSingleMemberDeposit(
     targetType,
     rateTiers,
     effectiveJoin,
-    md.id
+    md.id,
+    targetType === 'LEBARAN' ? effectiveLebaranCutOff : undefined
   );
   const matchedKeys = fifoResult.matchedKeys;
 
@@ -659,6 +826,18 @@ export async function reconcileSingleMemberDeposit(
       ) {
         return false;
       }
+      // Khusus LEBARAN: lindungi seluruh transaksi yang berada pada atau sebelum cut-off date siklus selesai
+      if (targetType === 'LEBARAN' && effectiveLebaranCutOff) {
+        if (t.for_year && t.for_month && isMonthSettledByCutOff(t.for_year, t.for_month, effectiveLebaranCutOff)) {
+          return false;
+        }
+        if (t.transaction_date && new Date(t.transaction_date) <= new Date(effectiveLebaranCutOff)) {
+          return false;
+        }
+        if (t.created_at && new Date(t.created_at) <= new Date(effectiveLebaranCutOff)) {
+          return false;
+        }
+      }
       const y = t.for_year;
       return (y && y >= sYear && y <= eYear) || desc.includes('setoran matriks') || desc.includes('rekonsiliasi otomatis');
     })
@@ -673,23 +852,25 @@ export async function reconcileSingleMemberDeposit(
     }
   }
 
-  // Juga eksekusi query delete bermetode chained seperti modal jika didukung
-  const deleteQuery: any = supabase
-    .from('deposit_transactions')
-    .delete();
+  // Juga eksekusi query delete bermetode chained seperti modal jika didukung (hanya untuk non-LEBARAN atau tanpa cut-off)
+  if (targetType !== 'LEBARAN' || !effectiveLebaranCutOff) {
+    const deleteQuery: any = supabase
+      .from('deposit_transactions')
+      .delete();
 
-  if (typeof deleteQuery.eq === 'function') {
-    const eqQuery = deleteQuery.eq('member_deposit_id', md.id);
-    if (eqQuery && typeof eqQuery.gte === 'function') {
-      const gteQuery = eqQuery.gte('for_year', sYear);
-      if (gteQuery && typeof gteQuery.lte === 'function') {
-        const lteQuery = gteQuery.lte('for_year', eYear);
-        if (lteQuery && typeof lteQuery.eq === 'function') {
-          const typeQuery = lteQuery.eq('transaction_type', 'deposit');
-          if (typeQuery && typeof typeQuery.neq === 'function') {
-            await typeQuery.neq('description', 'Migrasi Saldo Awal (As-Is)');
-          } else if (typeQuery && typeof typeQuery.then === 'function') {
-            await typeQuery;
+    if (typeof deleteQuery.eq === 'function') {
+      const eqQuery = deleteQuery.eq('member_deposit_id', md.id);
+      if (eqQuery && typeof eqQuery.gte === 'function') {
+        const gteQuery = eqQuery.gte('for_year', sYear);
+        if (gteQuery && typeof gteQuery.lte === 'function') {
+          const lteQuery = gteQuery.lte('for_year', eYear);
+          if (lteQuery && typeof lteQuery.eq === 'function') {
+            const typeQuery = lteQuery.eq('transaction_type', 'deposit');
+            if (typeQuery && typeof typeQuery.neq === 'function') {
+              await typeQuery.neq('description', 'Migrasi Saldo Awal (As-Is)');
+            } else if (typeQuery && typeof typeQuery.then === 'function') {
+              await typeQuery;
+            }
           }
         }
       }
@@ -706,12 +887,24 @@ export async function reconcileSingleMemberDeposit(
             desc.includes('migra') ||
             desc.includes('saldo awal') ||
             desc.includes('belum teralokasi');
+          if (!isBulk) return false;
+          // Khusus LEBARAN: lindungi transaksi migrasi lampau yang sudah settled
+          if (targetType === 'LEBARAN' && effectiveLebaranCutOff) {
+            if (t.for_year && t.for_month && isMonthSettledByCutOff(t.for_year, t.for_month, effectiveLebaranCutOff)) {
+              return false;
+            }
+            if (t.transaction_date && new Date(t.transaction_date) <= new Date(effectiveLebaranCutOff)) {
+              return false;
+            }
+            if (t.created_at && new Date(t.created_at) <= new Date(effectiveLebaranCutOff)) {
+              return false;
+            }
+          }
           return (
-            isBulk &&
-            (t.for_month === null ||
-              t.for_month === undefined ||
-              desc.includes('saldo awal migrasi sistem') ||
-              desc.includes('belum teralokasi'))
+            t.for_month === null ||
+            t.for_month === undefined ||
+            desc.includes('saldo awal migrasi sistem') ||
+            desc.includes('belum teralokasi')
           );
         })
         .map((t: any) => t.id)
@@ -724,18 +917,20 @@ export async function reconcileSingleMemberDeposit(
         }
       }
 
-      const delQuery: any = supabase.from('deposit_transactions').delete();
-      if (typeof delQuery.eq === 'function') {
-        const eqQuery = delQuery.eq('member_deposit_id', md.id);
-        if (eqQuery && typeof eqQuery.is === 'function') {
-          const isQuery = eqQuery.is('for_month', null);
-          if (isQuery && typeof isQuery.ilike === 'function') {
-            await isQuery.ilike('description', '%migrasi%');
-          } else if (isQuery && typeof isQuery.then === 'function') {
-            await isQuery;
+      if (targetType !== 'LEBARAN' || !effectiveLebaranCutOff) {
+        const delQuery: any = supabase.from('deposit_transactions').delete();
+        if (typeof delQuery.eq === 'function') {
+          const eqQuery = delQuery.eq('member_deposit_id', md.id);
+          if (eqQuery && typeof eqQuery.is === 'function') {
+            const isQuery = eqQuery.is('for_month', null);
+            if (isQuery && typeof isQuery.ilike === 'function') {
+              await isQuery.ilike('description', '%migrasi%');
+            } else if (isQuery && typeof isQuery.then === 'function') {
+              await isQuery;
+            }
+          } else if (eqQuery && typeof eqQuery.then === 'function') {
+            await eqQuery;
           }
-        } else if (eqQuery && typeof eqQuery.then === 'function') {
-          await eqQuery;
         }
       }
     } catch (delBulkErr) {
@@ -745,24 +940,27 @@ export async function reconcileSingleMemberDeposit(
 
   // Enforce Clean Purge per Member Deposit Account:
   // Bersihkan seluruh transaksi ledger migrasi/rekonsiliasi lama pada akun deposit ini sebelum menyisipkan mutasi baru
-  try {
-    const delPurgeBuilder: any = supabase
-      .from('deposit_transactions')
-      .delete();
+  // Khusus LEBARAN dengan siklus selesai, hindari purge blanket agar mutasi masa lalu tidak terhapus
+  if (targetType !== 'LEBARAN' || !effectiveLebaranCutOff) {
+    try {
+      const delPurgeBuilder: any = supabase
+        .from('deposit_transactions')
+        .delete();
 
-    if (typeof delPurgeBuilder.eq === 'function') {
-      const eqBuilder = delPurgeBuilder.eq('member_deposit_id', md.id);
-      if (eqBuilder && typeof eqBuilder.or === 'function') {
-        const { error: delErr } = await eqBuilder.or(
-          'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%belum teralokasi%'
-        );
-        if (delErr) {
-          console.warn('Peringatan saat purge transaksi buku besar lama:', delErr);
+      if (typeof delPurgeBuilder.eq === 'function') {
+        const eqBuilder = delPurgeBuilder.eq('member_deposit_id', md.id);
+        if (eqBuilder && typeof eqBuilder.or === 'function') {
+          const { error: delErr } = await eqBuilder.or(
+            'description.ilike.%matriks%,description.ilike.%rekonsiliasi%,description.ilike.%migrasi%,description.ilike.%saldo awal%,description.ilike.%belum teralokasi%'
+          );
+          if (delErr) {
+            console.warn('Peringatan saat purge transaksi buku besar lama:', delErr);
+          }
         }
       }
+    } catch (purgeErr) {
+      console.warn('Exception saat purge transaksi buku besar lama:', purgeErr);
     }
-  } catch (purgeErr) {
-    console.warn('Exception saat purge transaksi buku besar lama:', purgeErr);
   }
 
   // 10. Simpan transaksi baru untuk setiap bulan yang dicocokkan FIFO
@@ -914,6 +1112,19 @@ export async function bulkAutoReconcileAllMembers(
     rateTiers = [];
   }
 
+  // Ambil siklus pencairan lebaran terakhir yang selesai sekali saja di awal untuk cache efisien
+  let lastLebaranCutOffDate: string | null = null;
+  if (typesToProcess.includes('LEBARAN')) {
+    try {
+      const lastCycle = await getLastCompletedLebaranCycle();
+      if (lastCycle && lastCycle.cut_off_date) {
+        lastLebaranCutOffDate = lastCycle.cut_off_date;
+      }
+    } catch (err) {
+      console.warn('Gagal memuat siklus lebaran terakhir di bulkAutoReconcileAllMembers:', err);
+    }
+  }
+
   let totalSuccess = 0;
   let totalFailed = 0;
   const errors: Array<{ memberId: string; memberName: string; error: string }> = [];
@@ -941,7 +1152,8 @@ export async function bulkAutoReconcileAllMembers(
           depTypes,
           joinDate: member.tgl_awal_anggota || member.created_at || null,
           startYear: options?.startYear,
-          endYear: options?.endYear
+          endYear: options?.endYear,
+          lastLebaranCutOffDate: targetType === 'LEBARAN' ? lastLebaranCutOffDate : undefined
         });
       }
       totalSuccess++;
@@ -1081,6 +1293,19 @@ export async function bulkCheckAllUpToCurrentMonth(
     rateTiers = [];
   }
 
+  // Ambil siklus pencairan lebaran terakhir yang selesai sekali saja di awal untuk cache efisien
+  let lastLebaranCutOffDate: string | null = null;
+  if (typesToProcess.includes('LEBARAN')) {
+    try {
+      const lastCycle = await getLastCompletedLebaranCycle();
+      if (lastCycle && lastCycle.cut_off_date) {
+        lastLebaranCutOffDate = lastCycle.cut_off_date;
+      }
+    } catch (err) {
+      console.warn('Gagal memuat siklus lebaran terakhir di bulkCheckAllUpToCurrentMonth:', err);
+    }
+  }
+
   let totalSuccess = 0;
   let totalFailed = 0;
   const BATCH_MEMBER_SIZE = 25;
@@ -1160,31 +1385,35 @@ export async function bulkCheckAllUpToCurrentMonth(
             continue;
           }
 
-          // Bersihkan transaksi alokasi bulanan lama
-          const delQuery: any = supabase.from('deposit_transactions').delete();
-          if (typeof delQuery.eq === 'function') {
-            const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
-            if (eqQuery && typeof eqQuery.not === 'function') {
-              await eqQuery.not('for_month', 'is', null);
-            } else if (eqQuery && typeof eqQuery.then === 'function') {
-              await eqQuery;
+          // Bersihkan transaksi alokasi bulanan lama (lindungi histori LEBARAN jika memiliki cut-off)
+          if (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate) {
+            const delQuery: any = supabase.from('deposit_transactions').delete();
+            if (typeof delQuery.eq === 'function') {
+              const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
+              if (eqQuery && typeof eqQuery.not === 'function') {
+                await eqQuery.not('for_month', 'is', null);
+              } else if (eqQuery && typeof eqQuery.then === 'function') {
+                await eqQuery;
+              }
             }
           }
 
           // Bersihkan saldo migrasi penampung belum teralokasi (for_month IS NULL) jika ada
-          try {
-            const delBulk: any = supabase.from('deposit_transactions').delete();
-            if (typeof delBulk.eq === 'function') {
-              const eqBulk = delBulk.eq('member_deposit_id', memberDepositId);
-              if (eqBulk && typeof eqBulk.is === 'function') {
-                const isBulk = eqBulk.is('for_month', null);
-                if (isBulk && typeof isBulk.then === 'function') {
-                  await isBulk;
+          if (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate) {
+            try {
+              const delBulk: any = supabase.from('deposit_transactions').delete();
+              if (typeof delBulk.eq === 'function') {
+                const eqBulk = delBulk.eq('member_deposit_id', memberDepositId);
+                if (eqBulk && typeof eqBulk.is === 'function') {
+                  const isBulk = eqBulk.is('for_month', null);
+                  if (isBulk && typeof isBulk.then === 'function') {
+                    await isBulk;
+                  }
                 }
               }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
           }
 
           // Susun mutasi baru dari bulan bergabung sampai bulan berjalan saat ini
@@ -1194,6 +1423,11 @@ export async function bulkCheckAllUpToCurrentMonth(
             const endM = (y === currentYear) ? currentMonth : 12;
 
             for (let mon = startM; mon <= endM; mon++) {
+              // Abaikan bulan yang berada pada atau sebelum cut-off date jika tipe simpanan LEBARAN
+              if (typeCode === 'LEBARAN' && isMonthSettledByCutOff(y, mon, lastLebaranCutOffDate)) {
+                continue;
+              }
+
               const rateAmount = getApplicableRate(typeCode, y, mon, rateTiers) || 200000;
 
               txsToInsert.push({
