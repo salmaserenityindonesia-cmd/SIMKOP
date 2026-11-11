@@ -34,6 +34,7 @@ export interface SavingsTemplateRow {
   nrp: string;
   nama: string;
   nomor_rekening: string;
+  bank_account_number?: string;
   bulan: number;
   tahun: number;
   kode_simpanan: string;
@@ -47,6 +48,7 @@ export interface MemberBatchItem {
   nama: string;
   bank_account_number?: string | null;
   status?: string;
+  jumlah_simpanan_pokok?: number | null;
 }
 
 export interface DepositTypeItem {
@@ -127,12 +129,25 @@ export function buildSavingsTemplateRows(
     return undefined;
   };
 
-  const effectivePokokTarget = Number(pokokTargetAmount) > 0 ? Number(pokokTargetAmount) : 10000;
+  let effectivePokokTarget = Number(pokokTargetAmount) > 0 ? Number(pokokTargetAmount) : 0;
+  if (effectivePokokTarget <= 0) {
+    const rateFromTier = rateTiers ? getApplicableRate('POKOK', year, month, rateTiers) : 0;
+    if (rateFromTier > 0) {
+      effectivePokokTarget = rateFromTier;
+    } else {
+      const dtPokok = depositTypes.find(dt => isPokokDepositType(dt));
+      if (dtPokok?.default_amount && Number(dtPokok.default_amount) > 0) {
+        effectivePokokTarget = Number(dtPokok.default_amount);
+      } else {
+        effectivePokokTarget = 10000;
+      }
+    }
+  }
 
   for (const m of members) {
     const memberDeps = deposits.filter(d => d.member_id === m.id);
 
-    // 1. Akumulasi pembayaran Simpanan Pokok historis
+    // 1. Akumulasi pembayaran Simpanan Pokok historis & profil
     const memberPokokDeps = memberDeps.filter(dep => isPokokDepositType(getDepositTypeInfo(dep)));
     const memberPokokDepIds = new Set(memberPokokDeps.map(dep => dep.id));
 
@@ -145,11 +160,15 @@ export function buildSavingsTemplateRows(
       if (tx.transaction_type === 'withdrawal') {
         return sum - amt;
       }
-      return sum + amt;
+      if (!tx.transaction_type || tx.transaction_type === 'deposit') {
+        return sum + amt;
+      }
+      return sum;
     }, 0);
 
-    const effectivePaidPokok = Math.max(0, paidPokok);
-    const isPokokLunas = effectivePaidPokok >= effectivePokokTarget;
+    const profilePokok = Number(m.jumlah_simpanan_pokok) || 0;
+    const totalPokokPaid = Math.max(0, Math.max(paidPokok, profilePokok));
+    const isPokokLunas = totalPokokPaid >= effectivePokokTarget;
 
     // 2. Baris Simpanan Rutin Bulanan
     const memberRecurringDeps = memberDeps.filter(dep => {
@@ -188,6 +207,7 @@ export function buildSavingsTemplateRows(
           nrp: m.nrp,
           nama: m.nama,
           nomor_rekening: m.bank_account_number || '-',
+          bank_account_number: m.bank_account_number || '-',
           bulan: month,
           tahun: year,
           kode_simpanan: typeCode,
@@ -208,6 +228,7 @@ export function buildSavingsTemplateRows(
           nrp: m.nrp,
           nama: m.nama,
           nomor_rekening: m.bank_account_number || '-',
+          bank_account_number: m.bank_account_number || '-',
           bulan: month,
           tahun: year,
           kode_simpanan: code,
@@ -219,15 +240,16 @@ export function buildSavingsTemplateRows(
 
     // 3. Pengecekan Kondisional Pokok
     if (!isPokokLunas) {
-      const sisaPokok = Math.max(0, effectivePokokTarget - effectivePaidPokok);
+      const sisaPokok = Math.max(0, effectivePokokTarget - totalPokokPaid);
       rows.push({
         nrp: m.nrp,
         nama: m.nama,
         nomor_rekening: m.bank_account_number || '-',
+        bank_account_number: m.bank_account_number || '-',
         bulan: month,
         tahun: year,
         kode_simpanan: 'POKOK',
-        telah_dibayar: effectivePaidPokok,
+        telah_dibayar: totalPokokPaid,
         jumlah_bayar: sisaPokok
       });
     }
@@ -257,10 +279,24 @@ export const generateSavingsBatchTemplate = async (
     { header: 'Jumlah Bayar', key: 'jumlah_bayar', width: 20 },
   ];
 
-  const { data: members, error: mErr } = await supabase
+  let members: MemberBatchItem[] = [];
+  const { data: membersData, error: mErr } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, bank_account_number')
+    .select('id, nrp, nama, bank_account_number, jumlah_simpanan_pokok')
     .eq('status', 'aktif');
+
+  if (mErr) {
+    const { data: fallbackMembers, error: fbErr } = await supabase
+      .from('anggota')
+      .select('id, nrp, nama, bank_account_number')
+      .eq('status', 'aktif');
+    if (fbErr) {
+      console.error("Error fetching anggota:", fbErr);
+    }
+    members = (fallbackMembers || []) as MemberBatchItem[];
+  } else {
+    members = (membersData || []) as MemberBatchItem[];
+  }
 
   const { data: deposits, error: dErr } = await supabase
     .from('member_deposits')
@@ -276,8 +312,8 @@ export const generateSavingsBatchTemplate = async (
     .eq('for_month', month)
     .eq('for_year', year);
 
-  if (mErr || dErr || tErr || dtErr) {
-    console.error("Error fetching savings batch template data:", { mErr, dErr, tErr, dtErr });
+  if (dErr || tErr || dtErr) {
+    console.error("Error fetching savings batch template data:", { dErr, tErr, dtErr });
   }
 
   const rateTiers = await getRateTiers(undefined, false).catch(() => []);
@@ -285,7 +321,13 @@ export const generateSavingsBatchTemplate = async (
   // Ambil nominal tarif Simpanan Pokok aktif
   let pokokTargetAmount = await getActivePokokTariff().catch(() => 0);
   if (!pokokTargetAmount || pokokTargetAmount <= 0) {
-    pokokTargetAmount = getApplicableRate('POKOK', year, month, rateTiers) || 10000;
+    pokokTargetAmount = getApplicableRate('POKOK', year, month, rateTiers);
+  }
+  if (!pokokTargetAmount || pokokTargetAmount <= 0) {
+    const matchedDt = (depositTypes || []).find(t => isPokokDepositType(t));
+    pokokTargetAmount = matchedDt?.default_amount && Number(matchedDt.default_amount) > 0
+      ? Number(matchedDt.default_amount)
+      : 10000;
   }
 
   // Ambil riwayat setoran pokok dari semua rekening simpanan pokok anggota

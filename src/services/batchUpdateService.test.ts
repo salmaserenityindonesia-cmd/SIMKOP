@@ -324,6 +324,135 @@ describe('batchUpdateService - Conditional Pokok Logic & Template Generation', (
       expect(rows[3].telah_dibayar).toBe(0);
       expect(rows[3].jumlah_bayar).toBe(100000);
     });
+
+    it('mengakui pelunasan Simpanan Pokok seumur hidup dari saldo awal profil anggota (jumlah_simpanan_pokok) tanpa transaksi di tabel deposit_transactions', () => {
+      const memberProfilLunas: MemberBatchItem = {
+        id: 'm-profil-lunas',
+        nrp: '10009',
+        nama: 'Kusuma Wardani',
+        bank_account_number: '111222333',
+        status: 'aktif',
+        jumlah_simpanan_pokok: 100000,
+      };
+
+      const deposits: MemberDepositItem[] = [
+        { id: 'dep-p-9', member_id: 'm-profil-lunas', deposit_types: mockDepositTypes[0] }, // POKOK
+        { id: 'dep-w-9', member_id: 'm-profil-lunas', deposit_types: mockDepositTypes[1] }, // WAJIB
+        { id: 'dep-l-9', member_id: 'm-profil-lunas', deposit_types: mockDepositTypes[2] }, // LEBARAN
+        { id: 'dep-b-9', member_id: 'm-profil-lunas', deposit_types: mockDepositTypes[3] }, // BELANJA
+      ];
+
+      // Tidak ada mutasi di tabel deposit_transactions
+      const rows = buildSavingsTemplateRows(
+        [memberProfilLunas],
+        deposits,
+        mockDepositTypes,
+        [],
+        [],
+        100000,
+        11,
+        2026
+      );
+
+      // Karena profil anggota sudah mencatat 100.000 (>= target 100.000), baris POKOK tidak boleh muncul
+      expect(rows).toHaveLength(3);
+      expect(rows.map(r => r.kode_simpanan)).toEqual(['WAJIB', 'LEBARAN', 'BELANJA']);
+    });
+
+    it('menggunakan fallback batas tarif Simpanan Pokok default 10.000 jika pokokTargetAmount tidak dispesifikasi / 0', () => {
+      const member1: MemberBatchItem = {
+        id: 'm-f1',
+        nrp: '20001',
+        nama: 'Dedi Sutrisno',
+      };
+      const member2: MemberBatchItem = {
+        id: 'm-f2',
+        nrp: '20002',
+        nama: 'Eko Prasetyo',
+      };
+
+      const deposits: MemberDepositItem[] = [
+        { id: 'dep-p-f1', member_id: 'm-f1', deposit_types: { id: 'dt-p', code: 'POKOK' } },
+        { id: 'dep-p-f2', member_id: 'm-f2', deposit_types: { id: 'dt-p', code: 'POKOK' } },
+      ];
+
+      // Dedi sudah bayar 10.000 (lunas pada tarif default 10.000)
+      // Eko baru bayar 3.000 (sisa 7.000 pada tarif default 10.000)
+      const allPokokTxs: DepositTransactionItem[] = [
+        { member_deposit_id: 'dep-p-f1', amount: 10000, transaction_type: 'deposit' },
+        { member_deposit_id: 'dep-p-f2', amount: 3000, transaction_type: 'deposit' },
+      ];
+
+      const rows = buildSavingsTemplateRows(
+        [member1, member2],
+        deposits,
+        [], // tidak ada depositTypes dengan default_amount
+        [],
+        allPokokTxs,
+        0, // pokokTargetAmount = 0 -> memicu fallback default 10.000
+        11,
+        2026
+      );
+
+      // Dedi: 3 baris rutin standar (lunas pokok, jadi tidak ada baris POKOK)
+      const dediRows = rows.filter(r => r.nrp === '20001');
+      expect(dediRows).toHaveLength(3);
+      expect(dediRows.map(r => r.kode_simpanan)).toEqual(['WAJIB', 'LEBARAN', 'BELANJA']);
+
+      // Eko: 3 baris rutin standar + 1 baris POKOK (telah_dibayar: 3000, jumlah_bayar: 7000)
+      const ekoRows = rows.filter(r => r.nrp === '20002');
+      expect(ekoRows).toHaveLength(4);
+      expect(ekoRows.map(r => r.kode_simpanan)).toEqual(['WAJIB', 'LEBARAN', 'BELANJA', 'POKOK']);
+      const ekoPokok = ekoRows.find(r => r.kode_simpanan === 'POKOK');
+      expect(ekoPokok?.telah_dibayar).toBe(3000);
+      expect(ekoPokok?.jumlah_bayar).toBe(7000);
+    });
+
+    it('menggunakan ambang batas tarif Simpanan Pokok aktif dari rateTiers jika pokokTargetAmount = 0', () => {
+      const customRateTiers = [
+        {
+          id: 'tier-p-1',
+          deposit_type_code: 'POKOK',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 250000,
+        },
+      ];
+
+      const member: MemberBatchItem = {
+        id: 'm-tier',
+        nrp: '30001',
+        nama: 'Hendra Gunawan',
+      };
+
+      const deposits: MemberDepositItem[] = [
+        { id: 'dep-p-tier', member_id: 'm-tier', deposit_types: { id: 'dt-p', code: 'POKOK' } },
+      ];
+
+      // Hendra baru bayar 100.000 (belum lunas karena tarif aktif = 250.000)
+      const allPokokTxs: DepositTransactionItem[] = [
+        { member_deposit_id: 'dep-p-tier', amount: 100000, transaction_type: 'deposit' },
+      ];
+
+      const rows = buildSavingsTemplateRows(
+        [member],
+        deposits,
+        [],
+        [],
+        allPokokTxs,
+        0,
+        11,
+        2026,
+        customRateTiers
+      );
+
+      const pokokRow = rows.find(r => r.kode_simpanan === 'POKOK');
+      expect(pokokRow).toBeDefined();
+      expect(pokokRow?.telah_dibayar).toBe(100000);
+      expect(pokokRow?.jumlah_bayar).toBe(150000); // 250.000 - 100.000
+    });
   });
 
   describe('generateSavingsBatchTemplate', () => {
@@ -400,6 +529,80 @@ describe('batchUpdateService - Conditional Pokok Logic & Template Generation', (
       expect(rows).toHaveLength(2);
       expect(rows[1].kode_simpanan).toBe('POKOK');
       expect(rows[1].jumlah_bayar).toBe(100000);
+    });
+
+    it('menyaring keluar baris POKOK ketika simpanan pokok anggota telah lunas seumur hidup di database', async () => {
+      vi.spyOn(savingsRateService, 'getRateTiers').mockResolvedValue([]);
+      vi.spyOn(savingsRateService, 'getActivePokokTariff').mockResolvedValue(10000);
+
+      vi.spyOn(supabase, 'from').mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-lunas', nrp: '1002', nama: 'Siti Rahma', bank_account_number: '456', status: 'aktif' }],
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'md-wajib-2',
+                  member_id: 'm-lunas',
+                  deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 50000 },
+                },
+                {
+                  id: 'md-pokok-2',
+                  member_id: 'm-lunas',
+                  deposit_types: { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 10000 },
+                },
+              ],
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 50000 },
+                { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 10000 },
+              ],
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({
+                  data: [],
+                  error: null,
+                }),
+              }),
+              in: vi.fn().mockResolvedValue({
+                // Riwayat pembayaran pokok sudah lunas (10.000 >= target 10.000)
+                data: [{ id: 'tx-p-1', member_deposit_id: 'md-pokok-2', amount: 10000, transaction_type: 'deposit' }],
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+      });
+
+      const { workbook, rows } = await generateSavingsBatchTemplate(11, 2026);
+
+      expect(workbook).toBeDefined();
+      // Anggota sudah lunas pokok, jadi HANYA menghasilkan 1 baris (WAJIB), tanpa baris POKOK
+      expect(rows).toHaveLength(1);
+      expect(rows[0].kode_simpanan).toBe('WAJIB');
+      expect(rows.some(r => r.kode_simpanan === 'POKOK')).toBe(false);
     });
   });
 
