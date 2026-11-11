@@ -37,6 +37,8 @@ export interface LoanMatrixMember {
   totalLoans: number;
   months: Record<number, LoanMatrixMonth>;
   complianceYTD: number;
+  priorYearPaid?: number;
+  priorYearRemaining?: number;
   anggota?: { id: string; nrp: string; nama: string; pangkat?: string };
   loan_types?: { id: string; code: string; name: string };
 }
@@ -145,6 +147,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   // To track running balance per loan
   const loanBalances: Record<string, number> = {};
   const loanCumulativePaid: Record<string, number> = {};
+  const loanPriorYearPaid: Record<string, number> = {};
 
   (schedules || []).forEach((sched: any) => {
     const loan = sched.loan;
@@ -155,6 +158,15 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     const dueDate = new Date(sched.due_date);
     const month = dueDate.getMonth() + 1;
     const scheduleYear = dueDate.getFullYear();
+    const parsedYear = sched.due_date ? parseInt(String(sched.due_date).substring(0, 4), 10) : scheduleYear;
+    const isBeforeSelectedYear = (parsedYear < year) || (sched.due_date && sched.due_date < startOfYear);
+
+    if (loanPriorYearPaid[loan.id] === undefined) {
+      loanPriorYearPaid[loan.id] = 0;
+    }
+    if (isBeforeSelectedYear) {
+      loanPriorYearPaid[loan.id] += Number(sched.paid_amount || 0);
+    }
 
     // Initialize running balance for this loan if not exists
     // Expected total is tenor * monthly_target (or fallback to principal_amount)
@@ -193,6 +205,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         totalLoans: 1,
         months: {},
         complianceYTD: 0,
+        priorYearPaid: 0,
+        priorYearRemaining: 0,
         anggota: member,
         loan_types: loanType,
       };
@@ -308,6 +322,10 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
            row.months[i].status = 'FINISHED';
        }
     }
+
+    const priorPaid = loanPriorYearPaid[row.id || row.loanId || ''] || 0;
+    row.priorYearPaid = priorPaid;
+    row.priorYearRemaining = Math.max(0, Number(row.principalAmount || 0) - priorPaid);
   });
 
   const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 100;

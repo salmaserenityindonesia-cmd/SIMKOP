@@ -316,6 +316,185 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(decCell.paidAmount).toBe(0);
     expect(decCell.cumulativePaidAmount).toBeUndefined();
   });
+
+  it('calculates priorYearPaid and priorYearRemaining correctly for loans spanning multiple years', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [
+                      { loan_id: 'loan-prior-1' },
+                      { loan_id: 'loan-new-2' },
+                      { loan_id: 'loan-overpaid-3' },
+                    ],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    // Loan 1: Prior year payments in 2025 (total 2,000,000 out of 10,000,000 principal)
+                    {
+                      id: 's-1',
+                      period_number: 1,
+                      due_date: '2025-11-10',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-prior-1',
+                        loan_number: 'PINJ-2025-001',
+                        principal_amount: 10000000,
+                        tenor: 10,
+                        monthly_target: 1000000,
+                        status: 'active',
+                        member: { id: 'mem-1', nrp: '111', nama: 'Prajurit Satu' },
+                      },
+                    },
+                    {
+                      id: 's-2',
+                      period_number: 2,
+                      due_date: '2025-12-10',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-prior-1',
+                        loan_number: 'PINJ-2025-001',
+                        principal_amount: 10000000,
+                        tenor: 10,
+                        monthly_target: 1000000,
+                        status: 'active',
+                        member: { id: 'mem-1', nrp: '111', nama: 'Prajurit Satu' },
+                      },
+                    },
+                    {
+                      id: 's-3',
+                      period_number: 3,
+                      due_date: '2026-01-10',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-prior-1',
+                        loan_number: 'PINJ-2025-001',
+                        principal_amount: 10000000,
+                        tenor: 10,
+                        monthly_target: 1000000,
+                        status: 'active',
+                        member: { id: 'mem-1', nrp: '111', nama: 'Prajurit Satu' },
+                      },
+                    },
+                    // Loan 2: New loan starting in 2026 (no prior year payments, 5,000,000 principal)
+                    {
+                      id: 's-4',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-new-2',
+                        loan_number: 'PINJ-2026-002',
+                        principal_amount: 5000000,
+                        tenor: 5,
+                        monthly_target: 1000000,
+                        status: 'active',
+                        member: { id: 'mem-2', nrp: '222', nama: 'Prajurit Dua' },
+                      },
+                    },
+                    // Loan 3: Overpaid in prior year (3,500,000 paid vs 3,000,000 principal)
+                    {
+                      id: 's-5',
+                      period_number: 1,
+                      due_date: '2025-10-15',
+                      target_amount: 1500000,
+                      paid_amount: 1500000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-overpaid-3',
+                        loan_number: 'PINJ-2025-003',
+                        principal_amount: 3000000,
+                        tenor: 2,
+                        monthly_target: 1500000,
+                        status: 'active',
+                        member: { id: 'mem-3', nrp: '333', nama: 'Prajurit Tiga' },
+                      },
+                    },
+                    {
+                      id: 's-6',
+                      period_number: 2,
+                      due_date: '2025-11-15',
+                      target_amount: 1500000,
+                      paid_amount: 2000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-overpaid-3',
+                        loan_number: 'PINJ-2025-003',
+                        principal_amount: 3000000,
+                        tenor: 2,
+                        monthly_target: 1500000,
+                        status: 'active',
+                        member: { id: 'mem-3', nrp: '333', nama: 'Prajurit Tiga' },
+                      },
+                    },
+                    {
+                      id: 's-7',
+                      period_number: 3,
+                      due_date: '2026-01-20',
+                      target_amount: 500000,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      loan: {
+                        id: 'loan-overpaid-3',
+                        loan_number: 'PINJ-2025-003',
+                        principal_amount: 3000000,
+                        tenor: 3,
+                        monthly_target: 500000,
+                        status: 'active',
+                        member: { id: 'mem-3', nrp: '333', nama: 'Prajurit Tiga' },
+                      },
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members.length).toBe(3);
+
+    const rowLoan1 = summary.members.find(m => m.loanId === 'loan-prior-1');
+    expect(rowLoan1).toBeDefined();
+    expect(rowLoan1?.principalAmount).toBe(10000000);
+    expect(rowLoan1?.priorYearPaid).toBe(2000000);
+    expect(rowLoan1?.priorYearRemaining).toBe(8000000);
+
+    const rowLoan2 = summary.members.find(m => m.loanId === 'loan-new-2');
+    expect(rowLoan2).toBeDefined();
+    expect(rowLoan2?.principalAmount).toBe(5000000);
+    expect(rowLoan2?.priorYearPaid).toBe(0);
+    expect(rowLoan2?.priorYearRemaining).toBe(5000000);
+
+    const rowLoan3 = summary.members.find(m => m.loanId === 'loan-overpaid-3');
+    expect(rowLoan3).toBeDefined();
+    expect(rowLoan3?.principalAmount).toBe(3000000);
+    expect(rowLoan3?.priorYearPaid).toBe(3500000);
+    // priorYearRemaining must not be negative: Math.max(0, 3000000 - 3500000) === 0
+    expect(rowLoan3?.priorYearRemaining).toBe(0);
+  });
 });
 
 describe('loanMatrixService - cumulativePaidAmount & getCumulativePaidUpToMonth', () => {
