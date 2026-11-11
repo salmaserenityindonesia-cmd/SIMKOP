@@ -7,6 +7,21 @@ import {
   PayScheduleResult,
   MakePaymentResult
 } from '../types/loan';
+import {
+  getLoanSettings,
+  updateLoanSettings,
+  DEFAULT_MIN_REMAINING_THP,
+  DEFAULT_RAT_NOTES,
+  type LoanSettings
+} from './settingsService';
+
+export {
+  getLoanSettings,
+  updateLoanSettings,
+  DEFAULT_MIN_REMAINING_THP,
+  DEFAULT_RAT_NOTES,
+  type LoanSettings
+};
 
 export interface Loan {
   id: string;
@@ -750,5 +765,8 @@ export const loanService = {
     }
     
     return { success: true };
-  }
+  },
+
+  getLoanSettings,
+  updateLoanSettings
 };

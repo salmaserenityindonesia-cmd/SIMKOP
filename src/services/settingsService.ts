@@ -8,7 +8,17 @@ export interface KoperasiProfile {
   terminal_name: string;
   footer_notes: string;
   logo_url?: string | null;
+  min_remaining_thp?: number;
+  min_thp_rat_notes?: string;
   updated_at?: string;
+}
+
+export const DEFAULT_MIN_REMAINING_THP = 1500000;
+export const DEFAULT_RAT_NOTES = 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.000';
+
+export interface LoanSettings {
+  minRemainingThp: number;
+  ratNotes?: string;
 }
 
 export const DEFAULT_KOPERASI_PROFILE: KoperasiProfile = {
@@ -18,7 +28,9 @@ export const DEFAULT_KOPERASI_PROFILE: KoperasiProfile = {
   telepon: '(0354)7654321',
   terminal_name: 'POS Terminal #01',
   footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan',
-  logo_url: null
+  logo_url: null,
+  min_remaining_thp: DEFAULT_MIN_REMAINING_THP,
+  min_thp_rat_notes: DEFAULT_RAT_NOTES
 };
 
 export const KOPERASI_PROFILE_STORAGE_KEY = 'simkop_koperasi_profile';
@@ -53,9 +65,12 @@ export function getStoredLocalProfile(): KoperasiProfile | null {
       const stored = storage.getItem(KOPERASI_PROFILE_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as KoperasiProfile;
+        const rawMin = Number(parsed.min_remaining_thp);
         return {
           ...parsed,
-          logo_url: parsed.logo_url ?? null
+          logo_url: parsed.logo_url ?? null,
+          min_remaining_thp: !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP,
+          min_thp_rat_notes: parsed.min_thp_rat_notes ?? DEFAULT_RAT_NOTES
         };
       }
     }
@@ -117,6 +132,7 @@ export async function getKoperasiProfile(forceRefresh: boolean = false): Promise
     }
 
     if (data) {
+      const rawMin = Number(data.min_remaining_thp);
       cachedProfile = {
         id: data.id,
         nama_koperasi: data.nama_koperasi || DEFAULT_KOPERASI_PROFILE.nama_koperasi,
@@ -125,6 +141,8 @@ export async function getKoperasiProfile(forceRefresh: boolean = false): Promise
         terminal_name: data.terminal_name || DEFAULT_KOPERASI_PROFILE.terminal_name,
         footer_notes: data.footer_notes !== undefined && data.footer_notes !== null ? data.footer_notes : DEFAULT_KOPERASI_PROFILE.footer_notes,
         logo_url: data.logo_url !== undefined ? data.logo_url : DEFAULT_KOPERASI_PROFILE.logo_url,
+        min_remaining_thp: !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP,
+        min_thp_rat_notes: data.min_thp_rat_notes !== undefined && data.min_thp_rat_notes !== null ? data.min_thp_rat_notes : DEFAULT_RAT_NOTES,
         updated_at: data.updated_at
       };
       // Keep localStorage in sync with cloud
@@ -159,12 +177,18 @@ export async function updateKoperasiProfile(
 ): Promise<UpdateKoperasiProfileResult> {
   const normalizedData: KoperasiProfile = {
     id: 1,
-    nama_koperasi: payload.nama_koperasi !== undefined ? payload.nama_koperasi.trim() : DEFAULT_KOPERASI_PROFILE.nama_koperasi,
-    alamat: payload.alamat !== undefined ? payload.alamat.trim() : DEFAULT_KOPERASI_PROFILE.alamat,
-    telepon: payload.telepon !== undefined ? payload.telepon.trim() : DEFAULT_KOPERASI_PROFILE.telepon,
-    terminal_name: payload.terminal_name !== undefined ? payload.terminal_name.trim() : DEFAULT_KOPERASI_PROFILE.terminal_name,
-    footer_notes: payload.footer_notes !== undefined ? payload.footer_notes.trim() : DEFAULT_KOPERASI_PROFILE.footer_notes,
+    nama_koperasi: payload.nama_koperasi !== undefined ? payload.nama_koperasi.trim() : (cachedProfile?.nama_koperasi ?? DEFAULT_KOPERASI_PROFILE.nama_koperasi),
+    alamat: payload.alamat !== undefined ? payload.alamat.trim() : (cachedProfile?.alamat ?? DEFAULT_KOPERASI_PROFILE.alamat),
+    telepon: payload.telepon !== undefined ? payload.telepon.trim() : (cachedProfile?.telepon ?? DEFAULT_KOPERASI_PROFILE.telepon),
+    terminal_name: payload.terminal_name !== undefined ? payload.terminal_name.trim() : (cachedProfile?.terminal_name ?? DEFAULT_KOPERASI_PROFILE.terminal_name),
+    footer_notes: payload.footer_notes !== undefined ? payload.footer_notes.trim() : (cachedProfile?.footer_notes ?? DEFAULT_KOPERASI_PROFILE.footer_notes),
     logo_url: payload.logo_url !== undefined ? payload.logo_url : (cachedProfile?.logo_url ?? DEFAULT_KOPERASI_PROFILE.logo_url),
+    min_remaining_thp: payload.min_remaining_thp !== undefined
+      ? (Number(payload.min_remaining_thp) > 0 ? Number(payload.min_remaining_thp) : DEFAULT_MIN_REMAINING_THP)
+      : (cachedProfile?.min_remaining_thp ?? DEFAULT_MIN_REMAINING_THP),
+    min_thp_rat_notes: payload.min_thp_rat_notes !== undefined
+      ? payload.min_thp_rat_notes.trim()
+      : (cachedProfile?.min_thp_rat_notes ?? DEFAULT_RAT_NOTES),
     updated_at: new Date().toISOString()
   };
 
@@ -207,6 +231,7 @@ export async function updateKoperasiProfile(
       };
     }
 
+    const rawUpdatedMin = Number(data.min_remaining_thp);
     const updatedData: KoperasiProfile = {
       id: data.id,
       nama_koperasi: data.nama_koperasi || normalizedData.nama_koperasi,
@@ -215,6 +240,8 @@ export async function updateKoperasiProfile(
       terminal_name: data.terminal_name || normalizedData.terminal_name,
       footer_notes: data.footer_notes !== undefined ? data.footer_notes : normalizedData.footer_notes,
       logo_url: data.logo_url !== undefined ? data.logo_url : normalizedData.logo_url,
+      min_remaining_thp: !isNaN(rawUpdatedMin) && rawUpdatedMin > 0 ? rawUpdatedMin : normalizedData.min_remaining_thp,
+      min_thp_rat_notes: data.min_thp_rat_notes !== undefined && data.min_thp_rat_notes !== null ? data.min_thp_rat_notes : normalizedData.min_thp_rat_notes,
       updated_at: data.updated_at
     };
 
@@ -236,6 +263,41 @@ export async function updateKoperasiProfile(
       message: 'Profil disimpan secara lokal (offline fallback).'
     };
   }
+}
+
+/**
+ * Retrieves the loan configuration settings (minimum remaining THP threshold & RAT notes)
+ */
+export async function getLoanSettings(forceRefresh: boolean = false): Promise<LoanSettings> {
+  const profile = await getKoperasiProfile(forceRefresh);
+  const rawMin = Number(profile.min_remaining_thp);
+  const minRemainingThp = !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP;
+  const ratNotes = profile.min_thp_rat_notes || DEFAULT_RAT_NOTES;
+
+  return {
+    minRemainingThp,
+    ratNotes
+  };
+}
+
+/**
+ * Updates the loan configuration settings (minimum remaining THP threshold & RAT notes)
+ */
+export async function updateLoanSettings(
+  payload: LoanSettings
+): Promise<UpdateKoperasiProfileResult> {
+  const currentProfile = await getKoperasiProfile(false);
+  const rawMin = Number(payload.minRemainingThp);
+  const minRemainingThp = !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP;
+  const ratNotes = payload.ratNotes !== undefined
+    ? payload.ratNotes.trim()
+    : (currentProfile.min_thp_rat_notes || DEFAULT_RAT_NOTES);
+
+  return updateKoperasiProfile({
+    ...currentProfile,
+    min_remaining_thp: minRemainingThp,
+    min_thp_rat_notes: ratNotes
+  });
 }
 
 /**

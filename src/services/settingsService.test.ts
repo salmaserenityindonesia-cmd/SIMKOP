@@ -5,8 +5,17 @@ import {
   clearProfileCache,
   isTableMigratedInSupabase,
   DEFAULT_KOPERASI_PROFILE,
-  KOPERASI_PROFILE_STORAGE_KEY
+  KOPERASI_PROFILE_STORAGE_KEY,
+  getLoanSettings,
+  updateLoanSettings,
+  DEFAULT_MIN_REMAINING_THP,
+  DEFAULT_RAT_NOTES
 } from './settingsService';
+import {
+  loanService,
+  getLoanSettings as loanGetLoanSettings,
+  updateLoanSettings as loanUpdateLoanSettings
+} from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => ({
@@ -276,6 +285,170 @@ describe('settingsService', () => {
 
     const fetched = await getKoperasiProfile(true);
     expect(fetched.logo_url).toBe(testLogo);
+  });
+
+  describe('LoanSettings dynamic threshold', () => {
+    it('should return default loan settings when database and localStorage are empty', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'Table does not exist' } })
+          })
+        })
+      });
+
+      const settings = await getLoanSettings(true);
+      expect(settings.minRemainingThp).toBe(DEFAULT_MIN_REMAINING_THP);
+      expect(settings.minRemainingThp).toBe(1500000);
+      expect(settings.ratNotes).toBe(DEFAULT_RAT_NOTES);
+    });
+
+    it('should return configured loan settings from Supabase database', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 1,
+                nama_koperasi: 'KOPERASI PRIMKOPPOL',
+                min_remaining_thp: 2000000,
+                min_thp_rat_notes: 'Keputusan RAT 2026 Batas Rp 2.000.000'
+              },
+              error: null
+            })
+          })
+        })
+      });
+
+      const settings = await getLoanSettings(true);
+      expect(settings.minRemainingThp).toBe(2000000);
+      expect(settings.ratNotes).toBe('Keputusan RAT 2026 Batas Rp 2.000.000');
+    });
+
+    it('should fallback to default 1.500.000 if stored/db value is non-positive or invalid', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 1,
+                min_remaining_thp: 0,
+                min_thp_rat_notes: null
+              },
+              error: null
+            })
+          })
+        })
+      });
+
+      const settings = await getLoanSettings(true);
+      expect(settings.minRemainingThp).toBe(1500000);
+      expect(settings.ratNotes).toBe(DEFAULT_RAT_NOTES);
+    });
+
+    it('should return stored loan settings from localStorage fallback when database fails', async () => {
+      mockStorage[KOPERASI_PROFILE_STORAGE_KEY] = JSON.stringify({
+        nama_koperasi: 'KOPERASI PRIMKOPPOL',
+        min_remaining_thp: 1750000,
+        min_thp_rat_notes: 'Keputusan RAT Luar Biasa Rp 1.750.000'
+      });
+
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: null,
+              error: { message: 'Network offline' }
+            })
+          })
+        })
+      });
+
+      const settings = await getLoanSettings(true);
+      expect(settings.minRemainingThp).toBe(1750000);
+      expect(settings.ratNotes).toBe('Keputusan RAT Luar Biasa Rp 1.750.000');
+    });
+
+    it('should update loan settings in Supabase and sync to local cache and storage', async () => {
+      const updatedRecord = {
+        id: 1,
+        nama_koperasi: 'KOPERASI PRIMKOPPOL',
+        alamat: 'Jl. Jaksa Agung Suprapto No. 10, Ngawi',
+        telepon: '(0354)7654321',
+        terminal_name: 'POS Terminal #01',
+        footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan',
+        min_remaining_thp: 1800000,
+        min_thp_rat_notes: 'Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000',
+        updated_at: '2026-11-01T00:00:00Z'
+      };
+
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: DEFAULT_KOPERASI_PROFILE, error: null })
+          })
+        }),
+        upsert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: updatedRecord, error: null })
+          })
+        })
+      });
+
+      const res = await updateLoanSettings({
+        minRemainingThp: 1800000,
+        ratNotes: 'Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000'
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.isLocalFallback).toBe(false);
+      expect(res.data?.min_remaining_thp).toBe(1800000);
+      expect(res.data?.min_thp_rat_notes).toBe('Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000');
+
+      // Check subsequent getLoanSettings returns updated cached value
+      const cached = await getLoanSettings(false);
+      expect(cached.minRemainingThp).toBe(1800000);
+      expect(cached.ratNotes).toBe('Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000');
+    });
+
+    it('should fallback gracefully to localStorage when Supabase update fails', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: DEFAULT_KOPERASI_PROFILE, error: null })
+          })
+        }),
+        upsert: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: null,
+              error: { code: 'PGRST205', message: 'Schema cache error' }
+            })
+          })
+        })
+      });
+
+      const res = await updateLoanSettings({
+        minRemainingThp: 1600000,
+        ratNotes: 'Keputusan RAT Lokal'
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.isLocalFallback).toBe(true);
+      expect(res.data?.min_remaining_thp).toBe(1600000);
+
+      // Verify in localStorage
+      const stored = JSON.parse(mockStorage[KOPERASI_PROFILE_STORAGE_KEY]);
+      expect(stored.min_remaining_thp).toBe(1600000);
+      expect(stored.min_thp_rat_notes).toBe('Keputusan RAT Lokal');
+    });
+
+    it('should be re-exported by loanService and accessible via helper or service object', async () => {
+      expect(typeof loanGetLoanSettings).toBe('function');
+      expect(typeof loanUpdateLoanSettings).toBe('function');
+      expect(typeof loanService.getLoanSettings).toBe('function');
+      expect(typeof loanService.updateLoanSettings).toBe('function');
+    });
   });
 });
 
