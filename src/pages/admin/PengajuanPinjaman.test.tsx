@@ -344,16 +344,16 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(calculateAvailableTenors()).toEqual([]);
     });
 
-    it('filters tenor list up to 6 months for emergency loan', () => {
-      expect(calculateAvailableTenors(6)).toEqual([1, 2, 3, 4, 5, 6]);
+    it('filters tenor list up to 6 months for emergency loan (multiples of 6)', () => {
+      expect(calculateAvailableTenors(6)).toEqual([6]);
     });
 
-    it('filters tenor list up to 12 months for regular loan', () => {
-      expect(calculateAvailableTenors(12)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    it('filters tenor list up to 12 months for regular loan (multiples of 6)', () => {
+      expect(calculateAvailableTenors(12)).toEqual([6, 12]);
     });
 
-    it('filters tenor list up to 36 months for long term loan', () => {
-      expect(calculateAvailableTenors(36)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36]);
+    it('filters tenor list up to 36 months for long term loan (multiples of 6)', () => {
+      expect(calculateAvailableTenors(36)).toEqual([6, 12, 18, 24, 30, 36]);
     });
   });
 
@@ -413,8 +413,12 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
 
       expect(html).toContain('-- Pilih Tenor --');
       expect(html).not.toContain('-- Pilih Jenis Pinjaman Terlebih Dahulu --');
-      expect(html).toContain('<option value="1">1 Bulan</option>');
       expect(html).toContain('<option value="6">6 Bulan</option>');
+      expect(html).not.toContain('<option value="1">1 Bulan</option>');
+      expect(html).not.toContain('<option value="2">2 Bulan</option>');
+      expect(html).not.toContain('<option value="3">3 Bulan</option>');
+      expect(html).not.toContain('<option value="4">4 Bulan</option>');
+      expect(html).not.toContain('<option value="5">5 Bulan</option>');
       expect(html).not.toContain('<option value="7">7 Bulan</option>');
       expect(html).not.toContain('<option value="10">10 Bulan</option>');
       expect(html).not.toContain('<option value="12">12 Bulan</option>');
@@ -423,7 +427,7 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).not.toContain('<option value="36">36 Bulan</option>');
     });
 
-    it('restricts options to max 12 months when REGULER loan type is selected (no 18, 24, 30, 36)', () => {
+    it('restricts options to max 12 months when REGULER loan type is selected (multiples of 6 only: 6, 12)', () => {
       const html = renderToStaticMarkup(
         <PengajuanPinjaman
           initialLoanTypes={mockLoanTypes}
@@ -432,7 +436,18 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       );
 
       expect(html).toContain('-- Pilih Tenor --');
+      expect(html).toContain('<option value="6">6 Bulan</option>');
       expect(html).toContain('<option value="12">12 Bulan</option>');
+      expect(html).not.toContain('<option value="1">1 Bulan</option>');
+      expect(html).not.toContain('<option value="2">2 Bulan</option>');
+      expect(html).not.toContain('<option value="3">3 Bulan</option>');
+      expect(html).not.toContain('<option value="4">4 Bulan</option>');
+      expect(html).not.toContain('<option value="5">5 Bulan</option>');
+      expect(html).not.toContain('<option value="7">7 Bulan</option>');
+      expect(html).not.toContain('<option value="8">8 Bulan</option>');
+      expect(html).not.toContain('<option value="9">9 Bulan</option>');
+      expect(html).not.toContain('<option value="10">10 Bulan</option>');
+      expect(html).not.toContain('<option value="11">11 Bulan</option>');
       expect(html).not.toContain('<option value="18">18 Bulan</option>');
       expect(html).not.toContain('<option value="24">24 Bulan</option>');
       expect(html).not.toContain('<option value="30">30 Bulan</option>');
