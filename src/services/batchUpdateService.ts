@@ -1,5 +1,11 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
+import {
+  getApplicableRate,
+  getActivePokokTariff,
+  getRateTiers,
+  SavingsRateTier,
+} from './savingsRateService';
 
 export type BatchPreviewRow = {
   nrp: string;
@@ -14,56 +20,319 @@ export type BatchPreviewRow = {
   schedule_id?: string; // for loans
 };
 
-export const downloadBatchTemplate = async (type: 'savings' | 'loans', month: number, year: number) => {
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(`Template ${type === 'savings' ? 'Simpanan' : 'Pinjaman'} ${month}-${year}`);
+export interface SavingsTemplateRow {
+  nrp: string;
+  nama: string;
+  nomor_rekening: string;
+  bulan: number;
+  tahun: number;
+  kode_simpanan: string;
+  telah_dibayar: number;
+  jumlah_bayar: number;
+}
 
-  if (type === 'savings') {
-    worksheet.columns = [
-      { header: 'NRP', key: 'nrp', width: 15 },
-      { header: 'Nama', key: 'nama', width: 30 },
-      { header: 'Nomor Rekening', key: 'nomor_rekening', width: 20 },
-      { header: 'Bulan', key: 'bulan', width: 10 },
-      { header: 'Tahun', key: 'tahun', width: 10 },
-      { header: 'Kode Simpanan', key: 'kode_simpanan', width: 15 },
-      { header: 'Telah Dibayar', key: 'telah_dibayar', width: 20 },
-      { header: 'Jumlah Bayar', key: 'jumlah_bayar', width: 20 },
-    ];
+export interface MemberBatchItem {
+  id: string;
+  nrp: string;
+  nama: string;
+  bank_account_number?: string | null;
+  status?: string;
+}
 
-    const { data: members, error: mErr } = await supabase.from('anggota').select('id, nrp, nama, bank_account_number').eq('status', 'aktif');
-    const { data: deposits, error: dErr } = await supabase.from('member_deposits').select('id, member_id, deposit_types(code, default_amount, frequency_type)');
-    const { data: txs, error: tErr } = await supabase.from('deposit_transactions').select('member_deposit_id, amount').eq('for_month', month).eq('for_year', year);
+export interface DepositTypeItem {
+  id?: string;
+  code?: string;
+  name?: string;
+  default_amount?: number;
+  frequency_type?: string;
+}
 
-    if (members && deposits) {
-      for (const m of members) {
-        const memberDeps = deposits.filter(d => d.member_id === m.id);
-        for (const dep of memberDeps) {
-          const freq = (dep.deposit_types as any)?.frequency_type;
-          if (freq === 'one_time' || freq === 'once') continue;
+export interface MemberDepositItem {
+  id: string;
+  member_id: string;
+  deposit_type_id?: string;
+  deposit_types?: DepositTypeItem | DepositTypeItem[] | null;
+}
 
-          const typeCode = (dep.deposit_types as any)?.code || '';
-          const expected = (dep.deposit_types as any)?.default_amount || 0;
-          
-          const memberTxs = (txs || []).filter(tx => tx.member_deposit_id === dep.id);
-          const paid = memberTxs.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+export interface DepositTransactionItem {
+  id?: string;
+  member_deposit_id: string;
+  amount: number;
+  transaction_type?: string;
+  for_month?: number | null;
+  for_year?: number | null;
+}
 
-          worksheet.addRow({
-              nrp: m.nrp,
-              nama: m.nama,
-              nomor_rekening: m.bank_account_number || '-',
-              bulan: month,
-              tahun: year,
-              kode_simpanan: typeCode,
-              telah_dibayar: paid,
-              jumlah_bayar: expected > paid ? expected - paid : 0
-          });
-        }
+/**
+ * Memeriksa apakah tipe simpanan merupakan Simpanan Pokok (POKOK / SP / nama 'pokok')
+ */
+export function isPokokDepositType(dt?: { code?: string; name?: string } | null): boolean {
+  if (!dt) return false;
+  const c = (dt.code || '').toUpperCase();
+  const n = (dt.name || '').toLowerCase();
+  return c === 'POKOK' || c === 'SP' || n.includes('pokok');
+}
+
+/**
+ * Urutan prioritas simpanan rutin: 1: WAJIB, 2: LEBARAN, 3: BELANJA, sisanya urutan berikutnya
+ */
+export function getDepositTypeSortOrder(dt?: { code?: string; name?: string } | null): number {
+  if (!dt) return 99;
+  const c = (dt.code || '').toUpperCase();
+  const n = (dt.name || '').toLowerCase();
+  if (c === 'WAJIB' || c === 'SW' || n.includes('wajib')) return 1;
+  if (c === 'LEBARAN' || c === 'SL' || n.includes('lebaran') || n.includes('hari raya')) return 2;
+  if (c === 'BELANJA' || c === 'SB' || n.includes('belanja')) return 3;
+  return 10;
+}
+
+/**
+ * Menyusun baris-baris data template simpanan bulanan Excel.
+ * Setiap anggota aktif memiliki urutan:
+ * Baris 1: WAJIB
+ * Baris 2: LEBARAN
+ * Baris 3: BELANJA
+ * Baris 4: POKOK (Kondisional: HANYA jika Simpanan Pokok anggota belum lunas).
+ */
+export function buildSavingsTemplateRows(
+  members: MemberBatchItem[],
+  deposits: MemberDepositItem[],
+  depositTypes: DepositTypeItem[] = [],
+  txsForMonth: DepositTransactionItem[] = [],
+  allPokokTxs: DepositTransactionItem[] = [],
+  pokokTargetAmount: number = 10000,
+  month: number,
+  year: number,
+  rateTiers?: SavingsRateTier[]
+): SavingsTemplateRow[] {
+  const rows: SavingsTemplateRow[] = [];
+
+  const getDepositTypeInfo = (dep: MemberDepositItem): DepositTypeItem | undefined => {
+    if (dep.deposit_types) {
+      return Array.isArray(dep.deposit_types) ? dep.deposit_types[0] : dep.deposit_types;
+    }
+    if (dep.deposit_type_id && depositTypes.length > 0) {
+      return depositTypes.find(dt => dt.id === dep.deposit_type_id);
+    }
+    return undefined;
+  };
+
+  const effectivePokokTarget = Number(pokokTargetAmount) > 0 ? Number(pokokTargetAmount) : 10000;
+
+  for (const m of members) {
+    const memberDeps = deposits.filter(d => d.member_id === m.id);
+
+    // 1. Akumulasi pembayaran Simpanan Pokok historis
+    const memberPokokDeps = memberDeps.filter(dep => isPokokDepositType(getDepositTypeInfo(dep)));
+    const memberPokokDepIds = new Set(memberPokokDeps.map(dep => dep.id));
+
+    const memberPokokTxs = allPokokTxs.filter(tx =>
+      memberPokokDepIds.has(tx.member_deposit_id) || (tx as any).member_id === m.id
+    );
+
+    const paidPokok = memberPokokTxs.reduce((sum, tx) => {
+      const amt = Number(tx.amount) || 0;
+      if (tx.transaction_type === 'withdrawal') {
+        return sum - amt;
+      }
+      return sum + amt;
+    }, 0);
+
+    const effectivePaidPokok = Math.max(0, paidPokok);
+    const isPokokLunas = effectivePaidPokok >= effectivePokokTarget;
+
+    // 2. Baris Simpanan Rutin Bulanan
+    const memberRecurringDeps = memberDeps.filter(dep => {
+      const dt = getDepositTypeInfo(dep);
+      if (isPokokDepositType(dt)) return false;
+      const freq = dt?.frequency_type;
+      if (freq === 'one_time' || freq === 'once') return false;
+      return true;
+    });
+
+    if (memberRecurringDeps.length > 0) {
+      // Urutkan simpanan rutin: 1. WAJIB, 2. LEBARAN, 3. BELANJA, dll.
+      memberRecurringDeps.sort((a, b) => {
+        const dtA = getDepositTypeInfo(a);
+        const dtB = getDepositTypeInfo(b);
+        return getDepositTypeSortOrder(dtA) - getDepositTypeSortOrder(dtB);
+      });
+
+      for (const dep of memberRecurringDeps) {
+        const dt = getDepositTypeInfo(dep);
+        const typeCode = dt?.code || '';
+        const rateFromTier = getApplicableRate(typeCode, year, month, rateTiers);
+        const expected = rateFromTier > 0 ? rateFromTier : (dt?.default_amount || 0);
+
+        const memberTxs = txsForMonth.filter(tx => tx.member_deposit_id === dep.id);
+        const paid = memberTxs.reduce((sum, tx) => {
+          const amt = Number(tx.amount) || 0;
+          if (tx.transaction_type === 'withdrawal') {
+            return sum - amt;
+          }
+          return sum + amt;
+        }, 0);
+        const effectivePaid = Math.max(0, paid);
+
+        rows.push({
+          nrp: m.nrp,
+          nama: m.nama,
+          nomor_rekening: m.bank_account_number || '-',
+          bulan: month,
+          tahun: year,
+          kode_simpanan: typeCode,
+          telah_dibayar: effectivePaid,
+          jumlah_bayar: expected > effectivePaid ? expected - effectivePaid : 0
+        });
       }
     } else {
-        console.error("Error fetching savings data:", mErr, dErr, tErr);
+      // Fallback jika belum memiliki rekening simpanan rutin terdaftar:
+      // Sediakan 3 baris simpanan standar bulanan
+      const standardCodes = ['WAJIB', 'LEBARAN', 'BELANJA'];
+      for (const code of standardCodes) {
+        const matchedDt = depositTypes.find(t => (t.code || '').toUpperCase() === code);
+        const rateFromTier = getApplicableRate(code, year, month, rateTiers);
+        const expected = rateFromTier > 0 ? rateFromTier : (matchedDt?.default_amount || 0);
+
+        rows.push({
+          nrp: m.nrp,
+          nama: m.nama,
+          nomor_rekening: m.bank_account_number || '-',
+          bulan: month,
+          tahun: year,
+          kode_simpanan: code,
+          telah_dibayar: 0,
+          jumlah_bayar: expected
+        });
+      }
     }
 
+    // 3. Pengecekan Kondisional Pokok
+    if (!isPokokLunas) {
+      const sisaPokok = Math.max(0, effectivePokokTarget - effectivePaidPokok);
+      rows.push({
+        nrp: m.nrp,
+        nama: m.nama,
+        nomor_rekening: m.bank_account_number || '-',
+        bulan: month,
+        tahun: year,
+        kode_simpanan: 'POKOK',
+        telah_dibayar: effectivePaidPokok,
+        jumlah_bayar: sisaPokok
+      });
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Menghasilkan workbook template batch update simpanan bulanan lengkap dengan baris pokok kondisional.
+ */
+export const generateSavingsBatchTemplate = async (
+  month: number,
+  year: number
+): Promise<{ workbook: ExcelJS.Workbook; rows: SavingsTemplateRow[] }> => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(`Template Simpanan ${month}-${year}`);
+
+  worksheet.columns = [
+    { header: 'NRP', key: 'nrp', width: 15 },
+    { header: 'Nama', key: 'nama', width: 30 },
+    { header: 'Nomor Rekening', key: 'nomor_rekening', width: 20 },
+    { header: 'Bulan', key: 'bulan', width: 10 },
+    { header: 'Tahun', key: 'tahun', width: 10 },
+    { header: 'Kode Simpanan', key: 'kode_simpanan', width: 15 },
+    { header: 'Telah Dibayar', key: 'telah_dibayar', width: 20 },
+    { header: 'Jumlah Bayar', key: 'jumlah_bayar', width: 20 },
+  ];
+
+  const { data: members, error: mErr } = await supabase
+    .from('anggota')
+    .select('id, nrp, nama, bank_account_number')
+    .eq('status', 'aktif');
+
+  const { data: deposits, error: dErr } = await supabase
+    .from('member_deposits')
+    .select('id, member_id, deposit_type_id, deposit_types(id, code, name, default_amount, frequency_type)');
+
+  const { data: depositTypes, error: dtErr } = await supabase
+    .from('deposit_types')
+    .select('id, code, name, default_amount, frequency_type');
+
+  const { data: txs, error: tErr } = await supabase
+    .from('deposit_transactions')
+    .select('id, member_deposit_id, amount, transaction_type, for_month, for_year')
+    .eq('for_month', month)
+    .eq('for_year', year);
+
+  if (mErr || dErr || tErr || dtErr) {
+    console.error("Error fetching savings batch template data:", { mErr, dErr, tErr, dtErr });
+  }
+
+  const rateTiers = await getRateTiers(undefined, false).catch(() => []);
+
+  // Ambil nominal tarif Simpanan Pokok aktif
+  let pokokTargetAmount = await getActivePokokTariff().catch(() => 0);
+  if (!pokokTargetAmount || pokokTargetAmount <= 0) {
+    pokokTargetAmount = getApplicableRate('POKOK', year, month, rateTiers) || 10000;
+  }
+
+  // Ambil riwayat setoran pokok dari semua rekening simpanan pokok anggota
+  const pokokDepositIds = (deposits || [])
+    .filter(d => {
+      const dt = Array.isArray(d.deposit_types) ? d.deposit_types[0] : d.deposit_types;
+      if (isPokokDepositType(dt)) return true;
+      if (d.deposit_type_id && depositTypes) {
+        const match = depositTypes.find(t => t.id === d.deposit_type_id);
+        return isPokokDepositType(match);
+      }
+      return false;
+    })
+    .map(d => d.id);
+
+  const allPokokTxs: any[] = [];
+  if (pokokDepositIds.length > 0) {
+    const chunkSize = 200;
+    for (let i = 0; i < pokokDepositIds.length; i += chunkSize) {
+      const chunk = pokokDepositIds.slice(i, i + chunkSize);
+      const { data: pData } = await supabase
+        .from('deposit_transactions')
+        .select('id, member_deposit_id, amount, transaction_type')
+        .in('member_deposit_id', chunk);
+      if (pData) {
+        allPokokTxs.push(...pData);
+      }
+    }
+  }
+
+  const rows = buildSavingsTemplateRows(
+    members || [],
+    deposits || [],
+    depositTypes || [],
+    txs || [],
+    allPokokTxs,
+    pokokTargetAmount,
+    month,
+    year,
+    rateTiers
+  );
+
+  rows.forEach(r => worksheet.addRow(r));
+
+  return { workbook, rows };
+};
+
+export const downloadBatchTemplate = async (type: 'savings' | 'loans', month: number, year: number) => {
+  let workbook: ExcelJS.Workbook;
+
+  if (type === 'savings') {
+    const res = await generateSavingsBatchTemplate(month, year);
+    workbook = res.workbook;
   } else {
+    workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(`Template Pinjaman ${month}-${year}`);
+
     worksheet.columns = [
       { header: 'NRP', key: 'nrp', width: 15 },
       { header: 'Nama', key: 'nama', width: 30 },
@@ -114,14 +383,16 @@ export const downloadBatchTemplate = async (type: 'savings' | 'loans', month: nu
     }
   }
 
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = window.URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `Template_${type}_${month}_${year}.xlsx`;
-  anchor.click();
-  window.URL.revokeObjectURL(url);
+  if (typeof window !== 'undefined' && window.URL && document.createElement) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `Template_${type}_${month}_${year}.xlsx`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+  }
 };
 
 export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans', month: number, year: number): Promise<BatchPreviewRow[]> => {

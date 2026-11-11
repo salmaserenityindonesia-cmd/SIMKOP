@@ -445,4 +445,61 @@ export async function getActiveSavingsRateTiers(
   return result;
 }
 
+/**
+ * Mengambil nominal tarif simpanan pokok aktif.
+ * 1. Ambil dari savings_rate_tiers aktif (deposit_type_code = 'POKOK' dan end_year IS NULL).
+ * 2. Fallback: default_amount dari tabel deposit_types (kode POKOK / SP).
+ * 3. Fallback default: Rp 10.000.
+ */
+export async function getActivePokokTariff(): Promise<number> {
+  try {
+    // 1. Coba kueri langsung tabel savings_rate_tiers untuk tier aktif (end_year IS NULL)
+    try {
+      const q: any = supabase.from('savings_rate_tiers');
+      if (q && typeof q.select === 'function') {
+        const res = await q.select('*');
+        const rows = res?.data;
+        if (rows && Array.isArray(rows)) {
+          const active = rows.find((t: any) => {
+            const code = (t.deposit_type_code || '').toUpperCase();
+            return (code === 'POKOK' || code === 'SP') && (t.end_year === null || t.end_year === undefined);
+          });
+          if (active && Number(active.monthly_rate) > 0) {
+            return Number(active.monthly_rate);
+          }
+        }
+      }
+    } catch {}
+
+    const tiers = await getRateTiers('POKOK').catch(() => []);
+    const activeTier = tiers.find(t => 
+      (t.deposit_type_code.toUpperCase() === 'POKOK' || t.deposit_type_code.toUpperCase() === 'SP') &&
+      (t.end_year === null || t.end_year === undefined)
+    );
+    if (activeTier && Number(activeTier.monthly_rate) > 0) {
+      return Number(activeTier.monthly_rate);
+    }
+
+    const { data: dTypes } = await supabase
+      .from('deposit_types')
+      .select('id, code, name, default_amount');
+
+    if (dTypes && dTypes.length > 0) {
+      const match = dTypes.find((dt: any) => {
+        const c = (dt.code || '').toUpperCase();
+        const n = (dt.name || '').toLowerCase();
+        return c === 'POKOK' || c === 'SP' || n.includes('pokok');
+      });
+      if (match && match.default_amount && Number(match.default_amount) > 0) {
+        return Number(match.default_amount);
+      }
+    }
+  } catch (err) {
+    console.warn('Gagal memuat active pokok tariff:', err);
+  }
+
+  return 10000;
+}
+
+
 
