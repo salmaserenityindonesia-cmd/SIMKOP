@@ -1,6 +1,26 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 
+export interface DepositTypeOption {
+  id: string;
+  code: string;
+  name: string;
+  can_be_withdrawn?: boolean;
+}
+
+export async function getWithdrawableDepositTypes(): Promise<DepositTypeOption[]> {
+  const { data, error } = await supabase
+    .from('deposit_types')
+    .select('id, code, name, can_be_withdrawn')
+    .order('name', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching deposit types for filter:', error);
+    return [];
+  }
+  return data || [];
+}
+
 export interface WithdrawalLedgerItem {
   id: string;
   member_id: string;
@@ -18,6 +38,7 @@ export interface WithdrawalLedgerItem {
   payment_method: string;
   notes: string;
   created_by: string | null;
+  transaction_type?: string;
   has_active_loan: boolean;
   active_loan_balance: number;
   active_loan_count: number;
@@ -52,7 +73,7 @@ export interface WithdrawalSummary {
 export interface WithdrawalReportFilters {
   startDate?: string;
   endDate?: string;
-  depositTypeCode?: string; // 'all' | 'lebaran' | 'belanja' | 'pokok_wajib' | 'sukarela_lainnya' or custom code
+  depositTypeCode?: string; // 'all' | 'TERMINATION' | 'lebaran' | 'belanja' | 'pokok_wajib' | dynamic deposit code or ID
   paymentMethod?: string;   // 'all' | 'tunai' | 'transfer'
   searchQuery?: string;
   hasActiveLoanOnly?: boolean;
@@ -98,6 +119,38 @@ export const isLebaran = (code?: string, name?: string, description?: string, no
 };
 
 /**
+ * Memeriksa apakah suatu jenis simpanan atau keterangan transaksi merujuk pada Simpanan Belanja Bulanan
+ */
+export const isBelanja = (
+  code?: string,
+  name?: string,
+  description?: string,
+  notes?: string,
+  paymentMethod?: string,
+  referenceNo?: string
+): boolean => {
+  const c = (code || '').toUpperCase().trim();
+  const n = (name || '').toUpperCase().trim();
+  const d = (description || '').toUpperCase().trim();
+  const nt = (notes || '').toUpperCase().trim();
+  const pm = (paymentMethod || '').toLowerCase().trim();
+  const ref = (referenceNo || '').toUpperCase().trim();
+
+  return (
+    c.includes('BELANJA') ||
+    c === 'SB' ||
+    n.includes('BELANJA') ||
+    d.includes('BELANJA') ||
+    nt.includes('BELANJA') ||
+    pm.includes('belanja') ||
+    pm === 'potong_simpanan_belanja' ||
+    ref.startsWith('INV-') ||
+    d.includes('KASIR POS') ||
+    nt.includes('BELANJA TOKO')
+  );
+};
+
+/**
  * Mengkategorikan kode / nama jenis simpanan ke dalam bucket utama
  */
 export function categorizeDepositType(
@@ -110,14 +163,15 @@ export function categorizeDepositType(
     return 'lebaran';
   }
 
+  if (isBelanja(code, name, description, notes)) {
+    return 'belanja';
+  }
+
   const c = (code || '').toUpperCase().trim();
   const n = (name || '').toLowerCase().trim();
   const d = (description || '').toLowerCase().trim();
   const nt = (notes || '').toLowerCase().trim();
 
-  if (c.includes('BELANJA') || c === 'SB' || n.includes('belanja') || d.includes('belanja') || nt.includes('belanja')) {
-    return 'belanja';
-  }
   if (
     c.includes('POKOK') ||
     c.includes('WAJIB') ||
@@ -171,7 +225,16 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
           )
         )
       `)
-      .eq('transaction_type', 'withdrawal');
+      .order('created_at', { ascending: false });
+
+    const filterDepositCode = (filters?.depositTypeCode || '').trim().toUpperCase();
+    if (filterDepositCode === 'TERMINATION') {
+      query = query.eq('transaction_type', 'termination');
+    } else if (filterDepositCode && filterDepositCode !== 'ALL') {
+      query = query.eq('transaction_type', 'withdrawal');
+    } else {
+      query = query.in('transaction_type', ['withdrawal', 'termination']);
+    }
 
     // Abaikan filter rentang tanggal jika filter periode 'Semua Waktu' (startDate/endDate kosong)
     if (filters?.startDate && filters.startDate.trim() !== '') {
@@ -183,10 +246,6 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       query = query.lte('created_at', endIso);
     }
 
-    if (query.order) {
-      query = query.order('created_at', { ascending: false });
-    }
-
     let rawTxList: any[] = [];
     const { data: nestedData, error: txError } = await query;
 
@@ -195,8 +254,15 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       // Fallback: direct select on deposit_transactions
       let fbQuery: any = supabase
         .from('deposit_transactions')
-        .select('*')
-        .eq('transaction_type', 'withdrawal');
+        .select('*');
+
+      if (filterDepositCode === 'TERMINATION') {
+        fbQuery = fbQuery.eq('transaction_type', 'termination');
+      } else if (filterDepositCode && filterDepositCode !== 'ALL') {
+        fbQuery = fbQuery.eq('transaction_type', 'withdrawal');
+      } else {
+        fbQuery = fbQuery.in('transaction_type', ['withdrawal', 'termination']);
+      }
 
       if (filters?.startDate && filters.startDate.trim() !== '') {
         const startIso = filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000Z`;
@@ -226,7 +292,11 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
 
     // Resolusi member_deposits yang belum ter-join secara lengkap
     const unjoinedMdIds = rawTxList
-      .filter(tx => (!tx.member_deposits || !tx.member_deposits.anggota) && tx.member_deposit_id)
+      .filter(tx => {
+        const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+        const mem = Array.isArray(md?.anggota) ? md.anggota[0] : md?.anggota;
+        return (!mem || !(mem.nama || mem.name)) && tx.member_deposit_id;
+      })
       .map(tx => tx.member_deposit_id);
 
     const mdLookup = new Map<string, any>();
@@ -238,8 +308,7 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
             id,
             member_id,
             deposit_type_id,
-            deposit_types (id, name, code),
-            anggota (id, nama, nrp, pangkat, bank_name, bank_account_number, status)
+            deposit_types (id, name, code)
           `)
           .in('id', Array.from(new Set(unjoinedMdIds)));
 
@@ -251,20 +320,124 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       }
     }
 
-    // Ambil daftar seluruh anggota jika terdapat transaksi dengan anggota terputus
+    // Ambil daftar seluruh anggota untuk lookup profil yang andal
     let allAnggotaList: any[] = [];
-    const hasUnlinked = rawTxList.some(tx => {
-      const md = (Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits) || mdLookup.get(tx.member_deposit_id);
-      const member = Array.isArray(md?.anggota) ? md.anggota[0] : md?.anggota;
-      return !member;
+    try {
+      const { data: aList, error: aErr } = await supabase
+        .from('anggota')
+        .select('*');
+      if (aErr) {
+        console.warn('Gagal memuat allAnggotaList:', aErr.message);
+      }
+      allAnggotaList = aList || [];
+    } catch (_) {}
+
+    // Identifikasi transaksi POS untuk cross-lookup ke tabel sales (berdasarkan sale_number atau reference_no)
+    const posTxRefNos = Array.from(new Set(
+      rawTxList
+        .map(tx => (tx.reference_no || '').trim())
+        .filter(ref => ref && ref !== '-')
+    ));
+
+    const salesMemberMap = new Map<string, string>(); // sale_number / ID -> member_id
+    if (posTxRefNos.length > 0) {
+      try {
+        let salesData: any[] = [];
+        const { data: sRows, error: sErr } = await supabase
+          .from('sales')
+          .select('id, sale_number, member_id')
+          .in('sale_number', posTxRefNos);
+
+        if (!sErr && sRows && sRows.length > 0) {
+          salesData = sRows;
+        } else {
+          // Fallback tanpa filter kolom ketat
+          const { data: fbSales } = await supabase
+            .from('sales')
+            .select('*')
+            .in('sale_number', posTxRefNos);
+          if (fbSales) salesData = fbSales;
+        }
+
+        salesData.forEach((s: any) => {
+          const mId = s.member_id || (Array.isArray(s.anggota) ? s.anggota[0]?.id : s.anggota?.id);
+          const num = s.sale_number || s.invoice_number;
+          if (mId) {
+            if (num) {
+              const strNum = String(num).trim();
+              salesMemberMap.set(strNum, mId);
+              salesMemberMap.set(strNum.toUpperCase(), mId);
+              salesMemberMap.set(strNum.replace(/^INV-/, ''), mId);
+            }
+            if (s.id) {
+              salesMemberMap.set(s.id, mId);
+              salesMemberMap.set(`sale-${s.id}`, mId);
+            }
+          }
+        });
+      } catch (e) {
+        console.warn('Gagal memuat cross-lookup sales:', e);
+      }
+    }
+
+    // Ekstrak kemungkinan UUID penjualan dari keterangan atau catatan transaksi (misal: "Transaksi penjualan POS ID: <uuid>")
+    const notesSaleIds = new Set<string>();
+    rawTxList.forEach(tx => {
+      const fullNotes = `${tx.notes || ''} ${tx.description || ''}`;
+      const uuidMatch = fullNotes.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (uuidMatch && !salesMemberMap.has(uuidMatch[0])) {
+        notesSaleIds.add(uuidMatch[0]);
+      }
     });
 
-    if (hasUnlinked) {
+    if (notesSaleIds.size > 0) {
       try {
-        const { data: aList } = await supabase
+        const { data: salesByIds } = await supabase
+          .from('sales')
+          .select('id, sale_number, member_id')
+          .in('id', Array.from(notesSaleIds));
+
+        (salesByIds || []).forEach((s: any) => {
+          const mId = s.member_id || (Array.isArray(s.anggota) ? s.anggota[0]?.id : s.anggota?.id);
+          if (mId) {
+            if (s.id) salesMemberMap.set(s.id, mId);
+            const num = s.sale_number || s.invoice_number;
+            if (num) {
+              salesMemberMap.set(String(num).trim(), mId);
+              salesMemberMap.set(String(num).trim().toUpperCase(), mId);
+            }
+          }
+        });
+      } catch (_) {}
+    }
+
+    // Helper pembanding ID yang tangguh (case & whitespace insensitive)
+    const matchId = (id1?: any, id2?: any): boolean => {
+      if (!id1 || !id2) return false;
+      return String(id1).trim().toLowerCase() === String(id2).trim().toLowerCase();
+    };
+
+    // Pastikan semua member_id yang ditemukan sudah ada di allAnggotaList
+    const targetMemberIds = new Set<string>();
+    rawTxList.forEach(tx => {
+      const md = (Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits) || mdLookup.get(tx.member_deposit_id);
+      if (md?.member_id) targetMemberIds.add(md.member_id);
+    });
+    salesMemberMap.forEach(mId => targetMemberIds.add(mId));
+
+    const missingMemberIds = Array.from(targetMemberIds).filter(
+      id => id && !allAnggotaList.some(a => matchId(a.id, id))
+    );
+
+    if (missingMemberIds.length > 0) {
+      try {
+        const { data: extraMembers } = await supabase
           .from('anggota')
-          .select('id, nama, nrp, pangkat, bank_name, bank_account_number, status');
-        allAnggotaList = aList || [];
+          .select('*')
+          .in('id', missingMemberIds);
+        if (extraMembers) {
+          allAnggotaList.push(...extraMembers);
+        }
       } catch (_) {}
     }
 
@@ -277,11 +450,72 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       const dt = Array.isArray(md?.deposit_types) ? md.deposit_types[0] : md?.deposit_types;
       let member = Array.isArray(md?.anggota) ? md.anggota[0] : md?.anggota;
 
-      // Jika relasi anggota terputus, cari dari nama/nrp pada keterangan atau catatan
-      if (!member && allAnggotaList.length > 0) {
+      // Prioritas 1: Coba cari member dari md.member_id yang terhubung di rekening simpanan
+      const effectiveMdMemberId = md?.member_id;
+      if ((!member || !(member.nama || member.name)) && effectiveMdMemberId) {
+        const matched = allAnggotaList.find(a => matchId(a.id, effectiveMdMemberId));
+        if (matched) member = matched;
+      }
+
+      // Prioritas 2: Coba cari member dari salesMemberMap berdasarkan reference_no (struk kasir POS)
+      if ((!member || !(member.nama || member.name)) && tx.reference_no) {
+        const trimmedRef = tx.reference_no.trim();
+        const mId =
+          salesMemberMap.get(trimmedRef) ||
+          salesMemberMap.get(trimmedRef.toUpperCase()) ||
+          salesMemberMap.get(trimmedRef.replace(/^INV-/, ''));
+        if (mId) {
+          const matched = allAnggotaList.find(a => matchId(a.id, mId));
+          if (matched) member = matched;
+        }
+      }
+
+      // Prioritas 3: Coba cari dari sale_id UUID di catatan (notes / description)
+      if ((!member || !(member.nama || member.name))) {
+        const fullNotes = `${tx.notes || ''} ${tx.description || ''}`;
+        const uuidMatch = fullNotes.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        if (uuidMatch) {
+          const mId = salesMemberMap.get(uuidMatch[0]);
+          if (mId) {
+            const matched = allAnggotaList.find(a => matchId(a.id, mId));
+            if (matched) member = matched;
+          }
+        }
+      }
+
+      // Prioritas 4: Direct single query ke sales jika reference_no ada
+      if ((!member || !(member.nama || member.name)) && tx.reference_no && tx.reference_no !== '-') {
+        try {
+          const { data: sDirect } = await supabase
+            .from('sales')
+            .select('id, sale_number, member_id')
+            .eq('sale_number', tx.reference_no.trim())
+            .maybeSingle();
+
+          if (sDirect?.member_id) {
+            let matched = allAnggotaList.find(a => matchId(a.id, sDirect.member_id));
+            if (!matched) {
+              const { data: dMem } = await supabase
+                .from('anggota')
+                .select('*')
+                .eq('id', sDirect.member_id)
+                .maybeSingle();
+              if (dMem) {
+                matched = dMem;
+                allAnggotaList.push(dMem);
+              }
+            }
+            if (matched) member = matched;
+          }
+        } catch (_) {}
+      }
+
+      // Prioritas 5: Cek kecocokan nama atau nrp dari deskripsi / catatan transaksi
+      if ((!member || !(member.nama || member.name)) && allAnggotaList.length > 0) {
         const descText = `${tx.description || ''} ${tx.notes || ''}`.toLowerCase();
         member = allAnggotaList.find(a =>
           (a.nama && descText.includes(a.nama.toLowerCase())) ||
+          (a.name && descText.includes(a.name.toLowerCase())) ||
           (a.nrp && descText.includes(a.nrp.toLowerCase()))
         );
       }
@@ -291,19 +525,51 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
         memberIds.add(memberId);
       }
 
-      // Deteksi simpanan lebaran secara fleksibel
+      // Deteksi terminasi, simpanan lebaran & belanja secara fleksibel dan akurat
+      const txType = (tx.transaction_type || '').toLowerCase();
+      const isTerminationTx = txType === 'termination' ||
+        (tx.notes || '').toLowerCase().includes('terminasi') ||
+        (tx.notes || '').toLowerCase().includes('kliring') ||
+        (tx.description || '').toLowerCase().includes('terminasi') ||
+        (tx.description || '').toLowerCase().includes('kliring');
+
       const lebaranCheck = isLebaran(dt?.code, dt?.name, tx.description, tx.notes);
-      const resolvedCode = dt?.code || (lebaranCheck ? 'LEBARAN' : 'SUKARELA');
-      const resolvedName = dt?.name || (lebaranCheck ? 'Simpanan Lebaran' : 'Simpanan Sukarela');
+      const belanjaCheck = isBelanja(dt?.code, dt?.name, tx.description, tx.notes, tx.payment_method, tx.reference_no);
+
+      let resolvedCode = dt?.code;
+      if (!resolvedCode) {
+        if (isTerminationTx) resolvedCode = 'TERMINATION';
+        else if (lebaranCheck) resolvedCode = 'LEBARAN';
+        else if (belanjaCheck) resolvedCode = 'BELANJA';
+        else resolvedCode = 'LAINNYA';
+      }
+
+      let resolvedName = dt?.name;
+      if (!resolvedName) {
+        if (isTerminationTx) resolvedName = 'Kliring Penutupan Keanggotaan';
+        else if (lebaranCheck) resolvedName = 'Simpanan Lebaran';
+        else if (belanjaCheck) resolvedName = 'Simpanan Belanja Bulanan';
+        else resolvedName = 'Simpanan Lainnya';
+      } else {
+        if (belanjaCheck && (resolvedName.toLowerCase() === 'simpanan belanja' || resolvedCode === 'BELANJA')) {
+          resolvedName = 'Simpanan Belanja Bulanan';
+        }
+      }
+
+      const memberName = member?.nama || member?.name || 'Anggota Tidak Dikenal';
+      const memberNrp = member?.nrp || '-';
+      const memberRank = member?.pangkat || '-';
+      const bankName = member?.bank_name || '-';
+      const bankAccountNumber = member?.bank_account_number || '-';
 
       preliminaryItems.push({
         id: tx.id,
         member_id: memberId,
-        member_name: member?.nama || 'Anggota Tidak Dikenal',
-        member_nrp: member?.nrp || '-',
-        member_rank: member?.pangkat || '-',
-        bank_name: member?.bank_name || '-',
-        bank_account_number: member?.bank_account_number || '-',
+        member_name: memberName,
+        member_nrp: memberNrp,
+        member_rank: memberRank,
+        bank_name: bankName,
+        bank_account_number: bankAccountNumber,
         deposit_type_id: dt?.id || md?.deposit_type_id || '',
         deposit_type_code: resolvedCode,
         deposit_type_name: resolvedName,
@@ -312,7 +578,8 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
         reference_no: tx.reference_no || '-',
         payment_method: tx.payment_method || 'tunai',
         notes: tx.notes || tx.description || '-',
-        created_by: tx.created_by || null
+        created_by: tx.created_by || null,
+        transaction_type: tx.transaction_type || 'withdrawal'
       });
     }
 
@@ -375,13 +642,34 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
 
     // 4. Terapkan filter lanjutan di memori (depositTypeCode, paymentMethod, hasActiveLoanOnly, searchQuery)
     if (filters?.depositTypeCode && filters.depositTypeCode !== 'all') {
-      const target = filters.depositTypeCode.toLowerCase();
+      const target = filters.depositTypeCode.toLowerCase().trim();
       items = items.filter(i => {
+        if (target === 'termination') {
+          const notesText = `${i.notes || ''}`.toLowerCase();
+          return (
+            i.deposit_type_code.toLowerCase() === 'termination' ||
+            i.deposit_type_name.toLowerCase().includes('kliring') ||
+            i.deposit_type_name.toLowerCase().includes('terminasi') ||
+            notesText.includes('terminasi') ||
+            notesText.includes('kliring') ||
+            notesText.includes('pengunduran') ||
+            i.transaction_type?.toLowerCase() === 'termination'
+          );
+        }
         if (target === 'lebaran') {
           return isLebaran(i.deposit_type_code, i.deposit_type_name, i.notes);
         }
+        if (target === 'belanja') {
+          return isBelanja(i.deposit_type_code, i.deposit_type_name, i.notes, undefined, i.payment_method, i.reference_no);
+        }
         const cat = categorizeDepositType(i.deposit_type_code, i.deposit_type_name, i.notes);
-        return cat === target || i.deposit_type_code.toLowerCase() === target;
+        return (
+          cat === target ||
+          i.deposit_type_code.toLowerCase() === target ||
+          i.deposit_type_name.toLowerCase() === target ||
+          i.deposit_type_name.toLowerCase().includes(target) ||
+          (i.deposit_type_id && i.deposit_type_id.toLowerCase() === target)
+        );
       });
     }
 

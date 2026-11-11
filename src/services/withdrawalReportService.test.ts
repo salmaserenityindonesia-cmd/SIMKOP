@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  getWithdrawableDepositTypes,
+  DepositTypeOption,
   getWithdrawalDetailedLedger,
   getWithdrawalSummary,
   calculateWithdrawalSummary,
   exportWithdrawalReportExcel,
   categorizeDepositType,
   isLebaran,
+  isBelanja,
   formatRupiah,
   sanitizeNumber,
   WithdrawalLedgerItem
@@ -35,6 +38,36 @@ describe('withdrawalReportService', () => {
     obj.then = (onResolve: any, onReject: any) => mockPromise.then(onResolve, onReject);
     return obj;
   }
+
+  describe('getWithdrawableDepositTypes', () => {
+    it('fetches deposit types ordered by name ascending', async () => {
+      const mockTypes: DepositTypeOption[] = [
+        { id: 'dt-1', code: 'BELANJA', name: 'Simpanan Belanja Bulanan', can_be_withdrawn: true },
+        { id: 'dt-2', code: 'LEBARAN', name: 'Simpanan Hari Raya (Lebaran)', can_be_withdrawn: true },
+        { id: 'dt-3', code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false },
+        { id: 'dt-4', code: 'WAJIB', name: 'Simpanan Wajib', can_be_withdrawn: false }
+      ];
+
+      (supabase.from as any).mockReturnValue(createQueryMock(mockTypes, null));
+
+      const types = await getWithdrawableDepositTypes();
+
+      expect(supabase.from).toHaveBeenCalledWith('deposit_types');
+      expect(types).toEqual(mockTypes);
+      expect(types).toHaveLength(4);
+    });
+
+    it('returns empty array and logs error when query fails', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      (supabase.from as any).mockReturnValue(createQueryMock(null, { message: 'Database connection failed' }));
+
+      const types = await getWithdrawableDepositTypes();
+
+      expect(types).toEqual([]);
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      consoleErrorSpy.mockRestore();
+    });
+  });
 
   describe('Utility & Helper Functions', () => {
     it('formatRupiah formats number to IDR string correctly', () => {
@@ -79,6 +112,18 @@ describe('withdrawalReportService', () => {
       expect(isLebaran(undefined, undefined, undefined, 'Pencairan THR Idul Fitri')).toBe(true);
       expect(isLebaran('SP', 'Simpanan Pokok')).toBe(false);
       expect(isLebaran('SB', 'Simpanan Belanja')).toBe(false);
+    });
+
+    it('isBelanja identifies variations of belanja codes, names, payment methods, and invoice numbers', () => {
+      expect(isBelanja('BELANJA')).toBe(true);
+      expect(isBelanja('SB')).toBe(true);
+      expect(isBelanja(undefined, 'Simpanan Belanja Bulanan')).toBe(true);
+      expect(isBelanja(undefined, undefined, 'Belanja Kasir POS (INV-1794286975137)')).toBe(true);
+      expect(isBelanja(undefined, undefined, undefined, 'Transaksi belanja toko kasir')).toBe(true);
+      expect(isBelanja(undefined, undefined, undefined, undefined, 'potong_simpanan_belanja')).toBe(true);
+      expect(isBelanja(undefined, undefined, undefined, undefined, undefined, 'INV-1794286975137')).toBe(true);
+      expect(isBelanja('SL', 'Simpanan Lebaran')).toBe(false);
+      expect(isBelanja('SS', 'Simpanan Sukarela')).toBe(false);
     });
   });
 
@@ -215,6 +260,116 @@ describe('withdrawalReportService', () => {
       expect(belanjaResult[0].member_id).toBe('m-2');
     });
 
+    it('filters by TERMINATION correctly querying transaction_type = termination', async () => {
+      const termTxData = [
+        {
+          id: 'tx-term-1',
+          amount: 3500000,
+          created_at: '2025-05-01T08:00:00.000Z',
+          reference_no: 'TRM-2025-001',
+          payment_method: 'transfer',
+          notes: 'Kliring Pengunduran Diri Anggota',
+          description: 'Kliring Penutupan Keanggotaan',
+          created_by: 'admin-1',
+          transaction_type: 'termination',
+          member_deposit_id: 'md-3',
+          member_deposits: {
+            id: 'md-3',
+            member_id: 'm-3',
+            deposit_type_id: 'dt-3',
+            deposit_types: {
+              id: 'dt-3',
+              name: 'Simpanan Pokok',
+              code: 'POKOK'
+            },
+            anggota: {
+              id: 'm-3',
+              nama: 'Agus Sutanto',
+              nrp: '789012',
+              pangkat: 'Letkol Inf',
+              bank_name: 'BNI',
+              bank_account_number: '987654321',
+              status: 'nonaktif'
+            }
+          }
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') return createQueryMock(termTxData, null);
+        return createQueryMock([], null);
+      });
+
+      const result = await getWithdrawalDetailedLedger({ depositTypeCode: 'TERMINATION' });
+      expect(result).toHaveLength(1);
+      expect(result[0].member_name).toBe('Agus Sutanto');
+      expect(result[0].amount).toBe(3500000);
+      expect(result[0].transaction_type).toBe('termination');
+    });
+
+    it('filters by dynamic deposit codes like BELANJA, LEBARAN, custom codes, or deposit_type_id', async () => {
+      const customTxData = [
+        ...mockTxData,
+        {
+          id: 'tx-custom-1',
+          amount: 750000,
+          created_at: '2025-04-12T11:00:00.000Z',
+          reference_no: 'WD-2025-003',
+          payment_method: 'tunai',
+          notes: 'Penarikan Simpanan Pendidikan Anak',
+          description: null,
+          created_by: 'admin-1',
+          transaction_type: 'withdrawal',
+          member_deposit_id: 'md-4',
+          member_deposits: {
+            id: 'md-4',
+            member_id: 'm-4',
+            deposit_type_id: 'dt-pendidikan',
+            deposit_types: {
+              id: 'dt-pendidikan',
+              name: 'Simpanan Pendidikan',
+              code: 'PENDIDIKAN'
+            },
+            anggota: {
+              id: 'm-4',
+              nama: 'Dewi Lestari',
+              nrp: '112233',
+              pangkat: 'PNS IV/a',
+              bank_name: 'BRI',
+              bank_account_number: '1122-3344-55',
+              status: 'aktif'
+            }
+          }
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') return createQueryMock(customTxData, null);
+        return createQueryMock([], null);
+      });
+
+      // Filter by dynamic code 'PENDIDIKAN'
+      const pendidikanResult = await getWithdrawalDetailedLedger({ depositTypeCode: 'PENDIDIKAN' });
+      expect(pendidikanResult).toHaveLength(1);
+      expect(pendidikanResult[0].member_name).toBe('Dewi Lestari');
+      expect(pendidikanResult[0].deposit_type_code).toBe('PENDIDIKAN');
+
+      // Filter by deposit_type_id
+      const byIdResult = await getWithdrawalDetailedLedger({ depositTypeCode: 'dt-pendidikan' });
+      expect(byIdResult).toHaveLength(1);
+      expect(byIdResult[0].member_name).toBe('Dewi Lestari');
+
+      // Filter by dynamic code 'LEBARAN'
+      const lebaranResult = await getWithdrawalDetailedLedger({ depositTypeCode: 'LEBARAN' });
+      expect(lebaranResult).toHaveLength(1);
+      expect(lebaranResult[0].member_name).toBe('Budi Santoso');
+
+      // Filter by dynamic code 'BELANJA'
+      const belanjaResult = await getWithdrawalDetailedLedger({ depositTypeCode: 'BELANJA' });
+      expect(belanjaResult).toHaveLength(1);
+      expect(belanjaResult[0].member_name).toBe('Siti Aminah');
+    });
+
     it('applies paymentMethod filter properly', async () => {
       (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'deposit_transactions') return createQueryMock(mockTxData, null);
@@ -324,6 +479,123 @@ describe('withdrawalReportService', () => {
       expect(result[0].deposit_type_code).toBe('LEBARAN');
       expect(result[0].amount).toBe(2500000);
       expect(result[0].reference_no).toBe('KW-WD-991');
+    });
+
+    it('resolves POS cashier transaction INV-1794286975137 to Yanto Santoso and Simpanan Belanja Bulanan via sales cross-lookup', async () => {
+      const posTx = [
+        {
+          id: 'tx-pos-yanto',
+          amount: 41000,
+          created_at: '2026-11-10T12:00:00.000Z',
+          reference_no: 'INV-1794286975137',
+          payment_method: 'potong_simpanan_belanja',
+          notes: 'Transaksi belanja toko kasir',
+          description: 'Belanja Kasir POS (INV-1794286975137)',
+          created_by: 'cashier-01',
+          transaction_type: 'withdrawal',
+          member_deposit_id: 'md-orphan-pos',
+          member_deposits: null // Relasi terputus atau tidak terjoin
+        }
+      ];
+
+      const salesList = [
+        {
+          id: 'sale-001',
+          sale_number: 'INV-1794286975137',
+          member_id: 'mem-yanto'
+        }
+      ];
+
+      const anggotaList = [
+        {
+          id: 'mem-yanto',
+          nama: 'Yanto Santoso',
+          nrp: '96316180',
+          pangkat: 'Serma',
+          bank_name: 'BRI',
+          bank_account_number: '9631618001',
+          status: 'aktif'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return createQueryMock(posTx);
+        }
+        if (table === 'member_deposits') {
+          return createQueryMock([]);
+        }
+        if (table === 'sales') {
+          return createQueryMock(salesList);
+        }
+        if (table === 'anggota') {
+          return createQueryMock(anggotaList);
+        }
+        if (table === 'loans') {
+          return createQueryMock([]);
+        }
+        return createQueryMock([]);
+      });
+
+      const result = await getWithdrawalDetailedLedger();
+      expect(result).toHaveLength(1);
+      expect(result[0].member_name).toBe('Yanto Santoso');
+      expect(result[0].member_nrp).toBe('96316180');
+      expect(result[0].member_rank).toBe('Serma');
+      expect(result[0].deposit_type_code).toBe('BELANJA');
+      expect(result[0].deposit_type_name).toBe('Simpanan Belanja Bulanan');
+      expect(result[0].amount).toBe(41000);
+      expect(result[0].reference_no).toBe('INV-1794286975137');
+    });
+
+    it('resolves member from md.member_id when nested anggota join in member_deposits is null', async () => {
+      const txData = [
+        {
+          id: 'tx-md-yanto',
+          amount: 41000,
+          created_at: '2026-11-10T12:00:00.000Z',
+          reference_no: 'INV-1794286975137',
+          payment_method: 'potong_simpanan_belanja',
+          notes: 'Transaksi belanja toko kasir',
+          description: 'Belanja Kasir POS (INV-1794286975137)',
+          created_by: 'cashier-01',
+          transaction_type: 'withdrawal',
+          member_deposit_id: 'md-yanto',
+          member_deposits: {
+            id: 'md-yanto',
+            member_id: 'mem-yanto',
+            deposit_type_id: 'dt-belanja',
+            deposit_types: { id: 'dt-belanja', name: 'Simpanan Belanja Bulanan', code: 'BELANJA' },
+            anggota: null // PostgREST join returned null
+          }
+        }
+      ];
+
+      const anggotaList = [
+        {
+          id: 'mem-yanto',
+          nama: 'Yanto Santoso',
+          nrp: '96316180',
+          pangkat: 'Serma',
+          bank_name: 'BRI',
+          bank_account_number: '9631618001',
+          status: 'aktif'
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') return createQueryMock(txData);
+        if (table === 'member_deposits') return createQueryMock([]);
+        if (table === 'sales') return createQueryMock([]);
+        if (table === 'anggota') return createQueryMock(anggotaList);
+        return createQueryMock([]);
+      });
+
+      const result = await getWithdrawalDetailedLedger();
+      expect(result).toHaveLength(1);
+      expect(result[0].member_name).toBe('Yanto Santoso');
+      expect(result[0].member_nrp).toBe('96316180');
+      expect(result[0].deposit_type_name).toBe('Simpanan Belanja Bulanan');
     });
 
     it('handles unexpected exceptions gracefully', async () => {
