@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
+import { resetFinancialTransactions } from '../../../services/cashFlowService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -267,7 +268,15 @@ async function getShuEstimation(
 
 // ─── Main Page Component ──────────────────────────────────────────────────────
 
-export default function LaporanKeuangan() {
+export interface LaporanKeuanganProps {
+  initialResetModalOpen?: boolean;
+  initialConfirmText?: string;
+}
+
+export default function LaporanKeuangan({
+  initialResetModalOpen = false,
+  initialConfirmText = '',
+}: LaporanKeuanganProps = {}) {
   const { showToast } = useFeedback();
   const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>('cashflow');
   const [startDate, setStartDate] = useState(startOfMonth);
@@ -277,6 +286,11 @@ export default function LaporanKeuangan() {
 
   const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(null);
   const [shuData, setShuData]           = useState<ShuEstimationData | null>(null);
+
+  // State Modal Konfirmasi Reset Kas
+  const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
+  const [confirmText, setConfirmText] = useState(initialConfirmText);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -365,6 +379,30 @@ export default function LaporanKeuangan() {
 
   // ── Print PDF (client-side) ──────────────────────────────────────────────
   const handlePrintPDF = () => window.print();
+
+  // ── Reset Transaksi Keuangan (RPC) ────────────────────────────────────────
+  const handleConfirmReset = async () => {
+    if (confirmText !== 'RESET KAS KEUANGAN' || isResetting) return;
+    setIsResetting(true);
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+      const res = await resetFinancialTransactions(currentUserId);
+      if (res.success) {
+        setIsResetModalOpen(false);
+        setConfirmText('');
+        showToast(res.message || 'Seluruh transaksi kas berhasil di-reset.', 'success');
+        await fetchData();
+      } else {
+        showToast(res.message || 'Gagal mereset transaksi kas keuangan.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Reset error:', err);
+      showToast(err?.message || 'Terjadi kesalahan sistem saat mereset kas.', 'error');
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -468,6 +506,18 @@ export default function LaporanKeuangan() {
             >
               <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
               Download PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmText('');
+                setIsResetModalOpen(true);
+              }}
+              title="Reset seluruh transaksi keuangan kas dan penjualan retail"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-rose-300 bg-rose-50/60 text-rose-700 text-sm font-semibold hover:bg-rose-100/80 hover:border-rose-400 transition-colors shadow-sm cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[18px]">history_toggle_off</span>
+              Reset Transaksi Kas
             </button>
           </div>
         </div>
@@ -784,6 +834,135 @@ export default function LaporanKeuangan() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ── MODAL KONFIRMASI BAHAYA RESET TRANSAKSI KEUANGAN ── */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150 no-print">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-modal-title"
+            className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-rose-200 flex flex-col animate-in zoom-in-95 duration-150"
+          >
+            {/* Modal Header */}
+            <div className="p-5 border-b border-rose-100 flex items-start gap-3 bg-rose-50/70">
+              <div className="p-2.5 rounded-full shrink-0 bg-rose-100 text-rose-600">
+                <span className="material-symbols-outlined text-[24px]">warning</span>
+              </div>
+              <div className="flex-1 min-w-0 pr-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-rose-200 text-rose-800">
+                    Aksi Destruktif
+                  </span>
+                </div>
+                <h3 id="reset-modal-title" className="text-base font-bold text-rose-900 leading-tight">
+                  Reset Transaksi Kas Keuangan
+                </h3>
+                <p className="text-xs text-rose-600 mt-0.5">
+                  Tindakan ini permanen dan akan menghapus riwayat transaksi keuangan & retail
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isResetting) {
+                    setIsResetModalOpen(false);
+                    setConfirmText('');
+                  }
+                }}
+                disabled={isResetting}
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white/60 transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                aria-label="Tutup modal"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* Modal Body Form */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmReset();
+              }}
+            >
+              <div className="p-6 space-y-4">
+                <div className="text-sm text-gray-700 space-y-2">
+                  <p className="font-medium text-gray-900">
+                    Anda akan melakukan reset transaksi keuangan koperasi. Tindakan ini akan menghapus:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-gray-600">
+                    <li>Seluruh riwayat arus kas masuk & keluar (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">cash_flow</code>).</li>
+                    <li>Seluruh penjualan retail POS kasir (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">sales</code>, <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">sale_items</code>, <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">cashier_shifts</code>).</li>
+                    <li>Seluruh riwayat penarikan dan potongan simpanan anggota (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">deposit_transactions</code>).</li>
+                    <li>Saldo kas brankas berjalan akan kembali ke <strong>Rp 0</strong>.</li>
+                  </ul>
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-start gap-2 mt-2">
+                    <span className="material-symbols-outlined text-[18px] text-emerald-600 shrink-0 mt-0.5">verified_user</span>
+                    <div>
+                      <p className="font-semibold text-emerald-900">Penegasan Keamanan Data Master:</p>
+                      <p className="text-emerald-700 mt-0.5">
+                        Master produk, harga modal (HPP), dan simpanan pokok anggota tetap aman dan tidak akan terhapus.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-rose-50 border border-rose-200 rounded-lg p-3.5 space-y-2">
+                  <label htmlFor="confirm-reset-input" className="block text-xs font-medium text-rose-900">
+                    Ketik teks verifikasi persis di bawah ini untuk mengonfirmasi:
+                  </label>
+                  <div className="font-mono text-xs font-bold text-rose-800 bg-white/90 px-2.5 py-1.5 rounded border border-rose-300 select-all tracking-wider text-center">
+                    RESET KAS KEUANGAN
+                  </div>
+                  <input
+                    id="confirm-reset-input"
+                    type="text"
+                    autoComplete="off"
+                    disabled={isResetting}
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    placeholder='Ketik "RESET KAS KEUANGAN"'
+                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500 bg-white font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 px-6 border-t border-gray-200 flex items-center justify-end gap-3 bg-gray-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isResetting) {
+                      setIsResetModalOpen(false);
+                      setConfirmText('');
+                    }
+                  }}
+                  disabled={isResetting}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg border border-gray-300 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={confirmText !== 'RESET KAS KEUANGAN' || isResetting}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isResetting ? (
+                    <>
+                      <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
+                      <span>Mereset Data...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-[18px]">delete_forever</span>
+                      <span>Konfirmasi Reset</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
