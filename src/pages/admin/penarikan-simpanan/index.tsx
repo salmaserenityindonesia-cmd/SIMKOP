@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
-import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark } from 'lucide-react';
+import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark, Users } from 'lucide-react';
 import { getWithdrawableSavings, withdrawSavings, WithdrawableDeposit } from '../../../services/withdrawal.service';
 import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalReceiptModal';
+import BulkLebaranTab from './BulkLebaranTab';
 
 interface Anggota {
   id: string;
@@ -15,6 +16,7 @@ interface Anggota {
 }
 
 export default function PenarikanSimpanan() {
+  const [activeTab, setActiveTab] = useState<'regular' | 'bulk_lebaran'>('regular');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Anggota[]>([]);
@@ -165,133 +167,170 @@ export default function PenarikanSimpanan() {
             <span className="text-emerald-600 font-medium">Penarikan Simpanan</span>
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Penarikan & Pencairan Simpanan</h1>
-          <p className="text-slate-500">Cairkan simpanan sukarela / berkala milik anggota aktif.</p>
+          <p className="text-slate-500">Cairkan simpanan sukarela / berkala perorangan atau eksekusi pencairan massal simpanan lebaran.</p>
         </div>
 
-        {/* Search Bar */}
-        <div className="relative z-10 max-w-2xl">
-          <div className="relative flex items-center">
-            <Search className="absolute left-4 text-slate-400 w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Cari NRP atau Nama Anggota..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
-            />
-            {isSearching && (
-              <div className="absolute right-4 w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            )}
-          </div>
-          
-          {searchResults.length > 0 && (
-            <div className="absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
-              {searchResults.map((anggota) => (
-                <button
-                  key={anggota.id}
-                  onClick={() => handleSelectAnggota(anggota)}
-                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 text-left"
-                >
-                  <div>
-                    <div className="font-medium text-slate-800">{anggota.nama}</div>
-                    <div className="text-sm text-slate-500">{anggota.nrp} • {anggota.pangkat}</div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-slate-400" />
-                </button>
-              ))}
-            </div>
-          )}
+        {/* Tab Switcher */}
+        <div className="flex items-center gap-2 border-b border-slate-200">
+          <button
+            type="button"
+            onClick={() => setActiveTab('regular')}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all ${
+              activeTab === 'regular'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-xl'
+            }`}
+          >
+            <Wallet className="w-4 h-4" />
+            <span>Penarikan Perorangan (Reguler)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bulk_lebaran')}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all relative ${
+              activeTab === 'bulk_lebaran'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-xl'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Pencairan Massal Simpanan Lebaran</span>
+            <span className="px-2 py-0.5 text-[10px] uppercase font-black bg-emerald-100 text-emerald-800 rounded-full">
+              THR
+            </span>
+          </button>
         </div>
 
-        {/* Member Profile & Cards */}
-        {selectedAnggota && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Member Profile Card */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center font-bold text-xl">
-                  {selectedAnggota.nama.charAt(0)}
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-slate-800">{selectedAnggota.nama}</h2>
-                  <p className="text-slate-500">{selectedAnggota.nrp} • {selectedAnggota.pangkat}</p>
-                </div>
+        {activeTab === 'regular' ? (
+          <div className="space-y-6">
+            {/* Search Bar */}
+            <div className="relative z-10 max-w-2xl">
+              <div className="relative flex items-center">
+                <Search className="absolute left-4 text-slate-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Cari NRP atau Nama Anggota..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
+                />
+                {isSearching && (
+                  <div className="absolute right-4 w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                )}
               </div>
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center gap-3">
-                <Landmark className="text-slate-400 w-5 h-5" />
-                <div>
-                  <div className="text-xs text-slate-500 font-medium uppercase">Rekening Bank</div>
-                  <div className="font-semibold text-slate-700">
-                    {selectedAnggota.bank_name || 'Belum diisi'} - {selectedAnggota.bank_account_number || '-'}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Savings Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {isLoadingSavings ? (
-                <div className="col-span-full py-12 flex justify-center">
-                  <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : (
-                <>
-                  {withdrawableSavings.map((deposit) => (
-                    <div key={deposit.member_deposit_id} className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col">
-                      <div className="p-5 flex-1">
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="flex items-center gap-2">
-                            <Wallet className="text-emerald-500 w-5 h-5" />
-                            <h3 className="font-bold text-slate-800">{deposit.deposit_name}</h3>
-                          </div>
-                          <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-md">
-                            Bisa Ditarik
-                          </span>
-                        </div>
-                        <p className="text-sm text-slate-500 mb-1">Saldo Tersedia</p>
-                        <p className="text-2xl font-black text-slate-800">
-                          Rp {deposit.saldo.toLocaleString('id-ID')}
-                        </p>
+              
+              {searchResults.length > 0 && (
+                <div className="absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                  {searchResults.map((anggota) => (
+                    <button
+                      key={anggota.id}
+                      onClick={() => handleSelectAnggota(anggota)}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0 text-left"
+                    >
+                      <div>
+                        <div className="font-medium text-slate-800">{anggota.nama}</div>
+                        <div className="text-sm text-slate-500">{anggota.nrp} • {anggota.pangkat}</div>
                       </div>
-                      <div className="p-3 bg-emerald-50/50 border-t border-emerald-100 grid grid-cols-2 gap-2">
-                        <button 
-                          onClick={() => handleOpenWithdraw(deposit, false)}
-                          className="px-4 py-2 text-sm font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
-                        >
-                          Tarik Sebagian
-                        </button>
-                        <button 
-                          onClick={() => handleOpenWithdraw(deposit, true)}
-                          className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200"
-                        >
-                          Cairkan Penuh
-                        </button>
-                      </div>
-                    </div>
+                      <ArrowRight className="w-4 h-4 text-slate-400" />
+                    </button>
                   ))}
-                  
-                  {/* Mock Simpanan Pokok (Non-withdrawable) */}
-                  <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col opacity-75">
-                    <div className="p-5 flex-1">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="flex items-center gap-2">
-                          <Lock className="text-slate-400 w-5 h-5" />
-                          <h3 className="font-bold text-slate-600">Simpanan Pokok & Wajib</h3>
-                        </div>
-                        <span className="px-2 py-1 bg-slate-200 text-slate-600 text-xs font-bold rounded-md flex items-center gap-1">
-                          <Lock className="w-3 h-3" /> Terkunci
-                        </span>
-                      </div>
-                      <p className="text-sm text-slate-500 mb-1">Status Penarikan</p>
-                      <p className="text-sm font-medium text-slate-700">
-                        Hanya bisa dicairkan saat pengunduran diri (Kliring).
-                      </p>
-                    </div>
-                  </div>
-                </>
+                </div>
               )}
             </div>
+
+            {/* Member Profile & Cards */}
+            {selectedAnggota && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Member Profile Card */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center font-bold text-xl">
+                      {selectedAnggota.nama.charAt(0)}
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-800">{selectedAnggota.nama}</h2>
+                      <p className="text-slate-500">{selectedAnggota.nrp} • {selectedAnggota.pangkat}</p>
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center gap-3">
+                    <Landmark className="text-slate-400 w-5 h-5" />
+                    <div>
+                      <div className="text-xs text-slate-500 font-medium uppercase">Rekening Bank</div>
+                      <div className="font-semibold text-slate-700">
+                        {selectedAnggota.bank_name || 'Belum diisi'} - {selectedAnggota.bank_account_number || '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Savings Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {isLoadingSavings ? (
+                    <div className="col-span-full py-12 flex justify-center">
+                      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      {withdrawableSavings.map((deposit) => (
+                        <div key={deposit.member_deposit_id} className="bg-white rounded-2xl border border-emerald-100 shadow-sm overflow-hidden flex flex-col">
+                          <div className="p-5 flex-1">
+                            <div className="flex justify-between items-start mb-4">
+                              <div className="flex items-center gap-2">
+                                <Wallet className="text-emerald-500 w-5 h-5" />
+                                <h3 className="font-bold text-slate-800">{deposit.deposit_name}</h3>
+                              </div>
+                              <span className="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-md">
+                                Bisa Ditarik
+                              </span>
+                            </div>
+                            <p className="text-sm text-slate-500 mb-1">Saldo Tersedia</p>
+                            <p className="text-2xl font-black text-slate-800">
+                              Rp {deposit.saldo.toLocaleString('id-ID')}
+                            </p>
+                          </div>
+                          <div className="p-3 bg-emerald-50/50 border-t border-emerald-100 grid grid-cols-2 gap-2">
+                            <button 
+                              onClick={() => handleOpenWithdraw(deposit, false)}
+                              className="px-4 py-2 text-sm font-medium text-emerald-700 bg-white border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors"
+                            >
+                              Tarik Sebagian
+                            </button>
+                            <button 
+                              onClick={() => handleOpenWithdraw(deposit, true)}
+                              className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200"
+                            >
+                              Cairkan Penuh
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      
+                      {/* Mock Simpanan Pokok (Non-withdrawable) */}
+                      <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col opacity-75">
+                        <div className="p-5 flex-1">
+                          <div className="flex justify-between items-start mb-4">
+                            <div className="flex items-center gap-2">
+                              <Lock className="text-slate-400 w-5 h-5" />
+                              <h3 className="font-bold text-slate-600">Simpanan Pokok & Wajib</h3>
+                            </div>
+                            <span className="px-2 py-1 bg-slate-200 text-slate-600 text-xs font-bold rounded-md flex items-center gap-1">
+                              <Lock className="w-3 h-3" /> Terkunci
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-500 mb-1">Status Penarikan</p>
+                          <p className="text-sm font-medium text-slate-700">
+                            Hanya bisa dicairkan saat pengunduran diri (Kliring).
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+        ) : (
+          <BulkLebaranTab />
         )}
       </div>
 
