@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { loanService, MIN_REMAINING_THP, calculateTHPEligibility, getActiveLoanTypes } from '../../services/loanService';
+import { loanService, MIN_REMAINING_THP, calculateTHPEligibility, getActiveLoanTypes, getLoanSettings } from '../../services/loanService';
 import { LoanType } from '../../services/koperasiService';
 import { extractMemberTHP } from '../../services/memberService';
 import { supabase } from '../../lib/supabaseClient';
@@ -23,6 +23,7 @@ export interface SimulationPanelProps {
   tenor?: number | '';
   onSelectTenor?: (tenor: number) => void;
   maxTenor?: number;
+  minRemainingThp?: number;
 }
 
 export function SimulationPanel({
@@ -31,13 +32,14 @@ export function SimulationPanel({
   amount,
   tenor,
   onSelectTenor,
-  maxTenor
+  maxTenor,
+  minRemainingThp = MIN_REMAINING_THP
 }: SimulationPanelProps) {
   const eligibility = thpData 
-    ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, MIN_REMAINING_THP)
-    : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
+    ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, minRemainingThp)
+    : { finalRemainingThp: 0, isEligible: false, shortfall: minRemainingThp };
 
-  // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= Rp 1.500.000)
+  // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= minRemainingThp)
   // Bersumber dinamis dari master produk pinjaman (default hingga 36 bulan jika standalone)
   const effectiveMaxTenor = typeof maxTenor === 'number' ? maxTenor : 36;
   const availableTenors = calculateAvailableTenors(effectiveMaxTenor);
@@ -51,7 +53,7 @@ export function SimulationPanel({
     const currentTenorNum = typeof tenor === 'number' ? tenor : 0;
     const viable = availableTenors.filter(t => {
       const monthly = principal / t;
-      return (thpData.remaining_thp - monthly) >= MIN_REMAINING_THP;
+      return (thpData.remaining_thp - monthly) >= minRemainingThp;
     });
 
     const higherViable = viable.find(t => t > currentTenorNum);
@@ -108,7 +110,7 @@ export function SimulationPanel({
               <div>
                 <p className="font-semibold text-emerald-900">Memenuhi Syarat</p>
                 <p className="text-emerald-700 text-xs">
-                  Sisa THP setelah pemotongan ({formatCurrency(eligibility.finalRemainingThp)}) berada di atas batas minimum {formatCurrency(MIN_REMAINING_THP)}.
+                  Sisa THP setelah pemotongan ({formatCurrency(eligibility.finalRemainingThp)}) berada di atas batas minimum {formatCurrency(minRemainingThp)}.
                 </p>
               </div>
             </div>
@@ -128,12 +130,12 @@ export function SimulationPanel({
                   <strong className="font-bold text-rose-700 font-mono">
                     {formatCurrency(eligibility.shortfall)}
                   </strong>
-                  {' '}dari batas minimum {formatCurrency(MIN_REMAINING_THP)}).
+                  {' '}dari batas minimum {formatCurrency(minRemainingThp)}).
                 </p>
                 {recommendedTenor && (
                   <div className="mt-2.5 pt-2 border-t border-rose-200/80 text-rose-800">
                     <div className="font-medium text-xs sm:text-sm text-amber-900 bg-amber-50/80 p-2.5 rounded-lg border border-amber-200/70">
-                      💡 <strong>Rekomendasi:</strong> Pilih tenor {recommendedTenor} bulan atau lebih agar cicilan per bulan menjadi lebih ringan dan memenuhi syarat sisa THP minimal {formatCurrency(MIN_REMAINING_THP)}.
+                      💡 <strong>Rekomendasi:</strong> Pilih tenor {recommendedTenor} bulan atau lebih agar cicilan per bulan menjadi lebih ringan dan memenuhi syarat sisa THP minimal {formatCurrency(minRemainingThp)}.
                       {onSelectTenor && (
                         <button
                           type="button"
@@ -166,7 +168,8 @@ export async function submitLoanApplication(
   amount: number | '',
   tenor: number | '',
   selectedLoanTypeId: string,
-  maxTenor: number
+  maxTenor: number,
+  minThreshold?: number
 ) {
   if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
     throw new Error('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
@@ -176,7 +179,9 @@ export async function submitLoanApplication(
     throw new Error(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
   }
 
-  return await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId);
+  return minThreshold !== undefined
+    ? await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId, minThreshold)
+    : await loanService.applyLoan(selectedAnggota, purpose, Number(amount), Number(tenor), selectedLoanTypeId);
 }
 
 export interface PengajuanPinjamanProps {
@@ -188,6 +193,7 @@ export interface PengajuanPinjamanProps {
   initialPurpose?: string;
   initialLoanTypes?: LoanType[];
   initialSelectedLoanTypeId?: string;
+  initialMinRemainingThp?: number;
 }
 
 export default function PengajuanPinjaman({
@@ -198,7 +204,8 @@ export default function PengajuanPinjaman({
   initialTenor,
   initialPurpose,
   initialLoanTypes,
-  initialSelectedLoanTypeId
+  initialSelectedLoanTypeId,
+  initialMinRemainingThp
 }: PengajuanPinjamanProps = {}) {
   const [loanTypes, setLoanTypes] = useState<LoanType[]>(initialLoanTypes || []);
   const [selectedLoanTypeId, setSelectedLoanTypeId] = useState<string>(initialSelectedLoanTypeId || '');
@@ -208,6 +215,7 @@ export default function PengajuanPinjaman({
   const [purpose, setPurpose] = useState(initialPurpose || '');
   const [amount, setAmount] = useState<number | ''>(initialAmount ?? '');
   const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
+  const [minRemainingThp, setMinRemainingThp] = useState<number>(initialMinRemainingThp ?? MIN_REMAINING_THP);
 
   const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
   const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 0;
@@ -261,7 +269,21 @@ export default function PengajuanPinjaman({
     if (initialLoanTypes === undefined) {
       loadLoanTypes();
     }
+    if (initialMinRemainingThp === undefined) {
+      loadLoanSettings();
+    }
   }, []);
+
+  async function loadLoanSettings() {
+    try {
+      const settings = await getLoanSettings();
+      if (settings && typeof settings.min_remaining_thp === 'number') {
+        setMinRemainingThp(settings.min_remaining_thp);
+      }
+    } catch (err) {
+      console.error('Gagal memuat pengaturan pinjaman:', err);
+    }
+  }
 
   async function loadLoanTypes() {
     try {
@@ -353,18 +375,22 @@ export default function PengajuanPinjaman({
   };
 
   const eligibility = thpData 
-    ? calculateTHPEligibility(thpData.remaining_thp, calculateCicilan(), MIN_REMAINING_THP)
-    : { finalRemainingThp: 0, isEligible: false, shortfall: MIN_REMAINING_THP };
+    ? calculateTHPEligibility(thpData.remaining_thp, calculateCicilan(), minRemainingThp)
+    : { finalRemainingThp: 0, isEligible: false, shortfall: minRemainingThp };
 
   const isTHPEligible = () => eligibility.isEligible;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (thpData !== null && !isTHPEligible()) {
+      setError(`Pengajuan ditolak: Sisa THP setelah pemotongan (${formatCurrency(eligibility.finalRemainingThp)}) kurang dari batas minimal ${formatCurrency(minRemainingThp)}.`);
+      return;
+    }
     setError(null);
     setSuccess(null);
     setSubmitting(true);
     try {
-      await submitLoanApplication(selectedAnggota, purpose, amount, tenor, selectedLoanTypeId, maxTenor);
+      await submitLoanApplication(selectedAnggota, purpose, amount, tenor, selectedLoanTypeId, maxTenor, minRemainingThp);
       setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
       
       // Reset form
@@ -516,6 +542,7 @@ export default function PengajuanPinjaman({
             tenor={tenor}
             onSelectTenor={(t) => setTenor(t)}
             maxTenor={selectedLoanType ? selectedLoanType.max_duration_months : undefined}
+            minRemainingThp={minRemainingThp}
           />
         </div>
       </div>

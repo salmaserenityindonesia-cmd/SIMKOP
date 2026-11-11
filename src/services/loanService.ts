@@ -286,14 +286,21 @@ export const loanService = {
     };
   },
 
-  async applyLoan(memberId: string, purpose: string, amount: number, tenor: number, loanTypeId?: string) {
+  async applyLoan(
+    memberId: string,
+    purpose: string,
+    amount: number,
+    tenor: number,
+    loanTypeId?: string,
+    minThreshold: number = MIN_REMAINING_THP
+  ) {
     const monthlyTarget = amount / tenor;
     
     const { remaining_thp } = await this.getMemberTHP(memberId);
-    const eligibility = calculateTHPEligibility(remaining_thp, monthlyTarget, MIN_REMAINING_THP);
+    const eligibility = calculateTHPEligibility(remaining_thp, monthlyTarget, minThreshold);
     if (!eligibility.isEligible) {
       throw new Error(
-        `Pengajuan ditolak: Sisa THP setelah pemotongan (Rp ${eligibility.finalRemainingThp.toLocaleString('id-ID')}) kurang Rp ${eligibility.shortfall.toLocaleString('id-ID')} dari batas minimal Rp ${MIN_REMAINING_THP.toLocaleString('id-ID')}.`
+        `Pengajuan ditolak: Sisa THP setelah pemotongan (Rp ${eligibility.finalRemainingThp.toLocaleString('id-ID')}) kurang Rp ${eligibility.shortfall.toLocaleString('id-ID')} dari batas minimal Rp ${minThreshold.toLocaleString('id-ID')}.`
       );
     }
 

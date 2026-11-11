@@ -543,4 +543,182 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       ).rejects.toThrow('Tenor yang dipilih (10 bulan) melebihi batas maksimal 6 bulan untuk jenis pinjaman ini.');
     });
   });
+
+  describe('Dynamic Minimum Remaining THP Configuration & Eligibility Integration', () => {
+    const mockLoanTypes: LoanType[] = [
+      {
+        id: 'lt-darurat',
+        code: 'DARURAT',
+        name: 'Pinjaman Darurat',
+        max_duration_months: 6,
+        is_active: true
+      },
+      {
+        id: 'lt-reguler',
+        code: 'REGULER',
+        name: 'Pinjaman Reguler',
+        max_duration_months: 12,
+        is_active: true
+      }
+    ];
+
+    it('SimulationPanel respects custom minRemainingThp (e.g. Rp 2.000.000) when rendering Memenuhi Syarat', () => {
+      const thpData = {
+        master_thp: 5000000,
+        active_installments: 0,
+        savings_deduction: 200000,
+        remaining_thp: 4800000
+      };
+      // Installment 2,000,000 -> final remaining = 2,800,000 (>= 2,000,000)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={2000000}
+          minRemainingThp={2000000}
+        />
+      );
+
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).toContain('berada di atas batas minimum');
+      expect(html).toContain('2.000.000');
+      expect(html).not.toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+    });
+
+    it('SimulationPanel marks loan as Tidak Memenuhi Syarat when remaining THP is between default 1.5M and RAT threshold 2.0M', () => {
+      const thpData = {
+        master_thp: 4000000,
+        active_installments: 500000,
+        savings_deduction: 200000,
+        remaining_thp: 3300000
+      };
+      // Installment 1,550,000 -> final remaining = 1,750,000.
+      // Under old default 1.500.000, this was eligible.
+      // Under RAT threshold 2.000.000, it is INELIGIBLE with shortfall 250.000.
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={1550000}
+          minRemainingThp={2000000}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).toContain('250.000');
+      expect(html).toContain('2.000.000');
+      expect(html).toContain('text-red-600');
+      expect(html).not.toContain('text-green-600');
+      expect(html).not.toContain('Memenuhi Syarat</p>');
+    });
+
+    it('SimulationPanel adjusts recommendation tenor to satisfy custom threshold (e.g. Rp 1.750.000)', () => {
+      const thpData = {
+        master_thp: 4500000,
+        active_installments: 1000000,
+        savings_deduction: 200000,
+        remaining_thp: 3300000
+      };
+      // Principal 18,000,000, Tenor 6 -> Monthly = 3,000,000 -> Final THP = 300,000 (< 1,750,000)
+      // Tenor 10 -> Monthly = 1,800,000 -> Final THP = 1,500,000 (Passes 1.5M, but FAILS 1.75M)
+      // Tenor 12 -> Monthly = 1,500,000 -> Final THP = 1,800,000 (>= 1,750,000 -> VIABLE!)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={3000000}
+          amount={18000000}
+          tenor={6}
+          minRemainingThp={1750000}
+          onSelectTenor={() => {}}
+        />
+      );
+
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).toContain('Rekomendasi:');
+      expect(html).toContain('Pilih tenor 12 bulan atau lebih agar cicilan per bulan menjadi lebih ringan');
+      expect(html).toContain('1.750.000');
+      expect(html).toContain('Terapkan Tenor 12 Bulan');
+    });
+
+    it('PengajuanPinjaman page disables submit button when remaining THP fails custom threshold (Rp 2.000.000)', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Renovasi Dapur"
+          initialAmount={12000000}
+          initialTenor={12}
+          initialMinRemainingThp={2000000}
+          initialThpData={{
+            master_thp: 4000000,
+            active_installments: 1200000,
+            savings_deduction: 200000,
+            remaining_thp: 2600000
+          }}
+        />
+      );
+
+      // Monthly installment = 1,000,000 -> Final THP = 1,600,000
+      // 1,600,000 < 2,000,000 -> Ineligible, shortfall 400,000
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+      expect(html).toContain('400.000');
+      expect(html).toContain('2.000.000');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+
+    it('PengajuanPinjaman page enables submit button when remaining THP meets custom threshold (Rp 2.000.000)', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Renovasi Dapur"
+          initialAmount={6000000}
+          initialTenor={12}
+          initialMinRemainingThp={2000000}
+          initialThpData={{
+            master_thp: 4000000,
+            active_installments: 1200000,
+            savings_deduction: 200000,
+            remaining_thp: 2600000
+          }}
+        />
+      );
+
+      // Monthly installment = 500,000 -> Final THP = 2,100,000 >= 2,000,000
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).toContain('2.000.000');
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+      expect(html).toContain('Ajukan Pinjaman');
+    });
+
+    it('submitLoanApplication forwards custom dynamic threshold to loanService.applyLoan', async () => {
+      const spyApplyLoan = vi.spyOn(loanService, 'applyLoan').mockResolvedValueOnce({
+        id: 'loan-dynamic-1',
+        loan_number: 'LOAN-DYN-001',
+        status: 'draft'
+      } as any);
+
+      const result = await submitLoanApplication(
+        'm-1',
+        'Beli Kebutuhan RAT',
+        5000000,
+        5,
+        'lt-darurat',
+        6,
+        2000000
+      );
+
+      expect(spyApplyLoan).toHaveBeenCalledWith(
+        'm-1',
+        'Beli Kebutuhan RAT',
+        5000000,
+        5,
+        'lt-darurat',
+        2000000
+      );
+      expect(result.id).toBe('loan-dynamic-1');
+    });
+  });
 });
