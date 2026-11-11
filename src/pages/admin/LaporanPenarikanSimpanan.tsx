@@ -24,11 +24,13 @@ import {
   getWithdrawalDetailedLedger,
   getWithdrawalSummary,
   exportWithdrawalReportExcel,
+  getWithdrawableDepositTypes,
   formatRupiah,
   categorizeDepositType,
   type WithdrawalLedgerItem,
   type WithdrawalSummary,
-  type WithdrawalReportFilters
+  type WithdrawalReportFilters,
+  type DepositTypeOption
 } from '../../services/withdrawalReportService';
 import WithdrawalReceiptModal from '../../components/withdrawal/WithdrawalReceiptModal';
 
@@ -73,34 +75,37 @@ const formatDisplayDate = (dateStr?: string | null) => {
 
 export function DepositTypeBadge({ code, name }: { code: string; name: string }) {
   const category = categorizeDepositType(code, name);
+  const displayName = category === 'belanja' && (!name || name.trim().toLowerCase() === 'simpanan belanja')
+    ? 'Simpanan Belanja Bulanan'
+    : (name || (category === 'belanja' ? 'Simpanan Belanja Bulanan' : category === 'lebaran' ? 'Simpanan Lebaran' : 'Simpanan'));
 
   switch (category) {
     case 'lebaran':
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          {name || 'Simpanan Lebaran'}
+          {displayName}
         </span>
       );
     case 'belanja':
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-100 text-sky-800 border border-sky-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-          {name || 'Simpanan Belanja'}
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          {displayName}
         </span>
       );
     case 'pokok_wajib':
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 border border-slate-300">
           <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-          {name || 'Pokok & Wajib'}
+          {displayName || 'Pokok & Wajib'}
         </span>
       );
     default:
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
           <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-          {name || 'Simpanan Sukarela'}
+          {displayName || 'Simpanan Sukarela'}
         </span>
       );
   }
@@ -111,6 +116,7 @@ export function DepositTypeBadge({ code, name }: { code: string; name: string })
 export interface LaporanPenarikanSimpananProps {
   initialItems?: WithdrawalLedgerItem[];
   initialSummary?: WithdrawalSummary;
+  initialDepositTypes?: DepositTypeOption[];
   initialReceiptData?: {
     transactionId: string;
     member: { id: string; nama: string; nrp: string };
@@ -124,6 +130,7 @@ export interface LaporanPenarikanSimpananProps {
 export default function LaporanPenarikanSimpanan({
   initialItems,
   initialSummary,
+  initialDepositTypes,
   initialReceiptData = null
 }: LaporanPenarikanSimpananProps = {}) {
   // Preset filter state: 'all' | 'today' | 'month' | 'quarter' | 'custom'
@@ -134,6 +141,8 @@ export default function LaporanPenarikanSimpanan({
 
   // Dropdown & Checkbox filters
   const [depositTypeCode, setDepositTypeCode] = useState<string>('all');
+  const [depositTypeOptions, setDepositTypeOptions] = useState<DepositTypeOption[]>(() => initialDepositTypes || []);
+  const [isLoadingTypes, setIsLoadingTypes] = useState<boolean>(() => !initialDepositTypes);
   const [paymentMethod, setPaymentMethod] = useState<string>('all');
   const [hasActiveLoanOnly, setHasActiveLoanOnly] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -222,6 +231,19 @@ export default function LaporanPenarikanSimpanan({
   const isInitialMount = React.useRef(true);
 
   useEffect(() => {
+    let isMounted = true;
+    getWithdrawableDepositTypes().then((types) => {
+      if (isMounted) {
+        setDepositTypeOptions(types);
+        setIsLoadingTypes(false);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (initialItems && isInitialMount.current) {
       isInitialMount.current = false;
       return;
@@ -242,7 +264,15 @@ export default function LaporanPenarikanSimpanan({
       setIsExporting(true);
       let filterLabel = 'Semua Kategori Simpanan';
       if (depositTypeCode !== 'all') {
-        filterLabel = `Simpanan: ${depositTypeCode.toUpperCase()}`;
+        if (depositTypeCode.toUpperCase() === 'TERMINATION' || depositTypeCode === 'pokok_wajib') {
+          filterLabel = 'Simpanan: Pokok & Wajib (Kliring Keanggotaan)';
+        } else {
+          const matchedType = depositTypeOptions.find(
+            t => t.code.toLowerCase() === depositTypeCode.toLowerCase() || t.id === depositTypeCode
+          );
+          const typeName = matchedType?.name || (depositTypeCode === 'lebaran' ? 'Simpanan Hari Raya (Lebaran)' : depositTypeCode === 'belanja' ? 'Simpanan Belanja Bulanan' : depositTypeCode.toUpperCase());
+          filterLabel = `Simpanan: ${typeName}`;
+        }
       }
       if (paymentMethod !== 'all') {
         filterLabel += ` | Metode: ${paymentMethod.toUpperCase()}`;
@@ -521,10 +551,12 @@ export default function LaporanPenarikanSimpanan({
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="all">Semua Jenis Simpanan</option>
-                <option value="lebaran">Simpanan Hari Raya (Lebaran)</option>
-                <option value="belanja">Simpanan Belanja</option>
-                <option value="sukarela_lainnya">Simpanan Sukarela</option>
-                <option value="pokok_wajib">Pokok & Wajib (Kliring)</option>
+                {depositTypeOptions.map((t) => (
+                  <option key={t.id} value={t.code}>
+                    {t.name}
+                  </option>
+                ))}
+                <option value="TERMINATION">Pokok & Wajib (Kliring Keanggotaan)</option>
               </select>
             </div>
 

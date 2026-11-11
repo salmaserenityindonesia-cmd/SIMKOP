@@ -118,9 +118,25 @@ const mockSummary: withdrawalReportService.WithdrawalSummary = {
   totalActiveLoansObligation: 15000000
 };
 
+const mockDepositTypes: withdrawalReportService.DepositTypeOption[] = [
+  {
+    id: 'dt-leb',
+    code: 'LEBARAN',
+    name: 'Simpanan Hari Raya (Lebaran)',
+    can_be_withdrawn: true
+  },
+  {
+    id: 'dt-bel',
+    code: 'BELANJA',
+    name: 'Simpanan Belanja Bulanan',
+    can_be_withdrawn: true
+  }
+];
+
 describe('LaporanPenarikanSimpanan Page Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(withdrawalReportService, 'getWithdrawableDepositTypes').mockResolvedValue(mockDepositTypes);
     vi.spyOn(withdrawalReportService, 'getWithdrawalDetailedLedger').mockResolvedValue(mockLedgerItems);
     vi.spyOn(withdrawalReportService, 'getWithdrawalSummary').mockResolvedValue(mockSummary);
     vi.spyOn(withdrawalReportService, 'exportWithdrawalReportExcel').mockResolvedValue(undefined as any);
@@ -171,7 +187,11 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
   it('renders filter controls, date presets, and reload button', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter>
-        <LaporanPenarikanSimpanan initialItems={mockLedgerItems} initialSummary={mockSummary} />
+        <LaporanPenarikanSimpanan
+          initialItems={mockLedgerItems}
+          initialSummary={mockSummary}
+          initialDepositTypes={mockDepositTypes}
+        />
       </MemoryRouter>
     );
 
@@ -183,10 +203,16 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('Custom');
     expect(html).toContain('Muat Ulang');
 
-    // Dropdown options
+    // Dynamic dropdown options & termination
     expect(html).toContain('Semua Jenis Simpanan');
     expect(html).toContain('Simpanan Hari Raya (Lebaran)');
-    expect(html).toContain('Simpanan Belanja');
+    expect(html).toContain('Simpanan Belanja Bulanan');
+    expect(html).toContain('Pokok &amp; Wajib (Kliring Keanggotaan)');
+    expect(html).toContain('value="TERMINATION"');
+    expect(html).not.toContain('Simpanan Sukarela</option>');
+    expect(html).not.toContain('value="sukarela_lainnya"');
+
+    // Payment methods
     expect(html).toContain('Semua Metode Penyaluran');
     expect(html).toContain('Tunai Kasir Koperasi');
     expect(html).toContain('Transfer Bank');
@@ -194,6 +220,37 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     // Search and special risk toggle
     expect(html).toContain('Cari Transaksi / Anggota');
     expect(html).toContain('Hanya yang Memiliki Pinjaman Aktif');
+  });
+
+  it('renders dynamic deposit type options from database and termination option without obsolete sukarela option', () => {
+    const customTypes: withdrawalReportService.DepositTypeOption[] = [
+      { id: 'dt-qurban', code: 'QURBAN', name: 'Simpanan Qurban', can_be_withdrawn: true },
+      { id: 'dt-umroh', code: 'UMROH', name: 'Simpanan Umroh', can_be_withdrawn: true }
+    ];
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanPenarikanSimpanan
+          initialItems={mockLedgerItems}
+          initialSummary={mockSummary}
+          initialDepositTypes={customTypes}
+        />
+      </MemoryRouter>
+    );
+
+    // Dynamic options
+    expect(html).toContain('Simpanan Qurban');
+    expect(html).toContain('value="QURBAN"');
+    expect(html).toContain('Simpanan Umroh');
+    expect(html).toContain('value="UMROH"');
+
+    // Special termination option
+    expect(html).toContain('Pokok &amp; Wajib (Kliring Keanggotaan)');
+    expect(html).toContain('value="TERMINATION"');
+
+    // Hardcoded obsolete options must not be present
+    expect(html).not.toContain('Simpanan Sukarela</option>');
+    expect(html).not.toContain('value="sukarela_lainnya"');
   });
 
   it('renders surveillance ledger table rows with Wawan Gunawan and cross-obligation indicator', () => {
@@ -277,12 +334,51 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(lebaranBadge).toContain('Simpanan Hari Raya');
 
     const belanjaBadge = renderToStaticMarkup(<DepositTypeBadge code="SB" name="Simpanan Belanja" />);
-    expect(belanjaBadge).toContain('bg-sky-100');
+    expect(belanjaBadge).toContain('bg-amber-100');
+    expect(belanjaBadge).toContain('Simpanan Belanja Bulanan');
 
     const pokokBadge = renderToStaticMarkup(<DepositTypeBadge code="POKOK" name="Simpanan Pokok" />);
     expect(pokokBadge).toContain('bg-slate-100');
 
     const sukarelaBadge = renderToStaticMarkup(<DepositTypeBadge code="SUKARELA" name="Simpanan Sukarela" />);
     expect(sukarelaBadge).toContain('bg-purple-100');
+  });
+
+  it('renders POS shopping withdrawal row with Yanto Santoso and Simpanan Belanja Bulanan badge', () => {
+    const posLedgerItem: withdrawalReportService.WithdrawalLedgerItem = {
+      id: 'tx-pos-yanto',
+      member_id: 'mem-yanto',
+      member_name: 'Yanto Santoso',
+      member_nrp: '96316180',
+      member_rank: 'Serma',
+      bank_name: 'BRI',
+      bank_account_number: '9631618001',
+      deposit_type_id: 'dt-belanja',
+      deposit_type_code: 'BELANJA',
+      deposit_type_name: 'Simpanan Belanja Bulanan',
+      amount: 41000,
+      transaction_date: '2026-11-10T12:00:00.000Z',
+      reference_no: 'INV-1794286975137',
+      payment_method: 'potong_simpanan_belanja',
+      notes: 'Transaksi belanja toko kasir',
+      created_by: 'cashier-01',
+      has_active_loan: false,
+      active_loan_balance: 0,
+      active_loan_count: 0
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanPenarikanSimpanan initialItems={[posLedgerItem]} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Yanto Santoso');
+    expect(html).toContain('96316180');
+    expect(html).toContain('Serma');
+    expect(html).toContain('INV-1794286975137');
+    expect(html).toContain('Simpanan Belanja Bulanan');
+    expect(html).toContain('bg-amber-100');
+    expect(html).toContain(withdrawalReportService.formatRupiah(41000));
   });
 });
