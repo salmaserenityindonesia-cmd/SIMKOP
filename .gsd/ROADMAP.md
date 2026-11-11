@@ -1489,6 +1489,64 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 84: Perbaiki Identitas Anggota dan Label Jenis Simpanan pada Laporan Penarikan (/admin/laporan-penarikan)
+**Status:** ✅ Complete
+**Objective:** Memperbaiki resolusi identitas anggota (Nama, NRP) dan akurasi nama jenis simpanan (Simpanan Belanja Bulanan) pada laporan penarikan simpanan (`/admin/laporan-penarikan`), mengintegrasikan cross-lookup ke tabel sales untuk transaksi belanja kasir POS, dan menyelaraskan filter dropdown jenis simpanan.
+**Depends on:** Phase 83
+
+**Plans:**
+- [x] Plan 84.1: Fix Database Join and Fallback Mapping in withdrawalReportService.ts
+- [x] Plan 84.2: Align UI Table and Filter Dropdowns in LaporanPenarikanSimpanan.tsx
+- [x] Plan 84.3: Static Verification, Full Test Suite, and Production Build
+
+**Deliverables:**
+- Resolusi identitas anggota dari `member_deposits` dan tabel `sales` (fallback transaksi POS `INV-...`)
+- Label dan badge jenis simpanan dinamis yang akurat ("Simpanan Belanja Bulanan") tanpa fallback kaku "Simpanan Sukarela"
+- Penyelarasan opsi dropdown filter jenis simpanan dan tampilan tabel buku besar
+- Validasi pengujian unit Vitest dan kelulusan build produksi Vite 0 error
+
+---
+
+### Phase 85: Implementasi Fitur Pengajuan, Approval, dan Eksekusi Pencairan Massal Simpanan Lebaran (/admin/penarikan-simpanan)
+**Status:** ✅ Complete
+**Objective:** Mengimplementasikan alur lengkap pencairan massal simpanan lebaran secara terpadu di `/admin/penarikan-simpanan`, meliputi tabel siklus persistensi dan fungsi PostgreSQL RPC atomik, service layer simulasi nominatif, antarmuka tab navigasi dan modal konfirmasi ketik teks 'CAIRKAN LEBARAN', serta penguncian cut-off pada mesin matriks simpanan agar siklus baru dimulai murni dari Rp 0.
+**Depends on:** Phase 84
+
+**Plans:**
+- [x] Plan 85.1: Database Migration for Batch Cycles and Atomic RPC
+- [x] Plan 85.2: Service Layer for Bulk Simulation, Draft, and Execution
+- [x] Plan 85.3: UI Tab in /admin/penarikan-simpanan & Type-to-Confirm Modal
+- [x] Plan 85.4: Protect Matrix Ledger from Leaking Old Balances
+- [x] Plan 85.5: Static Verification, Full Test Suite, and Production Build
+
+**Deliverables:**
+- Migration file `046_create_lebaran_disbursement_cycles.sql` berisi tabel `lebaran_disbursement_cycles` dan RPC `execute_bulk_lebaran_disbursement`
+- Service layer `bulkWithdrawalService.ts` beserta unit test komprehensif
+- Tab baru "Pencairan Massal Simpanan Lebaran" dan modal konfirmasi ketik teks pada `PenarikanSimpanan.tsx`
+- Penyelarasan mesin alokasi simpanan `savingsMatrixService.ts` berbasis cut-off pencairan terakhir
+- Kelulusan pengujian statis TypeScript, rangkaian test Vitest, dan build produksi Vite
+
+---
+
+### Phase 86: Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan
+**Status:** 🔄 In Progress
+**Objective:** Mengintegrasikan pemuatan jenis simpanan dinamis dari tabel master `public.deposit_types` di Supabase ke dalam dropdown filter pada halaman Laporan Penarikan Simpanan (`/admin/laporan-penarikan`), menyelaraskan service layer kueri buku besar mutasi dan filter pencairan terminasi, serta memverifikasi build Vite dan suite pengujian.
+**Depends on:** Phase 85
+
+**Plans:**
+- [x] Plan 86.1: Service Layer Dynamic Deposit Types Fetcher and Query Alignment
+- [ ] Plan 86.2: Bind Dynamic Combo Box in Laporan Penarikan Page
+- [ ] Plan 86.3: Static Verification, Full Test Suite, and Production Build
+
+**Deliverables:**
+- Fungsi `getWithdrawableDepositTypes()` di `src/services/withdrawalReportService.ts` yang memuat data master simpanan Supabase
+- Penyelarasan filter kueri mutasi buku besar untuk kode simpanan dinamis serta penanganan mutasi terminasi keanggotaan
+- Dropdown select jenis simpanan dinamis di `src/pages/admin/LaporanPenarikanSimpanan.tsx` tanpa opsi hardcoded usang "Simpanan Sukarela"
+- Unit test terupdate di `withdrawalReportService.test.ts` dan `LaporanPenarikanSimpanan.test.tsx`
+- Kelulusan pengujian statis TypeScript, rangkaian test Vitest, dan build produksi Vite
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1633,6 +1691,9 @@ updated: 2026-10-30T20:50:00+07:00
 | 81 | Modularisasi & Pemisahan Monolith koperasiService.ts ke Domain Services Terpisah | ✅ | 3/3 | 100% |
 | 82 | Dinamisasi Ambang Batas Minimum Sisa THP Pengajuan Pinjaman via Menu Pengaturan | ✅ | 3/3 | 100% |
 | 83 | Input Fleksibel & Modal Konfirmasi THP | ✅ | 3/3 | 100% |
+| 84 | Resolusi Identitas Anggota & Label Simpanan Laporan Penarikan | ✅ | 3/3 | 100% |
+| 85 | Pencairan Massal Simpanan Lebaran | ✅ | 5/5 | 100% |
+| 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | 🔄 | 1/3 | 33% |
 
 ---
 
@@ -1723,6 +1784,9 @@ updated: 2026-10-30T20:50:00+07:00
 | 81 | 2026-11-11 | 2026-11-11 | 1 day |
 | 82 | 2026-11-11 | 2026-11-11 | 1 day |
 | 83 | 2026-11-11 | 2026-11-11 | 1 day |
+| 84 | 2026-11-11 | 2026-11-11 | 1 day |
+| 85 | 2026-11-11 | 2026-11-11 | 1 day |
+| 86 | 2026-11-11 | — | — |
 
 
 

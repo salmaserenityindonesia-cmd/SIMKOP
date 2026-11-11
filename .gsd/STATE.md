@@ -1,14 +1,11 @@
 ## Current Position
-- **Phase**: 83 (completed)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 86 (in progress)
+- **Task**: Plan 86.1 complete (commit b05f63f1), ready for Plan 86.2
+- **Status**: Executing
 
 ## Last Session Summary
-Phase 83 complete: Implementasi Input Fleksibel dan Modal Konfirmasi Ketik Teks untuk Perubahan Batas Minimum THP.
-- `83-1-PLAN.md` (Wave 1): Menghapus atribut `min="1"` dan `step="50000"` pada input sisa THP di `src/pages/admin/PengaturanKoperasi.tsx` dan memasang `step="any"` & `min="0"` agar nominal bebas diketik tanpa penolakan validasi peramban.
-- `83-2-PLAN.md` (Wave 2): Membangun Modal Konfirmasi Tindakan Kritis (Keputusan RAT) dengan perbandingan nominal lama vs baru (`initialMinThp` ➔ `minRemainingThp`), peringatan dampak RAT, dan validasi ketik kata verifikasi `SETUJU` (case-insensitive) untuk membuka kunci tombol konfirmasi simpan.
-- `83-3-PLAN.md` (Wave 3): Pengujian unit komprehensif di `src/pages/admin/PengaturanKoperasi.test.tsx` (19 tests passing), static typecheck TypeScript (`tsc --noEmit`), dan kompilasi build bundler Vite sukses 0 error.
-- Verifikasi independen (`gsd-verifier`): 6/6 must-haves verified (100% PASS), 65 test files passing (933 unit tests), exit code 0.
+Phase 86 Plan 1 complete:
+- `86-1-PLAN.md` (Wave 1): Service layer `src/services/withdrawalReportService.ts` berhasil mengimplementasikan `getWithdrawableDepositTypes()`, menyelaraskan kueri database untuk mutasi reguler (`transaction_type = 'withdrawal'`) dan kliring terminasi (`transaction_type = 'termination'`), mendukung kode simpanan dinamis, serta membersihkan pengecekan hardcoded `'sukarela'` (commit: `b05f63f1`).
 
 ## Next Steps
-All phases up to Phase 83 complete and verified. No remaining phases in roadmap.
+Execute Plan 86.2 (`/execute 86 2`): Bind dynamic combo box in `src/pages/admin/LaporanPenarikanSimpanan.tsx` with Supabase deposit types and update unit tests.
