@@ -26,3 +26,4 @@ export interface CreatePurchaseInvoiceRpcResponse {
   total_amount?: number;
   message?: string;
 }
+

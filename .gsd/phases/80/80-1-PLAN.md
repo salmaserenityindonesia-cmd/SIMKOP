@@ -19,3 +19,4 @@ Membangun berkas migrasi Supabase `supabase/migrations/044_create_atomic_purchas
 8. Mencatat jejak audit ke tabel `public.audit_logs` jika tersedia.
 9. Mengembalikan seluruh detail faktur dalam format JSONB yang terstandarisasi.
 10. Memberikan hak eksekusi RLS `GRANT EXECUTE` kepada `authenticated, anon, service_role`.
+

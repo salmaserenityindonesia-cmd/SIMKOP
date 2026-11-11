@@ -1434,6 +1434,25 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 81: Modularisasi & Pemisahan Monolith koperasiService.ts ke Domain Services Terpisah
+**Status:** ✅ Complete
+**Objective:** Mengeliminasi technical debt file monolitik berukuran raksasa (`koperasiService.ts` > 1.700 baris) dengan memecahnya ke dalam modul domain mandiri (`memberService.ts`, `purchaseInvoiceService.ts`, `depositManagementService.ts`) serta mempertahankan `koperasiService.ts` sebagai facade re-export yang backwards-compatible tanpa regresi pada 32+ file pemanggil.
+**Depends on:** Phase 80
+
+**Plans:**
+- [x] Plan 81.1: Extract Purchase Invoice & Restock Domain to purchaseInvoiceService.ts
+- [x] Plan 81.2: Extract Deposit Management & Commitments to depositManagementService.ts
+- [x] Plan 81.3: Consolidate Member Domain & Turn koperasiService.ts into Backwards-Compatible Facade
+
+**Deliverables:**
+- Layanan domain `src/services/purchaseInvoiceService.ts` untuk faktur pembelian dan mutasi restock barang
+- Layanan domain `src/services/depositManagementService.ts` untuk jenis simpanan, komitmen bulanan, dan mutasi saldo
+- Layanan domain `src/services/memberService.ts` menampung seluruh fungsionalitas CRUD anggota dan migrasi chunked
+- Refactor `src/services/koperasiService.ts` menjadi fasad agregator yang ramping dan backward-compatible
+- Verifikasi unit test (907+ tests) dan build bundler Vite tanpa regresi
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1575,6 +1594,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 78 | Migrasi Transaksi Multi-Tabel POS ke Atomic RPC Supabase | ✅ | 3/3 | 100% |
 | 79 | Migrasi Transaksi Simpan Pinjam ke Atomic RPC Supabase (approveLoan & recordRepayment) | ✅ | 3/3 | 100% |
 | 80 | Migrasi Restock Faktur Pembelian ke Atomic PostgreSQL RPC (create_purchase_invoice_atomic) | ✅ | 3/3 | 100% |
+| 81 | Modularisasi & Pemisahan Monolith koperasiService.ts ke Domain Services Terpisah | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1662,6 +1682,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 78 | 2026-11-11 | 2026-11-11 | 1 day |
 | 79 | 2026-11-11 | 2026-11-11 | 1 day |
 | 80 | 2026-11-11 | 2026-11-11 | 1 day |
+| 81 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 

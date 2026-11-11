@@ -8,3 +8,4 @@
   - Menangani respon sukses dari RPC dan memetakan hasilnya ke antarmuka `FakturPembelian`.
   - Menyediakan fallback sekuensial (dan in-memory mock fallback jika database offline/belum termigrasi) ketika fungsi RPC belum terpasang di remote (`PGRST202` / `42883`).
 - Memastikan kompatibilitas pemanggilan dari form `src/pages/admin/ManajemenPembelian.tsx` tetap terjaga 100%.
+

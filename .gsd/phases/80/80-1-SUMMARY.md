@@ -10,3 +10,4 @@
   - Mencatat histori ke `public.audit_logs`.
   - Mengembalikan objek JSONB lengkap yang memuat informasi faktur tersimpan.
 - Diberikan hak akses RLS `GRANT EXECUTE` kepada `authenticated, anon, service_role`.
+

@@ -7,6 +7,12 @@ import {
   extractMemberTHP,
   getActiveMembersForLoan,
   getActiveMemberDepositDefaults,
+  fetchAllAnggotaPaged,
+  getAnggota,
+  addAnggota,
+  updateAnggota,
+  deleteAnggota,
+  getAnggotaWithSimpanan,
 } from './memberService';
 import { supabase } from '../lib/supabaseClient';
 import { clearTierCache } from './savingsRateService';
@@ -909,5 +915,169 @@ describe('memberService - getActiveMemberDepositDefaults', () => {
     expect(defaults.wajib).toBe(200000); // 200000 is DEFAULT_RATE_TIERS / fallback rate for WAJIB
   });
 });
+
+describe('memberService - CRUD and Aggregation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('fetchAllAnggotaPaged & getAnggota', () => {
+    it('harus memuat seluruh anggota dengan paginasi loop tanpa terpotong di 1.000', async () => {
+      const page1 = Array.from({ length: 1000 }, (_, i) => ({
+        id: `member-${i + 1}`,
+        nrp: `NRP-${i + 1}`,
+        nama: `Anggota ${i + 1}`,
+      }));
+      const page2 = Array.from({ length: 150 }, (_, i) => ({
+        id: `member-${1000 + i + 1}`,
+        nrp: `NRP-${1000 + i + 1}`,
+        nama: `Anggota ${1000 + i + 1}`,
+      }));
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                range: vi.fn().mockImplementation((from: number) => {
+                  if (from === 0) return Promise.resolve({ data: page1, error: null });
+                  if (from === 1000) return Promise.resolve({ data: page2, error: null });
+                  return Promise.resolve({ data: [], error: null });
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const all = await fetchAllAnggotaPaged();
+      expect(all).toHaveLength(1150);
+      expect(all[0].nrp).toBe('NRP-1');
+      expect(all[1149].nrp).toBe('NRP-1150');
+    });
+
+    it('getAnggota memanggil fetchAllAnggotaPaged', async () => {
+      const dummy = [{ id: 'm-1', nrp: '001', nama: 'Test' }];
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                range: vi.fn().mockResolvedValue({ data: dummy, error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await getAnggota();
+      expect(res).toEqual(dummy);
+    });
+  });
+
+  describe('addAnggota, updateAnggota, deleteAnggota', () => {
+    it('addAnggota menyisipkan data baru dan mengembalikan record', async () => {
+      const newMember = { nrp: '777', nama: 'Prajurit Baru' };
+      const returned = { id: 'm-new', ...newMember, created_at: '2026-01-01' };
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: returned, error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await addAnggota(newMember);
+      expect(res).toEqual(returned);
+    });
+
+    it('updateAnggota memperbarui data anggota berdasarkan id', async () => {
+      const updates = { nama: 'Prajurit Diupdate' };
+      const returned = { id: 'm-new', nrp: '777', nama: 'Prajurit Diupdate' };
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: returned, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await updateAnggota('m-new', updates);
+      expect(res).toEqual(returned);
+    });
+
+    it('deleteAnggota menghapus anggota berdasarkan id', async () => {
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      await expect(deleteAnggota('m-del')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('getAnggotaWithSimpanan', () => {
+    it('menggabungkan data anggota dengan saldo simpanan pokok dan wajib', async () => {
+      const mockAnggota = [
+        { id: 'm-1', nrp: '001', nama: 'Anggota 1' },
+        { id: 'm-2', nrp: '002', nama: 'Anggota 2' },
+      ];
+      const mockSimpanan = [
+        { id: 's-1', anggota_id: 'm-1', jenis_simpanan: 'pokok', jumlah: 100000 },
+        { id: 's-2', anggota_id: 'm-1', jenis_simpanan: 'wajib', jumlah: 50000 },
+        { id: 's-3', anggota_id: 'm-2', jenis_simpanan: 'pokok', jumlah: 100000 },
+      ];
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockAnggota, error: null }),
+            }),
+          };
+        }
+        if (table === 'simpanan') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockSimpanan, error: null }),
+          };
+        }
+        return {};
+      });
+
+      const res = await getAnggotaWithSimpanan();
+      expect(res).toHaveLength(2);
+      expect(res[0].simpanan_pokok).toBe(100000);
+      expect(res[0].simpanan_wajib).toBe(50000);
+      expect(res[0].total_saldo).toBe(150000);
+
+      expect(res[1].simpanan_pokok).toBe(100000);
+      expect(res[1].simpanan_wajib).toBe(0);
+      expect(res[1].total_saldo).toBe(100000);
+    });
+  });
+});
+
 
 

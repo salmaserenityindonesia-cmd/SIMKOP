@@ -183,3 +183,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.create_purchase_invoice_atomic(TEXT, DATE, JSONB, UUID, TEXT) TO authenticated, anon, service_role;
 
 COMMENT ON FUNCTION public.create_purchase_invoice_atomic IS 'Mencatat faktur restock pembelian baru, menyisipkan rincian item, dan memperbarui stok master produk secara atomik dalam satu transaksi ACID';
+
