@@ -1618,6 +1618,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 91: Tambahkan Kolom Saldo Awal Terbayar Pra-Tahun pada Matriks Pinjaman (/admin/loan-matrix)
+**Status:** ✅ Complete
+**Objective:** Menambahkan kolom ringkasan saldo awal hutang terbayar pada tabel `/admin/loan-matrix` (`LoanMatrix.tsx`) di antara kolom "ANGGOTA" dan kolom bulan "JAN". Merangkum total pinjaman yang sudah terbayar pada akhir tahun sebelumnya (sebelum 1 Januari tahun terpilih), total pokok, dan sisa hutang yang menjadi saldo awal tahun berjalan.
+**Depends on:** Phase 90
+
+**Plans:**
+- [x] Plan 91.1: Wave 1 - Calculate Prior-Year Repayments in loanMatrixService.ts
+- [x] Plan 91.2: Wave 2 - Render Saldo Pra-Tahun Column in LoanMatrix.tsx
+- [x] Plan 91.3: Wave 3 - Static Analysis & Production Build Verification
+
+**Deliverables:**
+- Field `priorYearPaid` dan `priorYearRemaining` pada `LoanMatrixMember` di `loanMatrixService.ts`
+- Kolom "Saldo Pra Jan-XX (Akumulasi Lampau)" dengan rincian Pokok, Lunas, dan Sisa di `LoanMatrix.tsx`
+- Penyesuaian `colSpan` tabel matriks pinjaman
+- Unit test Vitest dan build produksi Vite bersih (exit code 0)
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1767,6 +1785,9 @@ updated: 2026-10-30T20:50:00+07:00
 | 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | ✅ | 3/3 | 100% |
 | 87 | Pembakuan Tenor Kelipatan 6 Bulan pada Pengajuan Pinjaman Baru | ✅ | 2/2 | 100% |
 | 88 | Tambahkan Baris Simpanan Pokok Bersyarat pada Template dan Parser Update Massal Bulanan | ✅ | 3/3 | 100% |
+| 89 | Form Validasi Status Anggota Sebelum Pencairan Simpanan Pokok | ✅ | 3/3 | 100% |
+| 90 | Implementasi Tombol Reset Transaksi Keuangan pada Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
+| 91 | Tambahkan Kolom Saldo Awal Terbayar Pra-Tahun pada Matriks Pinjaman | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1864,6 +1885,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 88 | 2026-11-11 | 2026-11-11 | 1 day |
 | 89 | 2026-11-11 | 2026-11-11 | 1 day |
 | 90 | 2026-11-11 | 2026-11-11 | 1 day |
+| 91 | 2026-11-12 | 2026-11-12 | 1 day |
 
 
 

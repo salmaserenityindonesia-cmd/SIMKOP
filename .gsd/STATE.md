@@ -1,13 +1,13 @@
 ## Current Position
-- **Phase**: 90 (completed)
+- **Phase**: 91 (completed)
 - **Task**: All waves executed and verified
 - **Status**: Complete
 
 ## Last Session Summary
-Phase 90 complete: Implementasi Tombol Reset Transaksi Keuangan pada Laporan Keuangan Terpadu (/admin/laporan-keuangan).
-- `90-1-PLAN.md` (Wave 1): Berkas migrasi PostgreSQL RPC atomik `reset_financial_transactions(p_admin_id uuid)` berstatus `SECURITY DEFINER` untuk mereset seluruh transaksi penjualan retail POS, pencairan simpanan, dan mutasi arus kas, dengan pencatatan audit log aman (commit: `53ee4394`).
-- `90-2-PLAN.md` (Wave 2): Pembuatan service `src/services/cashFlowService.ts` beserta unit test Vitest, pembuatan re-export `src/pages/admin/LaporanKeuangan.tsx`, serta penyediaan tombol "Reset Transaksi Kas" dan modal konfirmasi bahaya dengan verifikasi ketik teks `"RESET KAS KEUANGAN"` dan refetch metrik instan (commits: `979cba8f`, `13a8710a`).
-- `90-3-PLAN.md` (Wave 3): Validasi pengujian unit Vitest (`cashFlowService.test.ts`), resolusi tipe data statis TypeScript (`tsc --noEmit`), dan keberhasilan build produksi Vite (`npm run build`) dengan exit code 0 (commit: `32c86fd0`).
+Phase 91 complete: Tambahkan Kolom Saldo Awal Terbayar Pra-Tahun pada Matriks Pinjaman (/admin/loan-matrix).
+- `91-1-PLAN.md` (Wave 1): Ekstensi model `LoanMatrixMember` / `LoanMatrixRow` dan kalkulasi akumulasi pelunasan angsuran pinjaman pra-tahun (`priorYearPaid`) serta sisa pokok awal tahun (`priorYearRemaining`) di `src/services/loanMatrixService.ts` beserta unit test multi-tahun (commit: `44b5ca6a`).
+- `91-2-PLAN.md` (Wave 2): Penambahan kolom header "Saldo Pra Jan-XX (Akumulasi Lampau)" dan sel ringkasan (Pokok, Lunas, Sisa) di antara kolom Anggota dan Jan pada `src/pages/admin/LoanMatrix.tsx`, pembaruan `colSpan={15}`, dan suite test baru pada `src/pages/admin/LoanMatrix.test.tsx` (commit: `22041ea4`).
+- `91-3-PLAN.md` (Wave 3): Validasi pengujian unit Vitest (78/78 tests passed), pemeriksaan tipe data statis TypeScript (`npx tsc --noEmit`), dan keberhasilan build produksi Vite (`npm run build`) dengan exit code 0 (commit: `1ab5cd32`).
 
 ## Next Steps
-Phase 90 complete. Run `/verify 90` to execute independent verification or proceed with next requirements.
+Phase 91 complete. Run `/verify 91` to execute independent verification or proceed with next requirements.
