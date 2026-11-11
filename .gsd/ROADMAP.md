@@ -1582,6 +1582,23 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 89: Filter Kondisional Baris Simpanan Pokok pada Generator Template Update Massal Bulanan
+**Status:** ✅ Complete
+**Objective:** Menerapkan pengecekan pelunasan Simpanan Pokok seumur hidup yang ketat (*strict lifetime settlement check*) pada generator data template Excel `generateSavingsBatchTemplate` di `src/services/batchUpdateService.ts`. Memastikan baris dengan kode simpanan "POKOK" hanya dicantumkan bagi anggota yang akumulasi pembayaran Simpanan Pokoknya belum mencapai tarif resmi aktif (< Rp 10.000 / tarif aktif), dan diabaikan bagi anggota yang sudah lunas (hanya menyisakan WAJIB, LEBARAN, dan BELANJA).
+**Depends on:** Phase 88
+
+**Plans:**
+- [x] Plan 89.1: Wave 1 - Filter Out Paid Principal Savings from Template Export
+- [x] Plan 89.2: Wave 2 - Static Analysis & Build Verification
+
+**Deliverables:**
+- Pengecekan ketat ambang batas tarif aktif Simpanan Pokok (`savings_rate_tiers` / `deposit_types` / fallback Rp 10.000)
+- Akumulasi pembayaran Simpanan Pokok seumur hidup per anggota dengan penyaringan baris POKOK presisi
+- Pembuatan 3 baris simpanan rutin (WAJIB, LEBARAN, BELANJA) untuk setiap anggota
+- Validasi statis TypeScript, unit test Vitest, dan build produksi Vite exit code 0
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1826,6 +1843,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 86 | 2026-11-11 | 2026-11-11 | 1 day |
 | 87 | 2026-11-11 | 2026-11-11 | 1 day |
 | 88 | 2026-11-11 | 2026-11-11 | 1 day |
+| 89 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
