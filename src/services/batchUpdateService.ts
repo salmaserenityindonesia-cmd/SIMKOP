@@ -18,7 +18,17 @@ export type BatchPreviewRow = {
   status: 'READY' | 'MISMATCH' | 'ERROR';
   ref_id?: string; // loan_id or member_deposit_id
   schedule_id?: string; // for loans
+  member_id?: string;
 };
+
+export interface BatchExecutionSummary {
+  success: boolean;
+  totalProcessed: number;
+  recurringCount?: number;
+  pokokCount?: number;
+  loansCount?: number;
+  message?: string;
+}
 
 export interface SavingsTemplateRow {
   nrp: string;
@@ -396,7 +406,9 @@ export const downloadBatchTemplate = async (type: 'savings' | 'loans', month: nu
 };
 
 export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans', month: number, year: number): Promise<BatchPreviewRow[]> => {
-    const arrayBuffer = await file.arrayBuffer();
+    const arrayBuffer = typeof (file as any).arrayBuffer === 'function'
+      ? await (file as any).arrayBuffer()
+      : file;
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(arrayBuffer);
     const worksheet = workbook.getWorksheet(1);
@@ -424,7 +436,10 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
         });
 
         // Pre-fetch member deposits for matching
-        const { data: members } = await supabase.from('anggota').select('id, nrp, nama, member_deposits(id, deposit_types(code))').in('nrp', nrpList);
+        const { data: members } = await supabase
+            .from('anggota')
+            .select('id, nrp, nama, member_deposits(id, deposit_type_id, deposit_types(id, code, name))')
+            .in('nrp', nrpList);
         const memberMap = new Map();
         if (members) {
             members.forEach(m => memberMap.set(m.nrp, m));
@@ -440,7 +455,7 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
             const nominalBaruStr = getVal(row, 8); 
             const nominal_baru = parseFloat(nominalBaruStr.replace(/[^0-9.-]+/g, '')) || 0;
             const nominal_lama = parseFloat(nominalLamaStr.replace(/[^0-9.-]+/g, '')) || 0;
-            const kode_simpanan = getVal(row, 6);
+            const kode_simpanan = getVal(row, 6).trim().toUpperCase();
 
             const m = memberMap.get(nrp);
             let status: 'READY' | 'MISMATCH' | 'ERROR' = 'READY';
@@ -449,9 +464,24 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
             if (!m) {
                 status = 'ERROR'; // NRP not found
             } else {
-                const dep = m.member_deposits.find((d: any) => d.deposit_types.code === kode_simpanan);
+                const isPokok = kode_simpanan === 'POKOK' || kode_simpanan === 'SP';
+                const depList = Array.isArray(m.member_deposits) ? m.member_deposits : [];
+                const dep = depList.find((d: any) => {
+                    const dt = Array.isArray(d.deposit_types) ? d.deposit_types[0] : d.deposit_types;
+                    if (isPokok) {
+                        return isPokokDepositType(dt);
+                    }
+                    return (dt?.code || '').toUpperCase() === kode_simpanan;
+                });
+
                 if (dep) {
                     ref_id = dep.id;
+                    status = 'READY';
+                } else if (isPokok) {
+                    // Jika anggota belum memiliki entri member_deposits bertipe POKOK,
+                    // tandai status tetap READY (akan dibuat otomatis saat eksekusi)
+                    status = 'READY';
+                    ref_id = undefined;
                 } else {
                     status = 'MISMATCH';
                 }
@@ -466,7 +496,8 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
                 nominal_lama,
                 nominal_baru,
                 status,
-                ref_id
+                ref_id,
+                member_id: m?.id
             });
         });
     } else {
@@ -500,45 +531,167 @@ export const parseBatchUpdateFile = async (file: File, type: 'savings' | 'loans'
     return results;
 };
 
-export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savings' | 'loans', month: number, year: number) => {
-    // We only process rows where nominal_baru > 0 AND it's different from what was already paid
-    const validRows = payload.filter(r => r.status === 'READY' && r.nominal_baru > 0 && r.nominal_baru !== r.nominal_lama);
+export const executeBatchUpdate = async (
+    payload: BatchPreviewRow[],
+    type: 'savings' | 'loans',
+    month: number,
+    year: number
+): Promise<BatchExecutionSummary> => {
+    const isPokokTag = (tag: string) => {
+        const t = (tag || '').trim().toUpperCase();
+        return t === 'POKOK' || t === 'SP';
+    };
+
+    // Valid rows: status READY and nominal_baru > 0
+    const validRows = payload.filter(r => {
+        if (r.status !== 'READY' || r.nominal_baru <= 0) return false;
+        if (type === 'loans') {
+            return r.nominal_baru !== r.nominal_lama;
+        }
+        return true;
+    });
+
     if (validRows.length === 0) {
-        throw new Error("Tidak ada data dengan nominal pembayaran > 0 yang berbeda dari nilai Telah Dibayar sebelumnya.");
+        throw new Error("Tidak ada data dengan nominal pembayaran > 0 yang valid untuk diproses.");
     }
 
     // Fast client-side bulk operations
     if (type === 'savings') {
-        const refIds = validRows.map(r => r.ref_id).filter(Boolean);
-        if (refIds.length > 0) {
-            // Delete old transactions for this month/year for the affected deposits
+        const pokokRows = validRows.filter(r => isPokokTag(r.jenis_tagihan));
+        const recurringRows = validRows.filter(r => !isPokokTag(r.jenis_tagihan));
+
+        // 1. Tangani Simpanan Rutin Bulanan (WAJIB, LEBARAN, BELANJA, dll)
+        const recurringRefIds = recurringRows.map(r => r.ref_id).filter(Boolean);
+        if (recurringRefIds.length > 0) {
+            // Hapus mutasi lama pada bulan/tahun tersebut (idempotensi bulanan)
             const { error: delError } = await supabase
                 .from('deposit_transactions')
                 .delete()
-                .in('member_deposit_id', refIds)
+                .in('member_deposit_id', recurringRefIds)
                 .eq('for_month', month)
                 .eq('for_year', year);
-                
+
             if (delError) throw delError;
 
-            // Insert new transactions with the updated total
-            const txs = validRows.map(r => ({
-                member_deposit_id: r.ref_id,
-                amount: r.nominal_baru,
-                for_month: month,
-                for_year: year,
-                transaction_type: 'deposit',
-                description: `Batch Update ${month}/${year}`
-            }));
-            const { error: insError } = await supabase.from('deposit_transactions').insert(txs);
-            if (insError) throw insError;
+            // Masukkan transaksi baru
+            const recurringTxs = recurringRows
+                .filter(r => r.ref_id)
+                .map(r => ({
+                    member_deposit_id: r.ref_id,
+                    amount: r.nominal_baru,
+                    for_month: month,
+                    for_year: year,
+                    transaction_type: 'deposit',
+                    description: `Batch Update ${month}/${year}`
+                }));
+
+            if (recurringTxs.length > 0) {
+                const { error: insError } = await supabase.from('deposit_transactions').insert(recurringTxs);
+                if (insError) throw insError;
+            }
         }
+
+        // 2. Tangani Simpanan Pokok (POKOK)
+        if (pokokRows.length > 0) {
+            // Ambil master deposit_types untuk mencari ID tipe simpanan POKOK
+            const { data: depTypes } = await supabase
+                .from('deposit_types')
+                .select('id, code, name, default_amount, frequency_type');
+
+            const pokokType = (depTypes || []).find(dt => isPokokDepositType(dt));
+            const pokokTypeId = pokokType?.id;
+
+            // Cari member_id jika ada baris pokok yang belum memilikinya
+            const missingMemberNrps = pokokRows.filter(r => !r.member_id && !r.ref_id).map(r => r.nrp);
+            const memberLookup = new Map<string, string>();
+            if (missingMemberNrps.length > 0) {
+                const { data: memberData } = await supabase
+                    .from('anggota')
+                    .select('id, nrp')
+                    .in('nrp', missingMemberNrps);
+                (memberData || []).forEach(m => memberLookup.set(m.nrp, m.id));
+            }
+
+            const pokokTxs: any[] = [];
+
+            for (const r of pokokRows) {
+                let targetDepositId = r.ref_id;
+                const memberId = r.member_id || memberLookup.get(r.nrp);
+
+                // Jika belum memiliki member_deposit_id, pastikan akun member_deposits tersedia
+                if (!targetDepositId && memberId && pokokTypeId) {
+                    const { data: existingDep } = await supabase
+                        .from('member_deposits')
+                        .select('id')
+                        .eq('member_id', memberId)
+                        .eq('deposit_type_id', pokokTypeId)
+                        .maybeSingle();
+
+                    if (existingDep?.id) {
+                        targetDepositId = existingDep.id;
+                    } else {
+                        const tableDeposits: any = supabase.from('member_deposits');
+                        const insQuery = tableDeposits.insert({
+                            member_id: memberId,
+                            deposit_type_id: pokokTypeId,
+                            is_terminated: false
+                        });
+
+                        let insRes: any = null;
+                        if (typeof insQuery?.select === 'function') {
+                            const selQuery = insQuery.select('id');
+                            insRes = typeof selQuery.maybeSingle === 'function'
+                                ? await selQuery.maybeSingle()
+                                : (typeof selQuery.single === 'function' ? await selQuery.single() : await selQuery);
+                        } else if (typeof insQuery?.then === 'function') {
+                            insRes = await insQuery;
+                        }
+
+                        targetDepositId = insRes?.data?.id || (Array.isArray(insRes?.data) ? insRes?.data[0]?.id : null);
+
+                        if (!targetDepositId) {
+                            const { data: fallbackDep } = await supabase
+                                .from('member_deposits')
+                                .select('id')
+                                .eq('member_id', memberId)
+                                .eq('deposit_type_id', pokokTypeId)
+                                .maybeSingle();
+                            targetDepositId = fallbackDep?.id;
+                        }
+                    }
+                }
+
+                if (targetDepositId) {
+                    pokokTxs.push({
+                        member_deposit_id: targetDepositId,
+                        transaction_type: 'deposit',
+                        amount: r.nominal_baru,
+                        for_month: month,
+                        for_year: year,
+                        description: 'Setoran Simpanan Pokok via Update Massal Bulanan'
+                    });
+                }
+            }
+
+            if (pokokTxs.length > 0) {
+                const { error: pInsError } = await supabase.from('deposit_transactions').insert(pokokTxs);
+                if (pInsError) throw pInsError;
+            }
+        }
+
+        return {
+            success: true,
+            totalProcessed: validRows.length,
+            recurringCount: recurringRows.length,
+            pokokCount: pokokRows.length,
+            message: `Update massal simpanan berhasil diproses (${recurringRows.length} simpanan rutin, ${pokokRows.length} simpanan pokok).`
+        };
     } else {
-        // Loans are trickier because of schedules.
-        // We will fetch all relevant schedules first
+        // Loans
         const loanIds = validRows.map(r => r.ref_id).filter(Boolean);
         const { data: schedules } = await supabase.from('loan_schedules').select('*').in('loan_id', loanIds);
         
+        let processedLoans = 0;
         if (schedules) {
             for (const r of validRows) {
                 const sched = schedules.find(s => {
@@ -566,9 +719,15 @@ export const executeBatchUpdate = async (payload: BatchPreviewRow[], type: 'savi
                         payment_method: 'batch_transfer',
                         notes: `Batch Update Correction ${month}/${year}`
                     });
+                    processedLoans++;
                 }
             }
         }
+        return {
+            success: true,
+            totalProcessed: processedLoans,
+            loansCount: processedLoans,
+            message: `Update massal pinjaman berhasil diproses (${processedLoans} pinjaman).`
+        };
     }
-    return true;
 };
