@@ -69,3 +69,4 @@ Memperbarui fungsi pembuatan template Excel simpanan bulanan pada `src/services/
 - [ ] Anggota dengan Simpanan Pokok yang sudah lunas hanya mendapatkan 3 baris tagihan bulanan (WAJIB, LEBARAN, BELANJA).
 - [ ] Anggota dengan Simpanan Pokok belum lunas mendapatkan baris ke-4 bertipe POKOK dengan nilai `Telah Dibayar` dan `Jumlah Bayar` yang akurat.
 - [ ] Baris Excel per anggota terkumpul berurutan secara konsisten.
+

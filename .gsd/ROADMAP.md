@@ -1565,14 +1565,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 88: Tambahkan Baris Simpanan Pokok Bersyarat pada Template dan Parser Update Massal Bulanan (/admin/batch-update)
-**Status:** ⏳ In Progress
+**Status:** ✅ Complete
 **Objective:** Memperbarui generator file template Excel pada menu Update Massal Bulanan (`src/services/batchUpdateService.ts` dan `src/pages/admin/BatchUpdater.tsx`) agar memeriksa status pelunasan Simpanan Pokok masing-masing anggota aktif. Jika belum lunas, sertakan baris POKOK bersyarat dengan sisa kekurangan. Selaraskan juga parser dan eksekusi batch update agar mutasi POKOK dialokasikan dan dicatat dengan benar ke rekening simpanan pokok anggota terkait di `deposit_transactions`.
 **Depends on:** Phase 87
 
 **Plans:**
-- [ ] Plan 88.1: Wave 1 - Conditional Pokok Injection in Template Generator
-- [ ] Plan 88.2: Wave 2 - Support POKOK Code in Batch Import and Review Parser
-- [ ] Plan 88.3: Wave 3 - Comprehensive Unit Testing, Static Analysis & Build Verification
+- [x] Plan 88.1: Wave 1 - Conditional Pokok Injection in Template Generator
+- [x] Plan 88.2: Wave 2 - Support POKOK Code in Batch Import and Review Parser
+- [x] Plan 88.3: Wave 3 - Comprehensive Unit Testing, Static Analysis & Build Verification
 
 **Deliverables:**
 - Injeksi kondisional baris Simpanan Pokok pada pembuat template Excel di `src/services/batchUpdateService.ts`
@@ -1730,7 +1730,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 85 | Pencairan Massal Simpanan Lebaran | ✅ | 5/5 | 100% |
 | 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | ✅ | 3/3 | 100% |
 | 87 | Pembakuan Tenor Kelipatan 6 Bulan pada Pengajuan Pinjaman Baru | ✅ | 2/2 | 100% |
-| 88 | Tambahkan Baris Simpanan Pokok Bersyarat pada Template dan Parser Update Massal Bulanan | ⏳ | 0/3 | 0% |
+| 88 | Tambahkan Baris Simpanan Pokok Bersyarat pada Template dan Parser Update Massal Bulanan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1825,6 +1825,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 85 | 2026-11-11 | 2026-11-11 | 1 day |
 | 86 | 2026-11-11 | 2026-11-11 | 1 day |
 | 87 | 2026-11-11 | 2026-11-11 | 1 day |
+| 88 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 

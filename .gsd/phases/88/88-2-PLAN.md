@@ -77,3 +77,4 @@ Menyelaraskan alur parser, preview, dan eksekusi impor file Excel pada `src/serv
 - [ ] Akun `member_deposits` bertipe `POKOK` dibuat secara otomatis jika anggota belum memilikinya saat eksekusi.
 - [ ] Transaksi setoran pokok tercatat di `deposit_transactions` dengan deskripsi informatif.
 - [ ] Tabel Review & Konfirmasi di `BatchUpdater.tsx` menampilkan badge khusus untuk baris POKOK.
+
