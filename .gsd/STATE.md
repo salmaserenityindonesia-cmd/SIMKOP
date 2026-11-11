@@ -1,13 +1,13 @@
 ## Current Position
-- **Phase**: 89 (completed)
-- **Task**: All tasks complete
-- **Status**: Verified
+- **Phase**: 90 (completed)
+- **Task**: All waves executed and verified
+- **Status**: Complete
 
 ## Last Session Summary
-Phase 89 complete: Filter Kondisional Baris Simpanan Pokok pada Generator Template Update Massal Bulanan.
-- `89-1-PLAN.md` (Wave 1): Penerapan pengecekan pelunasan Simpanan Pokok seumur hidup (*strict lifetime settlement check*) pada fungsi `buildSavingsTemplateRows` dan `generateSavingsBatchTemplate` di `src/services/batchUpdateService.ts`. Memastikan baris dengan kode simpanan 'POKOK' hanya muncul jika akumulasi pembayaran simpanan pokok anggota belum mencapai tarif aktif/resmi (default: 10.000), dan diabaikan bagi yang sudah lunas (commit: `8435ca70`).
-- `89-2-PLAN.md` (Wave 2): Verifikasi statis tipe TypeScript (`tsc --noEmit`), eksekusi unit test Vitest di `src/services/batchUpdateService.test.ts` (14 passing tests), dan kelulusan build produksi Vite (`npm run build`) dengan exit code 0 (commit: `3580fa4e`).
-- Verifikasi independen `gsd-verifier`: 5/5 kriteria kelayakan terpenuhi dengan status **PASS** ([VERIFICATION.md](file:///c:/SIMKOP/.gsd/phases/89/VERIFICATION.md)).
+Phase 90 complete: Implementasi Tombol Reset Transaksi Keuangan pada Laporan Keuangan Terpadu (/admin/laporan-keuangan).
+- `90-1-PLAN.md` (Wave 1): Berkas migrasi PostgreSQL RPC atomik `reset_financial_transactions(p_admin_id uuid)` berstatus `SECURITY DEFINER` untuk mereset seluruh transaksi penjualan retail POS, pencairan simpanan, dan mutasi arus kas, dengan pencatatan audit log aman (commit: `53ee4394`).
+- `90-2-PLAN.md` (Wave 2): Pembuatan service `src/services/cashFlowService.ts` beserta unit test Vitest, pembuatan re-export `src/pages/admin/LaporanKeuangan.tsx`, serta penyediaan tombol "Reset Transaksi Kas" dan modal konfirmasi bahaya dengan verifikasi ketik teks `"RESET KAS KEUANGAN"` dan refetch metrik instan (commits: `979cba8f`, `13a8710a`).
+- `90-3-PLAN.md` (Wave 3): Validasi pengujian unit Vitest (`cashFlowService.test.ts`), resolusi tipe data statis TypeScript (`tsc --noEmit`), dan keberhasilan build produksi Vite (`npm run build`) dengan exit code 0 (commit: `32c86fd0`).
 
 ## Next Steps
-All phases up to Phase 89 complete and verified. Ready for next phase or requirements.
+Phase 90 complete. Run `/verify 90` to execute independent verification or proceed with next requirements.

@@ -1599,6 +1599,25 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 90: Implementasi Tombol Reset Transaksi Keuangan pada Laporan Keuangan Terpadu (/admin/laporan-keuangan)
+**Status:** ✅ Complete
+**Objective:** Menambahkan tombol "Reset Transaksi Keuangan" pada bilah kontrol/filter halaman `/admin/laporan-keuangan` (`LaporanKeuangan.tsx`). Fitur ini mengosongkan seluruh riwayat arus kas masuk dan keluar secara atomik tanpa merusak master data anggota maupun stok produk via RPC `reset_financial_transactions` dengan konfirmasi verifikasi teks "RESET KAS KEUANGAN".
+**Depends on:** Phase 89
+
+**Plans:**
+- [x] Plan 90.1: Wave 1 - Database Migration for Atomic Financial Reset RPC
+- [x] Plan 90.2: Wave 2 - Service Layer & UI Modal Implementation
+- [x] Plan 90.3: Wave 3 - Static Analysis & Build Verification
+
+**Deliverables:**
+- Migrasi RPC PostgreSQL `reset_financial_transactions(p_admin_id uuid)`
+- Lapisan service `cashFlowService.ts` dan unit test `cashFlowService.test.ts`
+- Tombol reset dan dialog modal bahaya dengan validasi teks "RESET KAS KEUANGAN" di `LaporanKeuangan.tsx`
+- Refetch metrik kartu Kas Masuk, Kas Keluar, Saldo Kas Brankas, dan tabel mutasi seketika
+- Pengujian unit Vitest dan build produksi Vite bersih (exit code 0)
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1844,6 +1863,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 87 | 2026-11-11 | 2026-11-11 | 1 day |
 | 88 | 2026-11-11 | 2026-11-11 | 1 day |
 | 89 | 2026-11-11 | 2026-11-11 | 1 day |
+| 90 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
