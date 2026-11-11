@@ -277,8 +277,8 @@ export default function PengajuanPinjaman({
   async function loadLoanSettings() {
     try {
       const settings = await getLoanSettings();
-      if (settings && typeof settings.min_remaining_thp === 'number') {
-        setMinRemainingThp(settings.min_remaining_thp);
+      if (settings && typeof settings.minRemainingThp === 'number') {
+        setMinRemainingThp(settings.minRemainingThp);
       }
     } catch (err) {
       console.error('Gagal memuat pengaturan pinjaman:', err);
