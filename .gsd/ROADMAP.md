@@ -1535,7 +1535,7 @@ updated: 2026-10-30T20:50:00+07:00
 
 **Plans:**
 - [x] Plan 86.1: Service Layer Dynamic Deposit Types Fetcher and Query Alignment
-- [ ] Plan 86.2: Bind Dynamic Combo Box in Laporan Penarikan Page
+- [x] Plan 86.2: Bind Dynamic Combo Box in Laporan Penarikan Page
 - [ ] Plan 86.3: Static Verification, Full Test Suite, and Production Build
 
 **Deliverables:**
@@ -1693,7 +1693,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 83 | Input Fleksibel & Modal Konfirmasi THP | ✅ | 3/3 | 100% |
 | 84 | Resolusi Identitas Anggota & Label Simpanan Laporan Penarikan | ✅ | 3/3 | 100% |
 | 85 | Pencairan Massal Simpanan Lebaran | ✅ | 5/5 | 100% |
-| 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | 🔄 | 1/3 | 33% |
+| 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | 🔄 | 2/3 | 67% |
 
 ---
 
