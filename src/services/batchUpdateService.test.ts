@@ -1,15 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import ExcelJS from 'exceljs';
+import { supabase } from '../lib/supabaseClient';
 import {
   isPokokDepositType,
   getDepositTypeSortOrder,
   buildSavingsTemplateRows,
+  generateSavingsBatchTemplate,
+  parseBatchUpdateFile,
+  executeBatchUpdate,
   MemberBatchItem,
   MemberDepositItem,
   DepositTypeItem,
   DepositTransactionItem,
 } from './batchUpdateService';
+import * as savingsRateService from './savingsRateService';
 
 describe('batchUpdateService - Conditional Pokok Logic & Template Generation', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
   describe('isPokokDepositType', () => {
     it('mengidentifikasi POKOK dari kode dan nama', () => {
       expect(isPokokDepositType({ code: 'POKOK' })).toBe(true);
@@ -314,6 +323,324 @@ describe('batchUpdateService - Conditional Pokok Logic & Template Generation', (
       expect(rows[3].kode_simpanan).toBe('POKOK');
       expect(rows[3].telah_dibayar).toBe(0);
       expect(rows[3].jumlah_bayar).toBe(100000);
+    });
+  });
+
+  describe('generateSavingsBatchTemplate', () => {
+    it('membuat workbook Excel dengan header lengkap dan baris sesuai data database', async () => {
+      vi.spyOn(savingsRateService, 'getRateTiers').mockResolvedValue([]);
+      vi.spyOn(savingsRateService, 'getActivePokokTariff').mockResolvedValue(100000);
+
+      vi.spyOn(supabase, 'from').mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-1', nrp: '1001', nama: 'Budi Santoso', bank_account_number: '123' }],
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'md-1',
+                  member_id: 'm-1',
+                  deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 50000 },
+                },
+                {
+                  id: 'md-pokok',
+                  member_id: 'm-1',
+                  deposit_types: { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 100000 },
+                },
+              ],
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 50000 },
+                { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 100000 },
+              ],
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({
+                  data: [],
+                  error: null,
+                }),
+              }),
+              in: vi.fn().mockResolvedValue({
+                data: [], // Belum bayar pokok sama sekali
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) } as any;
+      });
+
+      const { workbook, rows } = await generateSavingsBatchTemplate(11, 2026);
+
+      expect(workbook).toBeDefined();
+      const sheet = workbook.getWorksheet('Template Simpanan 11-2026');
+      expect(sheet).toBeDefined();
+      expect(sheet?.actualRowCount).toBe(3); // 1 header + 2 baris (WAJIB + POKOK)
+      expect(rows).toHaveLength(2);
+      expect(rows[1].kode_simpanan).toBe('POKOK');
+      expect(rows[1].jumlah_bayar).toBe(100000);
+    });
+  });
+
+  describe('parseBatchUpdateFile', () => {
+    it('mem-parsing baris POKOK menjadi status READY baik jika deposit_types ada atau belum ada', async () => {
+      // Buat file Excel in-memory dengan ExcelJS
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Sheet1');
+      ws.addRow(['NRP', 'Nama', 'Nomor Rekening', 'Bulan', 'Tahun', 'Kode Simpanan', 'Telah Dibayar', 'Jumlah Bayar']);
+      // Baris 1: WAJIB (terdaftar)
+      ws.addRow(['1001', 'Budi Santoso', '123', 11, 2026, 'WAJIB', 0, 50000]);
+      // Baris 2: POKOK (anggota punya akun simpanan pokok)
+      ws.addRow(['1001', 'Budi Santoso', '123', 11, 2026, 'POKOK', 0, 100000]);
+      // Baris 3: POKOK (anggota Siti belum punya akun simpanan pokok di DB)
+      ws.addRow(['1002', 'Siti Rahma', '456', 11, 2026, 'POKOK', 0, 100000]);
+      // Baris 4: Simpanan rutin yang tidak terdaftar -> MISMATCH
+      ws.addRow(['1002', 'Siti Rahma', '456', 11, 2026, 'SUKARELA', 0, 20000]);
+      // Baris 5: NRP tidak dikenal -> ERROR
+      ws.addRow(['9999', 'Orang Asing', '000', 11, 2026, 'POKOK', 0, 100000]);
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const mockFile = {
+        arrayBuffer: async () => buffer,
+      } as unknown as File;
+
+      vi.spyOn(supabase, 'from').mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'm-1',
+                    nrp: '1001',
+                    nama: 'Budi Santoso',
+                    member_deposits: [
+                      { id: 'md-budi-wajib', deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' } },
+                      { id: 'md-budi-pokok', deposit_types: { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' } },
+                    ],
+                  },
+                  {
+                    id: 'm-2',
+                    nrp: '1002',
+                    nama: 'Siti Rahma',
+                    member_deposits: [], // Siti belum punya akun deposit POKOK maupun SUKARELA
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+        return {} as any;
+      });
+
+      const parsed = await parseBatchUpdateFile(mockFile, 'savings', 11, 2026);
+
+      expect(parsed).toHaveLength(5);
+
+      // Budi WAJIB
+      expect(parsed[0].status).toBe('READY');
+      expect(parsed[0].ref_id).toBe('md-budi-wajib');
+
+      // Budi POKOK (terdaftar)
+      expect(parsed[1].status).toBe('READY');
+      expect(parsed[1].ref_id).toBe('md-budi-pokok');
+      expect(parsed[1].nominal_baru).toBe(100000);
+
+      // Siti POKOK (tidak punya akun pokok, tapi tetap READY)
+      expect(parsed[2].status).toBe('READY');
+      expect(parsed[2].ref_id).toBeUndefined();
+      expect(parsed[2].member_id).toBe('m-2');
+
+      // Siti SUKARELA (tidak punya akun simpanan sukarela -> MISMATCH)
+      expect(parsed[3].status).toBe('MISMATCH');
+
+      // Unknown NRP -> ERROR
+      expect(parsed[4].status).toBe('ERROR');
+    });
+  });
+
+  describe('executeBatchUpdate', () => {
+    it('melempar error jika tidak ada baris valid dengan nominal > 0', async () => {
+      await expect(
+        executeBatchUpdate(
+          [
+            {
+              nrp: '1001',
+              nama: 'Budi',
+              nomor_rekening: '123',
+              periode: '11/2026',
+              jenis_tagihan: 'WAJIB',
+              nominal_lama: 0,
+              nominal_baru: 0,
+              status: 'READY',
+            },
+          ],
+          'savings',
+          11,
+          2026
+        )
+      ).rejects.toThrow('Tidak ada data dengan nominal pembayaran > 0 yang valid untuk diproses.');
+    });
+
+    it('memproses batch simpanan pokok dan simpanan rutin secara benar', async () => {
+      const insertedTxs: any[] = [];
+      const insertedDeposits: any[] = [];
+      const deletedTxs: any[] = [];
+
+      vi.spyOn(supabase, 'from').mockImplementation((table: string) => {
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockImplementation((col: string, val: any) => {
+                    deletedTxs.push({ col, val });
+                    return Promise.resolve({ error: null });
+                  }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedTxs.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          } as any;
+        }
+
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 100000 },
+                { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 50000 },
+              ],
+              error: null,
+            }),
+          } as any;
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((dep: any) => {
+              insertedDeposits.push(dep);
+              return {
+                select: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'new-dep-siti' }, error: null }),
+                }),
+              };
+            }),
+          } as any;
+        }
+
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-2', nrp: '1002' }],
+                error: null,
+              }),
+            }),
+          } as any;
+        }
+
+        return {} as any;
+      });
+
+      const payload = [
+        {
+          nrp: '1001',
+          nama: 'Budi Santoso',
+          nomor_rekening: '123',
+          periode: '11/2026',
+          jenis_tagihan: 'WAJIB',
+          nominal_lama: 0,
+          nominal_baru: 50000,
+          status: 'READY' as const,
+          ref_id: 'md-budi-wajib',
+          member_id: 'm-1',
+        },
+        {
+          nrp: '1001',
+          nama: 'Budi Santoso',
+          nomor_rekening: '123',
+          periode: '11/2026',
+          jenis_tagihan: 'POKOK',
+          nominal_lama: 0,
+          nominal_baru: 100000,
+          status: 'READY' as const,
+          ref_id: 'md-budi-pokok',
+          member_id: 'm-1',
+        },
+        {
+          nrp: '1002',
+          nama: 'Siti Rahma',
+          nomor_rekening: '456',
+          periode: '11/2026',
+          jenis_tagihan: 'POKOK',
+          nominal_lama: 0,
+          nominal_baru: 100000,
+          status: 'READY' as const,
+          ref_id: undefined, // Belum punya member_deposit_id
+          member_id: 'm-2',
+        },
+      ];
+
+      const result = await executeBatchUpdate(payload, 'savings', 11, 2026);
+
+      expect(result.success).toBe(true);
+      expect(result.totalProcessed).toBe(3);
+      expect(result.recurringCount).toBe(1);
+      expect(result.pokokCount).toBe(2);
+
+      // Pastikan transaksi simpanan rutin disisipkan
+      const recurringTx = insertedTxs.find(tx => tx.member_deposit_id === 'md-budi-wajib');
+      expect(recurringTx).toBeDefined();
+      expect(recurringTx?.amount).toBe(50000);
+      expect(recurringTx?.description).toContain('Batch Update 11/2026');
+
+      // Pastikan akun member_deposits untuk Siti dibuat
+      expect(insertedDeposits).toHaveLength(1);
+      expect(insertedDeposits[0].member_id).toBe('m-2');
+      expect(insertedDeposits[0].deposit_type_id).toBe('dt-pokok');
+
+      // Pastikan transaksi simpanan pokok disisipkan untuk Budi dan Siti
+      const budiPokokTx = insertedTxs.find(tx => tx.member_deposit_id === 'md-budi-pokok');
+      expect(budiPokokTx).toBeDefined();
+      expect(budiPokokTx?.amount).toBe(100000);
+      expect(budiPokokTx?.description).toContain('Setoran Simpanan Pokok via Update Massal Bulanan');
+
+      const sitiPokokTx = insertedTxs.find(tx => tx.member_deposit_id === 'new-dep-siti');
+      expect(sitiPokokTx).toBeDefined();
+      expect(sitiPokokTx?.amount).toBe(100000);
     });
   });
 });
