@@ -1548,13 +1548,13 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 87: Pembakuan Tenor Kelipatan 6 Bulan pada Form Pengajuan Pinjaman Baru
-**Status:** ⬜ Not Started
+**Status:** ✅ Complete
 **Objective:** Memperbarui algoritma pembentukan opsi tenor pinjaman pada dropdown Pengajuan Pinjaman Baru (`/admin/pengajuan-pinjaman` di `src/pages/admin/PengajuanPinjaman.tsx`) agar dibakukan dengan termin kelipatan 6 bulan (6, 12, 18, 24, dst. sampai batas maksimal jenis pinjaman) dan mereset nilai tenor jika tidak sesuai kelipatan, serta memverifikasi dengan unit test dan build produksi.
 **Depends on:** Phase 86
 
 **Plans:**
-- [ ] Plan 87.1: Wave 1 - Implement Multiples of 6 Months Tenor Logic & Update Tests
-- [ ] Plan 87.2: Wave 2 - Static Analysis, Vitest Suite & Build Verification
+- [x] Plan 87.1: Wave 1 - Implement Multiples of 6 Months Tenor Logic & Update Tests
+- [x] Plan 87.2: Wave 2 - Static Analysis, Vitest Suite & Build Verification
 
 **Deliverables:**
 - Logika pembangkit tenor kelipatan 6 bulan pada `calculateAvailableTenors` di `src/pages/admin/PengajuanPinjaman.tsx`
@@ -1711,7 +1711,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 84 | Resolusi Identitas Anggota & Label Simpanan Laporan Penarikan | ✅ | 3/3 | 100% |
 | 85 | Pencairan Massal Simpanan Lebaran | ✅ | 5/5 | 100% |
 | 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | ✅ | 3/3 | 100% |
-| 87 | Pembakuan Tenor Kelipatan 6 Bulan pada Pengajuan Pinjaman Baru | ⬜ | 0/2 | 0% |
+| 87 | Pembakuan Tenor Kelipatan 6 Bulan pada Pengajuan Pinjaman Baru | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1805,7 +1805,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 84 | 2026-11-11 | 2026-11-11 | 1 day |
 | 85 | 2026-11-11 | 2026-11-11 | 1 day |
 | 86 | 2026-11-11 | 2026-11-11 | 1 day |
-| 87 | 2026-11-11 | — | — |
+| 87 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 

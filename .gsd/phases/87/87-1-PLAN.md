@@ -71,3 +71,4 @@ Load these files for context:
 - [ ] Opsi tenor pinjaman baru hanya menampilkan angka kelipatan 6 bulan (6, 12, 18, 24, dst.) sampai batas maksimal produk.
 - [ ] Dropdown tenor otomatis ter-reset saat pengguna beralih jenis pinjaman jika tenor sebelumnya tidak terdapat pada kelipatan yang valid.
 - [ ] Seluruh unit test di `src/pages/admin/PengajuanPinjaman.test.tsx` lulus 100%.
+

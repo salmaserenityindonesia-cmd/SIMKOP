@@ -35,3 +35,4 @@ Load these files for context:
 - [ ] `npx tsc --noEmit` keluar dengan exit code 0 tanpa komplain tipe.
 - [ ] `npx vitest run` meluluskan semua suite test tanpa kegagalan.
 - [ ] `npm run build` menyelesaikan bundel produksi Vite dengan exit code 0.
+
