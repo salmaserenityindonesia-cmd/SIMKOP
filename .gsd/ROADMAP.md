@@ -1529,14 +1529,14 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 86: Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan
-**Status:** 🔄 In Progress
+**Status:** ✅ Complete
 **Objective:** Mengintegrasikan pemuatan jenis simpanan dinamis dari tabel master `public.deposit_types` di Supabase ke dalam dropdown filter pada halaman Laporan Penarikan Simpanan (`/admin/laporan-penarikan`), menyelaraskan service layer kueri buku besar mutasi dan filter pencairan terminasi, serta memverifikasi build Vite dan suite pengujian.
 **Depends on:** Phase 85
 
 **Plans:**
 - [x] Plan 86.1: Service Layer Dynamic Deposit Types Fetcher and Query Alignment
 - [x] Plan 86.2: Bind Dynamic Combo Box in Laporan Penarikan Page
-- [ ] Plan 86.3: Static Verification, Full Test Suite, and Production Build
+- [x] Plan 86.3: Static Verification, Full Test Suite, and Production Build
 
 **Deliverables:**
 - Fungsi `getWithdrawableDepositTypes()` di `src/services/withdrawalReportService.ts` yang memuat data master simpanan Supabase
@@ -1693,7 +1693,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 83 | Input Fleksibel & Modal Konfirmasi THP | ✅ | 3/3 | 100% |
 | 84 | Resolusi Identitas Anggota & Label Simpanan Laporan Penarikan | ✅ | 3/3 | 100% |
 | 85 | Pencairan Massal Simpanan Lebaran | ✅ | 5/5 | 100% |
-| 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | 🔄 | 2/3 | 67% |
+| 86 | Dinamisasi Dropdown Filter Jenis Simpanan dari Master Database Supabase pada Laporan Penarikan | ✅ | 3/3 | 100% |
 
 ---
 
@@ -1786,7 +1786,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 83 | 2026-11-11 | 2026-11-11 | 1 day |
 | 84 | 2026-11-11 | 2026-11-11 | 1 day |
 | 85 | 2026-11-11 | 2026-11-11 | 1 day |
-| 86 | 2026-11-11 | — | — |
+| 86 | 2026-11-11 | 2026-11-11 | 1 day |
 
 
 
