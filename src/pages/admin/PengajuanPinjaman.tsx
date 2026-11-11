@@ -12,8 +12,12 @@ export const formatCurrency = (val: number) => {
 
 export const calculateAvailableTenors = (maxTenor?: number): number[] => {
   if (typeof maxTenor !== 'number' || maxTenor <= 0) return [];
-  const baseRange = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 24, 30, 36, 48, 60];
-  return baseRange.filter(t => t <= maxTenor);
+  if (maxTenor < 6) return [maxTenor];
+  const tenors: number[] = [];
+  for (let t = 6; t <= maxTenor; t += 6) {
+    tenors.push(t);
+  }
+  return tenors.length > 0 ? tenors : [6];
 };
 
 export interface SimulationPanelProps {
@@ -228,7 +232,8 @@ export default function PengajuanPinjaman({
       return;
     }
     const newType = loanTypes.find(lt => String(lt.id) === String(newTypeId));
-    if (newType && typeof tenor === 'number' && tenor > newType.max_duration_months) {
+    const newAvailableTenors = calculateAvailableTenors(newType?.max_duration_months);
+    if (typeof tenor === 'number' && !newAvailableTenors.includes(tenor)) {
       setTenor('');
     }
   };
