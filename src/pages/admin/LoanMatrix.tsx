@@ -538,6 +538,10 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <thead className="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-4 py-3 sticky left-0 bg-slate-50 z-30 min-w-[250px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Anggota</th>
+                <th className="px-4 py-3 text-left font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[140px]">
+                  <div>Saldo Pra Jan-{String(year).slice(-2)}</div>
+                  <div className="text-[10px] font-normal text-slate-500">Akumulasi Lampau</div>
+                </th>
                 {MONTHS.map(m => (
                   <th key={m} className="px-3 py-3 text-center min-w-[110px] border-l border-slate-200">{m}</th>
                 ))}
@@ -548,11 +552,11 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="text-center py-8 text-slate-500">Memuat data matriks...</td>
+                  <td colSpan={15} className="text-center py-8 text-slate-500">Memuat data matriks...</td>
                 </tr>
               ) : paginatedMembers.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="text-center py-8 text-slate-500">Tidak ada data untuk tahun {year}</td>
+                  <td colSpan={15} className="text-center py-8 text-slate-500">Tidak ada data untuk tahun {year}</td>
                 </tr>
               ) : (
                 paginatedMembers.map(row => {
@@ -581,6 +585,29 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                             {row.loan_number || row.loanNumber}
                           </div>
                         )}
+                      </td>
+                      
+                      <td className="px-4 py-3 border-r border-slate-200 bg-slate-50/40 text-xs" data-testid={`prior-summary-${row.memberId}`}>
+                        <div className="space-y-0.5">
+                          <div className="text-slate-500 flex justify-between gap-1">
+                            <span>P:</span>
+                            <span className="font-semibold text-slate-700">
+                              Rp {Number(row.principalAmount || 0).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                          <div className="text-emerald-700 flex justify-between gap-1">
+                            <span>Lunas:</span>
+                            <span className="font-bold">
+                              Rp {Number(row.priorYearPaid || 0).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                          <div className="text-amber-700 flex justify-between gap-1 border-t border-slate-200 pt-0.5">
+                            <span>Sisa:</span>
+                            <span className="font-semibold">
+                              Rp {Number(row.priorYearRemaining || 0).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                        </div>
                       </td>
                       
                       {Array.from({length: 12}, (_, i) => i + 1).map(m => {

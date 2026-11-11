@@ -779,4 +779,119 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('Pinjaman (10 Bln)');
     });
   });
+
+  describe('Saldo Pra-Jan (Akumulasi Lampau) Column Rendering (Phase 91)', () => {
+    const priorYearSummaryData: LoanMatrixSummary = {
+      year: 2026,
+      complianceYTD: 100,
+      totalCollectedYTD: 25000000,
+      projectedNextMonth: 5000000,
+      unpaidMembersCount: 0,
+      members: [
+        {
+          memberId: 'mem-prior-1',
+          loanId: 'loan-prior-1',
+          nrp: '11223344',
+          nama: 'Agus Setiawan',
+          principalAmount: 12000000,
+          priorYearPaid: 5000000,
+          priorYearRemaining: 7000000,
+          isLoanActive: true,
+          totalLoans: 1,
+          complianceYTD: 100,
+          months: {
+            1: { month: 1, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000 },
+            2: { month: 2, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000 },
+            3: { month: 3, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000 },
+            4: { month: 4, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000 },
+            5: { month: 5, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            6: { month: 6, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            7: { month: 7, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            8: { month: 8, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            9: { month: 9, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            10: { month: 10, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            11: { month: 11, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            12: { month: 12, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+          },
+        },
+      ],
+    };
+
+    it('renders the header "Saldo Pra Jan-26" with subtitle "Akumulasi Lampau"', () => {
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={priorYearSummaryData} initialYear={2026} />
+      );
+
+      expect(html).toContain('Saldo Pra Jan-26');
+      expect(html).toContain('Akumulasi Lampau');
+    });
+
+    it('dynamically slices the 2-digit year for the column header (e.g. 2025 -> "Saldo Pra Jan-25")', () => {
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={{ ...priorYearSummaryData, year: 2025 }} initialYear={2025} />
+      );
+
+      expect(html).toContain('Saldo Pra Jan-25');
+    });
+
+    it('renders prior year repayment summary cell with Pokok, Lunas, and Sisa amounts', () => {
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={priorYearSummaryData} initialYear={2026} />
+      );
+
+      expect(html).toContain('data-testid="prior-summary-mem-prior-1"');
+      // Pokok
+      expect(html).toContain('Rp 12.000.000');
+      // Lunas
+      expect(html).toContain('Rp 5.000.000');
+      // Sisa
+      expect(html).toContain('Rp 7.000.000');
+    });
+
+    it('renders Rp 0 fallback when principalAmount, priorYearPaid, or priorYearRemaining are missing', () => {
+      const missingPriorData: LoanMatrixSummary = {
+        ...priorYearSummaryData,
+        members: [
+          {
+            ...priorYearSummaryData.members[0],
+            memberId: 'mem-missing-prior',
+            principalAmount: undefined,
+            priorYearPaid: undefined,
+            priorYearRemaining: undefined,
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={missingPriorData} initialYear={2026} />
+      );
+
+      expect(html).toContain('data-testid="prior-summary-mem-missing-prior"');
+      expect(html).toContain('Rp 0');
+    });
+
+    it('sets colSpan={15} on loading state and empty state rows', () => {
+      // Empty state (initialData with empty members list)
+      const emptyHtml = renderToStaticMarkup(
+        <LoanMatrix
+          initialData={{
+            year: 2026,
+            complianceYTD: 0,
+            totalCollectedYTD: 0,
+            projectedNextMonth: 0,
+            unpaidMembersCount: 0,
+            members: [],
+          }}
+          initialYear={2026}
+        />
+      );
+      expect(emptyHtml).toContain('colSpan="15"');
+      expect(emptyHtml).toContain('Tidak ada data untuk tahun 2026');
+
+      // Loading state
+      const loadingHtml = renderToStaticMarkup(<LoanMatrix initialData={undefined} />);
+      expect(loadingHtml).toContain('colSpan="15"');
+      expect(loadingHtml).toContain('Memuat data matriks...');
+    });
+  });
 });
