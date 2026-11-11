@@ -46,6 +46,7 @@ export interface LoanMatrixMember {
 export type LoanMatrixRow = LoanMatrixMember;
 
 export interface LoanMatrixSummary {
+  year?: number;
   complianceYTD: number;
   totalCollectedYTD: number;
   projectedNextMonth: number;
