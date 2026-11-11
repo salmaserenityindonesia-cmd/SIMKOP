@@ -7,10 +7,11 @@ import type { ParsedMonthlyDeposit } from '../utils/savingsMatrixImporter';
 import {
   SavingsRateTier,
   getRateTiers,
-  getApplicableTierRate
+  getApplicableTierRate,
+  getActivePokokTariff
 } from './savingsRateService';
 
-export { getApplicableTierRate } from './savingsRateService';
+export { getApplicableTierRate, getActivePokokTariff } from './savingsRateService';
 export { reconcileMemberSavingsDeposit, autoReconcileSavingsLedger } from './savingsMatrixService';
 
 export interface DepositTypeItem {
@@ -694,6 +695,27 @@ export async function getComplianceMatrixData(
     return isNaN(joinDate.getTime()) || joinDate <= windowEndDate;
   });
 
+  // Ambil data master tarif berjenjang dari savings_rate_tiers
+  let rateTiers: SavingsRateTier[] = [];
+  try {
+    const { data: tiersData, error: tiersErr } = await supabase
+      .from('savings_rate_tiers')
+      .select('*')
+      .order('start_year', { ascending: true })
+      .order('start_month', { ascending: true });
+    if (!tiersErr && tiersData && tiersData.length > 0) {
+      rateTiers = tiersData;
+    } else {
+      rateTiers = await getRateTiers(undefined, false);
+    }
+  } catch {
+    try {
+      rateTiers = await getRateTiers(undefined, false);
+    } catch {
+      rateTiers = [];
+    }
+  }
+
   // 5. Ambil transaksi pokok dengan paging
   const { data: pokokTxs } = await fetchAllPaged(
     'deposit_transactions',
@@ -715,7 +737,13 @@ export async function getComplianceMatrixData(
       }
     });
 
-    const pokokTarget = typeList.find((dt: any) => dt.id === pokokId)?.default_amount || 100000;
+    const activePokokTier = (rateTiers || []).find((t: any) => {
+      const c = (t.deposit_type_code || '').toUpperCase();
+      return (c === 'POKOK' || c === 'SP') && (t.end_year === null || t.end_year === undefined);
+    });
+    const pokokTarget = activePokokTier && Number(activePokokTier.monthly_rate) > 0
+      ? Number(activePokokTier.monthly_rate)
+      : (typeList.find((dt: any) => dt.id === pokokId)?.default_amount || 100000);
     Object.keys(pokokSums).forEach((mId) => {
       if (pokokSums[mId] >= pokokTarget) {
         pokokPaidByMember.add(mId);
@@ -938,27 +966,6 @@ export async function getComplianceMatrixData(
         }
       }
     });
-  }
-
-  // Ambil data master tarif berjenjang dari savings_rate_tiers
-  let rateTiers: SavingsRateTier[] = [];
-  try {
-    const { data: tiersData, error: tiersErr } = await supabase
-      .from('savings_rate_tiers')
-      .select('*')
-      .order('start_year', { ascending: true })
-      .order('start_month', { ascending: true });
-    if (!tiersErr && tiersData && tiersData.length > 0) {
-      rateTiers = tiersData;
-    } else {
-      rateTiers = await getRateTiers(undefined, false);
-    }
-  } catch {
-    try {
-      rateTiers = await getRateTiers(undefined, false);
-    } catch {
-      rateTiers = [];
-    }
   }
 
   const targetWajib = typeList.find((dt: any) => dt.id === wajibId)?.default_amount || 25000;
@@ -1657,3 +1664,162 @@ export async function importSavingsMatrixLedger(
     };
   }
 }
+
+export interface PayPrincipalSavingsPayload {
+  memberId: string;
+  amount: number;
+  paymentMethod?: string;
+  notes?: string;
+}
+
+/**
+ * Melakukan pembayaran / pelunasan Simpanan Pokok anggota:
+ * 1. Mengidentifikasi atau memastikan akun rekening member_deposits untuk jenis simpanan POKOK.
+ * 2. Menyisipkan transaksi setoran ke public.deposit_transactions.
+ * 3. Mengembalikan mutasi transaksi yang tersimpan.
+ */
+export async function payMemberPrincipalSavings(payload: PayPrincipalSavingsPayload): Promise<{
+  success: boolean;
+  data?: any;
+  error?: string;
+}> {
+  try {
+    const { memberId, amount, paymentMethod = 'cash', notes } = payload;
+    if (!memberId) {
+      throw new Error('Member ID wajib diisi');
+    }
+    if (!amount || amount <= 0) {
+      throw new Error('Nominal setoran simpanan pokok harus lebih dari 0');
+    }
+
+    // 1. Ambil atau identifikasi deposit_types untuk POKOK
+    let pokokTypeId: string | null = null;
+    const { data: dTypes, error: dtError } = await supabase
+      .from('deposit_types')
+      .select('id, code, name');
+
+    if (dtError) {
+      console.warn('Gagal memuat deposit_types:', dtError);
+    }
+
+    if (dTypes && dTypes.length > 0) {
+      const matched = matchDepositType(dTypes, ['POKOK', 'SP'], ['pokok']);
+      if (matched) {
+        pokokTypeId = matched.id;
+      }
+    }
+
+    if (!pokokTypeId) {
+      const directQuery: any = supabase
+        .from('deposit_types')
+        .select('id, code, name');
+      const { data: directData } = await directQuery;
+      if (directData && Array.isArray(directData)) {
+        const found = directData.find((d: any) =>
+          (d.code || '').toUpperCase() === 'POKOK' ||
+          (d.code || '').toUpperCase() === 'SP' ||
+          (d.name || '').toLowerCase().includes('pokok')
+        );
+        if (found) {
+          pokokTypeId = found.id;
+        }
+      }
+    }
+
+    if (!pokokTypeId) {
+      throw new Error('Jenis simpanan pokok tidak ditemukan di master deposit_types.');
+    }
+
+    // 2. Cari atau buat akun rekening member_deposits milik anggota untuk POKOK
+    let memberDepositId: string | null = null;
+    const checkQuery: any = supabase
+      .from('member_deposits')
+      .select('id, member_id, deposit_type_id');
+
+    if (typeof checkQuery.eq === 'function') {
+      const eqMember = checkQuery.eq('member_id', memberId);
+      if (eqMember && typeof eqMember.eq === 'function') {
+        const eqType = eqMember.eq('deposit_type_id', pokokTypeId);
+        const checkRes = typeof eqType.maybeSingle === 'function'
+          ? await eqType.maybeSingle()
+          : (typeof eqType.single === 'function' ? await eqType.single() : await eqType);
+        if (checkRes?.data) {
+          const row = Array.isArray(checkRes.data) ? checkRes.data[0] : checkRes.data;
+          memberDepositId = row?.id;
+        }
+      }
+    }
+
+    // Jika rekening belum ada, buat baris rekening baru di public.member_deposits
+    if (!memberDepositId) {
+      const tableDeposits: any = supabase.from('member_deposits');
+      const insPayload = {
+        member_id: memberId,
+        deposit_type_id: pokokTypeId,
+        is_terminated: false,
+        created_at: new Date().toISOString()
+      };
+
+      const insQuery = tableDeposits.insert(insPayload);
+      let insRes: any = null;
+      if (typeof insQuery.select === 'function') {
+        const selQuery = insQuery.select('id');
+        insRes = typeof selQuery.maybeSingle === 'function'
+          ? await selQuery.maybeSingle()
+          : (typeof selQuery.single === 'function' ? await selQuery.single() : await selQuery);
+      } else {
+        insRes = await insQuery;
+      }
+
+      if (insRes?.error) {
+        throw insRes.error;
+      }
+      if (insRes?.data) {
+        const row = Array.isArray(insRes.data) ? insRes.data[0] : insRes.data;
+        memberDepositId = row?.id;
+      }
+    }
+
+    if (!memberDepositId) {
+      throw new Error('Gagal membuat rekening simpanan pokok anggota.');
+    }
+
+    // 3. Sisipkan transaksi setoran ke public.deposit_transactions
+    const refNo = `KW-POKOK-${Date.now()}`;
+    const txRow = {
+      member_deposit_id: memberDepositId,
+      transaction_type: 'deposit',
+      amount: amount,
+      payment_method: paymentMethod || 'cash',
+      reference_no: refNo,
+      description: notes || 'Pelunasan Simpanan Pokok Anggota',
+      created_at: new Date().toISOString()
+    };
+
+    const insertTxQuery: any = supabase.from('deposit_transactions').insert(txRow);
+    let insertedData: any = null;
+
+    if (typeof insertTxQuery.select === 'function') {
+      const sel = insertTxQuery.select();
+      const res = typeof sel.single === 'function' ? await sel.single() : await sel;
+      if (res?.error) throw res.error;
+      insertedData = res?.data;
+    } else {
+      const res = await insertTxQuery;
+      if (res?.error) throw res.error;
+      insertedData = res?.data;
+    }
+
+    return {
+      success: true,
+      data: insertedData || txRow
+    };
+  } catch (err: any) {
+    console.error('Error saat pelunasan simpanan pokok:', err);
+    return {
+      success: false,
+      error: err?.message || String(err)
+    };
+  }
+}
+

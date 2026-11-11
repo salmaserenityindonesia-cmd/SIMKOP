@@ -37,6 +37,7 @@ import {
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
 import SavingsMatrixImportModal from '../../components/compliance/SavingsMatrixImportModal';
+import PelunasanPokokModal from '../../components/compliance/PelunasanPokokModal';
 import { exportSavingsMatrixExcel, DepositTypeKey } from '../../utils/savingsMatrixExporter';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
@@ -357,6 +358,15 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [showImportModal, setShowImportModal] = useState(initialShowImportModal || false);
   const [showExportDropdown, setShowExportDropdown] = useState(initialShowExportDropdown || false);
   const [isExporting, setIsExporting] = useState(initialIsExporting || false);
+
+  const [selectedMemberForPokok, setSelectedMemberForPokok] = useState<{
+    id: string;
+    nama: string;
+    nrp: string;
+    status?: string;
+    membership_status?: string;
+  } | null>(null);
+  const [isPokokModalOpen, setIsPokokModalOpen] = useState(false);
 
   const feedback = useContext(FeedbackContext);
 
@@ -980,9 +990,31 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">{row.nrp}</span>
                         {row.pokokLunas ? (
-                          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium border border-emerald-200">Pokok: Lunas</span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            Pokok: Lunas
+                          </span>
                         ) : (
-                          <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium border border-amber-200">Pokok: Belum</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedMemberForPokok({
+                                id: row.member_id,
+                                nama: row.nama,
+                                nrp: row.nrp,
+                                status: (row as any).status,
+                                membership_status: (row as any).membership_status
+                              });
+                              setIsPokokModalOpen(true);
+                            }}
+                            data-testid={`pay-pokok-btn-${row.nrp}`}
+                            title="Klik untuk melunasi Simpanan Pokok"
+                            className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-800 border border-amber-300 hover:border-amber-400 px-2 py-0.5 rounded-full transition-all cursor-pointer shadow-xs active:scale-95"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                            Pokok: Belum
+                            <span className="text-[9px] underline ml-0.5 font-semibold">Bayar</span>
+                          </button>
                         )}
                       </div>
 
@@ -1645,6 +1677,20 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           )
         }
         defaultType="WAJIB"
+      />
+
+      {/* Modal Pelunasan Simpanan Pokok Anggota */}
+      <PelunasanPokokModal
+        isOpen={isPokokModalOpen}
+        member={selectedMemberForPokok}
+        onClose={() => {
+          setIsPokokModalOpen(false);
+          setSelectedMemberForPokok(null);
+        }}
+        onSuccess={async () => {
+          clearTierCache();
+          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+        }}
       />
     </AdminLayout>
   );

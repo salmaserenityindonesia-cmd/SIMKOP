@@ -1668,6 +1668,42 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       );
       expect(emptyHtml).toContain('colSpan="15"');
     });
+
+    it('renders interactive button for Pokok: Belum and static badge for Pokok: Lunas', () => {
+      const rowUnpaid = {
+        member_id: 'm-unpaid',
+        nrp: '34763421',
+        nama: 'Tom Hanks',
+        pokokLunas: false,
+        compliance: 50,
+        balances: { w: 0, b: 0, l: 0 },
+        months: Array(12).fill(null),
+      };
+
+      const rowPaid = {
+        member_id: 'm-paid',
+        nrp: '34763422',
+        nama: 'Leonardo DiCaprio',
+        pokokLunas: true,
+        compliance: 100,
+        balances: { w: 0, b: 0, l: 0 },
+        months: Array(12).fill(null),
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowUnpaid as any, rowPaid as any]} initialYear="2026" />
+      );
+
+      // Verifikasi Tom Hanks memiliki tombol interaktif pelunasan simpanan pokok
+      expect(html).toContain('data-testid="pay-pokok-btn-34763421"');
+      expect(html).toContain('title="Klik untuk melunasi Simpanan Pokok"');
+      expect(html).toContain('Pokok: Belum');
+      expect(html).toContain('Bayar');
+
+      // Verifikasi Leonardo DiCaprio memiliki badge lunas
+      expect(html).toContain('Pokok: Lunas');
+      expect(html).not.toContain('data-testid="pay-pokok-btn-34763422"');
+    });
   });
 });
 
