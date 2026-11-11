@@ -400,6 +400,26 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       expect(html).toContain('step="any"');
       expect(html).toContain('min="0"');
       expect(html).not.toContain('step="50000"');
+      expect(html).not.toContain('min="1"');
+    });
+
+    it('ensures minRemainingThp input element has flexible attributes without restrictive steps', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialMinRemainingThp={1750500}
+        />
+      );
+
+      // Verify that input element has id="minRemainingThp", step="any", min="0"
+      expect(html).toContain('id="minRemainingThp"');
+      expect(html).toContain('step="any"');
+      expect(html).toContain('min="0"');
+      // Verify removed restrictive attributes
+      expect(html).not.toContain('step="50000"');
+      expect(html).not.toContain('min="1"');
+      // Verify preview displays custom amount correctly
+      expect(html).toContain('1.750.500');
     });
 
     it('integrates with settingsService.getLoanSettings and updateLoanSettings', async () => {
@@ -491,6 +511,20 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
         // Case-insensitive: 'setuju' also unlocks the button
         expect(htmlLower).toContain('data-testid="btn-confirm-critical-threshold"');
         expect(htmlLower).not.toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
+
+        const htmlMixedWithSpaces = renderToStaticMarkup(
+          <PengaturanKoperasi
+            initialLoading={false}
+            initialOriginalMinThp={1500000}
+            initialMinRemainingThp={1000000}
+            initialConfirmModalOpen={true}
+            initialConfirmationInputText="  SeTuJu  "
+          />
+        );
+
+        // Mixed-case with whitespace also unlocks the button
+        expect(htmlMixedWithSpaces).toContain('data-testid="btn-confirm-critical-threshold"');
+        expect(htmlMixedWithSpaces).not.toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
       });
 
       it('keeps the confirm button disabled when arbitrary text is typed', () => {
