@@ -397,6 +397,9 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       expect(html).toContain('value="2000000"');
       expect(html).toContain('2.000.000');
       expect(html).toContain('value="SK Pengurus No 12/2026"');
+      expect(html).toContain('step="any"');
+      expect(html).toContain('min="0"');
+      expect(html).not.toContain('step="50000"');
     });
 
     it('integrates with settingsService.getLoanSettings and updateLoanSettings', async () => {

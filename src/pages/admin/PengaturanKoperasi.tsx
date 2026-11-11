@@ -905,8 +905,8 @@ export default function PengaturanKoperasi({
                       id="minRemainingThp"
                       name="minRemainingThp"
                       type="number"
-                      min="1"
-                      step="50000"
+                      min="0"
+                      step="any"
                       required
                       value={minRemainingThp || ''}
                       onChange={(e) => setMinRemainingThp(Number(e.target.value))}
