@@ -76,6 +76,21 @@ describe('cashFlowService - resetFinancialTransactions', () => {
     expect(result.message).toContain('Permission denied');
   });
 
+  it('provides helpful message when RPC is missing from schema cache', async () => {
+    (supabase.rpc as any).mockResolvedValueOnce({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find the function public.reset_financial_transactions(p_admin_id) in the schema cache',
+      },
+    });
+
+    const result = await resetFinancialTransactions('admin-uuid-456');
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('Fungsi database reset_financial_transactions belum dipasang pada database Supabase');
+  });
+
   it('handles caught exceptions when RPC call throws', async () => {
     (supabase.rpc as any).mockRejectedValueOnce(new Error('Network error connecting to database'));
 

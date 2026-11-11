@@ -30,9 +30,13 @@ export async function resetFinancialTransactions(
 
     if (error) {
       console.error('Error executing reset_financial_transactions RPC:', error);
+      let userMessage = error.message || 'Gagal mereset transaksi keuangan.';
+      if (error.code === 'PGRST202' || error.message?.includes('schema cache')) {
+        userMessage = 'Fungsi database reset_financial_transactions belum dipasang pada database Supabase. Silakan jalankan file migrasi 040_create_reset_financial_transactions_rpc.sql di SQL Editor Supabase.';
+      }
       return {
         success: false,
-        message: error.message || 'Gagal mereset transaksi keuangan.',
+        message: userMessage,
       };
     }
 
