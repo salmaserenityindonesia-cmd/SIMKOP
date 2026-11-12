@@ -79,7 +79,7 @@ export const ClearanceActionModal: React.FC<ClearanceActionModalProps> = ({
               </div>
               <div>
                 <p className="text-xs text-gray-500">Sisa Utang</p>
-                <p className="font-semibold text-red-600">{formatCurrency(summary.total_kewajiban)}</p>
+                <p className="font-semibold text-red-600">{formatCurrency(Math.abs(summary.total_kewajiban))}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">Hak Bersih</p>

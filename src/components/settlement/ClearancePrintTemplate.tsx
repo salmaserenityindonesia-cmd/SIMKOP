@@ -91,15 +91,15 @@ export const ClearancePrintTemplate = forwardRef<HTMLDivElement, ClearancePrintT
                 summary.loan_details.map((l, idx) => (
                   <tr key={idx}>
                     <td className="border border-gray-300 p-2">{l.loan_number || '-'} / {l.purpose}</td>
-                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(l.principal_amount)}</td>
-                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(l.total_paid)}</td>
-                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(l.remaining_balance)}</td>
+                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(Math.max(0, Math.abs(l.principal_amount)))}</td>
+                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(Math.max(0, Math.abs(l.total_paid)))}</td>
+                    <td className="border border-gray-300 p-2 text-right">{formatCurrency(Math.max(0, Math.abs(l.remaining_balance)))}</td>
                   </tr>
                 ))
               )}
               <tr className="font-bold bg-gray-50">
                 <td colSpan={3} className="border border-gray-300 p-2 text-right">Total Sisa Kewajiban</td>
-                <td className="border border-gray-300 p-2 text-right">{formatCurrency(summary.total_kewajiban)}</td>
+                <td className="border border-gray-300 p-2 text-right">{formatCurrency(Math.abs(summary.total_kewajiban))}</td>
               </tr>
             </tbody>
           </table>
@@ -108,17 +108,17 @@ export const ClearancePrintTemplate = forwardRef<HTMLDivElement, ClearancePrintT
         <div className="mb-8">
           <h3 className="font-bold border-b border-gray-400 mb-2">C. PERHITUNGAN BERSIH (NET SETTLEMENT)</h3>
           <div className="p-4 border border-black font-bold text-lg flex justify-between bg-gray-50">
-            <span>Hak Bersih Anggota:</span>
-            <span>{formatCurrency(summary.net_settlement)}</span>
+            <span>{summary.net_settlement >= 0 ? 'Hak Bersih Anggota (Surplus):' : 'Kekurangan Pembayaran Anggota (Defisit):'}</span>
+            <span className={summary.net_settlement >= 0 ? 'text-blue-900' : 'text-red-700'}>{formatCurrency(summary.net_settlement)}</span>
           </div>
           {summary.net_settlement < 0 && (
-            <p className="text-sm italic mt-2 font-semibold">
+            <p className="text-sm italic mt-2 font-semibold text-red-700">
               * Anggota wajib menyetorkan kekurangan sebesar {formatCurrency(Math.abs(summary.net_settlement))} sebelum disahkan.
             </p>
           )}
-          {summary.net_settlement > 0 && (
-            <p className="text-sm italic mt-2">
-              * Dana bersih akan ditransfer ke rekening terdaftar anggota / diserahkan secara tunai.
+          {summary.net_settlement >= 0 && (
+            <p className="text-sm italic mt-2 text-gray-700">
+              * Dana bersih ({formatCurrency(summary.net_settlement)}) akan ditransfer ke rekening terdaftar anggota / diserahkan secara tunai.
             </p>
           )}
         </div>

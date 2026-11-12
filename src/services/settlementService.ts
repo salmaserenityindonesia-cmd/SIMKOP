@@ -44,6 +44,12 @@ export const settlementService = {
       throw new Error(`Gagal mengambil rincian simpanan: ${depositError.message}`);
     }
 
+    const normalizedDeposits: DepositSettlementDetail[] = deposits.map((d: any) => ({
+      deposit_name: d.deposit_name || 'Unknown',
+      can_be_withdrawn: Boolean(d.can_be_withdrawn),
+      total_amount: Math.max(0, Number(d.total_amount || 0))
+    }));
+
     // 2. Fetch loan settlement via RPC
     const { data: loanData, error: loanError } = await supabase.rpc('get_member_loan_settlement', {
       p_member_id: memberId
@@ -57,9 +63,20 @@ export const settlementService = {
       throw new Error(`Gagal mengambil rincian pinjaman: ${loanError.message}`);
     }
 
+    // Normalisasi nilai pinjaman menjadi nilai positif mutlak (mencegah bug double negation)
+    const normalizedLoans: LoanSettlementDetail[] = loans.map((l: any) => ({
+      loan_id: l.loan_id || l.id,
+      loan_number: l.loan_number ?? null,
+      purpose: l.purpose || l.notes || '-',
+      principal_amount: Math.max(0, Math.abs(Number(l.principal_amount || l.amount || 0))),
+      tenor: Number(l.tenor || 0),
+      total_paid: Math.max(0, Math.abs(Number(l.total_paid || 0))),
+      remaining_balance: Math.max(0, Math.abs(Number(l.remaining_balance || 0)))
+    }));
+
     // 3. Calculate totals
-    const total_hak = deposits.reduce((sum, d) => sum + Number(d.total_amount), 0);
-    const total_kewajiban = loans.reduce((sum, l) => sum + Number(l.remaining_balance), 0);
+    const total_hak = normalizedDeposits.reduce((sum, d) => sum + Number(d.total_amount), 0);
+    const total_kewajiban = normalizedLoans.reduce((sum, l) => sum + Math.max(0, Math.abs(Number(l.remaining_balance || 0))), 0);
     const net_settlement = total_hak - total_kewajiban;
 
     return {
@@ -67,8 +84,8 @@ export const settlementService = {
       total_hak,
       total_kewajiban,
       net_settlement,
-      deposit_details: deposits,
-      loan_details: loans
+      deposit_details: normalizedDeposits,
+      loan_details: normalizedLoans
     };
   },
 
@@ -154,8 +171,8 @@ export const settlementService = {
         
         result.push({
           deposit_name: typeInfo?.name || 'Unknown',
-          can_be_withdrawn: typeInfo?.can_be_withdrawn || false,
-          total_amount: total
+          can_be_withdrawn: Boolean(typeInfo?.can_be_withdrawn),
+          total_amount: Math.max(0, total)
         });
       }
     }
@@ -178,16 +195,18 @@ export const settlementService = {
     if (lData) {
       for (const loan of lData) {
         const reps = loan.loan_repayments || [];
-        const total_paid = reps.reduce((sum: number, r: any) => sum + Number(r.amount_paid || 0), 0);
+        const total_paid = reps.reduce((sum: number, r: any) => sum + Math.max(0, Number(r.amount_paid || 0)), 0);
+        const principal = Math.max(0, Math.abs(Number((loan as any).principal_amount || loan.amount || 0)));
+        const remaining_balance = Math.max(0, principal - total_paid);
         
         result.push({
           loan_id: loan.id,
-          loan_number: loan.loan_number,
+          loan_number: loan.loan_number || null,
           purpose: loan.notes || '-',
-          principal_amount: Number(loan.amount),
-          tenor: Number(loan.tenor),
+          principal_amount: principal,
+          tenor: Number(loan.tenor || 0),
           total_paid,
-          remaining_balance: Number(loan.amount) - total_paid
+          remaining_balance
         });
       }
     }

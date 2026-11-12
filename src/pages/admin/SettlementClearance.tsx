@@ -202,15 +202,30 @@ export default function SettlementClearance() {
             </div>
             <div className="bg-orange-50 rounded-xl p-6 border border-orange-100 shadow-sm">
               <h3 className="text-orange-800 text-sm font-medium">Total Kewajiban Pinjaman</h3>
-              <p className="text-3xl font-bold text-orange-700 mt-2">{formatCurrency(summary.total_kewajiban)}</p>
+              <p className="text-3xl font-bold text-orange-700 mt-2">{formatCurrency(Math.abs(summary.total_kewajiban))}</p>
             </div>
             <div className={`rounded-xl p-6 border shadow-sm ${summary.net_settlement >= 0 ? 'bg-blue-50 border-blue-100' : 'bg-red-50 border-red-100'}`}>
-              <h3 className={`text-sm font-medium ${summary.net_settlement >= 0 ? 'text-blue-800' : 'text-red-800'}`}>Hak Bersih Anggota (Net Settlement)</h3>
+              <div className="flex items-center justify-between">
+                <h3 className={`text-sm font-medium ${summary.net_settlement >= 0 ? 'text-blue-800' : 'text-red-800'}`}>
+                  Hak Bersih Anggota (Net Settlement)
+                </h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                  summary.net_settlement >= 0 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
+                }`}>
+                  {summary.net_settlement >= 0 ? 'Surplus' : 'Defisit'}
+                </span>
+              </div>
               <p className={`text-4xl font-black mt-2 ${summary.net_settlement >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
                 {formatCurrency(summary.net_settlement)}
               </p>
-              {summary.net_settlement < 0 && (
-                <p className="text-red-600 text-xs font-semibold mt-2">* Defisit harus dilunasi sebelum pengesahan.</p>
+              {summary.net_settlement >= 0 ? (
+                <p className="text-blue-600 text-xs font-medium mt-2">
+                  * Surplus: Kas koperasi diserahkan/ditransfer ke anggota ({formatCurrency(summary.net_settlement)}).
+                </p>
+              ) : (
+                <p className="text-red-600 text-xs font-semibold mt-2">
+                  * Defisit: Anggota wajib melunasi sisa utang {formatCurrency(Math.abs(summary.net_settlement))} ke koperasi sebelum pengesahan.
+                </p>
               )}
             </div>
           </div>
@@ -276,7 +291,7 @@ export default function SettlementClearance() {
                             <span className="block text-xs text-gray-500">{l.purpose} (Tenor: {l.tenor} bln)</span>
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900 text-right font-medium text-orange-600">
-                            {formatCurrency(l.remaining_balance)}
+                            {formatCurrency(Math.max(0, Math.abs(l.remaining_balance)))}
                           </td>
                         </tr>
                       ))
