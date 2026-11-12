@@ -341,14 +341,16 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
     ];
 
     filteredMembers.forEach(m => {
+      const isMemberCompleted = !m.isLoanActive || (m as any).status === 'completed' || (m as any).status === 'paid_off';
+      const memberCompliance = isMemberCompleted ? 100 : m.complianceYTD;
       const row: any = {
         nrp: m.anggota?.nrp || m.nrp,
         nama: m.anggota?.nama || m.nama,
         loanNumber: m.loan_number || m.loanNumber || '-',
         loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman',
         tenor: m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || '-',
-        status: m.isLoanActive ? 'Aktif' : 'Selesai',
-        compliance: m.complianceYTD.toFixed(1) + '%'
+        status: !isMemberCompleted ? 'Aktif' : 'Selesai',
+        compliance: memberCompliance.toFixed(1) + '%'
       };
       
       for(let i = 1; i <= 12; i++) {
@@ -563,6 +565,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   const rowKey = row.id || row.loanId || `${row.memberId}-${row.loanNumber || row.loan_number || ''}`;
                   const targetLoanId = row.loanId || row.id || Object.values(row.months).find(m => m.loanId)?.loanId;
                   const tenorDisplay = row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || 0;
+                  const isLoanCompleted = !row.isLoanActive || (row as any).status === 'completed' || (row as any).status === 'paid_off';
+                  const rowCompliance = isLoanCompleted ? 100 : row.complianceYTD;
 
                   return (
                     <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
@@ -574,7 +578,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                           <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[11px]">
                             {row.loan_types?.name || row.loanTypeName || 'Pinjaman'} ({tenorDisplay} Bln)
                           </span>
-                          {row.isLoanActive ? (
+                          {!isLoanCompleted ? (
                             <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium">Aktif</span>
                           ) : (
                             <span className="px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded-full text-[10px] font-medium">Selesai</span>
@@ -663,12 +667,27 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                                         </div>
                                       );
                                     })()}
-                                    {cell.remainingBalance !== undefined && (
-                                      <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
-                                        <span>Sisa Angsuran:</span>
-                                        <span>Rp {formatAmount(cell.remainingBalance)}</span>
-                                      </div>
-                                    )}
+                                    {(() => {
+                                      const remainingInstallment = isLoanCompleted 
+                                        ? 0 
+                                        : Math.max(0, Number(cell?.remainingBalance !== undefined ? cell.remainingBalance : (Number(cell?.targetAmount || 0) - Number(cell?.paidAmount || 0))));
+
+                                      if (isLoanCompleted || remainingInstallment === 0) {
+                                        return (
+                                          <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-emerald-400">
+                                            <span>Sisa Angsuran:</span>
+                                            <span>Rp 0 (Lunas)</span>
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <div className="flex justify-between mt-1 pt-1 border-t border-slate-600 text-amber-400">
+                                          <span>Sisa Angsuran:</span>
+                                          <span>Rp {formatAmount(remainingInstallment)}</span>
+                                        </div>
+                                      );
+                                    })()}
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
                                   </div>
                                 </div>
@@ -680,11 +699,11 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
                       <td className="px-4 py-3 border-l border-slate-100 bg-white group-hover:bg-slate-50 text-center">
                         <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
-                          row.complianceYTD >= 100 ? 'bg-emerald-100 text-emerald-700' :
-                          row.complianceYTD >= 50 ? 'bg-amber-100 text-amber-700' :
+                          rowCompliance >= 100 ? 'bg-emerald-100 text-emerald-700' :
+                          rowCompliance >= 50 ? 'bg-amber-100 text-amber-700' :
                           'bg-rose-100 text-rose-700'
                         }`}>
-                          {row.complianceYTD.toFixed(0)}%
+                          {rowCompliance.toFixed(0)}%
                         </div>
                       </td>
                       <td className="px-4 py-3 sticky right-0 bg-white group-hover:bg-slate-50 z-10 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] text-center">
