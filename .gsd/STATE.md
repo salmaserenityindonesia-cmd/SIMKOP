@@ -1,18 +1,23 @@
 ## Current Position
-- **Phase**: 93 (completed)
-- **Task**: All waves executed and verified
-- **Status**: Complete
+- **Phase**: 94 (planned)
+- **Task**: Ready for execution
+- **Status**: In Progress
 
 ## Last Session Summary
-Phase 93 complete: Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif (/admin/clearance).
-- `93-1-PLAN.md` (Wave 1):
-  - Penghapusan modifikasi destruktif `document.body.innerHTML` dan penghapusan `window.location.reload()` di `SettlementClearance.tsx`.
-  - Pemasangan `type="button"`, `e.preventDefault()`, dan `e.stopPropagation()` pada tombol cetak serta pembungkusan area SPA dengan `print:hidden`.
-  - Konfigurasi ukuran kertas F4 (`@page { size: 215mm 330mm; margin: 8mm 12mm; }`), tata letak kompak, dan `break-inside: avoid` pada blok tanda tangan di `ClearancePrintTemplate.tsx` (commit: `c8a16184`, `b393825c`).
-- `93-2-PLAN.md` (Wave 2):
-  - Validasi unit test Vitest settlement (9/9 passed).
-  - Validasi tipe statis TypeScript (`npx tsc --noEmit`) bersih tanpa error.
-  - Build produksi Vite (`npm run build`) berhasil sukses dengan exit code 0 (commit: `8d5bb0ae`).
+Phase 94 planned: Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota (/admin/clearance).
+- `94-1-PLAN.md` (Wave 1):
+  - Otomatisasi pelunasan seluruh sisa jadwal angsuran (`loan_schedules`) saat eksekusi kliring di `settlementService.ts`.
+  - Pencatatan mutasi pelunasan kliring (`loan_repayments`) dengan metode `POTONG_SIMPANAN_KLIRING`.
+  - Pembaruan pinjaman induk: `status = 'completed'`, `sisa_pinjaman = 0`.
+  - Migrasi Supabase RPC `supabase/migrations/047_settle_loan_schedules_on_clearance.sql`.
+- `94-2-PLAN.md` (Wave 2):
+  - Penyelarasan tooltip sel jadwal pinjaman di `LoanMatrix.tsx` untuk pinjaman selesai (`isLoanCompleted` -> `Sisa Angsuran: Rp 0 (Lunas)` text-emerald-400).
+  - Penanganan status selesai dan kepatuhan 100% pada `loanMatrixService.ts`.
+  - Pengujian komponen unit test `LoanMatrix.test.tsx` dan `loanMatrixService.test.ts`.
+- `94-3-PLAN.md` (Wave 3):
+  - Eksekusi menyeluruh Vitest test suite (`settlementService.test.ts`, `LoanMatrix.test.tsx`, `loanMatrixService.test.ts`).
+  - Pemeriksaan tipe statis `npx tsc --noEmit`.
+  - Build produksi Vite `npm run build` bebas error (exit code 0).
 
 ## Next Steps
-Phase 93 complete. Run `/verify 93` to execute independent verification or proceed with next requirements.
+Run `/execute 94` (or proceed with Phase 94 Wave 1) to begin implementation.

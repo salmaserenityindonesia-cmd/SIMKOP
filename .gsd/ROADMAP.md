@@ -1672,6 +1672,26 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 94: Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota
+**Status:** ⏳ In Progress
+**Objective:** Memastikan proses kliring pengunduran diri anggota di `/admin/clearance` secara atomik melunaskan seluruh sisa jadwal angsuran di `loan_schedules`, mencatat pelunasan kliring di `loan_repayments`, menyetel `loans.sisa_pinjaman = 0` dan `status = 'completed'`, serta menyelaraskan rendering tooltip sisa angsuran dan kepatuhan 100% pada `/admin/loan-matrix` untuk pinjaman berstatus selesai.
+**Depends on:** Phase 93
+
+**Plans:**
+- [ ] Plan 94.1: Wave 1 - Auto-Settle All Loan Schedules in Clearance Execution
+- [ ] Plan 94.2: Wave 2 - Loan Matrix Tooltip Fallback & Completed Loan Alignment
+- [ ] Plan 94.3: Wave 3 - Automated Test Suite, Static Analysis & Production Build Verification
+
+**Deliverables:**
+- Otomatisasi pelunasan seluruh sisa jadwal angsuran (`loan_schedules`) saat eksekusi kliring di `settlementService.ts`
+- Pencatatan mutasi pelunasan kliring (`POTONG_SIMPANAN_KLIRING`) pada `loan_repayments`
+- Pembaruan status pinjaman menjadi `completed` dan `sisa_pinjaman = 0`
+- Migrasi Supabase RPC `047_settle_loan_schedules_on_clearance.sql` untuk integritas transaksi di tingkat basis data
+- Penyelarasan tooltip sel jadwal pinjaman di `LoanMatrix.tsx` menjadi "Sisa Angsuran: Rp 0 (Lunas)" berwarna hijau untuk pinjaman selesai
+- Verifikasi static analysis `tsc --noEmit` dan build produksi Vite selesai 100%
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1826,6 +1846,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 91 | Tambahkan Kolom Saldo Awal Terbayar Pra-Tahun pada Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 92 | Perbaiki Bug Double Negation pada Perhitungan Net Settlement Kliring Anggota Keluar | ✅ | 2/2 | 100% |
 | 93 | Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif | ✅ | 2/2 | 100% |
+| 94 | Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota | ⏳ | 0/3 | 0% |
 
 ---
 
@@ -1926,6 +1947,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 91 | 2026-11-12 | 2026-11-12 | 1 day |
 | 92 | 2026-11-12 | 2026-11-12 | 1 day |
 | 93 | 2026-11-12 | 2026-11-12 | 1 day |
+| 94 | 2026-11-12 | — | — |
 
 
 
