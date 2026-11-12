@@ -13,12 +13,17 @@ import {
   History, 
   Landmark, 
   ShieldAlert, 
-  Info,
-  Clock,
-  ArrowUpRight,
-  Filter,
-  Ban,
-  Check
+  Info, 
+  Clock, 
+  Filter, 
+  Ban, 
+  Check, 
+  Plus, 
+  Trash2, 
+  Eye, 
+  PlayCircle, 
+  ListPlus, 
+  FileText 
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import { 
@@ -28,6 +33,7 @@ import {
   LebaranDisbursementCycle
 } from '../../../services/bulkWithdrawalService';
 import BulkDisbursementConfirmModal from './BulkDisbursementConfirmModal';
+import CycleRecipientsModal from './CycleRecipientsModal';
 
 export default function BulkLebaranTab() {
   const [simulation, setSimulation] = useState<LebaranSimulationSummary | null>(null);
@@ -37,18 +43,28 @@ export default function BulkLebaranTab() {
   const [isLoadingSimulation, setIsLoadingSimulation] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isReplaying, setIsReplaying] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Search & Filter State
+  // Search & Filter State Nominatif
   const [searchQuery, setSearchQuery] = useState('');
   const [loanFilter, setLoanFilter] = useState<'all' | 'with_loan' | 'no_loan'>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
 
+  // Form Input Tanggal Historis State
+  const [inputMode, setInputMode] = useState<'single' | 'bulk'>('single');
+  const [singleDate, setSingleDate] = useState('');
+  const [singleCycleName, setSingleCycleName] = useState('');
+  const [bulkDatesText, setBulkDatesText] = useState('');
+  const [isSubmittingDate, setIsSubmittingDate] = useState(false);
+
   // Modal State
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [targetCycleForExecution, setTargetCycleForExecution] = useState<LebaranDisbursementCycle | null>(null);
+  const [selectedCycleForRecipients, setSelectedCycleForRecipients] = useState<LebaranDisbursementCycle | null>(null);
+  const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
 
   // Load Initial Data
   useEffect(() => {
@@ -186,7 +202,6 @@ export default function BulkLebaranTab() {
 
       let cycleId = targetCycleForExecution?.id;
 
-      // 1. If not executing existing draft, create draft first
       if (!cycleId) {
         const newCycle = await bulkWithdrawalService.createDisbursementDraft({
           cycleName: payload.cycleName,
@@ -197,19 +212,15 @@ export default function BulkLebaranTab() {
         cycleId = newCycle.id;
       }
 
-      // 2. Approve and Execute
       const result = await bulkWithdrawalService.approveAndExecuteDisbursement(cycleId, currentUserId);
 
-      // 3. Update feedback
       setSuccessMessage(
         `Sukses! Siklus "${payload.cycleName}" berhasil dieksekusi (${result.executionMode === 'rpc' ? 'Engine Database Atomik' : 'Proses Terstruktur'}). Total ${result.totalMembers} anggota telah dicairkan senilai Rp ${result.totalAmount.toLocaleString('id-ID')}.`
       );
 
-      // Close modal
       setIsConfirmModalOpen(false);
       setTargetCycleForExecution(null);
 
-      // Reload all data
       await loadAllData();
     } catch (err: any) {
       console.error('Error executing bulk disbursement:', err);
@@ -219,15 +230,110 @@ export default function BulkLebaranTab() {
     }
   };
 
-  // Reject / Cancel a Draft Cycle
-  const handleRejectDraft = async (cycleId: string) => {
-    if (!window.confirm('Apakah Anda yakin ingin membatalkan draf siklus pencairan ini?')) return;
+  // Handle Add Single Historical Date
+  const handleAddSingleHistoricalDate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!singleDate) {
+      alert('Silakan pilih tanggal pencairan terlebih dahulu.');
+      return;
+    }
+
+    setIsSubmittingDate(true);
+    setExecutionError(null);
     try {
-      await bulkWithdrawalService.rejectDisbursementDraft(cycleId, 'Dibatalkan oleh admin');
+      await bulkWithdrawalService.addHistoricalDisbursementDate(
+        singleDate,
+        singleCycleName || undefined
+      );
+      setSuccessMessage(`Tanggal historis ${singleDate} berhasil ditambahkan ke daftar siklus.`);
+      setSingleDate('');
+      setSingleCycleName('');
       await loadCyclesData();
     } catch (err: any) {
-      alert(err.message || 'Gagal membatalkan draf siklus');
+      alert(err.message || 'Gagal menambahkan tanggal historis');
+    } finally {
+      setIsSubmittingDate(false);
     }
+  };
+
+  // Handle Add Bulk Historical Dates
+  const handleAddBulkHistoricalDates = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const rawLines = bulkDatesText.split('\n').map(l => l.trim()).filter(Boolean);
+    if (rawLines.length === 0) {
+      alert('Silakan masukkan minimal satu tanggal (format YYYY-MM-DD per baris).');
+      return;
+    }
+
+    setIsSubmittingDate(true);
+    setExecutionError(null);
+    try {
+      const result = await bulkWithdrawalService.addHistoricalDisbursementDates(rawLines);
+      if (result.errors.length > 0) {
+        alert(`Berhasil menambahkan ${result.added} tanggal. Terdapat peringatan:\n` + result.errors.join('\n'));
+      } else {
+        setSuccessMessage(`Berhasil menambahkan ${result.added} tanggal siklus historis sekaligus.`);
+      }
+      setBulkDatesText('');
+      await loadCyclesData();
+    } catch (err: any) {
+      alert(err.message || 'Gagal menambahkan kumpulan tanggal historis');
+    } finally {
+      setIsSubmittingDate(false);
+    }
+  };
+
+  // Handle Delete Cycle Date
+  const handleDeleteCycle = async (cycle: LebaranDisbursementCycle) => {
+    const cycleDate = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
+    if (!window.confirm(`Hapus tanggal siklus "${cycle.cycle_name}" (${cycleDate}) dari daftar riwayat?`)) {
+      return;
+    }
+
+    try {
+      await bulkWithdrawalService.deleteHistoricalDisbursementDate(cycle.id);
+      setSuccessMessage(`Siklus "${cycle.cycle_name}" berhasil dihapus.`);
+      await loadCyclesData();
+    } catch (err: any) {
+      alert(err.message || 'Gagal menghapus siklus');
+    }
+  };
+
+  // Handle Replay All Cycles (Simulasi Pengosongan Ulang)
+  const handleExecuteReplay = async () => {
+    if (cyclesHistory.length === 0) {
+      alert('Belum ada tanggal siklus pencairan yang terdaftar. Tambahkan tanggal pencairan terlebih dahulu.');
+      return;
+    }
+
+    const confirmMsg = 
+      `Apakah Anda yakin ingin menjalankan SIMULASI PENGOSONGAN ULANG (REPLAY) sesuai seluruh ${cyclesHistory.length} tanggal siklus tercatat?\n\n` +
+      `Sistem akan mengosongkan mutasi penarikan lebaran sebelumnya dan menghitung ulang setoran anggota secara berantai dari tanggal tertua s/d terbaru sehingga saldo terkini terhitung presisi dari tanggal pencairan terakhir.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsReplaying(true);
+    setExecutionError(null);
+    setSuccessMessage(null);
+
+    try {
+      const replayResult = await bulkWithdrawalService.executeReplayAllCycles();
+      setSuccessMessage(
+        `Pengosongan ulang berhasil dieksekusi (${replayResult.mode === 'rpc' ? 'Engine Atomik Database' : 'Kalkulasi Fallback Klien'}). Total ${replayResult.totalCycles} siklus dan ${replayResult.totalRecipients} mutasi pencairan telah disinkronkan senilai Rp ${replayResult.totalAmount.toLocaleString('id-ID')}. Saldo berjalan telah disegarkan!`
+      );
+      await loadAllData();
+    } catch (err: any) {
+      console.error('Error executing replay:', err);
+      setExecutionError(err.message || 'Gagal menjalankan simulasi pengosongan ulang.');
+    } finally {
+      setIsReplaying(false);
+    }
+  };
+
+  // View Recipients
+  const handleViewRecipients = (cycle: LebaranDisbursementCycle) => {
+    setSelectedCycleForRecipients(cycle);
+    setIsRecipientsModalOpen(true);
   };
 
   return (
@@ -254,7 +360,7 @@ export default function BulkLebaranTab() {
                 <>
                   Siklus Terakhir Dicairkan:{' '}
                   <span className="text-emerald-100 font-bold">
-                    {new Date(lastCycle.cut_off_date).toLocaleDateString('id-ID', {
+                    {new Date(lastCycle.disbursement_date || lastCycle.cut_off_date).toLocaleDateString('id-ID', {
                       day: 'numeric',
                       month: 'long',
                       year: 'numeric'
@@ -262,9 +368,9 @@ export default function BulkLebaranTab() {
                   </span>{' '}
                   ({lastCycle.cycle_name}) — Total{' '}
                   <span className="text-yellow-300 font-bold">
-                    Rp {lastCycle.total_amount.toLocaleString('id-ID')}
+                    Rp {Number(lastCycle.total_amount || 0).toLocaleString('id-ID')}
                   </span>{' '}
-                  ({lastCycle.total_members} Anggota)
+                  ({lastCycle.total_members} Penerima)
                 </>
               ) : (
                 'Belum ada riwayat siklus pencairan massal simpanan lebaran sebelumnya.'
@@ -275,11 +381,11 @@ export default function BulkLebaranTab() {
         <div className="flex items-center gap-2">
           <button
             onClick={loadAllData}
-            disabled={isLoadingSimulation || isLoadingHistory}
+            disabled={isLoadingSimulation || isLoadingHistory || isReplaying}
             className="px-3.5 py-2 bg-white/10 hover:bg-white/20 active:bg-white/30 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
             title="Muat ulang seluruh data"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSimulation ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSimulation || isReplaying ? 'animate-spin' : ''}`} />
             Segarkan
           </button>
         </div>
@@ -316,6 +422,139 @@ export default function BulkLebaranTab() {
           </button>
         </div>
       )}
+
+      {/* Panel Manajemen Tanggal Pencairan & Simulasi Pengosongan Ulang (Replay) */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
+                <History className="w-5 h-5" />
+              </div>
+              <h3 className="font-bold text-slate-800 text-base md:text-lg">
+                Riwayat Tanggal Pencairan & Simulasi Pengosongan Ulang
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Catat tanggal pencairan historis masa lalu dan jalankan simulasi pengosongan berantai (*replay*) untuk menghitung sisa saldo simpanan lebaran anggota secara presisi.
+            </p>
+          </div>
+
+          <button
+            onClick={handleExecuteReplay}
+            disabled={isReplaying || cyclesHistory.length === 0}
+            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl text-sm shadow-md shadow-indigo-100 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            title="Mengosongkan dan menghitung ulang mutasi penarikan simpanan lebaran sesuai seluruh tanggal terdaftar"
+          >
+            <PlayCircle className={`w-4 h-4 ${isReplaying ? 'animate-spin' : ''}`} />
+            <span>
+              {isReplaying 
+                ? 'Sedang Menjalankan Simulasi Replay...' 
+                : `Kosongkan Ulang Sesuai Semua Tanggal (${cyclesHistory.length} Siklus)`}
+            </span>
+          </button>
+        </div>
+
+        {/* Form Tambah Tanggal Historis */}
+        <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5 text-indigo-600" />
+              Tambah Tanggal Pencairan Terlewat / Historis
+            </span>
+            <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg text-xs">
+              <button
+                type="button"
+                onClick={() => setInputMode('single')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                  inputMode === 'single' ? 'bg-white text-slate-800 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Input Satu Tanggal
+              </button>
+              <button
+                type="button"
+                onClick={() => setInputMode('bulk')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                  inputMode === 'bulk' ? 'bg-white text-slate-800 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Input Banyak Sekaligus (Bulk)
+              </button>
+            </div>
+          </div>
+
+          {inputMode === 'single' ? (
+            <form onSubmit={handleAddSingleHistoricalDate} className="flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[180px] max-w-xs">
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Tanggal Pencairan
+                </label>
+                <input
+                  type="date"
+                  value={singleDate}
+                  onChange={(e) => setSingleDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
+              </div>
+
+              <div className="flex-1 min-w-[220px]">
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Keterangan / Nama Siklus (Opsional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Lebaran Idul Fitri 2024"
+                  value={singleCycleName}
+                  onChange={(e) => setSingleCycleName(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="pt-5">
+                <button
+                  type="submit"
+                  disabled={isSubmittingDate || !singleDate}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Tambah Tanggal</span>
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleAddBulkHistoricalDates} className="space-y-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Tempel Daftar Tanggal (YYYY-MM-DD per baris)
+                </label>
+                <textarea
+                  rows={4}
+                  placeholder={`2023-04-20\n2024-04-10\n2025-03-30`}
+                  value={bulkDatesText}
+                  onChange={(e) => setBulkDatesText(e.target.value)}
+                  className="w-full p-2.5 font-mono text-xs bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Setiap baris akan otomatis didaftarkan sebagai siklus historis terpisah.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSubmittingDate || !bulkDatesText.trim()}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
+                >
+                  <ListPlus className="w-3.5 h-3.5" />
+                  <span>+ Tambah Semua Tanggal</span>
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
 
       {/* Metric Cards (Simulasi) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -446,7 +685,7 @@ export default function BulkLebaranTab() {
         <div className="flex items-center gap-2.5">
           <button
             onClick={loadSimulation}
-            disabled={isLoadingSimulation}
+            disabled={isLoadingSimulation || isReplaying}
             className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5"
             title="Refresh data nominatif simulasi"
           >
@@ -465,7 +704,7 @@ export default function BulkLebaranTab() {
 
           <button
             onClick={() => handleOpenExecutionModal()}
-            disabled={isLoadingSimulation || !simulation || simulation.totalMembers === 0}
+            disabled={isLoadingSimulation || isReplaying || !simulation || simulation.totalMembers === 0}
             className="px-5 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-xl text-sm shadow-sm shadow-red-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ShieldAlert className="w-4 h-4" />
@@ -610,7 +849,7 @@ export default function BulkLebaranTab() {
         )}
       </div>
 
-      {/* Tabel Riwayat Siklus Pencairan Massal */}
+      {/* Tabel Riwayat Siklus Pencairan Massal & Detail Penerima */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -620,7 +859,7 @@ export default function BulkLebaranTab() {
                 Riwayat Siklus Pencairan Massal Simpanan Lebaran
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Daftar siklus pencairan yang pernah diajukan dan diproses sebelumnya
+                Daftar siklus pencairan yang terdaftar, diajukan, atau dicatat dalam simulasi berantai
               </p>
             </div>
           </div>
@@ -647,16 +886,47 @@ export default function BulkLebaranTab() {
             <table className="w-full text-left border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-600 font-semibold text-xs uppercase tracking-wider">
-                  <th className="py-3 px-4">Tanggal Cut-off</th>
+                  <th className="py-3 px-4 w-12 text-center">No</th>
+                  <th className="py-3 px-4">Tanggal Pencairan</th>
                   <th className="py-3 px-4">Nama Siklus</th>
-                  <th className="py-3 px-4 text-center">Jumlah Anggota</th>
-                  <th className="py-3 px-4 text-right">Total Dana Dicairkan</th>
+                  <th className="py-3 px-4 text-center">Sumber</th>
+                  <th className="py-3 px-4 text-center">Jumlah Penerima</th>
+                  <th className="py-3 px-4 text-right">Total Cair (Rp)</th>
                   <th className="py-3 px-4 text-center">Status</th>
                   <th className="py-3 px-4 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {cyclesHistory.map((cycle) => {
+                {cyclesHistory.map((cycle, idx) => {
+                  const dateStr = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
+                  const displayDate = dateStr ? new Date(dateStr).toLocaleDateString('id-ID', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric'
+                  }) : '-';
+
+                  // Badge Sumber
+                  const src = cycle.source_type || 'MASSAL';
+                  let sourceBadge = (
+                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold rounded-md">
+                      Massal
+                    </span>
+                  );
+                  if (src === 'HISTORICAL_INPUT') {
+                    sourceBadge = (
+                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 text-[11px] font-semibold rounded-md">
+                        Input Historis
+                      </span>
+                    );
+                  } else if (src === 'MANUAL') {
+                    sourceBadge = (
+                      <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-semibold rounded-md">
+                        Manual
+                      </span>
+                    );
+                  }
+
+                  // Badge Status
                   let badge = (
                     <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg">
                       {cycle.status}
@@ -691,47 +961,58 @@ export default function BulkLebaranTab() {
 
                   return (
                     <tr key={cycle.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 font-mono text-slate-700 text-xs">
-                        {cycle.cut_off_date ? new Date(cycle.cut_off_date).toLocaleDateString('id-ID', {
-                          day: 'numeric',
-                          month: 'short',
-                          year: 'numeric'
-                        }) : '-'}
+                      <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-mono">
+                        {idx + 1}
                       </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-800">
-                        {cycle.cycle_name}
+                      <td className="py-3.5 px-4 font-mono font-medium text-slate-700 text-xs">
+                        {displayDate}
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="font-semibold text-slate-800">{cycle.cycle_name}</div>
                         {cycle.notes && (
                           <div className="text-xs text-slate-400 font-normal">{cycle.notes}</div>
                         )}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {sourceBadge}
                       </td>
                       <td className="py-3.5 px-4 text-center font-bold text-slate-700">
                         {cycle.total_members.toLocaleString('id-ID')}
                       </td>
                       <td className="py-3.5 px-4 text-right font-black text-slate-800">
-                        Rp {cycle.total_amount.toLocaleString('id-ID')}
+                        Rp {Number(cycle.total_amount || 0).toLocaleString('id-ID')}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         {badge}
                       </td>
                       <td className="py-3.5 px-4 text-center">
-                        {cycle.status === 'DRAFT' ? (
-                          <div className="inline-flex items-center gap-2">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleViewRecipients(cycle)}
+                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1"
+                            title="Lihat daftar nominatif penerima pada tanggal ini"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Lihat Penerima</span>
+                          </button>
+
+                          {cycle.status === 'DRAFT' && (
                             <button
                               onClick={() => handleOpenExecutionModal(cycle)}
                               className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-colors"
                             >
                               Eksekusi
                             </button>
-                            <button
-                              onClick={() => handleRejectDraft(cycle.id)}
-                              className="px-2.5 py-1 border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-semibold rounded-lg transition-colors"
-                            >
-                              Tolak
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-400 italic">Terkunci</span>
-                        )}
+                          )}
+
+                          <button
+                            onClick={() => handleDeleteCycle(cycle)}
+                            className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors"
+                            title="Hapus tanggal siklus ini"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -742,7 +1023,7 @@ export default function BulkLebaranTab() {
         )}
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Modal Eksekusi Pencairan Massal */}
       <BulkDisbursementConfirmModal
         isOpen={isConfirmModalOpen}
         onClose={() => {
@@ -756,6 +1037,16 @@ export default function BulkLebaranTab() {
         error={executionError}
         defaultCycleName={targetCycleForExecution?.cycle_name}
         defaultCutOffDate={targetCycleForExecution?.cut_off_date}
+      />
+
+      {/* Modal Rincian Penerima Per Siklus */}
+      <CycleRecipientsModal
+        isOpen={isRecipientsModalOpen}
+        onClose={() => {
+          setIsRecipientsModalOpen(false);
+          setSelectedCycleForRecipients(null);
+        }}
+        cycle={selectedCycleForRecipients}
       />
     </div>
   );

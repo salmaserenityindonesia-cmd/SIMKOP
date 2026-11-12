@@ -481,6 +481,146 @@ describe('bulkWithdrawalService', () => {
       expect(typeof bulkWithdrawalService.rejectDisbursementDraft).toBe('function');
       expect(typeof bulkWithdrawalService.getLebaranDisbursementCycles).toBe('function');
       expect(typeof bulkWithdrawalService.getLastCompletedLebaranCycle).toBe('function');
+      expect(typeof bulkWithdrawalService.getCycleRecipients).toBe('function');
+      expect(typeof bulkWithdrawalService.addHistoricalDisbursementDate).toBe('function');
+      expect(typeof bulkWithdrawalService.addHistoricalDisbursementDates).toBe('function');
+      expect(typeof bulkWithdrawalService.deleteHistoricalDisbursementDate).toBe('function');
+      expect(typeof bulkWithdrawalService.executeReplayAllCycles).toBe('function');
+      expect(typeof bulkWithdrawalService.recordManualLebaranWithdrawal).toBe('function');
+    });
+  });
+
+  describe('Historical Dates, Recipients and Replay', () => {
+    it('getCycleRecipients retrieves recipient details', async () => {
+      const mockItems = [
+        { id: 'i-1', cycle_id: 'c-1', member_id: 'm-1', nrp: '111', member_name: 'Budi', amount_disbursed: 500000 },
+        { id: 'i-2', cycle_id: 'c-1', member_id: 'm-2', nrp: '222', member_name: 'Agus', amount_disbursed: 750000 }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_items') {
+          return createMockChain(mockItems);
+        }
+        return createMockChain([]);
+      });
+
+      const recipients = await bulkWithdrawalService.getCycleRecipients('c-1');
+      expect(recipients.length).toBe(2);
+      expect(recipients[0].member_name).toBe('Budi');
+    });
+
+    it('addHistoricalDisbursementDate inserts historical cycle with correct defaults', async () => {
+      let insertedPayload: any = null;
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          const chain = createMockChain({ id: 'c-hist-1', disbursement_date: '2024-04-10' });
+          chain.insert = vi.fn((rows: any[]) => {
+            insertedPayload = rows[0];
+            return chain;
+          });
+          return chain;
+        }
+        return createMockChain([]);
+      });
+
+      const res = await bulkWithdrawalService.addHistoricalDisbursementDate('2024-04-10', 'Lebaran 2024');
+      expect(res.id).toBe('c-hist-1');
+      expect(insertedPayload.disbursement_date).toBe('2024-04-10');
+      expect(insertedPayload.source_type).toBe('HISTORICAL_INPUT');
+      expect(insertedPayload.status).toBe('COMPLETED');
+    });
+
+    it('addHistoricalDisbursementDates handles multiple dates and skips invalid formats', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return createMockChain({ id: 'c-1' });
+        }
+        return createMockChain([]);
+      });
+
+      const result = await bulkWithdrawalService.addHistoricalDisbursementDates([
+        '2023-04-20',
+        'invalid-date',
+        '2024-04-10'
+      ]);
+
+      expect(result.added).toBe(2);
+      expect(result.errors.length).toBe(1);
+      expect(result.errors[0]).toContain('Format tanggal tidak valid');
+    });
+
+    it('deleteHistoricalDisbursementDate deletes a cycle', async () => {
+      let deletedWhereId: string | null = null;
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          const chain = createMockChain(null);
+          chain.delete = vi.fn(() => chain);
+          chain.eq = vi.fn((col: string, val: string) => {
+            if (col === 'id') deletedWhereId = val;
+            return chain;
+          });
+          return chain;
+        }
+        return createMockChain([]);
+      });
+
+      const success = await bulkWithdrawalService.deleteHistoricalDisbursementDate('c-to-delete');
+      expect(success).toBe(true);
+      expect(deletedWhereId).toBe('c-to-delete');
+    });
+
+    it('executeReplayAllCycles uses RPC when available', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: { success: true, total_cycles: 5, total_recipients: 100, total_amount: 50000000 },
+        error: null
+      });
+
+      const result = await bulkWithdrawalService.executeReplayAllCycles();
+      expect(result.success).toBe(true);
+      expect(result.mode).toBe('rpc');
+      expect(result.totalCycles).toBe(5);
+      expect(result.totalRecipients).toBe(100);
+      expect(result.totalAmount).toBe(50000000);
+    });
+
+    it('recordManualLebaranWithdrawal upserts cycle and item for manual disbursement', async () => {
+      let insertedItem: any = null;
+      let updatedCycle: any = null;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          const chain = createMockChain({ id: 'cycle-exist', total_members: 1, total_amount: 100000 });
+          chain.update = vi.fn((payload) => {
+            updatedCycle = payload;
+            return chain;
+          });
+          return chain;
+        }
+        if (table === 'lebaran_disbursement_items') {
+          const chain = createMockChain(null);
+          chain.insert = vi.fn((rows: any[]) => {
+            insertedItem = rows[0];
+            return chain;
+          });
+          return chain;
+        }
+        return createMockChain([]);
+      });
+
+      await bulkWithdrawalService.recordManualLebaranWithdrawal({
+        memberId: 'mem-10',
+        memberName: 'Sertu Bambang',
+        nrp: '998877',
+        amount: 500000,
+        transactionDate: '2026-03-15'
+      });
+
+      expect(insertedItem).not.toBeNull();
+      expect(insertedItem.member_name).toBe('Sertu Bambang');
+      expect(insertedItem.amount_disbursed).toBe(500000);
+      expect(updatedCycle).not.toBeNull();
+      expect(updatedCycle.total_members).toBe(2);
+      expect(updatedCycle.total_amount).toBe(600000);
     });
   });
 });

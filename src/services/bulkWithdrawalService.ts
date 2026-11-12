@@ -1,11 +1,14 @@
 import { supabase } from '../lib/supabaseClient';
 
 export type DisbursementCycleStatus = 'DRAFT' | 'APPROVED' | 'COMPLETED' | 'REJECTED';
+export type DisbursementCycleSource = 'HISTORICAL_INPUT' | 'MASSAL' | 'MANUAL';
 
 export interface LebaranDisbursementCycle {
   id: string;
   cycle_name: string;
+  disbursement_date?: string;
   cut_off_date: string;
+  source_type?: DisbursementCycleSource;
   total_members: number;
   total_amount: number;
   status: DisbursementCycleStatus;
@@ -15,6 +18,17 @@ export interface LebaranDisbursementCycle {
   approved_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface LebaranDisbursementItem {
+  id: string;
+  cycle_id: string;
+  member_id: string;
+  nrp?: string | null;
+  member_name?: string | null;
+  bank_account?: string | null;
+  amount_disbursed: number;
+  created_at: string;
 }
 
 export interface LebaranSimulationMember {
@@ -50,6 +64,25 @@ export interface ExecuteDisbursementResult {
   totalMembers: number;
   totalAmount: number;
   executionMode: 'rpc' | 'client_fallback';
+}
+
+export interface RecordManualLebaranPayload {
+  memberId: string;
+  memberName: string;
+  nrp?: string;
+  bankAccount?: string;
+  amount: number;
+  transactionDate?: string;
+  cycleName?: string;
+  notes?: string;
+}
+
+export interface ReplayExecutionResult {
+  success: boolean;
+  totalCycles: number;
+  totalRecipients: number;
+  totalAmount: number;
+  mode: 'rpc' | 'client_fallback';
 }
 
 /**
@@ -145,7 +178,6 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
   const mdIds = activeMemberDeposits.map(md => md.id);
 
   // 4. Query transaksi deposit_transactions untuk menghitung saldo berjalan masing-masing
-  // Bagi chunk jika mdIds banyak untuk mencegah query overload
   const chunkSize = 200;
   const allTxs: any[] = [];
 
@@ -236,7 +268,6 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
     if (!loansError && loansData) {
       loanRows = loansData;
     } else {
-      // Fallback: coba query sederhana tanpa nested relations
       const { data: simpleLoans } = await supabase
         .from('loans')
         .select('id, member_id, amount, principal_amount, status')
@@ -298,7 +329,6 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
     };
   });
 
-  // Urutkan nominatif berdasarkan nama anggota secara ascending
   members.sort((a, b) => a.nama.localeCompare(b.nama));
 
   const totalMembers = members.length;
@@ -315,8 +345,6 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
 
 /**
  * 3. createDisbursementDraft()
- * Menjalankan simulasi terlebih dahulu untuk memastikan data total terkini,
- * kemudian membuat record baru pada `lebaran_disbursement_cycles` dengan status 'DRAFT'.
  */
 export async function createDisbursementDraft(
   payload: CreateDisbursementDraftPayload
@@ -329,13 +357,14 @@ export async function createDisbursementDraft(
     throw new Error('Tanggal cut-off wajib diisi.');
   }
 
-  // 1. Jalankan simulasi terlebih dahulu
   const simulation = await simulateLebaranDisbursement();
+  const dateOnly = payload.cutOffDate.slice(0, 10);
 
-  // 2. Insert record baru ke lebaran_disbursement_cycles
   const draftRecord = {
     cycle_name: payload.cycleName.trim(),
+    disbursement_date: dateOnly,
     cut_off_date: payload.cutOffDate,
+    source_type: 'MASSAL',
     total_members: simulation.totalMembers,
     total_amount: simulation.totalAmount,
     status: 'DRAFT',
@@ -358,9 +387,7 @@ export async function createDisbursementDraft(
 
 /**
  * 4. approveAndExecuteDisbursement()
- * Menjalankan approval dan eksekusi pencairan massal simpanan lebaran:
- * Mencoba memanggil fungsi RPC PostgreSQL atomik `execute_bulk_lebaran_disbursement` terlebih dahulu.
- * Jika RPC belum diaplikasikan atau gagal karena keterbatasan schema, menjalankan client-side fallback terstruktur.
+ * Eksekusi pencairan massal dan pencatatan penerima ke lebaran_disbursement_items
  */
 export async function approveAndExecuteDisbursement(
   cycleId: string,
@@ -368,6 +395,14 @@ export async function approveAndExecuteDisbursement(
 ): Promise<ExecuteDisbursementResult> {
   if (!cycleId) {
     throw new Error('ID siklus pencairan wajib diisi.');
+  }
+
+  // Ambil simulasi nominatif terkini untuk data penerima
+  let simulation: LebaranSimulationSummary | null = null;
+  try {
+    simulation = await simulateLebaranDisbursement();
+  } catch (simErr) {
+    console.warn('Gagal menghitung simulasi penerima:', simErr);
   }
 
   // 1. Coba panggil RPC atomik execute_bulk_lebaran_disbursement
@@ -381,6 +416,24 @@ export async function approveAndExecuteDisbursement(
     );
 
     if (!rpcError && rpcData?.success) {
+      // Pastikan penerima tercatat di lebaran_disbursement_items jika ada data nominatif
+      if (simulation && simulation.members.length > 0) {
+        try {
+          const itemsPayload = simulation.members.map(m => ({
+            cycle_id: cycleId,
+            member_id: m.memberId,
+            nrp: m.nrp || null,
+            member_name: m.nama || null,
+            bank_account: m.bankAccount || null,
+            amount_disbursed: m.saldoLebaran,
+            created_at: new Date().toISOString()
+          }));
+          await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
+        } catch (itemErr) {
+          console.warn('Catatan: Gagal mencatat items penerima setelah RPC:', itemErr);
+        }
+      }
+
       return {
         success: true,
         cycleId,
@@ -398,7 +451,6 @@ export async function approveAndExecuteDisbursement(
   }
 
   // 2. Client-side Fallback
-  // A. Ambil data siklus pencairan
   const { data: cycle, error: cycleErr } = await supabase
     .from('lebaran_disbursement_cycles')
     .select('*')
@@ -413,15 +465,18 @@ export async function approveAndExecuteDisbursement(
     throw new Error(`Siklus pencairan lebaran tidak dapat dieksekusi karena berstatus ${cycle.status}.`);
   }
 
-  // B. Ambil data nominatif simulasi terkini
-  const simulation = await simulateLebaranDisbursement();
+  const sim = simulation || await simulateLebaranDisbursement();
   const cutOffDateObj = cycle.cut_off_date ? new Date(cycle.cut_off_date) : new Date();
   const yearStr = isNaN(cutOffDateObj.getTime())
     ? new Date().getFullYear().toString()
     : cutOffDateObj.getFullYear().toString();
+  const dateOnly = isNaN(cutOffDateObj.getTime())
+    ? new Date().toISOString().slice(0, 10)
+    : cutOffDateObj.toISOString().slice(0, 10);
 
-  // C. Iterasi dan insert transaksi withdrawal untuk masing-masing anggota
-  for (const m of simulation.members) {
+  const itemsPayload: any[] = [];
+
+  for (const m of sim.members) {
     if (!m.memberDepositId || m.saldoLebaran <= 0) continue;
 
     const refNo = `KW-THR-${yearStr}-${(m.nrp || 'ANGGOTA').trim()}`;
@@ -431,7 +486,7 @@ export async function approveAndExecuteDisbursement(
       .from('deposit_transactions')
       .insert([{
         member_deposit_id: m.memberDepositId,
-        transaction_date: new Date().toISOString().slice(0, 10),
+        transaction_date: dateOnly,
         transaction_type: 'withdrawal',
         amount: m.saldoLebaran,
         description: desc,
@@ -457,21 +512,40 @@ export async function approveAndExecuteDisbursement(
           reference_id: tx.id,
           created_at: new Date().toISOString()
         }]);
-      } catch (_) {
-        // Abaikan jika tabel cash_flow belum tersedia
-      }
+      } catch (_) {}
+    }
+
+    itemsPayload.push({
+      cycle_id: cycleId,
+      member_id: m.memberId,
+      nrp: m.nrp || null,
+      member_name: m.nama || null,
+      bank_account: m.bankAccount || null,
+      amount_disbursed: m.saldoLebaran,
+      created_at: new Date().toISOString()
+    });
+  }
+
+  // Simpan record penerima ke lebaran_disbursement_items
+  if (itemsPayload.length > 0) {
+    try {
+      await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
+    } catch (itemErr) {
+      console.warn('Gagal menyimpan detail penerima di fallback:', itemErr);
     }
   }
 
-  // D. Update status siklus menjadi 'COMPLETED'
+  // Update status siklus menjadi 'COMPLETED'
   const { error: updateErr } = await supabase
     .from('lebaran_disbursement_cycles')
     .update({
+      disbursement_date: dateOnly,
+      source_type: 'MASSAL',
       status: 'COMPLETED',
       approved_by: approverId || null,
       approved_at: new Date().toISOString(),
-      total_members: simulation.totalMembers,
-      total_amount: simulation.totalAmount,
+      total_members: sim.totalMembers,
+      total_amount: sim.totalAmount,
       updated_at: new Date().toISOString()
     })
     .eq('id', cycleId);
@@ -483,15 +557,14 @@ export async function approveAndExecuteDisbursement(
   return {
     success: true,
     cycleId,
-    totalMembers: simulation.totalMembers,
-    totalAmount: simulation.totalAmount,
+    totalMembers: sim.totalMembers,
+    totalAmount: sim.totalAmount,
     executionMode: 'client_fallback'
   };
 }
 
 /**
  * 5. rejectDisbursementDraft()
- * Menolak / membatalkan draf siklus pencairan lebaran (status menjadi 'REJECTED').
  */
 export async function rejectDisbursementDraft(
   cycleId: string,
@@ -525,27 +598,37 @@ export async function rejectDisbursementDraft(
 }
 
 /**
- * 6. getLebaranDisbursementCycles()
+ * 6. getLebaranDisbursementCycles() / getLebaranCycleHistory()
  * Mengambil seluruh riwayat siklus pencairan dari tabel `lebaran_disbursement_cycles`
- * diurutkan berdasarkan waktu pembuatan terbaru (created_at DESC).
  */
 export async function getLebaranDisbursementCycles(): Promise<LebaranDisbursementCycle[]> {
-  const { data, error } = await supabase
-    .from('lebaran_disbursement_cycles')
-    .select('*')
-    .order('created_at', { ascending: false });
+  try {
+    const { data, error } = await supabase
+      .from('lebaran_disbursement_cycles')
+      .select('*')
+      .order('disbursement_date', { ascending: false });
 
-  if (error) {
-    throw new Error(`Gagal memuat daftar siklus pencairan simpanan lebaran: ${error.message}`);
+    if (error) {
+      const { data: fbData, error: fbError } = await supabase
+        .from('lebaran_disbursement_cycles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (fbError) throw fbError;
+      return (fbData || []) as LebaranDisbursementCycle[];
+    }
+
+    return (data || []) as LebaranDisbursementCycle[];
+  } catch (err: any) {
+    console.error('Error fetching lebaran cycles:', err);
+    throw new Error(`Gagal memuat daftar siklus pencairan simpanan lebaran: ${err.message}`);
   }
-
-  return (data || []) as LebaranDisbursementCycle[];
 }
+
+export const getLebaranCycleHistory = getLebaranDisbursementCycles;
 
 /**
  * 7. getLastCompletedLebaranCycle()
- * Mengambil 1 record siklus pencairan terakhir yang berstatus 'COMPLETED'
- * untuk referensi cut-off date periode sebelumnya.
+ * Mengambil record siklus pencairan terakhir yang berstatus 'COMPLETED'
  */
 export async function getLastCompletedLebaranCycle(): Promise<LebaranDisbursementCycle | null> {
   try {
@@ -560,13 +643,19 @@ export async function getLastCompletedLebaranCycle(): Promise<LebaranDisbursemen
 
     const { data, error } = await selQuery
       .eq('status', 'COMPLETED')
-      .order('cut_off_date', { ascending: false })
+      .order('disbursement_date', { ascending: false })
       .limit(1)
       .maybeSingle();
 
     if (error) {
-      console.warn('Gagal memuat siklus pencairan lebaran terakhir yang selesai:', error.message);
-      return null;
+      const { data: fallbackData } = await supabase
+        .from('lebaran_disbursement_cycles')
+        .select('*')
+        .eq('status', 'COMPLETED')
+        .order('cut_off_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (fallbackData as LebaranDisbursementCycle) || null;
     }
 
     return (data as LebaranDisbursementCycle) || null;
@@ -576,6 +665,391 @@ export async function getLastCompletedLebaranCycle(): Promise<LebaranDisbursemen
   }
 }
 
+/**
+ * 8. getCycleRecipients(cycleId: string)
+ * Mengambil daftar detail anggota penerima dari `lebaran_disbursement_items`
+ */
+export async function getCycleRecipients(cycleId: string): Promise<LebaranDisbursementItem[]> {
+  if (!cycleId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('lebaran_disbursement_items')
+      .select('*')
+      .eq('cycle_id', cycleId)
+      .order('member_name', { ascending: true });
+
+    if (error) {
+      console.warn('Gagal memuat detail penerima siklus:', error.message);
+      return [];
+    }
+
+    return (data || []) as LebaranDisbursementItem[];
+  } catch (err) {
+    console.warn('Exception memuat detail penerima siklus:', err);
+    return [];
+  }
+}
+
+/**
+ * 9. addHistoricalDisbursementDate()
+ * Menyisipkan tanggal pencairan historis ke `lebaran_disbursement_cycles`
+ */
+export async function addHistoricalDisbursementDate(
+  date: string,
+  cycleName?: string,
+  notes?: string
+): Promise<LebaranDisbursementCycle> {
+  if (!date || !date.trim()) {
+    throw new Error('Tanggal pencairan wajib diisi.');
+  }
+
+  const cleanDate = date.trim();
+  const year = cleanDate.slice(0, 4);
+  const defaultName = cycleName?.trim() || `Pencairan Lebaran ${year}`;
+
+  const payload: any = {
+    cycle_name: defaultName,
+    disbursement_date: cleanDate,
+    cut_off_date: cleanDate,
+    source_type: 'HISTORICAL_INPUT',
+    status: 'COMPLETED',
+    total_members: 0,
+    total_amount: 0,
+    notes: notes?.trim() || 'Input tanggal pencairan historis',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { data, error } = await supabase
+    .from('lebaran_disbursement_cycles')
+    .insert([payload])
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('unique constraint')) {
+      throw new Error(`Tanggal pencairan ${cleanDate} sudah terdaftar dalam siklus.`);
+    }
+    throw new Error(`Gagal menambahkan tanggal pencairan historis: ${error.message}`);
+  }
+
+  return data as LebaranDisbursementCycle;
+}
+
+/**
+ * 10. addHistoricalDisbursementDates()
+ * Menyisipkan beberapa tanggal pencairan historis sekaligus (bulk input)
+ */
+export async function addHistoricalDisbursementDates(
+  dates: string[],
+  defaultPrefix?: string
+): Promise<{ added: number; errors: string[] }> {
+  const uniqueDates = Array.from(new Set(dates.map(d => d.trim()).filter(Boolean)));
+  let added = 0;
+  const errors: string[] = [];
+
+  for (const date of uniqueDates) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      errors.push(`Format tanggal tidak valid: "${date}" (harus YYYY-MM-DD)`);
+      continue;
+    }
+    try {
+      const year = date.slice(0, 4);
+      const name = defaultPrefix ? `${defaultPrefix} ${year}` : `Pencairan Lebaran ${year}`;
+      await addHistoricalDisbursementDate(date, name);
+      added++;
+    } catch (err: any) {
+      errors.push(`${date}: ${err.message}`);
+    }
+  }
+
+  return { added, errors };
+}
+
+/**
+ * 11. deleteHistoricalDisbursementDate()
+ * Menghapus tanggal siklus dari `lebaran_disbursement_cycles`
+ */
+export async function deleteHistoricalDisbursementDate(cycleId: string): Promise<boolean> {
+  if (!cycleId) throw new Error('ID siklus pencairan wajib diisi.');
+
+  const { error } = await supabase
+    .from('lebaran_disbursement_cycles')
+    .delete()
+    .eq('id', cycleId);
+
+  if (error) {
+    throw new Error(`Gagal menghapus siklus pencairan: ${error.message}`);
+  }
+
+  return true;
+}
+
+/**
+ * 12. recordManualLebaranWithdrawal()
+ * Auto-sync ketika ada penarikan perorangan/manual simpanan lebaran
+ */
+export async function recordManualLebaranWithdrawal(payload: RecordManualLebaranPayload): Promise<void> {
+  const dateStr = payload.transactionDate || new Date().toISOString().slice(0, 10);
+  const cycleName = payload.cycleName || `Pencairan Manual Lebaran ${dateStr}`;
+
+  try {
+    // 1. Cari siklus pada tanggal tersebut
+    const { data: existingCycle } = await supabase
+      .from('lebaran_disbursement_cycles')
+      .select('id, total_members, total_amount')
+      .eq('disbursement_date', dateStr)
+      .maybeSingle();
+
+    let cycleId = existingCycle?.id;
+
+    if (!cycleId) {
+      const { data: newCycle, error: insertCycleErr } = await supabase
+        .from('lebaran_disbursement_cycles')
+        .insert([{
+          cycle_name: cycleName,
+          disbursement_date: dateStr,
+          cut_off_date: dateStr,
+          source_type: 'MANUAL',
+          total_members: 1,
+          total_amount: payload.amount,
+          status: 'COMPLETED',
+          notes: payload.notes || 'Pencairan Simpanan Lebaran Manual',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }])
+        .select('id')
+        .single();
+
+      if (!insertCycleErr && newCycle) {
+        cycleId = newCycle.id;
+      }
+    } else {
+      await supabase
+        .from('lebaran_disbursement_cycles')
+        .update({
+          total_members: (existingCycle.total_members || 0) + 1,
+          total_amount: (existingCycle.total_amount || 0) + payload.amount,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', cycleId);
+    }
+
+    if (cycleId) {
+      await supabase
+        .from('lebaran_disbursement_items')
+        .insert([{
+          cycle_id: cycleId,
+          member_id: payload.memberId,
+          nrp: payload.nrp || null,
+          member_name: payload.memberName || null,
+          bank_account: payload.bankAccount || null,
+          amount_disbursed: payload.amount,
+          created_at: new Date().toISOString()
+        }]);
+    }
+  } catch (err) {
+    console.warn('Gagal mencatat siklus historis pencairan manual simpanan lebaran:', err);
+  }
+}
+
+/**
+ * 13. executeReplayAllCycles()
+ * Menjalankan simulasi pengosongan ulang berantai (Replay) dari tanggal tertua s/d terbaru
+ */
+export async function executeReplayAllCycles(): Promise<ReplayExecutionResult> {
+  // 1. Panggil RPC atomik replay_lebaran_disbursement_cycles terlebih dahulu
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('replay_lebaran_disbursement_cycles');
+    if (!rpcError && rpcData?.success) {
+      return {
+        success: true,
+        totalCycles: Number(rpcData.total_cycles || 0),
+        totalRecipients: Number(rpcData.total_recipients || 0),
+        totalAmount: Number(rpcData.total_amount || 0),
+        mode: 'rpc'
+      };
+    }
+    if (rpcError) {
+      console.warn('RPC replay_lebaran_disbursement_cycles gagal, beralih ke fallback klien:', rpcError.message);
+    }
+  } catch (err) {
+    console.warn('Exception RPC replay, menjalankan fallback klien:', err);
+  }
+
+  // 2. Client-side Fallback
+  return await executeReplayClientFallback();
+}
+
+/**
+ * Client-side fallback untuk simulasi pengosongan ulang (Replay)
+ */
+async function executeReplayClientFallback(): Promise<ReplayExecutionResult> {
+  // 1. Ambil seluruh siklus dari lebaran_disbursement_cycles
+  const { data: cycles, error: cycleErr } = await supabase
+    .from('lebaran_disbursement_cycles')
+    .select('*')
+    .order('disbursement_date', { ascending: true });
+
+  if (cycleErr) {
+    throw new Error(`Gagal memuat siklus: ${cycleErr.message}`);
+  }
+
+  const sortedCycles = (cycles || []).sort((a, b) => {
+    const dateA = a.disbursement_date || a.cut_off_date || a.created_at;
+    const dateB = b.disbursement_date || b.cut_off_date || b.created_at;
+    return new Date(dateA).getTime() - new Date(dateB).getTime();
+  });
+
+  // 2. Bersihkan transaksi withdrawal simpanan lebaran lama
+  try {
+    await supabase
+      .from('deposit_transactions')
+      .delete()
+      .eq('transaction_type', 'withdrawal')
+      .or('description.ilike.%Pencairan%Simpanan Lebaran%,notes.ilike.%Pencairan%Simpanan Lebaran%,reference_no.ilike.KW-THR-%');
+  } catch (delErr) {
+    console.warn('Gagal membersihkan mutasi penarikan lama (fallback):', delErr);
+  }
+
+  // 3. Bersihkan lebaran_disbursement_items
+  try {
+    await supabase.from('lebaran_disbursement_items').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  } catch (delItemsErr) {
+    console.warn('Gagal membersihkan items lama (fallback):', delItemsErr);
+  }
+
+  if (sortedCycles.length === 0) {
+    return {
+      success: true,
+      totalCycles: 0,
+      totalRecipients: 0,
+      totalAmount: 0,
+      mode: 'client_fallback'
+    };
+  }
+
+  // 4. Ambil master deposit types LEBARAN
+  const { data: dTypes } = await supabase.from('deposit_types').select('id, name, code');
+  const lebaranTypes = (dTypes || []).filter(dt => isLebaranDepositType(dt.code, dt.name));
+  const lebaranTypeIds = lebaranTypes.map(t => t.id);
+
+  const { data: mDeposits } = await supabase
+    .from('member_deposits')
+    .select('id, member_id, deposit_type_id')
+    .in('deposit_type_id', lebaranTypeIds);
+
+  const activeMds = mDeposits || [];
+  const mdIds = activeMds.map(m => m.id);
+
+  const { data: membersData } = await supabase
+    .from('anggota')
+    .select('id, nrp, nama, pangkat, bank_account_number, status, joined_at, created_at');
+
+  const membersMap = new Map<string, any>((membersData || []).map(m => [m.id, m]));
+
+  let totalRecipientsAll = 0;
+  let totalAmountAll = 0;
+
+  for (const cycle of sortedCycles) {
+    const cycleDateStr = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : new Date().toISOString().slice(0, 10));
+    const cycleDate = new Date(cycleDateStr);
+    const yearStr = cycleDate.getFullYear().toString();
+
+    // Query mutasi s/d tanggal siklus
+    const { data: txs } = await supabase
+      .from('deposit_transactions')
+      .select('id, member_deposit_id, amount, transaction_type, transaction_date, created_at')
+      .in('member_deposit_id', mdIds);
+
+    const balanceMap = new Map<string, number>();
+    for (const tx of (txs || [])) {
+      const txDateStr = tx.transaction_date || (tx.created_at ? tx.created_at.slice(0, 10) : '');
+      if (txDateStr && txDateStr <= cycleDateStr) {
+        const cur = balanceMap.get(tx.member_deposit_id) || 0;
+        const amt = Number(tx.amount || 0);
+        if (tx.transaction_type === 'deposit') {
+          balanceMap.set(tx.member_deposit_id, cur + amt);
+        } else if (tx.transaction_type === 'withdrawal') {
+          balanceMap.set(tx.member_deposit_id, cur - amt);
+        }
+      }
+    }
+
+    let cycleMembersCount = 0;
+    let cycleTotalAmount = 0;
+    const itemsToInsert: any[] = [];
+    const txsToInsert: any[] = [];
+
+    for (const md of activeMds) {
+      const saldo = balanceMap.get(md.id) || 0;
+      if (saldo > 0) {
+        const mem = membersMap.get(md.member_id);
+        if (!mem) continue;
+
+        const joinDateStr = mem.joined_at || (mem.created_at ? mem.created_at.slice(0, 10) : '');
+        if (joinDateStr && joinDateStr > cycleDateStr) {
+          continue; // Anggota belum bergabung saat siklus ini terjadi
+        }
+
+        cycleMembersCount++;
+        cycleTotalAmount += saldo;
+
+        const refNo = `KW-THR-${yearStr}-${(mem.nrp || 'ANGGOTA').trim()}`;
+        txsToInsert.push({
+          member_deposit_id: md.id,
+          transaction_date: cycleDateStr,
+          transaction_type: 'withdrawal',
+          amount: saldo,
+          description: `Pencairan Massal Simpanan Lebaran - ${cycle.cycle_name}`,
+          reference_no: refNo,
+          payment_method: 'transfer',
+          notes: 'Pencairan Simpanan Lebaran (Replay Timeline)',
+          created_at: new Date(cycleDateStr + 'T12:00:00Z').toISOString()
+        });
+
+        itemsToInsert.push({
+          cycle_id: cycle.id,
+          member_id: mem.id,
+          nrp: mem.nrp || null,
+          member_name: mem.nama || null,
+          bank_account: mem.bank_account_number || null,
+          amount_disbursed: saldo,
+          created_at: new Date(cycleDateStr + 'T12:00:00Z').toISOString()
+        });
+      }
+    }
+
+    if (txsToInsert.length > 0) {
+      await supabase.from('deposit_transactions').insert(txsToInsert);
+    }
+    if (itemsToInsert.length > 0) {
+      await supabase.from('lebaran_disbursement_items').insert(itemsToInsert);
+    }
+
+    await supabase
+      .from('lebaran_disbursement_cycles')
+      .update({
+        total_members: cycleMembersCount,
+        total_amount: cycleTotalAmount,
+        status: 'COMPLETED',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', cycle.id);
+
+    totalRecipientsAll += cycleMembersCount;
+    totalAmountAll += cycleTotalAmount;
+  }
+
+  return {
+    success: true,
+    totalCycles: sortedCycles.length,
+    totalRecipients: totalRecipientsAll,
+    totalAmount: totalAmountAll,
+    mode: 'client_fallback'
+  };
+}
+
 export const bulkWithdrawalService = {
   isLebaranDepositType,
   simulateLebaranDisbursement,
@@ -583,5 +1057,12 @@ export const bulkWithdrawalService = {
   approveAndExecuteDisbursement,
   rejectDisbursementDraft,
   getLebaranDisbursementCycles,
-  getLastCompletedLebaranCycle
+  getLastCompletedLebaranCycle,
+  getLebaranCycleHistory,
+  getCycleRecipients,
+  addHistoricalDisbursementDate,
+  addHistoricalDisbursementDates,
+  deleteHistoricalDisbursementDate,
+  executeReplayAllCycles,
+  recordManualLebaranWithdrawal
 };

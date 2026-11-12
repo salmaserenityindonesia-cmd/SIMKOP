@@ -5,11 +5,16 @@ import {
   type WithdrawableDeposit,
   type WithdrawalPayload
 } from './withdrawal.service';
+import {
+  recordManualLebaranWithdrawal,
+  type RecordManualLebaranPayload
+} from './bulkWithdrawalService';
 
 export {
   getWithdrawableSavings,
   withdrawSavings,
+  recordManualLebaranWithdrawal,
   type WithdrawableDeposit,
-  type WithdrawalPayload
+  type WithdrawalPayload,
+  type RecordManualLebaranPayload
 };
-

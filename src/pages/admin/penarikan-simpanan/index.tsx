@@ -3,6 +3,7 @@ import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
 import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark, Users } from 'lucide-react';
 import { getWithdrawableSavings, withdrawSavings, WithdrawableDeposit } from '../../../services/withdrawal.service';
+import { bulkWithdrawalService } from '../../../services/bulkWithdrawalService';
 import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalReceiptModal';
 import BulkLebaranTab from './BulkLebaranTab';
 
@@ -130,6 +131,19 @@ export default function PenarikanSimpanan() {
         jenisSimpananLabel: selectedDeposit.deposit_name,
         namaAnggota: selectedAnggota.nama
       });
+
+      // Jika penarikan simpanan lebaran, auto-sync ke siklus & item historis
+      if (bulkWithdrawalService.isLebaranDepositType(selectedDeposit.deposit_code, selectedDeposit.deposit_name)) {
+        await bulkWithdrawalService.recordManualLebaranWithdrawal({
+          memberId: selectedAnggota.id,
+          memberName: selectedAnggota.nama,
+          nrp: selectedAnggota.nrp,
+          bankAccount: selectedAnggota.bank_account_number,
+          amount: amountNum,
+          transactionDate: new Date().toISOString().slice(0, 10),
+          notes: `Pencairan Manual ${selectedDeposit.deposit_name} (${methodText})`
+        });
+      }
 
       // Show receipt
       setReceiptData({

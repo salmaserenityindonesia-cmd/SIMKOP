@@ -38,5 +38,12 @@ describe('BulkLebaranTab Component', () => {
     // Table Headers
     expect(html).toContain('Daftar Nominatif Penerima Pencairan Simpanan Lebaran');
     expect(html).toContain('Riwayat Siklus Pencairan Massal Simpanan Lebaran');
+
+    // Historical Dates Form & Replay Controls
+    expect(html).toContain('Riwayat Tanggal Pencairan');
+    expect(html).toContain('Simulasi Pengosongan Ulang');
+    expect(html).toContain('Kosongkan Ulang Sesuai Semua Tanggal');
+    expect(html).toContain('Tambah Tanggal Pencairan Terlewat / Historis');
+    expect(html).toContain('+ Tambah Tanggal');
   });
 });
