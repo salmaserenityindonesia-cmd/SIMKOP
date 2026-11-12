@@ -537,5 +537,49 @@ describe('settlementService', () => {
         sisa_pinjaman: 0
       });
     });
+
+    it('memproses pelunasan seluruh jadwal pada legacy processClearance', async () => {
+      (supabase.rpc as any).mockResolvedValue({ data: true, error: null });
+      const updatedSchedules: any[] = [];
+      const updatedLoans: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          const chain = createChainMock([
+            { id: 'loan-leg-1', amount: 1000000, status: 'active' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedLoans.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_schedules') {
+          const chain = createChainMock([
+            { id: 'sched-leg-1', loan_id: 'loan-leg-1', period_number: 1, target_amount: 500000, paid_amount: 0, status: 'unpaid' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedSchedules.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_repayments') {
+          return createChainMock(null);
+        }
+
+        return createChainMock([]);
+      });
+
+      const res = await settlementService.processClearance('member-legacy-id');
+      expect(res).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith('process_member_clearance', {
+        p_member_id: 'member-legacy-id'
+      });
+      expect(updatedSchedules[0].status).toBe('paid');
+      expect(updatedLoans[0].status).toBe('completed');
+    });
   });
 });
