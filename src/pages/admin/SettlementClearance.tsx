@@ -67,15 +67,10 @@ export default function SettlementClearance() {
     }
   };
 
-  const handlePrint = () => {
-    if (!printRef.current) return;
-    const printContent = printRef.current.innerHTML;
-    const originalContent = document.body.innerHTML;
-    
-    document.body.innerHTML = printContent;
+  const handlePrint = (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     window.print();
-    document.body.innerHTML = originalContent;
-    window.location.reload(); // Quick reload to restore React event listeners after destructive DOM replace
   };
 
   const handleOpenModal = () => {
@@ -110,7 +105,7 @@ export default function SettlementClearance() {
 
   return (
     <AdminLayout>
-      <div className="space-y-6">
+      <div className="space-y-6 print:hidden">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Buku Pembantu & Kliring Anggota Keluar</h1>
       </div>
@@ -138,6 +133,7 @@ export default function SettlementClearance() {
             <p className="text-sm mt-1">Sisa pinjaman anggota ini telah lunas sepenuhnya. Anda dapat mengesahkan pengunduran diri final.</p>
           </div>
           <button
+            type="button"
             onClick={() => handleConfirmInstantPayoff('Otomatis Lunas', 'Pengesahan final dari status READY_TO_RESIGN')}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
           >
@@ -305,6 +301,7 @@ export default function SettlementClearance() {
           {/* Action Bar */}
           <div className="flex gap-4 pt-4 border-t border-gray-200 justify-end">
             <button 
+              type="button"
               onClick={handlePrint}
               className="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center font-medium"
             >
@@ -312,6 +309,7 @@ export default function SettlementClearance() {
               Cetak Lembar Settlement (PDF)
             </button>
             <button 
+              type="button"
               onClick={handleOpenModal}
               disabled={selectedMember.membership_status === 'RESIGNED' || selectedMember.membership_status === 'PENDING_RESIGNED'}
               className={`px-6 py-2 rounded-lg text-white font-medium flex items-center ${
@@ -324,23 +322,25 @@ export default function SettlementClearance() {
               Proses Pengunduran Diri
             </button>
           </div>
-
-          {/* Hidden Print Template */}
-          <div className="hidden">
-            <ClearancePrintTemplate ref={printRef} member={selectedMember} summary={summary} />
-          </div>
-          
-          <ClearanceActionModal
-            isOpen={isModalOpen}
-            onClose={() => setIsModalOpen(false)}
-            summary={summary}
-            member={selectedMember}
-            onConfirmInstantPayoff={handleConfirmInstantPayoff}
-            onConfirmDebtorTransition={handleConfirmDebtorTransition}
-          />
         </>
       )}
-    </div>
+      </div>
+
+      {/* Printable Settlement Template */}
+      {!loading && summary && selectedMember && (
+        <div className="hidden print:block">
+          <ClearancePrintTemplate ref={printRef} member={selectedMember} summary={summary} />
+        </div>
+      )}
+      
+      <ClearanceActionModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        summary={summary}
+        member={selectedMember}
+        onConfirmInstantPayoff={handleConfirmInstantPayoff}
+        onConfirmDebtorTransition={handleConfirmDebtorTransition}
+      />
     </AdminLayout>
   );
 }
