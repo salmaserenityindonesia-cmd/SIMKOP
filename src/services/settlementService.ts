@@ -90,6 +90,93 @@ export const settlementService = {
   },
 
   /**
+   * Melunaskan seluruh sisa jadwal angsuran pinjaman aktif anggota dan mencatat riwayat pelunasannya
+   */
+  async settleRemainingLoanSchedules(
+    memberId: string,
+    paymentMethod: string = 'POTONG_SIMPANAN_KLIRING',
+    notes: string = 'Pelunasan otomatis melalui kliring anggota keluar (net settlement)'
+  ): Promise<void> {
+    if (!supabase || typeof supabase.from !== 'function') return;
+
+    // 1. Ambil pinjaman aktif anggota (status IN 'active', 'approved', 'draft')
+    // juga sertakan 'completed' bila status pinjaman telah diubah oleh RPC namun jadwal belum selesai
+    const { data: activeLoans, error: loanErr } = await supabase
+      .from('loans')
+      .select('id, amount, principal_amount, status')
+      .eq('member_id', memberId)
+      .in('status', ['active', 'approved', 'draft', 'completed']);
+
+    if (loanErr || !activeLoans || activeLoans.length === 0) return;
+
+    for (const loan of activeLoans) {
+      // 2. Ambil seluruh jadwal angsuran yang belum lunas
+      const { data: unpaidSchedules, error: schedErr } = await supabase
+        .from('loan_schedules')
+        .select('id, loan_id, period_number, target_amount, paid_amount, status')
+        .eq('loan_id', loan.id)
+        .in('status', ['unpaid', 'partial']);
+
+      if (schedErr) {
+        console.warn(`Gagal mengambil jadwal angsuran pinjaman ${loan.id}:`, schedErr.message);
+        continue;
+      }
+
+      if (unpaidSchedules && unpaidSchedules.length > 0) {
+        for (const sched of unpaidSchedules) {
+          const target = Math.max(0, Number(sched.target_amount || 0));
+          const currentPaid = Math.max(0, Number(sched.paid_amount || 0));
+          const sisa = Math.max(0, target - currentPaid);
+
+          // Update jadwal angsuran menjadi lunas (paid)
+          await supabase
+            .from('loan_schedules')
+            .update({
+              paid_amount: target,
+              status: 'paid'
+            })
+            .eq('id', sched.id);
+
+          // Masukkan catatan pembayaran di loan_repayments jika terdapat sisa yang dilunasi
+          if (sisa > 0) {
+            const repayEntry: any = {
+              loan_id: loan.id,
+              schedule_id: sched.id,
+              amount_paid: sisa,
+              payment_method: paymentMethod || 'POTONG_SIMPANAN_KLIRING',
+              notes: notes || 'Pelunasan otomatis melalui kliring anggota keluar (net settlement)',
+              payment_date: new Date().toISOString(),
+              created_at: new Date().toISOString()
+            };
+
+            const { error: insErr } = await supabase.from('loan_repayments').insert(repayEntry);
+            if (insErr) {
+              // Fallback tanpa created_at jika skema tabel belum memiliki kolom created_at
+              await supabase.from('loan_repayments').insert({
+                loan_id: repayEntry.loan_id,
+                schedule_id: repayEntry.schedule_id,
+                amount_paid: repayEntry.amount_paid,
+                payment_method: repayEntry.payment_method,
+                payment_date: repayEntry.payment_date,
+                notes: repayEntry.notes
+              });
+            }
+          }
+        }
+      }
+
+      // Update data pinjaman induk di tabel loans: status = 'completed', sisa_pinjaman = 0
+      await supabase
+        .from('loans')
+        .update({
+          status: 'completed',
+          sisa_pinjaman: 0
+        })
+        .eq('id', loan.id);
+    }
+  },
+
+  /**
    * Memproses pengunduran diri dengan metode Pelunasan Seketika (Instant Payoff / Surplus)
    */
   async processInstantPayoff(memberId: string, paymentMethod: string, notes: string): Promise<boolean> {
@@ -110,7 +197,10 @@ export const settlementService = {
       throw new Error(`Gagal memproses kliring pelunasan seketika: ${error.message}`);
     }
 
-    return data;
+    // Melunaskan seluruh sisa jadwal angsuran pinjaman dan mencatat riwayat pelunasan kliring
+    await this.settleRemainingLoanSchedules(memberId, paymentMethod, notes);
+
+    return data ?? true;
   },
 
   /**
@@ -145,7 +235,10 @@ export const settlementService = {
       throw new Error(`Gagal memproses kliring pengunduran diri: ${error.message}`);
     }
 
-    return data;
+    // Melunaskan seluruh sisa jadwal angsuran pinjaman
+    await this.settleRemainingLoanSchedules(memberId, 'POTONG_SIMPANAN_KLIRING', 'Pelunasan otomatis melalui kliring anggota keluar (legacy)');
+
+    return data ?? true;
   },
 
   // --- Fallback Manual Methods if SQL Migration is not applied yet ---

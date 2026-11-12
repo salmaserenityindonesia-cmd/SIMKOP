@@ -23,6 +23,8 @@ describe('settlementService', () => {
     obj.select = vi.fn(() => obj);
     obj.eq = vi.fn(() => obj);
     obj.in = vi.fn(() => obj);
+    obj.update = vi.fn(() => obj);
+    obj.insert = vi.fn(() => p);
     obj.single = vi.fn(() => p);
     obj.then = (onRes: any, onRej: any) => p.then(onRes, onRej);
     return obj;
@@ -329,6 +331,211 @@ describe('settlementService', () => {
         p_processed_by: 'admin-user-456'
       });
       expect(res).toBe(true);
+    });
+  });
+
+  describe('settleRemainingLoanSchedules & Pelunasan Otomatis Kliring', () => {
+    it('melunaskan seluruh jadwal angsuran unpaid/partial, mencatat loan_repayments dengan metode POTONG_SIMPANAN_KLIRING, dan menyetel status pinjaman = completed', async () => {
+      const updatedSchedules: any[] = [];
+      const insertedRepayments: any[] = [];
+      const updatedLoans: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          const chain = createChainMock([
+            { id: 'loan-1', amount: 1000000, status: 'active' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedLoans.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_schedules') {
+          const chain = createChainMock([
+            { id: 'sched-1', loan_id: 'loan-1', period_number: 1, target_amount: 500000, paid_amount: 200000, status: 'partial' },
+            { id: 'sched-2', loan_id: 'loan-1', period_number: 2, target_amount: 500000, paid_amount: 0, status: 'unpaid' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedSchedules.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_repayments') {
+          const chain = createChainMock(null);
+          chain.insert = vi.fn((payload: any) => {
+            insertedRepayments.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+
+        return createChainMock([]);
+      });
+
+      await settlementService.settleRemainingLoanSchedules('member-test-1');
+
+      // Verifikasi jadwal angsuran diupdate menjadi lunas (paid) dengan paid_amount penuh
+      expect(updatedSchedules).toHaveLength(2);
+      expect(updatedSchedules[0]).toEqual({
+        paid_amount: 500000,
+        status: 'paid'
+      });
+      expect(updatedSchedules[1]).toEqual({
+        paid_amount: 500000,
+        status: 'paid'
+      });
+
+      // Verifikasi pencatatan pembayaran kliring di loan_repayments
+      expect(insertedRepayments).toHaveLength(2);
+      // Sched-1: 500.000 - 200.000 = 300.000
+      expect(insertedRepayments[0].amount_paid).toBe(300000);
+      expect(insertedRepayments[0].schedule_id).toBe('sched-1');
+      expect(insertedRepayments[0].payment_method).toBe('POTONG_SIMPANAN_KLIRING');
+      expect(insertedRepayments[0].notes).toContain('Pelunasan otomatis melalui kliring anggota keluar');
+
+      // Sched-2: 500.000 - 0 = 500.000
+      expect(insertedRepayments[1].amount_paid).toBe(500000);
+      expect(insertedRepayments[1].schedule_id).toBe('sched-2');
+      expect(insertedRepayments[1].payment_method).toBe('POTONG_SIMPANAN_KLIRING');
+
+      // Verifikasi status pinjaman di tabel loans menjadi completed dan sisa_pinjaman = 0
+      expect(updatedLoans).toHaveLength(1);
+      expect(updatedLoans[0]).toEqual({
+        status: 'completed',
+        sisa_pinjaman: 0
+      });
+    });
+
+    it('processInstantPayoff otomatis memanggil RPC dan menyinkronkan penuntasan sisa jadwal pinjaman', async () => {
+      (supabase.auth.getSession as any).mockResolvedValue({
+        data: { session: { user: { id: 'admin-123' } } }
+      });
+      (supabase.rpc as any).mockResolvedValue({
+        data: true,
+        error: null
+      });
+
+      const updatedSchedules: any[] = [];
+      const insertedRepayments: any[] = [];
+      const updatedLoans: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          const chain = createChainMock([
+            { id: 'loan-instant-1', amount: 3000000, status: 'active' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedLoans.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_schedules') {
+          const chain = createChainMock([
+            { id: 'sched-instant-1', loan_id: 'loan-instant-1', period_number: 1, target_amount: 1500000, paid_amount: 500000, status: 'partial' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedSchedules.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_repayments') {
+          const chain = createChainMock(null);
+          chain.insert = vi.fn((payload: any) => {
+            insertedRepayments.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+
+        return createChainMock([]);
+      });
+
+      const result = await settlementService.processInstantPayoff(
+        'member-instant-id',
+        'POTONG_SIMPANAN_KLIRING',
+        'Pelunasan kliring surplus anggota keluar'
+      );
+
+      expect(result).toBe(true);
+      expect(supabase.rpc).toHaveBeenCalledWith('process_instant_payoff_clearance', {
+        p_member_id: 'member-instant-id',
+        p_payment_method: 'POTONG_SIMPANAN_KLIRING',
+        p_notes: 'Pelunasan kliring surplus anggota keluar',
+        p_processed_by: 'admin-123'
+      });
+
+      // Verifikasi jadwal angsuran dilunaskan
+      expect(updatedSchedules).toHaveLength(1);
+      expect(updatedSchedules[0].status).toBe('paid');
+      expect(updatedSchedules[0].paid_amount).toBe(1500000);
+
+      // Verifikasi mutasi pembayaran dicatat
+      expect(insertedRepayments).toHaveLength(1);
+      expect(insertedRepayments[0].amount_paid).toBe(1000000); // 1.500.000 - 500.000
+      expect(insertedRepayments[0].payment_method).toBe('POTONG_SIMPANAN_KLIRING');
+
+      // Verifikasi pinjaman induk disetel completed dan sisa_pinjaman = 0
+      expect(updatedLoans).toHaveLength(1);
+      expect(updatedLoans[0]).toEqual({
+        status: 'completed',
+        sisa_pinjaman: 0
+      });
+    });
+
+    it('tidak mencatat mutasi berulang di loan_repayments jika sisa tagihan angsuran bernilai 0', async () => {
+      const insertedRepayments: any[] = [];
+      const updatedLoans: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          const chain = createChainMock([
+            { id: 'loan-zero-1', amount: 500000, status: 'active' }
+          ]);
+          chain.update = vi.fn((payload: any) => {
+            updatedLoans.push(payload);
+            return chain;
+          });
+          return chain;
+        }
+
+        if (table === 'loan_schedules') {
+          // Jadwal sudah terbayar penuh tetapi masih flag partial/unpaid (misal anomali)
+          const chain = createChainMock([
+            { id: 'sched-zero-1', loan_id: 'loan-zero-1', period_number: 1, target_amount: 500000, paid_amount: 500000, status: 'partial' }
+          ]);
+          return chain;
+        }
+
+        if (table === 'loan_repayments') {
+          const chain = createChainMock(null);
+          chain.insert = vi.fn((payload: any) => {
+            insertedRepayments.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+
+        return createChainMock([]);
+      });
+
+      await settlementService.settleRemainingLoanSchedules('member-zero-id');
+
+      // Sisa 0 tidak menghasilkan entri baru di loan_repayments
+      expect(insertedRepayments).toHaveLength(0);
+      // Tetapi status pinjaman tetap disetel completed & sisa_pinjaman = 0
+      expect(updatedLoans).toHaveLength(1);
+      expect(updatedLoans[0]).toEqual({
+        status: 'completed',
+        sisa_pinjaman: 0
+      });
     });
   });
 });
