@@ -22,6 +22,7 @@ export interface LoanMatrixMember {
   loanId?: string;
   loanNumber?: string;
   loan_number?: string;
+  status?: string;
   memberId: string;
   nrp: string;
   nama: string;
@@ -192,6 +193,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         id: loan.id,
         loanId: loan.id,
         loanNumber: loan.loan_number || '',
+        status: loan.status,
         memberId: member.id,
         nrp: member.nrp,
         nama: member.nama,
@@ -229,7 +231,12 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       if (loan.status === 'active' || loan.status === 'approved') {
         loansMap[loan.id].isLoanActive = true;
       }
+      if (loan.status) {
+        loansMap[loan.id].status = loan.status;
+      }
     }
+
+    const isLoanCompleted = loan.status === 'completed' || loan.status === 'paid_off';
 
     // ONLY populate matrix cell and YTD stats if the schedule is in the requested matrix year
     if (scheduleYear === year) {
@@ -239,16 +246,16 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       if (scheduleYear > currentYear || (scheduleYear === currentYear && month > currentMonth)) {
         // Future month
         if (Number(sched.paid_amount) >= Number(sched.target_amount) && Number(sched.target_amount) > 0) {
-          cellStatus = 'PAID';
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'PAID';
           totalTargetYTD += Number(sched.target_amount);
           totalCollectedYTD += Number(sched.paid_amount);
         } else if (Number(sched.paid_amount) > 0) {
-          cellStatus = 'PARTIAL';
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
           totalTargetYTD += Number(sched.target_amount);
           totalCollectedYTD += Number(sched.paid_amount);
         } else {
-          cellStatus = 'PROJECTED';
-          if (month === currentMonth + 1 && scheduleYear === currentYear) {
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'PROJECTED';
+          if (!isLoanCompleted && month === currentMonth + 1 && scheduleYear === currentYear) {
             projectedNextMonth += Number(sched.target_amount);
           }
         }
@@ -258,19 +265,19 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         totalCollectedYTD += Number(sched.paid_amount);
         
         if (Number(sched.paid_amount) >= Number(sched.target_amount)) {
-          cellStatus = 'PAID';
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'PAID';
         } else if (Number(sched.paid_amount) > 0) {
-          cellStatus = 'PARTIAL';
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
         } else {
-          cellStatus = 'UNPAID';
-          if (month === currentMonth && scheduleYear === currentYear) {
+          cellStatus = isLoanCompleted ? 'FINISHED' : 'UNPAID';
+          if (!isLoanCompleted && month === currentMonth && scheduleYear === currentYear) {
              unpaidMembersSet.add(member.id);
           }
         }
       }
 
       // If the loan is completed/finished, the status can reflect it
-      if (loan.status === 'completed' && cellStatus === 'PAID') {
+      if (isLoanCompleted && cellStatus !== 'PAID') {
         cellStatus = 'FINISHED';
       }
 
@@ -282,7 +289,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         targetAmount: Number(sched.target_amount),
         paidAmount: Number(sched.paid_amount),
         cumulativePaidAmount: loanCumulativePaid[loan.id],
-        remainingBalance: Math.max(0, loanBalances[loan.id]), // Ensure it doesn't go below 0 visually
+        remainingBalance: isLoanCompleted ? 0 : Math.max(0, loanBalances[loan.id]), // Ensure it doesn't go below 0 visually
         loanId: loan.id,
         loanNumber: loan.loan_number,
         tenor: loan.tenor,
@@ -308,25 +315,41 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
 
     for (let i = 1; i <= 12; i++) {
       const m = row.months[i];
-      if (m.status === 'PAID' || m.status === 'PARTIAL' || m.status === 'UNPAID') {
+      if (m.status === 'PAID' || m.status === 'PARTIAL' || m.status === 'UNPAID' || m.status === 'FINISHED') {
         loanTarget += m.targetAmount;
         loanPaid += m.paidAmount;
         lastActiveMonth = i;
       }
     }
 
-    row.complianceYTD = loanTarget > 0 ? (loanPaid / loanTarget) * 100 : 100;
+    const isRowCompleted = !row.isLoanActive || row.status === 'completed' || row.status === 'paid_off';
 
-    // Apply finished status for months after the last active month if loan is fully paid
-    if (!row.isLoanActive && lastActiveMonth > 0) {
-       for(let i = lastActiveMonth + 1; i <= 12; i++) {
-           row.months[i].status = 'FINISHED';
-       }
+    if (isRowCompleted) {
+      row.complianceYTD = 100;
+      for (let i = 1; i <= 12; i++) {
+        const normStatus = (row.months[i].status || '').toUpperCase();
+        if (normStatus !== 'NONE' && normStatus !== 'NOT_APPLICABLE') {
+          if (normStatus !== 'PAID') {
+            row.months[i].status = 'FINISHED';
+          }
+          row.months[i].remainingBalance = 0;
+        }
+      }
+    } else {
+      row.complianceYTD = loanTarget > 0 ? (loanPaid / loanTarget) * 100 : 100;
+
+      // Apply finished status for months after the last active month if loan is fully paid
+      if (!row.isLoanActive && lastActiveMonth > 0) {
+        for(let i = lastActiveMonth + 1; i <= 12; i++) {
+          row.months[i].status = 'FINISHED';
+          row.months[i].remainingBalance = 0;
+        }
+      }
     }
 
     const priorPaid = loanPriorYearPaid[row.id || row.loanId || ''] || 0;
     row.priorYearPaid = priorPaid;
-    row.priorYearRemaining = Math.max(0, Number(row.principalAmount || 0) - priorPaid);
+    row.priorYearRemaining = isRowCompleted ? 0 : Math.max(0, Number(row.principalAmount || 0) - priorPaid);
   });
 
   const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 100;

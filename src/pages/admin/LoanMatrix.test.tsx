@@ -894,4 +894,131 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(loadingHtml).toContain('Memuat data matriks...');
     });
   });
+
+  describe('Completed Loan Tooltip & Compliance Alignment', () => {
+    it('renders "Sisa Angsuran: Rp 0 (Lunas)" with text-emerald-400 and 100% compliance for inactive / completed loans', () => {
+      const completedLoanData: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 100,
+        totalCollectedYTD: 10000000,
+        projectedNextMonth: 0,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            memberId: 'mem-completed-1',
+            nrp: '11122233',
+            nama: 'Kapten Selesai',
+            isLoanActive: false,
+            status: 'completed',
+            totalLoans: 1,
+            complianceYTD: 80, // initially 80, but completed should force 100%
+            months: {
+              1: {
+                month: 1,
+                year: 2026,
+                status: 'PAID',
+                targetAmount: 1000000,
+                paidAmount: 1000000,
+                remainingBalance: 0,
+                loanId: 'loan-comp-1',
+                loanNumber: 'PJ-COMP-001',
+                periodNumber: 1,
+                tenor: 10,
+              },
+              2: {
+                month: 2,
+                year: 2026,
+                status: 'FINISHED',
+                targetAmount: 1000000,
+                paidAmount: 0,
+                remainingBalance: 500000, // even if lingering balance exists in old cell data
+                loanId: 'loan-comp-1',
+                loanNumber: 'PJ-COMP-001',
+                periodNumber: 2,
+                tenor: 10,
+              },
+              3: { month: 3, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              4: { month: 4, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              5: { month: 5, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              6: { month: 6, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              7: { month: 7, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              8: { month: 8, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              9: { month: 9, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              10: { month: 10, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              11: { month: 11, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              12: { month: 12, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={completedLoanData} initialYear={2026} />
+      );
+
+      // Verify status badge says "Selesai"
+      expect(html).toContain('Selesai');
+      // Verify tooltip displays Sisa Angsuran: Rp 0 (Lunas) with text-emerald-400
+      expect(html).toContain('text-emerald-400');
+      expect(html).toContain('Sisa Angsuran:');
+      expect(html).toContain('Rp 0 (Lunas)');
+      // Verify compliance badge shows 100%
+      expect(html).toContain('100%');
+    });
+
+    it('renders amber remaining balance for active loans with partial unpaid amounts', () => {
+      const activePartialLoanData: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 50,
+        totalCollectedYTD: 500000,
+        projectedNextMonth: 1000000,
+        unpaidMembersCount: 1,
+        members: [
+          {
+            memberId: 'mem-active-partial',
+            nrp: '44455566',
+            nama: 'Lettu Aktif',
+            isLoanActive: true,
+            status: 'active',
+            totalLoans: 1,
+            complianceYTD: 50,
+            months: {
+              1: {
+                month: 1,
+                year: 2026,
+                status: 'PARTIAL',
+                targetAmount: 1000000,
+                paidAmount: 500000,
+                remainingBalance: 500000,
+                loanId: 'loan-act-1',
+                loanNumber: 'PJ-ACT-001',
+                periodNumber: 1,
+                tenor: 5,
+              },
+              2: { month: 2, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              3: { month: 3, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              4: { month: 4, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              5: { month: 5, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              6: { month: 6, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              7: { month: 7, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              8: { month: 8, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              9: { month: 9, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              10: { month: 10, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              11: { month: 11, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              12: { month: 12, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={activePartialLoanData} initialYear={2026} />
+      );
+
+      expect(html).toContain('Aktif');
+      expect(html).toContain('text-amber-400');
+      expect(html).toContain('Rp 500.000');
+      expect(html).toContain('50%');
+    });
+  });
 });

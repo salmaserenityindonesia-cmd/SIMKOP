@@ -495,6 +495,88 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     // priorYearRemaining must not be negative: Math.max(0, 3000000 - 3500000) === 0
     expect(rowLoan3?.priorYearRemaining).toBe(0);
   });
+
+  it('correctly handles completed loans by setting cell status to FINISHED/PAID, remainingBalance to 0, and complianceYTD to 100', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-completed-x' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'sched-comp-1',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-completed-x',
+                        loan_number: 'PINJ-COMP-001',
+                        principal_amount: 2000000,
+                        tenor: 2,
+                        monthly_target: 1000000,
+                        status: 'completed',
+                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Sertu Selesai' },
+                      },
+                    },
+                    {
+                      id: 'sched-comp-2',
+                      period_number: 2,
+                      due_date: '2026-02-15',
+                      target_amount: 1000000,
+                      paid_amount: 1000000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-completed-x',
+                        loan_number: 'PINJ-COMP-001',
+                        principal_amount: 2000000,
+                        tenor: 2,
+                        monthly_target: 1000000,
+                        status: 'completed',
+                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Sertu Selesai' },
+                      },
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members.length).toBe(1);
+
+    const completedRow = summary.members[0];
+    expect(completedRow.isLoanActive).toBe(false);
+    expect(completedRow.status).toBe('completed');
+    expect(completedRow.complianceYTD).toBe(100);
+
+    // Month 1 and Month 2 cells should be FINISHED or PAID with remainingBalance 0
+    expect(completedRow.months[1].remainingBalance).toBe(0);
+    expect(['FINISHED', 'PAID']).toContain(completedRow.months[1].status);
+
+    expect(completedRow.months[2].remainingBalance).toBe(0);
+    expect(['FINISHED', 'PAID']).toContain(completedRow.months[2].status);
+
+    expect(completedRow.priorYearRemaining).toBe(0);
+  });
 });
 
 describe('loanMatrixService - cumulativePaidAmount & getCumulativePaidUpToMonth', () => {
