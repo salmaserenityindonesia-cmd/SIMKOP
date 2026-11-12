@@ -1654,6 +1654,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 93: Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif
+**Status:** ✅ Complete
+**Objective:** Memperbaiki pencetakan lembar settlement kliring di `/admin/clearance` (`SettlementClearance.tsx` dan `ClearancePrintTemplate.tsx`) agar pas 1 halaman penuh ukuran F4/Folio (215mm x 330mm) tanpa terpotong tanda tangan di halaman kedua, serta meniadakan destructive DOM mutation & page reload (`window.location.reload()`) sehingga data anggota aktif (`selectedMember`) tidak hilang/reset saat print preview dibatalkan atau selesai dicetak.
+**Depends on:** Phase 92
+
+**Plans:**
+- [x] Plan 93.1: Wave 1 - Non-Destructive Print Trigger & Optimasi CSS 1 Halaman Ukuran F4
+- [x] Plan 93.2: Wave 2 - Static Analysis & Build Verification
+
+**Deliverables:**
+- Penanganan cetak non-destruktif di `SettlementClearance.tsx` tanpa reload halaman dan tanpa modifikasi `document.body.innerHTML`
+- Tombol cetak dengan `type="button"` dan perlindungan `selectedMember`
+- Konfigurasi `@page` ukuran kertas F4 (215mm x 330mm) dan padding/margin kompak pada `ClearancePrintTemplate.tsx`
+- Aturan `break-inside: avoid` pada blok tanda tangan agar tidak terlempar ke halaman kedua
+- Pemeriksaan tipe statis TypeScript dan build produksi Vite bersih (exit code 0)
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1807,6 +1825,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 90 | Implementasi Tombol Reset Transaksi Keuangan pada Laporan Keuangan Terpadu | ✅ | 3/3 | 100% |
 | 91 | Tambahkan Kolom Saldo Awal Terbayar Pra-Tahun pada Matriks Pinjaman | ✅ | 3/3 | 100% |
 | 92 | Perbaiki Bug Double Negation pada Perhitungan Net Settlement Kliring Anggota Keluar | ✅ | 2/2 | 100% |
+| 93 | Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif | ✅ | 2/2 | 100% |
 
 ---
 
@@ -1906,6 +1925,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 90 | 2026-11-11 | 2026-11-11 | 1 day |
 | 91 | 2026-11-12 | 2026-11-12 | 1 day |
 | 92 | 2026-11-12 | 2026-11-12 | 1 day |
+| 93 | 2026-11-12 | 2026-11-12 | 1 day |
 
 
 
