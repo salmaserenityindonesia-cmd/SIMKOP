@@ -7,8 +7,8 @@ import { Anggota } from '../../services/koperasiService';
 interface ClearanceActionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  summary: SettlementSummary;
-  member: Anggota;
+  summary: SettlementSummary | null;
+  member: Anggota | null;
   onConfirmInstantPayoff: (paymentMethod: string, notes: string) => Promise<void>;
   onConfirmDebtorTransition: (notes: string) => Promise<void>;
 }
@@ -21,8 +21,6 @@ export const ClearanceActionModal: React.FC<ClearanceActionModalProps> = ({
   onConfirmInstantPayoff,
   onConfirmDebtorTransition
 }) => {
-  const isDeficit = summary.net_settlement < 0;
-  
   // Tab state for deficit handling: 'instant' | 'debtor'
   const [activeTab, setActiveTab] = useState<'instant' | 'debtor'>('instant');
   
@@ -32,7 +30,9 @@ export const ClearanceActionModal: React.FC<ClearanceActionModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  if (!isOpen || !summary || !member) return null;
+
+  const isDeficit = summary.net_settlement < 0;
 
   const handleProcess = async () => {
     setIsProcessing(true);

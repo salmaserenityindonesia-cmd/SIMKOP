@@ -333,14 +333,16 @@ export default function SettlementClearance() {
         </div>
       )}
       
-      <ClearanceActionModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        summary={summary}
-        member={selectedMember}
-        onConfirmInstantPayoff={handleConfirmInstantPayoff}
-        onConfirmDebtorTransition={handleConfirmDebtorTransition}
-      />
+      {selectedMember && summary && (
+        <ClearanceActionModal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          summary={summary}
+          member={selectedMember}
+          onConfirmInstantPayoff={handleConfirmInstantPayoff}
+          onConfirmDebtorTransition={handleConfirmDebtorTransition}
+        />
+      )}
     </AdminLayout>
   );
 }
