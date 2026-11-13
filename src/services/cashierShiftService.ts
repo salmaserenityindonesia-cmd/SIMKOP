@@ -502,7 +502,7 @@ export async function getShiftSalesSummary(
 
   // Filter transaksi yang valid (bukan dibatalkan atau parked)
   const validSales = salesRows.filter(s => {
-    const saleStatus = (s.sale_status || (s as any).status || '').toLowerCase();
+    const saleStatus = String(s.sale_status || '').toLowerCase();
     return saleStatus !== 'cancelled' && saleStatus !== 'parked';
   });
 

@@ -173,7 +173,6 @@ BEGIN
         paid_deposit,
         paid_credit,
         payment_scheme,
-        status,
         sale_status,
         created_at
     ) VALUES (
@@ -188,9 +187,11 @@ BEGIN
         v_effective_paid_cash,
         COALESCE(p_paid_deposit, 0),
         COALESCE(p_paid_credit, 0),
-        p_payment_scheme,
-        'completed',
-        'completed',
+        (CASE
+            WHEN p_payment_scheme IN ('cash', 'split', 'store_credit') THEN p_payment_scheme
+            ELSE 'cash'
+         END)::public.payment_scheme,
+        'completed'::public.sale_status,
         v_now
     ) RETURNING id INTO v_sale_id;
 

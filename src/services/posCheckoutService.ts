@@ -108,10 +108,21 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
         if (rpcRes) {
           const { data, error } = rpcRes;
           if (error) {
-            // If RPC function not found in DB (e.g. PGRST202), fallback to legacy mutations
-            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function');
-            if (!isMissingFunction) {
-              throw new Error(error.message || 'Gagal memproses transaksi kasir.');
+            // If RPC function is missing (PGRST202) or fails due to legacy sales column/type mismatch
+            // (e.g. 42703: column "status" does not exist, 42804: column "payment_scheme" is of type payment_scheme),
+            // fallback to sequential client-side mutations
+            const errorMsg = error.message || '';
+            const isMissingFunctionOrColumnMismatch =
+              error.code === 'PGRST202' ||
+              error.code === '42703' ||
+              error.code === '42804' ||
+              errorMsg.includes('Could not find the function') ||
+              /column .* of relation "sales" does not exist/i.test(errorMsg) ||
+              /column .* is of type .* but expression is of type/i.test(errorMsg);
+            if (isMissingFunctionOrColumnMismatch) {
+              console.warn('process_pos_checkout RPC unavailable or mismatched schema, falling back to client mutations:', errorMsg);
+            } else {
+              throw new Error(errorMsg || 'Gagal memproses transaksi kasir.');
             }
           } else if (data) {
             if (data.success === false) {

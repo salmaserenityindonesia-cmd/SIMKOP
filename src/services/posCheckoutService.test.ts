@@ -335,6 +335,145 @@ describe('posCheckoutService', () => {
     expect(mockProductUpdate).toHaveBeenCalled();
   });
 
+  it('should gracefully fallback to sequential client mutations if process_pos_checkout RPC fails with 42703 column "status" of relation "sales" does not exist', async () => {
+    (supabase.rpc as any).mockImplementation((funcName: string) => {
+      if (funcName === 'process_pos_checkout') {
+        return Promise.resolve({
+          data: null,
+          error: {
+            code: '42703',
+            message: 'column "status" of relation "sales" does not exist'
+          }
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-fallback-42703' },
+          error: null
+        })
+      })
+    });
+    const mockInsertItems = vi.fn().mockResolvedValue({ error: null });
+    const mockProductSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: { stock: 10 }, error: null })
+      })
+    });
+    const mockProductUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const mockCashFlowInsert = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: mockInsertItems };
+      if (table === 'products') return { select: mockProductSelect, update: mockProductUpdate };
+      if (table === 'cash_flow') return { insert: mockCashFlowInsert };
+      return {};
+    });
+
+    const payload = {
+      memberId: null,
+      cashierId: 'cashier-1',
+      shiftId: 'shift-fallback',
+      cart: [{ id: 'prod-1', name: 'Gula', qty: 1, price: 15000 }],
+      subtotal: 15000,
+      discount: 0,
+      totalAmount: 15000,
+      paidCash: 15000,
+      paidDeposit: 0,
+      paidCredit: 0,
+      paymentScheme: 'cash'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(res.saleId).toBe('sale-uuid-fallback-42703');
+    expect(mockInsertSale).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sale_status: 'completed'
+      })
+    );
+    const insertedPayload = mockInsertSale.mock.calls[0][0];
+    expect(insertedPayload).not.toHaveProperty('status');
+    expect(mockInsertItems).toHaveBeenCalled();
+    expect(mockProductUpdate).toHaveBeenCalled();
+  });
+
+  it('should gracefully fallback to sequential client mutations if process_pos_checkout RPC fails with 42804 enum type mismatch on payment_scheme', async () => {
+    (supabase.rpc as any).mockImplementation((funcName: string) => {
+      if (funcName === 'process_pos_checkout') {
+        return Promise.resolve({
+          data: null,
+          error: {
+            code: '42804',
+            message: 'column "payment_scheme" is of type payment_scheme but expression is of type text'
+          }
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const mockInsertSale = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'sale-uuid-fallback-42804' },
+          error: null
+        })
+      })
+    });
+    const mockInsertItems = vi.fn().mockResolvedValue({ error: null });
+    const mockProductSelect = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: { stock: 10 }, error: null })
+      })
+    });
+    const mockProductUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null })
+    });
+    const mockCashFlowInsert = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') return { insert: mockInsertSale };
+      if (table === 'sale_items') return { insert: mockInsertItems };
+      if (table === 'products') return { select: mockProductSelect, update: mockProductUpdate };
+      if (table === 'cash_flow') return { insert: mockCashFlowInsert };
+      return {};
+    });
+
+    const payload = {
+      memberId: 'member-1',
+      cashierId: 'cashier-1',
+      shiftId: 'shift-fallback',
+      cart: [{ id: 'prod-1', name: 'Gula', qty: 1, price: 15000 }],
+      subtotal: 15000,
+      discount: 0,
+      totalAmount: 15000,
+      paidCash: 15000,
+      paidDeposit: 0,
+      paidCredit: 0,
+      paymentScheme: 'cash'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(res.saleId).toBe('sale-uuid-fallback-42804');
+    expect(mockInsertSale).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_scheme: 'cash',
+        sale_status: 'completed'
+      })
+    );
+    expect(mockInsertItems).toHaveBeenCalled();
+    expect(mockProductUpdate).toHaveBeenCalled();
+  });
+
   it('should fallback to getActiveShiftId() when shiftId is not passed in payload', async () => {
     (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
       if (funcName === 'process_pos_checkout') {

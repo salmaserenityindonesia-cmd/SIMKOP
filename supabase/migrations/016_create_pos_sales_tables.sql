@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS public.sales (
     paid_deposit NUMERIC NOT NULL DEFAULT 0,
     paid_credit NUMERIC NOT NULL DEFAULT 0,
     payment_scheme TEXT NOT NULL DEFAULT 'cash' CHECK (payment_scheme IN ('cash', 'split', 'store_credit')),
-    status TEXT NOT NULL DEFAULT 'completed',
+    sale_status TEXT NOT NULL DEFAULT 'completed',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
