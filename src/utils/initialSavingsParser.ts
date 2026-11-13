@@ -4,7 +4,7 @@ import { parseAmount } from './memberMigrationParser';
 
 export const INITIAL_SAVINGS_TEMPLATE_FILENAME = 'template_saldo_awal_simpanan.xlsx';
 
-export const INITIAL_SAVINGS_HEADERS = [
+export const REQUIRED_SAVINGS_HEADERS = [
   'nrp',
   'nama',
   'jumlah_simpanan_pokok',
@@ -13,6 +13,8 @@ export const INITIAL_SAVINGS_HEADERS = [
   'jumlah_simpanan_lebaran',
 ] as const;
 
+export const INITIAL_SAVINGS_HEADERS = REQUIRED_SAVINGS_HEADERS;
+
 export interface InitialSavingsRow {
   nrp: string;
   nama: string;
@@ -20,6 +22,8 @@ export interface InitialSavingsRow {
   jumlah_simpanan_wajib: number;
   jumlah_simpanan_belanja: number;
   jumlah_simpanan_lebaran: number;
+  isValid?: boolean;
+  errorMessage?: string;
 }
 
 export interface InitialSavingsTemplateMember {
@@ -27,6 +31,23 @@ export interface InitialSavingsTemplateMember {
   nama?: string | null;
   status?: string | null;
   membership_status?: string | null;
+}
+
+export const normalizeName = (val: unknown): string =>
+  String(val || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+async function fetchRegisteredMembersFallback(): Promise<InitialSavingsTemplateMember[] | null> {
+  try {
+    const query: any = supabase.from('anggota')?.select('nrp, nama');
+    if (!query || typeof query.then !== 'function') return null;
+    const { data, error } = await query;
+    if (!error && Array.isArray(data)) {
+      return data as InitialSavingsTemplateMember[];
+    }
+  } catch (err) {
+    console.warn('Gagal mengambil daftar anggota untuk validasi saldo awal simpanan:', err);
+  }
+  return null;
 }
 
 /**
@@ -132,11 +153,13 @@ function extractCellValue(cell: ExcelJS.Cell): unknown {
 }
 
 /**
- * Mem-parsing file Excel upload Saldo Awal Simpanan dan memvalidasi keberadaan kolom wajib.
+ * Mem-parsing file Excel upload Saldo Awal Simpanan dan memvalidasi keberadaan kolom wajib
+ * serta kecocokan NRP dan Nama terhadap master data anggota.
  * Mengembalikan nilai nominal murni (as-is, tanpa rumus pembagian/perkalian, default 0 jika kosong).
  */
 export async function parseInitialSavingsExcel(
-  fileOrBuffer: File | ArrayBuffer | Uint8Array
+  fileOrBuffer: File | ArrayBuffer | Uint8Array,
+  registeredMembers?: InitialSavingsTemplateMember[]
 ): Promise<InitialSavingsRow[]> {
   let buffer: any;
   if (fileOrBuffer instanceof ArrayBuffer) {
@@ -176,19 +199,40 @@ export async function parseInitialSavingsExcel(
     }
   });
 
-  const requiredColumns = [
-    'nrp',
-    'jumlah_simpanan_pokok',
-    'jumlah_simpanan_wajib',
-    'jumlah_simpanan_belanja',
-    'jumlah_simpanan_lebaran',
-  ] as const;
+  const headerList = Object.keys(headers);
 
-  const missingColumns = requiredColumns.filter((col) => !headers[col]);
+  if (
+    headerList.includes('jumlah_pinjaman') ||
+    headerList.includes('jenis_pinjaman') ||
+    headerList.includes('pangkat')
+  ) {
+    throw new Error(
+      'File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal (.xlsx)" pada menu ini.'
+    );
+  }
+
+  const missingColumns = REQUIRED_SAVINGS_HEADERS.filter((col) => !headers[col]);
   if (missingColumns.length > 0) {
     throw new Error(
-      `Format kolom Excel tidak valid. Kolom wajib yang belum ada: ${missingColumns.join(', ')}. Gunakan template Saldo Awal Simpanan yang disediakan.`
+      `Header kolom tidak sesuai template Saldo Awal Simpanan. Kolom yang kurang: ${missingColumns.join(', ')}`
     );
+  }
+
+  let membersToValidate: InitialSavingsTemplateMember[] | null = null;
+  if (Array.isArray(registeredMembers)) {
+    membersToValidate = registeredMembers;
+  } else if (registeredMembers === undefined) {
+    membersToValidate = await fetchRegisteredMembersFallback();
+  }
+
+  const memberMap = new Map<string, string>();
+  if (membersToValidate !== null) {
+    for (const m of membersToValidate) {
+      const nrpKey = m.nrp !== null && m.nrp !== undefined ? String(m.nrp).trim() : '';
+      if (nrpKey) {
+        memberMap.set(nrpKey, m.nama !== null && m.nama !== undefined ? String(m.nama).trim() : '');
+      }
+    }
   }
 
   const rows: InitialSavingsRow[] = [];
@@ -216,13 +260,39 @@ export async function parseInitialSavingsExcel(
       return;
     }
 
+    const pokok = parseAmount(getVal('jumlah_simpanan_pokok'));
+    const wajib = parseAmount(getVal('jumlah_simpanan_wajib'));
+    const belanja = parseAmount(getVal('jumlah_simpanan_belanja'));
+    const lebaran = parseAmount(getVal('jumlah_simpanan_lebaran'));
+    const totalNominal = pokok + wajib + belanja + lebaran;
+    const namaDisplay = namaStr || '-';
+
+    let isValid = true;
+    let errorMessage: string | undefined;
+
+    if (
+      membersToValidate !== null &&
+      (totalNominal > 0 || !memberMap.has(nrp) || normalizeName(namaDisplay) !== normalizeName(memberMap.get(nrp) || ''))
+    ) {
+      if (!memberMap.has(nrp)) {
+        isValid = false;
+        errorMessage = `NRP ${nrp} (${namaDisplay}) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!`;
+      } else if (normalizeName(namaDisplay) !== normalizeName(memberMap.get(nrp) || '')) {
+        const dbNama = memberMap.get(nrp) || '';
+        isValid = false;
+        errorMessage = `Nama tidak cocok! Di Excel tertulis '${namaDisplay}', sedangkan di sistem untuk NRP ${nrp} terdaftar atas nama '${dbNama}'.`;
+      }
+    }
+
     rows.push({
       nrp,
-      nama: namaStr || '-',
-      jumlah_simpanan_pokok: parseAmount(getVal('jumlah_simpanan_pokok')),
-      jumlah_simpanan_wajib: parseAmount(getVal('jumlah_simpanan_wajib')),
-      jumlah_simpanan_belanja: parseAmount(getVal('jumlah_simpanan_belanja')),
-      jumlah_simpanan_lebaran: parseAmount(getVal('jumlah_simpanan_lebaran')),
+      nama: namaDisplay,
+      jumlah_simpanan_pokok: pokok,
+      jumlah_simpanan_wajib: wajib,
+      jumlah_simpanan_belanja: belanja,
+      jumlah_simpanan_lebaran: lebaran,
+      isValid,
+      errorMessage,
     });
   });
 

@@ -13,6 +13,10 @@ export * from './memberService';
 export * from './purchaseInvoiceService';
 export * from './depositManagementService';
 export {
+  bulkSetAllProductStock,
+  updateProductSellPriceFromPos,
+} from './productService';
+export {
   syncInitialLoanBalances,
   type InitialLoansSyncResult,
 } from './loanService';

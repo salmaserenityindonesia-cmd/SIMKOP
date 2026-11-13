@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import ExcelJS from 'exceljs';
 import {
   generateMigrationLoanSchedules,
   sanitizeMigrationLoanRow,
@@ -7,6 +8,10 @@ import {
   sanitizeBankAccountNumber,
   sanitizeDateString,
   computeReverseWajibBreakdown,
+  REQUIRED_MEMBER_HEADERS,
+  validateMemberImportHeaders,
+  buildMemberImportTemplateWorkbook,
+  parseMemberImportExcel,
 } from './memberMigrationParser';
 
 describe('memberMigrationParser - generateMigrationLoanSchedules', () => {
@@ -369,5 +374,94 @@ describe('memberMigrationParser - computeReverseWajibBreakdown', () => {
     const res = computeReverseWajibBreakdown(null, 100000, tiers);
     expect(res.monthsCount).toBe(1);
     expect(res.isPre2020Member).toBe(false);
+  });
+});
+
+describe('memberMigrationParser - Strict Header Validation & parseMemberImportExcel', () => {
+  it('accepts valid 6-column member headers (case-insensitive & trimmed)', () => {
+    const result = validateMemberImportHeaders([
+      ' NRP ',
+      'Nama',
+      'PANGKAT',
+      'bank_account_number',
+      'membership_status',
+      'tgl_awal_anggota',
+    ]);
+    expect(result).toEqual([...REQUIRED_MEMBER_HEADERS]);
+  });
+
+  it('rejects Initial Savings template with specific cross-file error message', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Saldo Awal Simpanan');
+    ws.addRow([
+      'nrp',
+      'nama',
+      'jumlah_simpanan_pokok',
+      'jumlah_simpanan_wajib',
+      'jumlah_simpanan_belanja',
+      'jumlah_simpanan_lebaran',
+    ]);
+    ws.addRow(['12345678', 'Budi Santoso', 100000, 500000, 0, 0]);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    await expect(parseMemberImportExcel(buffer as ArrayBuffer)).rejects.toThrow(
+      /template "Saldo Awal Simpanan".*tombol hijau "Saldo Awal Simpanan"/
+    );
+  });
+
+  it('rejects Initial Loans template with specific cross-file error message', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Saldo Awal Pinjaman');
+    ws.addRow([
+      'nrp',
+      'nama',
+      'jenis_pinjaman',
+      'jumlah_pinjaman',
+      'tgl_awal_pinjaman',
+      'nilai_angsuran',
+      'tenor',
+      'total_terangsur',
+    ]);
+    ws.addRow(['12345678', 'Budi Santoso', 'REG', 5000000, '2026-01-01', 500000, 10, 1000000]);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    await expect(parseMemberImportExcel(buffer as ArrayBuffer)).rejects.toThrow(
+      /template "Saldo Awal Pinjaman".*tombol kuning "Saldo Awal Pinjaman"/
+    );
+  });
+
+  it('rejects incomplete headers with exact missing column names', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Sheet1');
+    ws.addRow(['nrp', 'nama', 'pangkat']);
+    ws.addRow(['12345678', 'Budi Santoso', 'Aipda']);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    await expect(parseMemberImportExcel(buffer as ArrayBuffer)).rejects.toThrow(
+      /Header kolom tidak sesuai template Data Anggota\. Kolom yang kurang: bank_account_number, membership_status, tgl_awal_anggota/
+    );
+  });
+
+  it('builds and parses the 6-column member import template with zeroed savings/loan balances', async () => {
+    const wb = await buildMemberImportTemplateWorkbook();
+    const buffer = await wb.xlsx.writeBuffer();
+    const rows = await parseMemberImportExcel(buffer as ArrayBuffer);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      nrp: '95168420',
+      nama: 'Budi Santoso',
+      pangkat: 'Aipda',
+      bank_account_number: '367800973556',
+      membership_status: 'ACTIVE',
+      tgl_awal_anggota: '2026-11-13',
+      jumlah_simpanan_pokok: 0,
+      jumlah_simpanan_wajib: 0,
+      jumlah_simpanan_belanja: 0,
+      jumlah_simpanan_lebaran: 0,
+      jumlah_pinjaman: 0,
+      tenor: 0,
+      sisa_pinjaman: 0,
+    });
   });
 });

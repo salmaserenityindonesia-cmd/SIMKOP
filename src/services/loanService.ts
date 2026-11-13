@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { getActiveSavingsRateTiers } from './savingsRateService';
 import { LoanType } from './koperasiService';
-import type { InitialLoanRow } from '../utils/initialLoansParser';
+import { normalizeName, type InitialLoanRow } from '../utils/initialLoansParser';
 import {
   ApproveLoanRpcResponse,
   RecordLoanRepaymentRpcResponse,
@@ -152,24 +152,24 @@ export async function syncInitialLoanBalances(
     throw new Error('Tidak ada data baris saldo awal pinjaman untuk disimpan.');
   }
 
-  // 1. Pemetaan NRP -> anggota.id
-  let memberRows: Array<{ id: string; nrp: string }> = [];
+  // 1. Pemetaan NRP -> anggota.id & nama
+  let memberRows: Array<{ id: string; nrp: string; nama?: string }> = [];
   const { data: queriedMembers, error: memberFetchErr } = await supabase
     .from('anggota')
-    .select('id, nrp');
+    .select('id, nrp, nama');
 
   if (memberFetchErr) {
     throw new Error(`Gagal memuat data anggota: ${memberFetchErr.message}`);
   }
-  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string }>;
+  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string; nama?: string }>;
 
   if (memberRows.length >= 1000) {
     try {
-      const allPaged: Array<{ id: string; nrp: string }> = [];
+      const allPaged: Array<{ id: string; nrp: string; nama?: string }> = [];
       let offset = 0;
       const pageSize = 1000;
       while (true) {
-        const queryAny: any = supabase.from('anggota').select('id, nrp');
+        const queryAny: any = supabase.from('anggota').select('id, nrp, nama');
         if (typeof queryAny?.range !== 'function') break;
         const { data: pageData, error: pageErr } = await queryAny.range(offset, offset + pageSize - 1);
         if (pageErr || !pageData || pageData.length === 0) break;
@@ -185,10 +185,35 @@ export async function syncInitialLoanBalances(
     }
   }
 
-  const memberMap = new Map<string, string>();
+  const memberMap = new Map<string, { id: string; nama?: string }>();
   for (const m of memberRows) {
     if (m.nrp) {
-      memberMap.set(String(m.nrp).trim(), m.id);
+      memberMap.set(String(m.nrp).trim(), { id: m.id, nama: m.nama });
+    }
+  }
+
+  // 1b. Validasi ketat NRP & Nama sebelum menulis saldo awal pinjaman ke database
+  for (const row of rows) {
+    if (Number(row.jumlah_pinjaman) <= 0) continue;
+
+    const nrpKey = String(row.nrp || '').trim();
+    const dbMember = memberMap.get(nrpKey);
+    if (!dbMember) {
+      throw new Error(
+        `NRP ${nrpKey} (${row.nama || '-'}) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!`
+      );
+    }
+    if (
+      dbMember.nama &&
+      String(dbMember.nama).trim() !== '' &&
+      normalizeName(row.nama) !== normalizeName(dbMember.nama)
+    ) {
+      throw new Error(
+        `Nama tidak cocok! Di Excel tertulis '${row.nama || '-'}', sedangkan di sistem untuk NRP ${nrpKey} terdaftar atas nama '${dbMember.nama}'.`
+      );
+    }
+    if (row.isValid === false) {
+      throw new Error(row.errorMessage || `Data saldo awal pinjaman untuk NRP ${nrpKey} tidak valid.`);
     }
   }
 
@@ -213,7 +238,7 @@ export async function syncInitialLoanBalances(
 
   for (const row of rows) {
     const nrpKey = String(row.nrp || '').trim();
-    const memberId = memberMap.get(nrpKey);
+    const memberId = memberMap.get(nrpKey)?.id;
     const resolvedLoanTypeId =
       row.loan_type_id ||
       (row.jenis_pinjaman

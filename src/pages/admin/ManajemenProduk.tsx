@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { Produk, getProduk, addProduk, updateProduk, deleteProduk, RiwayatStok, getRiwayatStok, ProductCategory, getProductCategories } from '../../services/koperasiService';
+import { bulkSetAllProductStock } from '../../services/productService';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import ProductImportModal from '../../components/products/ProductImportModal';
 import { exportProductTemplate, parseProductUpload, batchUpsertProducts, ProductParseResult } from '../../services/productExcelService';
@@ -37,6 +38,7 @@ export default function ManajemenProduk() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [parseResult, setParseResult] = useState<ProductParseResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isSettingBulkStock, setIsSettingBulkStock] = useState(false);
 
   // Sorting states
   type SortField = 'name' | 'buy_price' | 'sell_price' | 'stock' | '';
@@ -265,6 +267,34 @@ export default function ManajemenProduk() {
     exportToPDF(headers, data, 'Data_Produk', 'Laporan Data Produk Koperasi');
   };
 
+  const handleBulkSetStock100 = async () => {
+    const confirmMsg =
+      'Apakah Anda yakin ingin mengubah stok SELURUH produk di katalog menjadi 100 untuk keperluan uji coba?';
+    const confirmed =
+      typeof showConfirm === 'function'
+        ? await showConfirm({
+            title: 'Set Stok = 100 (Uji Coba)',
+            message: confirmMsg,
+            confirmText: 'Ya, Set Stok = 100',
+            variant: 'primary',
+          })
+        : window.confirm(confirmMsg);
+
+    if (!confirmed) return;
+
+    setIsSettingBulkStock(true);
+    try {
+      await bulkSetAllProductStock(100);
+      showToast('Stok seluruh produk berhasil diperbarui menjadi 100.', 'success');
+      await fetchProducts();
+    } catch (error: any) {
+      console.error('Error setting bulk product stock', error);
+      showToast(error?.message || 'Gagal memperbarui stok produk secara massal', 'error');
+    } finally {
+      setIsSettingBulkStock(false);
+    }
+  };
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -321,6 +351,15 @@ export default function ManajemenProduk() {
             >
               <span className="material-symbols-outlined text-[20px]">upload_file</span>
               Import
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkSetStock100}
+              disabled={isSettingBulkStock || loading}
+              className="flex items-center gap-2 bg-amber-50 border border-amber-300 text-amber-800 px-4 py-2 rounded-lg font-label-lg shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[20px]">inventory_2</span>
+              {isSettingBulkStock ? 'Memperbarui Stok...' : 'Set Stok = 100 (Uji Coba)'}
             </button>
             <div className="w-px h-6 bg-outline-variant/50 mx-1"></div>
             <button

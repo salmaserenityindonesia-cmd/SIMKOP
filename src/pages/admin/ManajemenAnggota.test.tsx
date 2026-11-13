@@ -150,12 +150,13 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).not.toContain('lucide-trash');
     });
 
-    it('contains Template, Import, Tambah Anggota, Excel, and PDF toolbar buttons', () => {
+    it('contains Import Data Anggota, Tambah Anggota, Excel, and PDF toolbar buttons without standalone Template button', () => {
       const html = renderToStaticMarkup(<ManajemenAnggota />);
 
-      // Verification: Toolbar buttons present
-      expect(html).toContain('Template');
-      expect(html).toContain('Import');
+      // Verification: Toolbar buttons present and standalone Template button removed
+      expect(html).not.toContain('Template</button>');
+      expect(html).toContain('Import Data Anggota');
+      expect(html).toContain('whitespace-nowrap');
       expect(html).toContain('Saldo Awal Simpanan');
       expect(html).toContain('Saldo Awal Pinjaman');
       expect(html).toContain('border-amber-300');
@@ -393,6 +394,23 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       );
 
       consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('Import Data Induk Anggota Modal UI Structure', () => {
+    it('renders Import Data Induk Anggota modal with Indigo palette, 6-column description, template button, and disabled submit button', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota initialMemberImportModalOpen={true} />);
+
+      expect(html).toContain('Import Data Induk Anggota');
+      expect(html).toContain('Unduh Template Data Anggota (.xlsx)');
+      expect(html).toContain('nrp');
+      expect(html).toContain('bank_account_number');
+      expect(html).toContain('membership_status');
+      expect(html).toContain('tgl_awal_anggota');
+      expect(html).toContain('Saldo Awal: Rp 0 (Default Anggota Baru)');
+      expect(html).toContain('Simpan &amp; Impor Data Anggota');
+      expect(html).toContain('bg-indigo-600');
+      expect(html).toContain('disabled=""');
     });
   });
 

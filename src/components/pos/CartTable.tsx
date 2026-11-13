@@ -1,3 +1,4 @@
+import { Pencil } from 'lucide-react';
 import { CartItem } from '../../pages/pos/index';
 
 interface CartTableProps {
@@ -5,9 +6,10 @@ interface CartTableProps {
   onUpdateQty: (idx: number, qty: number) => void;
   onRemoveItem: (idx: number) => void;
   onClear: () => void;
+  onEditPrice?: (item: CartItem) => void;
 }
 
-export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear }: CartTableProps) {
+export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear, onEditPrice }: CartTableProps) {
   return (
     <div className="bg-surface-container-lowest border border-outline-variant/40 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 mt-3">
       <div className="px-4 py-3 bg-surface-container-low/60 border-b border-outline-variant/30 flex flex-wrap items-center justify-between gap-2">
@@ -48,7 +50,17 @@ export default function CartTable({ cart, onUpdateQty, onRemoveItem, onClear }: 
                 <td className="py-3 px-3">
                   <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant text-[11px] font-mono">{item.unit}</span>
                 </td>
-                <td className="py-3 px-3 text-right font-mono font-medium text-on-surface">{item.price.toLocaleString('id-ID')}</td>
+                <td className="py-3 px-3 text-right font-mono font-medium text-on-surface">
+                  <button
+                    type="button"
+                    onClick={() => onEditPrice?.(item)}
+                    title="Klik untuk mengedit harga jual barang ini (otomatis update ke inventori)"
+                    className="inline-flex items-center justify-end gap-1.5 px-2 py-1 rounded-lg font-bold text-slate-800 hover:bg-amber-50 hover:text-amber-700 border border-transparent hover:border-amber-200 transition-colors cursor-pointer group"
+                  >
+                    <span>{Number(item.price).toLocaleString('id-ID')}</span>
+                    <Pencil className="w-3.5 h-3.5 text-slate-400 group-hover:text-amber-600 transition-colors" />
+                  </button>
+                </td>
                 <td className="py-3 px-3">
                   <div className="flex items-center justify-center gap-1">
                     <button className="w-7 h-7 rounded border border-outline-variant hover:bg-surface-container-high flex items-center justify-center text-primary font-bold text-body-lg active:scale-95 transition-all" onClick={() => onUpdateQty(idx, item.qty - 1)}>-</button>

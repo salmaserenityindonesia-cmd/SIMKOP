@@ -3,7 +3,16 @@ import { Produk } from '../../services/koperasiService';
 
 interface ProductSearchInputProps {
   products?: Produk[];
-  onSelectProduct: (product: { barcode: string; name: string; unit: string; price: number; stock: number; id: string }) => void;
+  onSelectProduct: (product: {
+    barcode: string;
+    name: string;
+    unit: string;
+    price: number;
+    stock: number;
+    id: string;
+    buy_price?: number;
+    sku?: string;
+  }) => void;
   onOpenCamera: () => void;
   searchRef: React.Ref<HTMLInputElement>;
   disabled?: boolean;
@@ -53,9 +62,11 @@ export default function ProductSearchInput({ products = [], onSelectProduct, onO
   const handleSelect = (product: Produk) => {
     onSelectProduct({ 
       barcode: product.sku, 
+      sku: product.sku,
       name: product.name, 
       unit: product.unit, 
       price: product.sell_price, 
+      buy_price: product.buy_price,
       stock: product.stock, 
       id: product.id 
     });

@@ -51,6 +51,17 @@ export function useCart() {
 
   const setQuantity = (id: string, qty: number) => updateQty(id, qty);
 
+  const updateItemPrice = (productId: string, newPrice: number) => {
+    const validPrice = Math.max(0, Math.round(Number(newPrice) || 0));
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === productId
+          ? { ...item, price: validPrice, subtotal: validPrice * item.qty }
+          : item
+      )
+    );
+  };
+
   const clearCart = () => setItems([]);
 
   const parkCurrentTransaction = (note: string) => {
@@ -85,6 +96,7 @@ export function useCart() {
     removeItem,
     updateQty,
     setQuantity,
+    updateItemPrice,
     clearCart,
     parkCurrentTransaction,
     resumeTransaction,

@@ -62,6 +62,8 @@ describe('initialSavingsParser', () => {
       jumlah_simpanan_wajib: 1500000,
       jumlah_simpanan_belanja: 250000,
       jumlah_simpanan_lebaran: 300000,
+      isValid: true,
+      errorMessage: undefined,
     });
     expect(parsed[1]).toEqual({
       nrp: '87654321',
@@ -70,6 +72,42 @@ describe('initialSavingsParser', () => {
       jumlah_simpanan_wajib: 750000,
       jumlah_simpanan_belanja: 0,
       jumlah_simpanan_lebaran: 120000,
+      isValid: true,
+      errorMessage: undefined,
+    });
+  });
+
+  it('validates NRP existence and normalized Name against registeredMembers', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Saldo Awal Simpanan');
+    ws.addRow([...INITIAL_SAVINGS_HEADERS]);
+    ws.addRow(['12345678', '  budi   SANTOSO ', 100000, 500000, 0, 0]);
+    ws.addRow(['99999999', 'Belum Terdaftar', 100000, 0, 0, 0]);
+    ws.addRow(['87654321', 'Nama Berbeda', 0, 200000, 0, 0]);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const parsed = await parseInitialSavingsExcel(buffer as ArrayBuffer, [
+      { nrp: '12345678', nama: 'Budi Santoso' },
+      { nrp: '87654321', nama: 'Siti Aminah' },
+    ]);
+
+    expect(parsed).toHaveLength(3);
+    expect(parsed[0]).toMatchObject({
+      nrp: '12345678',
+      isValid: true,
+      errorMessage: undefined,
+    });
+    expect(parsed[1]).toMatchObject({
+      nrp: '99999999',
+      isValid: false,
+      errorMessage:
+        'NRP 99999999 (Belum Terdaftar) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!',
+    });
+    expect(parsed[2]).toMatchObject({
+      nrp: '87654321',
+      isValid: false,
+      errorMessage:
+        "Nama tidak cocok! Di Excel tertulis 'Nama Berbeda', sedangkan di sistem untuk NRP 87654321 terdaftar atas nama 'Siti Aminah'.",
     });
   });
 
@@ -81,7 +119,29 @@ describe('initialSavingsParser', () => {
 
     const buffer = await workbook.xlsx.writeBuffer();
     await expect(parseInitialSavingsExcel(buffer as ArrayBuffer)).rejects.toThrow(
-      /Format kolom Excel tidak valid/
+      /Header kolom tidak sesuai template Saldo Awal Simpanan\. Kolom yang kurang: jumlah_simpanan_wajib, jumlah_simpanan_belanja, jumlah_simpanan_lebaran/
+    );
+  });
+
+  it('rejects Member Import or Initial Loans templates when uploaded to Initial Savings', async () => {
+    const memberWb = new ExcelJS.Workbook();
+    const memberWs = memberWb.addWorksheet('Template Import Anggota');
+    memberWs.addRow(['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status', 'tgl_awal_anggota']);
+    memberWs.addRow(['95168420', 'Budi Santoso', 'Aipda', '367800973556', 'ACTIVE', '2026-11-13']);
+    const memberBuf = await memberWb.xlsx.writeBuffer();
+
+    await expect(parseInitialSavingsExcel(memberBuf as ArrayBuffer)).rejects.toThrow(
+      /File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal \(\.xlsx\)" pada menu ini\./
+    );
+
+    const loanWb = new ExcelJS.Workbook();
+    const loanWs = loanWb.addWorksheet('Saldo Awal Pinjaman');
+    loanWs.addRow(['nrp', 'nama', 'jenis_pinjaman', 'jumlah_pinjaman', 'tgl_awal_pinjaman', 'nilai_angsuran', 'tenor', 'total_terangsur']);
+    loanWs.addRow(['95168420', 'Budi Santoso', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
+    const loanBuf = await loanWb.xlsx.writeBuffer();
+
+    await expect(parseInitialSavingsExcel(loanBuf as ArrayBuffer)).rejects.toThrow(
+      /File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal \(\.xlsx\)" pada menu ini\./
     );
   });
 });
@@ -119,7 +179,7 @@ describe('syncInitialSavingsBalances', () => {
       if (table === 'anggota') {
         return {
           select: vi.fn().mockResolvedValue({
-            data: [{ id: 'm-1', nrp: '12345678' }],
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
             error: null,
           }),
         };
@@ -197,21 +257,13 @@ describe('syncInitialSavingsBalances', () => {
           jumlah_simpanan_belanja: 0,
           jumlah_simpanan_lebaran: 200000,
         },
-        {
-          nrp: '00000000',
-          nama: 'Tidak Ada',
-          jumlah_simpanan_pokok: 100000,
-          jumlah_simpanan_wajib: 0,
-          jumlah_simpanan_belanja: 0,
-          jumlah_simpanan_lebaran: 0,
-        },
       ],
       '2026-01-01'
     );
 
     expect(result).toEqual({
       updatedCount: 1,
-      skippedNrps: ['00000000'],
+      skippedNrps: [],
       effectiveDate: '2026-01-01',
     });
 
@@ -238,6 +290,56 @@ describe('syncInitialSavingsBalances', () => {
       action: 'UPLOAD_INITIAL_SAVINGS',
       record_id: '2026-01-01',
     });
+  });
+
+  it('throws an error when a row with balance > 0 has an unregistered NRP or mismatched Name', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
+            error: null,
+          }),
+        };
+      }
+      return {};
+    });
+
+    await expect(
+      syncInitialSavingsBalances(
+        [
+          {
+            nrp: '00000000',
+            nama: 'Tidak Ada',
+            jumlah_simpanan_pokok: 100000,
+            jumlah_simpanan_wajib: 0,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+          },
+        ],
+        '2026-01-01'
+      )
+    ).rejects.toThrow(
+      /NRP 00000000 \(Tidak Ada\) belum terdaftar di sistem\. Silakan isi\/impor data anggotanya terlebih dahulu!/
+    );
+
+    await expect(
+      syncInitialSavingsBalances(
+        [
+          {
+            nrp: '12345678',
+            nama: 'Orang Lain',
+            jumlah_simpanan_pokok: 100000,
+            jumlah_simpanan_wajib: 0,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+          },
+        ],
+        '2026-01-01'
+      )
+    ).rejects.toThrow(
+      /Nama tidak cocok! Di Excel tertulis 'Orang Lain', sedangkan di sistem untuk NRP 12345678 terdaftar atas nama 'Budi Santoso'\./
+    );
   });
 });
 

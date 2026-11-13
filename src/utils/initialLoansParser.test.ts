@@ -104,6 +104,44 @@ describe('initialLoansParser', () => {
     expect(parsed[2].errorMessage).toContain('tidak terdaftar di Master Produk');
   });
 
+  it('validates NRP existence and normalized Name against registeredMembers', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const ws = workbook.addWorksheet('Saldo Awal Pinjaman');
+    ws.addRow([...INITIAL_LOANS_HEADERS]);
+    ws.addRow(['12345678', '  budi   SANTOSO ', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
+    ws.addRow(['99999999', 'Belum Terdaftar', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
+    ws.addRow(['87654321', 'Nama Berbeda', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const parsed = await parseInitialLoansExcel(
+      buffer as ArrayBuffer,
+      [{ id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler', max_duration_months: 12 }],
+      [
+        { nrp: '12345678', nama: 'Budi Santoso' },
+        { nrp: '87654321', nama: 'Siti Aminah' },
+      ]
+    );
+
+    expect(parsed).toHaveLength(3);
+    expect(parsed[0]).toMatchObject({
+      nrp: '12345678',
+      isValid: true,
+      errorMessage: undefined,
+    });
+    expect(parsed[1]).toMatchObject({
+      nrp: '99999999',
+      isValid: false,
+      errorMessage:
+        'NRP 99999999 (Belum Terdaftar) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!',
+    });
+    expect(parsed[2]).toMatchObject({
+      nrp: '87654321',
+      isValid: false,
+      errorMessage:
+        "Nama tidak cocok! Di Excel tertulis 'Nama Berbeda', sedangkan di sistem untuk NRP 87654321 terdaftar atas nama 'Siti Aminah'.",
+    });
+  });
+
   it('throws an error when required columns are missing', async () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Sheet1');
@@ -112,7 +150,29 @@ describe('initialLoansParser', () => {
 
     const buffer = await workbook.xlsx.writeBuffer();
     await expect(parseInitialLoansExcel(buffer as ArrayBuffer, [])).rejects.toThrow(
-      /Format kolom Excel tidak valid/
+      /Header kolom tidak sesuai template Saldo Awal Pinjaman\. Kolom yang kurang: jenis_pinjaman, tgl_awal_pinjaman, nilai_angsuran, tenor, total_terangsur/
+    );
+  });
+
+  it('rejects Member Import or Initial Savings templates when uploaded to Initial Loans', async () => {
+    const memberWb = new ExcelJS.Workbook();
+    const memberWs = memberWb.addWorksheet('Template Import Anggota');
+    memberWs.addRow(['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status', 'tgl_awal_anggota']);
+    memberWs.addRow(['95168420', 'Budi Santoso', 'Aipda', '367800973556', 'ACTIVE', '2026-11-13']);
+    const memberBuf = await memberWb.xlsx.writeBuffer();
+
+    await expect(parseInitialLoansExcel(memberBuf as ArrayBuffer, [])).rejects.toThrow(
+      /File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal Pinjaman \(\.xlsx\)" pada menu ini\./
+    );
+
+    const savingsWb = new ExcelJS.Workbook();
+    const savingsWs = savingsWb.addWorksheet('Saldo Awal Simpanan');
+    savingsWs.addRow(['nrp', 'nama', 'jumlah_simpanan_pokok', 'jumlah_simpanan_wajib', 'jumlah_simpanan_belanja', 'jumlah_simpanan_lebaran']);
+    savingsWs.addRow(['95168420', 'Budi Santoso', 100000, 500000, 0, 0]);
+    const savingsBuf = await savingsWb.xlsx.writeBuffer();
+
+    await expect(parseInitialLoansExcel(savingsBuf as ArrayBuffer, [])).rejects.toThrow(
+      /File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal Pinjaman \(\.xlsx\)" pada menu ini\./
     );
   });
 });
@@ -160,7 +220,7 @@ describe('syncInitialLoanBalances', () => {
       if (table === 'anggota') {
         return {
           select: vi.fn().mockResolvedValue({
-            data: [{ id: 'm-1', nrp: '12345678' }],
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
             error: null,
           }),
         };
@@ -262,28 +322,14 @@ describe('syncInitialLoanBalances', () => {
           sisa_pinjaman: 2500000,
           isValid: true,
         },
-        {
-          nrp: '00000000',
-          nama: 'Tidak Ada',
-          jenis_pinjaman: 'REG',
-          loan_type_id: 'lt-1',
-          loan_type_name: 'Pinjaman Reguler',
-          jumlah_pinjaman: 1000000,
-          tgl_awal_pinjaman: '2026-01-10',
-          nilai_angsuran: 500000,
-          tenor: 2,
-          total_terangsur: 0,
-          sisa_pinjaman: 1000000,
-          isValid: true,
-        },
       ],
       '2026-03-01'
     );
 
     expect(result).toEqual({
       insertedCount: 1,
-      skippedCount: 1,
-      skippedNrps: ['00000000'],
+      skippedCount: 0,
+      skippedNrps: [],
       effectiveDate: '2026-03-01',
     });
 
@@ -326,6 +372,68 @@ describe('syncInitialLoanBalances', () => {
       action: 'UPLOAD_INITIAL_LOANS',
       record_id: '2026-03-01',
     });
+  });
+
+  it('throws an error when a row with jumlah_pinjaman > 0 has an unregistered NRP or mismatched Name', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
+            error: null,
+          }),
+        };
+      }
+      return {};
+    });
+
+    await expect(
+      syncInitialLoanBalances(
+        [
+          {
+            nrp: '00000000',
+            nama: 'Tidak Ada',
+            jenis_pinjaman: 'REG',
+            loan_type_id: 'lt-1',
+            loan_type_name: 'Pinjaman Reguler',
+            jumlah_pinjaman: 1000000,
+            tgl_awal_pinjaman: '2026-01-10',
+            nilai_angsuran: 500000,
+            tenor: 2,
+            total_terangsur: 0,
+            sisa_pinjaman: 1000000,
+            isValid: true,
+          },
+        ],
+        '2026-03-01'
+      )
+    ).rejects.toThrow(
+      /NRP 00000000 \(Tidak Ada\) belum terdaftar di sistem\. Silakan isi\/impor data anggotanya terlebih dahulu!/
+    );
+
+    await expect(
+      syncInitialLoanBalances(
+        [
+          {
+            nrp: '12345678',
+            nama: 'Orang Lain',
+            jenis_pinjaman: 'REG',
+            loan_type_id: 'lt-1',
+            loan_type_name: 'Pinjaman Reguler',
+            jumlah_pinjaman: 1000000,
+            tgl_awal_pinjaman: '2026-01-10',
+            nilai_angsuran: 500000,
+            tenor: 2,
+            total_terangsur: 0,
+            sisa_pinjaman: 1000000,
+            isValid: true,
+          },
+        ],
+        '2026-03-01'
+      )
+    ).rejects.toThrow(
+      /Nama tidak cocok! Di Excel tertulis 'Orang Lain', sedangkan di sistem untuk NRP 12345678 terdaftar atas nama 'Budi Santoso'\./
+    );
   });
 });
 

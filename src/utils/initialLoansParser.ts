@@ -4,7 +4,7 @@ import { parseAmount, sanitizeDateString } from './memberMigrationParser';
 
 export const INITIAL_LOANS_TEMPLATE_FILENAME = 'template_saldo_awal_pinjaman.xlsx';
 
-export const INITIAL_LOANS_HEADERS = [
+export const REQUIRED_LOAN_HEADERS = [
   'nrp',
   'nama',
   'jenis_pinjaman',
@@ -14,6 +14,8 @@ export const INITIAL_LOANS_HEADERS = [
   'tenor',
   'total_terangsur',
 ] as const;
+
+export const INITIAL_LOANS_HEADERS = REQUIRED_LOAN_HEADERS;
 
 export interface InitialLoanRow {
   nrp: string;
@@ -44,6 +46,23 @@ export interface InitialLoansTemplateLoanType {
   name: string;
   max_duration_months: number;
   is_active?: boolean;
+}
+
+export const normalizeName = (val: unknown): string =>
+  String(val || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+async function fetchRegisteredMembersFallback(): Promise<InitialLoansTemplateMember[] | null> {
+  try {
+    const query: any = supabase.from('anggota')?.select('nrp, nama');
+    if (!query || typeof query.then !== 'function') return null;
+    const { data, error } = await query;
+    if (!error && Array.isArray(data)) {
+      return data as InitialLoansTemplateMember[];
+    }
+  } catch (err) {
+    console.warn('Gagal mengambil daftar anggota untuk validasi saldo awal pinjaman:', err);
+  }
+  return null;
 }
 
 /**
@@ -247,11 +266,13 @@ function matchLoanType(
 
 /**
  * Mem-parsing file Excel upload Saldo Awal Pinjaman, menyaring baris dengan jumlah_pinjaman > 0,
+ * memvalidasi kecocokan NRP & Nama terhadap master anggota,
  * mencocokkan jenis_pinjaman terhadap Master Produk (loan_types), dan menghitung sisa_pinjaman.
  */
 export async function parseInitialLoansExcel(
   fileOrBuffer: File | ArrayBuffer | Uint8Array,
-  activeLoanTypes?: InitialLoansTemplateLoanType[]
+  activeLoanTypes?: InitialLoansTemplateLoanType[],
+  registeredMembers?: InitialLoansTemplateMember[]
 ): Promise<InitialLoanRow[]> {
   let buffer: any;
   if (fileOrBuffer instanceof ArrayBuffer) {
@@ -301,21 +322,40 @@ export async function parseInitialLoansExcel(
     }
   });
 
-  const requiredColumns = [
-    'nrp',
-    'jenis_pinjaman',
-    'jumlah_pinjaman',
-    'tgl_awal_pinjaman',
-    'nilai_angsuran',
-    'tenor',
-    'total_terangsur',
-  ] as const;
+  const headerList = Object.keys(headers);
 
-  const missingColumns = requiredColumns.filter((col) => !headers[col]);
+  if (
+    headerList.includes('jumlah_simpanan_wajib') ||
+    headerList.includes('jumlah_simpanan_pokok') ||
+    headerList.includes('pangkat')
+  ) {
+    throw new Error(
+      'File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal Pinjaman (.xlsx)" pada menu ini.'
+    );
+  }
+
+  const missingColumns = REQUIRED_LOAN_HEADERS.filter((col) => !headers[col]);
   if (missingColumns.length > 0) {
     throw new Error(
-      `Format kolom Excel tidak valid. Kolom wajib yang belum ada: ${missingColumns.join(', ')}. Gunakan template Saldo Awal Pinjaman yang disediakan.`
+      `Header kolom tidak sesuai template Saldo Awal Pinjaman. Kolom yang kurang: ${missingColumns.join(', ')}`
     );
+  }
+
+  let membersToValidate: InitialLoansTemplateMember[] | null = null;
+  if (Array.isArray(registeredMembers)) {
+    membersToValidate = registeredMembers;
+  } else if (registeredMembers === undefined) {
+    membersToValidate = await fetchRegisteredMembersFallback();
+  }
+
+  const memberMap = new Map<string, string>();
+  if (membersToValidate !== null) {
+    for (const m of membersToValidate) {
+      const nrpKey = m.nrp !== null && m.nrp !== undefined ? String(m.nrp).trim() : '';
+      if (nrpKey) {
+        memberMap.set(nrpKey, m.nama !== null && m.nama !== undefined ? String(m.nama).trim() : '');
+      }
+    }
   }
 
   const rows: InitialLoanRow[] = [];
@@ -343,6 +383,21 @@ export async function parseInitialLoansExcel(
       return;
     }
 
+    const namaDisplay = namaStr || '-';
+    let isMemberValid = true;
+    let memberErrorMessage: string | undefined;
+
+    if (membersToValidate !== null) {
+      if (!memberMap.has(nrp)) {
+        isMemberValid = false;
+        memberErrorMessage = `NRP ${nrp} (${namaDisplay}) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!`;
+      } else if (normalizeName(namaDisplay) !== normalizeName(memberMap.get(nrp) || '')) {
+        const dbNama = memberMap.get(nrp) || '';
+        isMemberValid = false;
+        memberErrorMessage = `Nama tidak cocok! Di Excel tertulis '${namaDisplay}', sedangkan di sistem untuk NRP ${nrp} terdaftar atas nama '${dbNama}'.`;
+      }
+    }
+
     const rawJenis = getVal('jenis_pinjaman');
     const jenisPinjaman = rawJenis !== null && rawJenis !== undefined ? String(rawJenis).trim() : '';
     const matchedLoanType = matchLoanType(jenisPinjaman, loanTypes);
@@ -353,17 +408,19 @@ export async function parseInitialLoansExcel(
     const totalTerangsur = parseAmount(getVal('total_terangsur'));
     const sisaPinjaman = Math.max(0, jumlahPinjaman - totalTerangsur);
 
-    const isValid = Boolean(matchedLoanType && nrp && jumlahPinjaman > 0);
-    let errorMessage: string | undefined;
+    let loanTypeErrorMessage: string | undefined;
     if (!matchedLoanType) {
-      errorMessage = jenisPinjaman
+      loanTypeErrorMessage = jenisPinjaman
         ? `Jenis pinjaman "${jenisPinjaman}" tidak terdaftar di Master Produk`
         : 'Jenis pinjaman wajib diisi';
     }
 
+    const isValid = Boolean(isMemberValid && matchedLoanType && nrp && jumlahPinjaman > 0);
+    const errorMessage = memberErrorMessage || loanTypeErrorMessage;
+
     rows.push({
       nrp,
-      nama: namaStr || '-',
+      nama: namaDisplay,
       jenis_pinjaman: jenisPinjaman,
       loan_type_id: matchedLoanType ? matchedLoanType.id : null,
       loan_type_name: matchedLoanType ? matchedLoanType.name : jenisPinjaman || 'Tidak Terdaftar',

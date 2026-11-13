@@ -11,6 +11,7 @@ import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
 import ParkedTransactionsModal from '../../components/pos/ParkedTransactionsModal';
 import BukaKasirModal from '../../components/pos/BukaKasirModal';
 import TutupKasirModal from '../../components/pos/TutupKasirModal';
+import EditItemPriceModal from '../../components/pos/EditItemPriceModal';
 import { processCheckout } from '../../services/posCheckoutService';
 import { holdTransaction, getParkedSales } from '../../services/posParkedService';
 import { cleanupExpiredParkedSales, getPosSettings } from '../../services/posSettingsService';
@@ -28,6 +29,9 @@ export interface CartItem {
   price: number;
   stock: number;
   qty: number;
+  buy_price?: number;
+  sku?: string;
+  product_id?: string;
 }
 
 export default function POSPage() {
@@ -39,6 +43,7 @@ export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [activeItemForQty, setActiveItemForQty] = useState<Omit<CartItem, 'qty'> | null>(null);
   const [qtyModalMode, setQtyModalMode] = useState<'add' | 'edit'>('add');
+  const [editingPriceItem, setEditingPriceItem] = useState<CartItem | null>(null);
   const [lastPayment, setLastPayment] = useState<any>(null);
   const [lastSaleNumber, setLastSaleNumber] = useState<string | null>(null);
   const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile | null>(null);
@@ -202,7 +207,7 @@ export default function POSPage() {
   useEffect(() => {
     const handleGlobalKeydown = (e: KeyboardEvent) => {
       // Don't trigger if a modal is open
-      if (modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked || modals.bukaKasir || modals.tutupKasir) return;
+      if (editingPriceItem || modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked || modals.bukaKasir || modals.tutupKasir) return;
       
       if (e.key === 'F1') {
         e.preventDefault();
@@ -256,7 +261,7 @@ export default function POSPage() {
     };
     window.addEventListener('keydown', handleGlobalKeydown);
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
-  }, [modals, cart, activeShift, handleHoldTransaction, showToast, selectedMember]);
+  }, [modals, editingPriceItem, cart, activeShift, handleHoldTransaction, showToast, selectedMember]);
 
   const handleSelectProduct = (product: Omit<CartItem, 'qty'>) => {
     if (!activeShift) {
@@ -422,6 +427,20 @@ export default function POSPage() {
                 setCart(next);
               }}
               onClear={() => setCart([])}
+              onEditPrice={(item) => {
+                const matchedProduct = products.find(
+                  (p) =>
+                    p.id === item.product_id ||
+                    p.id === item.id ||
+                    (item.barcode && p.sku === item.barcode)
+                );
+                setEditingPriceItem({
+                  ...item,
+                  product_id: item.product_id || matchedProduct?.id || item.id,
+                  sku: item.sku || item.barcode || matchedProduct?.sku,
+                  buy_price: item.buy_price ?? matchedProduct?.buy_price,
+                });
+              }}
             />
           </section>
           
@@ -478,7 +497,16 @@ export default function POSPage() {
           setModals(m => ({...m, camera: false}));
           const product = products.find(p => p.sku === text);
           if (product) {
-            handleSelectProduct({ barcode: product.sku, name: product.name, unit: product.unit, price: product.sell_price, stock: product.stock, id: product.id });
+            handleSelectProduct({
+              barcode: product.sku,
+              sku: product.sku,
+              name: product.name,
+              unit: product.unit,
+              price: product.sell_price,
+              buy_price: product.buy_price,
+              stock: product.stock,
+              id: product.id,
+            });
           } else {
             showToast('Produk tidak ditemukan dalam katalog!', 'warning');
           }
@@ -553,6 +581,37 @@ export default function POSPage() {
           setActiveShift(null);
           setCart([]);
           setModals(m => ({ ...m, tutupKasir: false, bukaKasir: true }));
+        }}
+      />
+
+      {/* Modal Edit Harga Jual Langsung dari Kasir */}
+      <EditItemPriceModal
+        isOpen={!!editingPriceItem}
+        item={editingPriceItem}
+        currentUserId={currentCashier?.id}
+        onClose={() => {
+          setEditingPriceItem(null);
+          setTimeout(() => searchInputRef.current?.focus(), 100);
+        }}
+        onSuccess={(productId, newPrice) => {
+          const targetBarcode = editingPriceItem?.barcode;
+          setCart((prev) =>
+            prev.map((cartItem) =>
+              cartItem.id === productId ||
+              cartItem.product_id === productId ||
+              (targetBarcode && cartItem.barcode === targetBarcode)
+                ? { ...cartItem, price: newPrice }
+                : cartItem
+            )
+          );
+          setProducts((prev) =>
+            prev.map((prod) =>
+              prod.id === productId || (targetBarcode && prod.sku === targetBarcode)
+                ? { ...prod, sell_price: newPrice }
+                : prod
+            )
+          );
+          loadProductCatalog();
         }}
       />
     </div>

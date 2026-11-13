@@ -3,6 +3,8 @@
  * Modul kalkulasi amortisasi pinjaman migrasi, sanitasi data Excel, dan penyesuaian baki piutang.
  */
 
+import ExcelJS from 'exceljs';
+
 export interface MigrationLoanSchedule {
   period_number: number;
   due_date: string;
@@ -165,7 +167,7 @@ export const sanitizeBankAccountNumber = (val: unknown): string | null => {
   return str;
 };
 
-export const MEMBER_IMPORT_TEMPLATE_HEADERS = [
+export const REQUIRED_MEMBER_HEADERS = [
   'nrp',
   'nama',
   'pangkat',
@@ -173,6 +175,8 @@ export const MEMBER_IMPORT_TEMPLATE_HEADERS = [
   'membership_status',
   'tgl_awal_anggota',
 ] as const;
+
+export const MEMBER_IMPORT_TEMPLATE_HEADERS = REQUIRED_MEMBER_HEADERS;
 
 export const MEMBER_IMPORT_TEMPLATE_FILENAME = 'template_import_anggota.xlsx';
 
@@ -186,6 +190,209 @@ export const MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS = [
     tgl_awal_anggota: '2026-11-13',
   },
 ];
+
+/**
+ * Validasi ketat header kolom file Excel Import Data Induk Anggota.
+ * Mencegah file template Saldo Awal Simpanan atau Saldo Awal Pinjaman tertukar.
+ */
+export function validateMemberImportHeaders(rawHeaders: unknown[]): string[] {
+  const headers = rawHeaders
+    .map((h) => String(h || '').trim().toLowerCase())
+    .filter(Boolean);
+
+  if (headers.includes('jumlah_simpanan_wajib') || headers.includes('jumlah_simpanan_pokok')) {
+    throw new Error(
+      'File tidak sesuai! File ini adalah template "Saldo Awal Simpanan". Silakan unggah melalui tombol hijau "Saldo Awal Simpanan" agar tanggal cut-off tercatat.'
+    );
+  }
+
+  if (headers.includes('jumlah_pinjaman') || headers.includes('jenis_pinjaman')) {
+    throw new Error(
+      'File tidak sesuai! File ini adalah template "Saldo Awal Pinjaman". Silakan unggah melalui tombol kuning "Saldo Awal Pinjaman".'
+    );
+  }
+
+  const missing = REQUIRED_MEMBER_HEADERS.filter((col) => !headers.includes(col));
+  if (missing.length > 0) {
+    throw new Error(
+      `Header kolom tidak sesuai template Data Anggota. Kolom yang kurang: ${missing.join(', ')}`
+    );
+  }
+
+  return headers;
+}
+
+/**
+ * Membangun workbook Excel template 6 kolom Data Induk Anggota.
+ */
+export async function buildMemberImportTemplateWorkbook(): Promise<ExcelJS.Workbook> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Template Import Anggota');
+
+  worksheet.columns = [
+    { header: 'nrp', key: 'nrp', width: 15 },
+    { header: 'nama', key: 'nama', width: 30 },
+    { header: 'pangkat', key: 'pangkat', width: 20 },
+    { header: 'bank_account_number', key: 'bank_account_number', width: 25 },
+    { header: 'membership_status', key: 'membership_status', width: 20 },
+    { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 20 },
+  ];
+
+  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+    worksheet.getColumn(k).numFmt = '@';
+  });
+  worksheet.getColumn('tgl_awal_anggota').numFmt = 'yyyy-mm-dd';
+
+  for (const sampleRow of MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS) {
+    worksheet.addRow(sampleRow);
+  }
+
+  return workbook;
+}
+
+/**
+ * Mengunduh file Excel template_import_anggota.xlsx ke browser pengguna.
+ */
+export async function downloadMemberImportTemplate(): Promise<void> {
+  const workbook = await buildMemberImportTemplateWorkbook();
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = window.URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = MEMBER_IMPORT_TEMPLATE_FILENAME;
+  link.click();
+
+  window.URL.revokeObjectURL(url);
+}
+
+function extractExcelCellValue(cell: ExcelJS.Cell): unknown {
+  let val: unknown = cell.value;
+  if (val && typeof val === 'object' && 'result' in val) {
+    val = (val as { result: unknown }).result;
+  }
+  return val === null || val === undefined ? null : val;
+}
+
+/**
+ * Mem-parsing file Excel Import Data Induk Anggota (6 kolom profil) dengan validasi header ketat.
+ * Seluruh nilai simpanan & pinjaman di-nolkan sehingga hanya memproses profil induk anggota.
+ */
+export async function parseMemberImportExcel(
+  fileOrBuffer: File | ArrayBuffer | Uint8Array
+): Promise<SanitizedMigrationMemberRow[]> {
+  let buffer: any;
+  if (fileOrBuffer instanceof ArrayBuffer) {
+    buffer = fileOrBuffer;
+  } else if (ArrayBuffer.isView(fileOrBuffer)) {
+    buffer = fileOrBuffer.buffer.slice(
+      fileOrBuffer.byteOffset,
+      fileOrBuffer.byteOffset + fileOrBuffer.byteLength
+    );
+  } else if (typeof (fileOrBuffer as File)?.arrayBuffer === 'function') {
+    buffer = await (fileOrBuffer as File).arrayBuffer();
+  } else if (typeof FileReader !== 'undefined') {
+    buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as ArrayBuffer);
+      reader.onerror = () => reject(new Error('Gagal membaca file Excel'));
+      reader.readAsArrayBuffer(fileOrBuffer as File);
+    });
+  } else {
+    throw new Error('Format input file Excel tidak didukung.');
+  }
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+
+  const worksheet = workbook.worksheets[0];
+  if (!worksheet) {
+    throw new Error('File Excel kosong atau tidak valid');
+  }
+
+  const rawHeaders: unknown[] = [];
+  const headerMap: Record<string, number> = {};
+  worksheet.getRow(1).eachCell((cell, colNumber) => {
+    const raw = extractExcelCellValue(cell);
+    rawHeaders.push(raw);
+    const headerName = raw !== null && raw !== undefined ? String(raw).trim().toLowerCase() : '';
+    if (headerName) {
+      headerMap[headerName] = colNumber;
+    }
+  });
+
+  validateMemberImportHeaders(rawHeaders);
+
+  const allowedStatus = ['ACTIVE', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
+  const rows: SanitizedMigrationMemberRow[] = [];
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+
+    const getVal = (colName: string): unknown => {
+      const idx = headerMap[colName];
+      if (!idx) return null;
+      return extractExcelCellValue(row.getCell(idx));
+    };
+
+    const rawNrp = getVal('nrp');
+    const rawNama = getVal('nama');
+    const rawPangkat = getVal('pangkat');
+    const rawBank = getVal('bank_account_number');
+    const rawStatus = getVal('membership_status');
+    const rawTgl = getVal('tgl_awal_anggota');
+
+    const nrp = rawNrp !== null && rawNrp !== undefined ? String(rawNrp).trim() : '';
+    const nama = rawNama !== null && rawNama !== undefined ? String(rawNama).trim() : '';
+
+    if (!nrp && !nama && !rawPangkat && !rawBank && !rawStatus && !rawTgl) {
+      return;
+    }
+
+    if (!nrp || !nama) {
+      throw new Error(`Baris ${rowNumber}: NRP dan Nama wajib diisi.`);
+    }
+
+    let membership_status = 'ACTIVE';
+    if (rawStatus !== null && rawStatus !== undefined && String(rawStatus).trim() !== '') {
+      const upperStatus = String(rawStatus).trim().toUpperCase();
+      if (!allowedStatus.includes(upperStatus)) {
+        throw new Error(
+          `Baris ${rowNumber}: membership_status "${String(rawStatus).trim()}" tidak valid. Gunakan salah satu dari: ${allowedStatus.join(', ')}.`
+        );
+      }
+      membership_status = upperStatus;
+    }
+
+    rows.push(
+      sanitizeMigrationMemberRow({
+        nrp,
+        nama,
+        pangkat: rawPangkat,
+        bank_account_number: rawBank,
+        membership_status,
+        tgl_awal_anggota: rawTgl,
+        jumlah_simpanan_pokok: 0,
+        jumlah_simpanan_wajib: 0,
+        jumlah_simpanan_belanja: 0,
+        jumlah_simpanan_lebaran: 0,
+        jumlah_pinjaman: 0,
+        tgl_awal_pinjaman: null,
+        tenor: 0,
+        sisa_pinjaman: 0,
+      })
+    );
+  });
+
+  if (rows.length === 0) {
+    throw new Error('Tidak ada data anggota valid yang ditemukan di dalam file Excel.');
+  }
+
+  return rows;
+}
 
 export interface SanitizedMigrationMemberRow extends SanitizedMigrationLoan {
   nrp: string;

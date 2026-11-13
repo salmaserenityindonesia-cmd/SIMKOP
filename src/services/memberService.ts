@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import type { Simpanan } from './depositManagementService';
 import { getActiveSavingsRateTiers } from './savingsRateService';
-import type { InitialSavingsRow } from '../utils/initialSavingsParser';
+import { normalizeName, type InitialSavingsRow } from '../utils/initialSavingsParser';
 
 export type { InitialSavingsRow };
 
@@ -1068,33 +1068,65 @@ export async function syncInitialSavingsBalances(
 
   const effectiveIso = parsedEffectiveDate.toISOString();
 
-  // 1. Pemetaan NRP -> anggota.id
-  let memberRows: Array<{ id: string; nrp: string }> = [];
+  // 1. Pemetaan NRP -> anggota.id & nama
+  let memberRows: Array<{ id: string; nrp: string; nama?: string }> = [];
   const { data: queriedMembers, error: memberFetchErr } = await supabase
     .from('anggota')
-    .select('id, nrp');
+    .select('id, nrp, nama');
 
   if (memberFetchErr) {
     throw new Error(`Gagal memuat data anggota: ${memberFetchErr.message}`);
   }
-  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string }>;
+  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string; nama?: string }>;
 
   // Jika jumlah anggota >= 1000, muat seluruh halaman via fetchAllAnggotaPaged agar tidak terpotong
   if (memberRows.length >= 1000) {
     try {
       const paged = await fetchAllAnggotaPaged();
       if (paged.length > memberRows.length) {
-        memberRows = paged.map((a) => ({ id: a.id, nrp: a.nrp }));
+        memberRows = paged.map((a) => ({ id: a.id, nrp: a.nrp, nama: a.nama }));
       }
     } catch (e) {
       console.warn('Gagal memuat anggota paged tambahan:', e);
     }
   }
 
-  const memberMap = new Map<string, string>();
+  const memberMap = new Map<string, { id: string; nama?: string }>();
   for (const m of memberRows) {
     if (m.nrp) {
-      memberMap.set(String(m.nrp).trim(), m.id);
+      memberMap.set(String(m.nrp).trim(), { id: m.id, nama: m.nama });
+    }
+  }
+
+  // 1b. Validasi ketat NRP & Nama sebelum menulis transaksi saldo awal ke database
+  for (const row of rows) {
+    if (row.isValid === false) {
+      throw new Error(row.errorMessage || `Data saldo awal untuk NRP ${row.nrp} tidak valid.`);
+    }
+
+    const rowTotal =
+      (Number(row.jumlah_simpanan_pokok) || 0) +
+      (Number(row.jumlah_simpanan_wajib) || 0) +
+      (Number(row.jumlah_simpanan_belanja) || 0) +
+      (Number(row.jumlah_simpanan_lebaran) || 0);
+
+    if (rowTotal > 0) {
+      const nrpKey = String(row.nrp || '').trim();
+      const dbMember = memberMap.get(nrpKey);
+      if (!dbMember) {
+        throw new Error(
+          `NRP ${nrpKey} (${row.nama || '-'}) belum terdaftar di sistem. Silakan isi/impor data anggotanya terlebih dahulu!`
+        );
+      }
+      if (
+        dbMember.nama &&
+        String(dbMember.nama).trim() !== '' &&
+        normalizeName(row.nama) !== normalizeName(dbMember.nama)
+      ) {
+        throw new Error(
+          `Nama tidak cocok! Di Excel tertulis '${row.nama || '-'}', sedangkan di sistem untuk NRP ${nrpKey} terdaftar atas nama '${dbMember.nama}'.`
+        );
+      }
     }
   }
 
@@ -1142,7 +1174,7 @@ export async function syncInitialSavingsBalances(
   // 3. Proses per anggota dengan Clean Overwrite pada deposit_transactions
   for (const row of rows) {
     const nrpKey = String(row.nrp || '').trim();
-    const memberId = memberMap.get(nrpKey);
+    const memberId = memberMap.get(nrpKey)?.id;
 
     if (!memberId) {
       if (nrpKey) skippedNrps.push(nrpKey);
