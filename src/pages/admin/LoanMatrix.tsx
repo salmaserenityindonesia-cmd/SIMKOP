@@ -487,10 +487,10 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           <table className="w-full text-sm text-left relative">
             <thead className="text-xs text-slate-700 uppercase bg-slate-50 sticky top-0 z-20 shadow-sm">
               <tr>
-                <th className="px-4 py-3 sticky left-0 bg-slate-50 z-30 min-w-[250px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Anggota</th>
-                <th className="px-4 py-3 text-left font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[175px] whitespace-nowrap">
-                  <div>Saldo Awal Pinjaman</div>
-                  <div className="text-[10px] font-medium text-amber-700">
+                <th className="px-3 py-3 sticky left-0 bg-slate-50 z-30 min-w-[185px] max-w-[205px] w-[195px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Anggota</th>
+                <th className="px-2.5 py-2.5 text-left font-bold text-slate-700 bg-slate-50 border-r border-slate-200 min-w-[145px] max-w-[160px] w-[150px]">
+                  <div className="text-[11px] leading-tight">Saldo Awal Pinjaman</div>
+                  <div className="text-[9px] font-medium text-amber-700 leading-tight mt-0.5">
                     Sah per {formattedCutoffDate}
                   </div>
                 </th>
@@ -520,13 +520,15 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
                   return (
                     <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                        <div className="font-semibold text-slate-800">{row.anggota?.nama || row.nama}</div>
-                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 mt-0.5">
+                      <td className="px-3 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 min-w-[185px] max-w-[205px] w-[195px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                        <div className="font-semibold text-slate-800 truncate" title={row.anggota?.nama || row.nama}>
+                          {row.anggota?.nama || row.nama}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-500 mt-0.5">
                           <span>NRP: {row.anggota?.nrp || row.nrp}</span>
                           <span>•</span>
-                          <span className="font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-[11px]">
-                            {row.loan_types?.name || row.loanTypeName || 'Pinjaman'} ({tenorDisplay} Bln)
+                          <span className="font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/70 px-1.5 py-0.2 rounded">
+                            ({tenorDisplay} Bln)
                           </span>
                           {!isLoanCompleted ? (
                             <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium">Aktif</span>
@@ -535,27 +537,27 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                           )}
                         </div>
                         {(row.loan_number || row.loanNumber) && (
-                          <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                          <div className="text-[10px] font-mono text-slate-400 mt-0.5 truncate" title={row.loan_number || row.loanNumber}>
                             {row.loan_number || row.loanNumber}
                           </div>
                         )}
                       </td>
                       
-                      <td className="px-3 py-2.5 border-r border-slate-200 bg-slate-50/40 text-[11px] whitespace-nowrap select-none font-mono" data-testid={`prior-summary-${row.memberId}`}>
+                      <td className="px-2.5 py-2.5 border-r border-slate-200 bg-slate-50/40 min-w-[145px] max-w-[160px] w-[150px] text-[11px] tabular-nums whitespace-nowrap select-none font-mono" data-testid={`prior-summary-${row.memberId}`}>
                         <div className="space-y-0.5">
-                          <div className="text-slate-500 flex items-center justify-between gap-1.5 whitespace-nowrap">
+                          <div className="text-slate-500 flex items-center justify-between gap-1 whitespace-nowrap">
                             <span className="font-sans text-[10px] text-slate-400">P:</span>
                             <span className="font-semibold text-slate-700 whitespace-nowrap tabular-nums">
-                              Rp {Number(row.principalAmount || 0).toLocaleString('id-ID')}
+                              Rp {Number(row.principalAmount ?? (row as any).principal_amount ?? 0).toLocaleString('id-ID')}
                             </span>
                           </div>
-                          <div className="text-emerald-700 flex items-center justify-between gap-1.5 whitespace-nowrap">
+                          <div className="text-emerald-700 flex items-center justify-between gap-1 whitespace-nowrap">
                             <span className="font-sans text-[10px] text-emerald-600">Terbayar:</span>
                             <span className="font-bold text-emerald-700 whitespace-nowrap tabular-nums">
                               Rp {Number(row.openingPaid ?? row.priorYearPaid ?? 0).toLocaleString('id-ID')}
                             </span>
                           </div>
-                          <div className="text-amber-700 flex items-center justify-between gap-1.5 border-t border-slate-200 pt-0.5 whitespace-nowrap">
+                          <div className="text-amber-700 flex items-center justify-between gap-1 border-t border-slate-200 pt-0.5 whitespace-nowrap">
                             <span className="font-sans text-[10px] text-amber-600">Sisa:</span>
                             <span className="font-semibold text-amber-800 whitespace-nowrap tabular-nums">
                               Rp {Number(row.openingRemaining ?? row.priorYearRemaining ?? 0).toLocaleString('id-ID')}

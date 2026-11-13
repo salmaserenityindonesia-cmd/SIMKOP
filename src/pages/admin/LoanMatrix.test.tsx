@@ -701,7 +701,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
 
       // Both rows should show Yanto Santoso and NRP
-      const yantoMatches = html.match(/Yanto Santoso/g);
+      const yantoMatches = html.match(/>Yanto Santoso</g);
       expect(yantoMatches).toHaveLength(2);
 
       const nrpMatches = html.match(/96316880/g);
@@ -711,15 +711,20 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('dari 2 pinjaman (1 anggota)');
     });
 
-    it('renders distinct loan type badges, tenors, and loan numbers on each row', () => {
+    it('renders shortened tenor badges without loan type name, narrowed column width, and loan numbers on each row', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
 
-      // First loan: Pinjaman Reguler (12 Bln) & PJ-2026-001
-      expect(html).toContain('Pinjaman Reguler (12 Bln)');
+      // Narrowed ANGGOTA column width classes on header and cells
+      expect(html).toContain('min-w-[185px] max-w-[205px] w-[195px]');
+
+      // First loan: shortened (12 Bln) badge & PJ-2026-001 (without verbose loan type name)
+      expect(html).toContain('(12 Bln)');
+      expect(html).not.toContain('Pinjaman Reguler');
       expect(html).toContain('PJ-2026-001');
 
-      // Second loan: Pinjaman Khusus (24 Bln) & PJ-2026-002
-      expect(html).toContain('Pinjaman Khusus (24 Bln)');
+      // Second loan: shortened (24 Bln) badge & PJ-2026-002 (without verbose loan type name)
+      expect(html).toContain('(24 Bln)');
+      expect(html).not.toContain('Pinjaman Khusus');
       expect(html).toContain('PJ-2026-002');
     });
 
@@ -752,7 +757,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('data-name="Yanto Santoso"');
     });
 
-    it('gracefully renders fallback badge when loanTypeName and loan_types are missing', () => {
+    it('gracefully renders tenor badge when loanTypeName and loan_types are missing', () => {
       const fallbackSummary: LoanMatrixSummary = {
         ...multiLoanMemberSummary,
         members: [
@@ -766,7 +771,8 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       };
 
       const html = renderToStaticMarkup(<LoanMatrix initialData={fallbackSummary} />);
-      expect(html).toContain('Pinjaman (10 Bln)');
+      expect(html).toContain('(10 Bln)');
+      expect(html).not.toContain('Pinjaman (10 Bln)');
     });
   });
 
@@ -814,6 +820,8 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
 
       expect(html).toContain('Saldo Awal Pinjaman');
       expect(html).toContain('Sah per Jan-26');
+      expect(html).toContain('min-w-[145px] max-w-[160px] w-[150px]');
+      expect(html).toContain('px-2.5 py-2.5');
     });
 
     it('dynamically slices the 2-digit year for the column header fallback (e.g. 2025 -> "Sah per Jan-25")', () => {
