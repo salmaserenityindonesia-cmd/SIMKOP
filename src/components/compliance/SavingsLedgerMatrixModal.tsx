@@ -33,9 +33,12 @@ import {
   cancelMonthDepositWithReason,
   getMonthAuditHistory,
   isSystemDefaultDescription,
+  isMonthBeforeCutOff,
+  getInitialSavingsCutOffDate,
   CheckMonthPayload,
   MonthAuditHistoryItem
 } from '../../services/savingsMatrixService';
+import { parseCutoffDateInfo } from '../../services/complianceService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { SavingsDifferenceAuditModal } from './SavingsDifferenceAuditModal';
 
@@ -63,6 +66,8 @@ export interface SavingsLedgerMatrixModalProps {
   initialSelectedCellForHistory?: { year: number; month: number; label: string } | null;
   initialAuditHistory?: MonthAuditHistoryItem[];
   initialDiffModalOpen?: boolean;
+  initialCutoffDate?: string | null;
+  initialOpeningBalances?: Partial<Record<DepositTabType, number>>;
 }
 
 export const MONTH_NAMES = [
@@ -190,7 +195,9 @@ export function generateMonthGrid(
 export {
   calculateTotalChecked,
   calculateFifoAllocation,
-  matchAutomaticFifo
+  matchAutomaticFifo,
+  isMonthBeforeCutOff,
+  getInitialSavingsCutOffDate
 };
 
 export default function SavingsLedgerMatrixModal({
@@ -213,7 +220,9 @@ export default function SavingsLedgerMatrixModal({
   initialHistoryModalOpen,
   initialSelectedCellForHistory,
   initialAuditHistory,
-  initialDiffModalOpen
+  initialDiffModalOpen,
+  initialCutoffDate,
+  initialOpeningBalances
 }: SavingsLedgerMatrixModalProps) {
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(initialDiffModalOpen ?? false);
@@ -320,6 +329,14 @@ export default function SavingsLedgerMatrixModal({
     WAJIB: initialDbBalances?.WAJIB ?? 0,
     BELANJA: initialDbBalances?.BELANJA ?? 0,
     LEBARAN: initialDbBalances?.LEBARAN ?? 0
+  });
+
+  // Cut-off date Saldo Awal Simpanan dan Saldo Awal Utuh per jenis simpanan
+  const [cutoffDate, setCutoffDate] = useState<string | null>(initialCutoffDate ?? null);
+  const [openingBalances, setOpeningBalances] = useState<Record<DepositTabType, number>>({
+    WAJIB: initialOpeningBalances?.WAJIB ?? 0,
+    BELANJA: initialOpeningBalances?.BELANJA ?? 0,
+    LEBARAN: initialOpeningBalances?.LEBARAN ?? 0
   });
 
   // State bulan tercentang per jenis simpanan: Set of 'YYYY-MM'
@@ -469,6 +486,11 @@ export default function SavingsLedgerMatrixModal({
           BELANJA: initialDbBalances?.BELANJA ?? 0,
           LEBARAN: initialDbBalances?.LEBARAN ?? 0
         };
+        const newOpeningBalances: Record<DepositTabType, number> = {
+          WAJIB: initialOpeningBalances?.WAJIB ?? 0,
+          BELANJA: initialOpeningBalances?.BELANJA ?? 0,
+          LEBARAN: initialOpeningBalances?.LEBARAN ?? 0
+        };
         const newCheckedMonths: Record<DepositTabType, Set<string>> = {
           WAJIB: new Set(initialCheckedMonths?.WAJIB || []),
           BELANJA: new Set(initialCheckedMonths?.BELANJA || []),
@@ -479,6 +501,18 @@ export default function SavingsLedgerMatrixModal({
           BELANJA: new Map(),
           LEBARAN: new Map()
         };
+
+        const allMemberTxs: any[] = [];
+        if (memberDepositsData && memberDepositsData.length > 0) {
+          for (const md of memberDepositsData as any[]) {
+            if (Array.isArray(md.deposit_transactions)) {
+              allMemberTxs.push(...md.deposit_transactions);
+            }
+          }
+        }
+
+        const effectiveCutoffDate =
+          initialCutoffDate || (await getInitialSavingsCutOffDate(allMemberTxs));
 
         if (memberDepositsData && memberDepositsData.length > 0) {
           for (const md of memberDepositsData as any[]) {
@@ -500,8 +534,7 @@ export default function SavingsLedgerMatrixModal({
 
             const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
 
-            // Cari mutasi migrasi/saldo awal atau penampung saldo belum teralokasi
-            const migrationTx = txs.find((t: any) => {
+            const isOpeningTx = (t: any) => {
               const d = (t.description || '').toLowerCase();
               return (
                 d.includes('migra') ||
@@ -510,34 +543,77 @@ export default function SavingsLedgerMatrixModal({
                 d.includes('one-time') ||
                 d.includes('belum teralokasi')
               );
-            });
+            };
+
+            // Cari mutasi migrasi/saldo awal atau penampung saldo belum teralokasi
+            const migrationTx = txs.find(isOpeningTx);
 
             let net = 0;
+            let openingAmt = 0;
+            let postCutoffNet = 0;
             for (const t of txs) {
               const amt = Number(t.amount || 0);
               if (t.transaction_type === 'withdrawal') net -= amt;
               else net += amt;
+
+              if (effectiveCutoffDate) {
+                const hasExplicitMonth =
+                  t.for_month !== null && t.for_month !== undefined && !isNaN(Number(t.for_month));
+                const isPreCutoffUnallocated =
+                  t.transaction_type === 'deposit' && !hasExplicitMonth;
+                if (isOpeningTx(t) || isPreCutoffUnallocated) {
+                  openingAmt += t.transaction_type === 'withdrawal' ? -amt : amt;
+                } else if (
+                  t.for_year &&
+                  t.for_month &&
+                  !isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveCutoffDate)
+                ) {
+                  postCutoffNet += t.transaction_type === 'withdrawal' ? -amt : amt;
+                }
+              }
             }
 
-            const migrationAmt = migrationTx ? Number(migrationTx.amount || 0) : 0;
-            const computedBalance = Math.max(
-              migrationAmt,
-              net,
-              baselineBalancesRef.current[tab] || 0,
-              initialDbBalances?.[tab] || 0
-            );
+            if (effectiveCutoffDate) {
+              const resolvedOpening = Math.max(openingAmt, initialOpeningBalances?.[tab] || 0);
+              newOpeningBalances[tab] = resolvedOpening;
+              const computedBalance = Math.max(
+                resolvedOpening + Math.max(0, postCutoffNet),
+                net,
+                baselineBalancesRef.current[tab] || 0,
+                initialDbBalances?.[tab] || 0
+              );
+              if (computedBalance > 0) {
+                newDbBalances[tab] = computedBalance;
+                baselineBalancesRef.current[tab] = computedBalance;
+              }
+            } else {
+              const migrationAmt = migrationTx ? Number(migrationTx.amount || 0) : 0;
+              const computedBalance = Math.max(
+                migrationAmt,
+                net,
+                baselineBalancesRef.current[tab] || 0,
+                initialDbBalances?.[tab] || 0
+              );
 
-            if (computedBalance > 0) {
-              newDbBalances[tab] = computedBalance;
-              baselineBalancesRef.current[tab] = computedBalance;
+              if (computedBalance > 0) {
+                newDbBalances[tab] = computedBalance;
+                baselineBalancesRef.current[tab] = computedBalance;
+              }
             }
 
             // Ambil bulan-bulan yang tercentang dari deposit_transactions beserta nominal riilnya
+            // (Dalam mode Cut-Off, abaikan bulan sebelum cut-off dan abaikan transaksi saldo awal)
             for (const t of txs) {
               if (t.transaction_type === 'deposit' && t.for_year && t.for_month) {
                 const desc = (t.description || '').toLowerCase();
-                // Abaikan transaksi saldo awal/penampung belum teralokasi jika tidak mencerminkan setoran bulanan
+                if (
+                  effectiveCutoffDate &&
+                  isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveCutoffDate)
+                ) {
+                  continue;
+                }
                 const isLumpSumMigration =
+                  desc.includes('saldo awal') ||
                   (desc.includes('migrasi saldo awal (as-is)') && t.amount > 200000) ||
                   desc.includes('belum teralokasi');
                 if (!isLumpSumMigration) {
@@ -552,6 +628,8 @@ export default function SavingsLedgerMatrixModal({
 
         if (isMounted) {
           setMemberDepositMap(map);
+          setCutoffDate(effectiveCutoffDate);
+          setOpeningBalances(newOpeningBalances);
           setDbBalances(newDbBalances);
           setCheckedMonths(newCheckedMonths);
           setMonthAmounts(newMonthAmounts);
@@ -577,8 +655,12 @@ export default function SavingsLedgerMatrixModal({
     return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers, currentMonthAmounts);
   }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts]);
 
+  const currentOpeningBalance = openingBalances[activeTab] || 0;
+  const hasCutoffMode = Boolean(cutoffDate) || currentOpeningBalance > 0;
+  const parsedCutoffInfo = useMemo(() => parseCutoffDateInfo(cutoffDate), [cutoffDate]);
+  const totalAccumulation = currentOpeningBalance + totalChecked;
   const targetDbBalance = dbBalances[activeTab] || 0;
-  const balanceDifference = totalChecked - targetDbBalance;
+  const balanceDifference = (hasCutoffMode ? totalAccumulation : totalChecked) - targetDbBalance;
   const isBalanced = balanceDifference === 0;
 
   // Handler buka form bukti setoran
@@ -707,6 +789,9 @@ export default function SavingsLedgerMatrixModal({
 
   // Handler toggle satu cell checkbox (buka dialog sesuai status centang saat ini)
   const handleToggleMonth = (year: number, month: number, key: string, label?: string) => {
+    if (isMonthBeforeCutOff(year, month, cutoffDate)) {
+      return;
+    }
     const isCurrentlyChecked = currentCheckedSet.has(key);
     const monthLabel = label || `${MONTH_NAMES[month - 1]}-${String(year).slice(-2)}`;
     if (isCurrentlyChecked) {
@@ -723,46 +808,72 @@ export default function SavingsLedgerMatrixModal({
 
     setSyncing(true);
     try {
-      // 1. Hapus transaksi rutin bulanan lama pada rentang tahun grid (kecuali saldo awal migrasi)
-      const deleteQuery = supabase
-        .from('deposit_transactions')
-        .delete()
-        .eq('member_deposit_id', memberDepositId)
-        .gte('for_year', startYear)
-        .lte('for_year', endYear)
-        .eq('transaction_type', 'deposit');
+      // Filter hanya bulan pasca cut-off jika mode Cut-Off Saldo Awal aktif
+      const safeKeys = cutoffDate
+        ? newCheckedKeys.filter((k) => {
+            const [yStr, mStr] = k.split('-');
+            return !isMonthBeforeCutOff(parseInt(yStr, 10), parseInt(mStr, 10), cutoffDate);
+          })
+        : newCheckedKeys;
 
-      if (typeof (deleteQuery as any).neq === 'function') {
-        await (deleteQuery as any).neq('description', 'Migrasi Saldo Awal (As-Is)');
+      // 1. Hapus transaksi rutin bulanan lama pada rentang tahun grid (lindungi Saldo Awal & pra cut-off)
+      if (hasCutoffMode) {
+        const deleteQuery: any = supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', memberDepositId)
+          .gte('for_year', startYear)
+          .lte('for_year', endYear)
+          .eq('transaction_type', 'deposit');
+
+        if (typeof deleteQuery.not === 'function') {
+          await deleteQuery.not('for_month', 'is', null);
+        } else if (typeof deleteQuery.neq === 'function') {
+          await deleteQuery.neq('description', 'Migrasi Saldo Awal (As-Is)');
+        } else {
+          await deleteQuery;
+        }
       } else {
-        await deleteQuery;
-      }
+        const deleteQuery = supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', memberDepositId)
+          .gte('for_year', startYear)
+          .lte('for_year', endYear)
+          .eq('transaction_type', 'deposit');
 
-      // Hapus transaksi gelondongan awal migrasi / penampung belum teralokasi (for_month IS NULL)
-      // dari tabel deposit_transactions saat rincian bulanan dibentuk agar tidak terhitung ganda
-      if (newCheckedKeys.length > 0) {
-        try {
-          const delQuery: any = supabase.from('deposit_transactions').delete();
-          if (typeof delQuery.eq === 'function') {
-            const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
-            if (eqQuery && typeof eqQuery.is === 'function') {
-              const isQuery = eqQuery.is('for_month', null);
-              if (isQuery && typeof isQuery.ilike === 'function') {
-                await isQuery.ilike('description', '%');
-              } else if (isQuery && typeof isQuery.then === 'function') {
-                await isQuery;
+        if (typeof (deleteQuery as any).neq === 'function') {
+          await (deleteQuery as any).neq('description', 'Migrasi Saldo Awal (As-Is)');
+        } else {
+          await deleteQuery;
+        }
+
+        // Hapus transaksi gelondongan awal migrasi / penampung belum teralokasi (for_month IS NULL)
+        // hanya dalam mode legacy (tanpa Cut-Off Saldo Awal utuh)
+        if (safeKeys.length > 0) {
+          try {
+            const delQuery: any = supabase.from('deposit_transactions').delete();
+            if (typeof delQuery.eq === 'function') {
+              const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
+              if (eqQuery && typeof eqQuery.is === 'function') {
+                const isQuery = eqQuery.is('for_month', null);
+                if (isQuery && typeof isQuery.ilike === 'function') {
+                  await isQuery.ilike('description', '%');
+                } else if (isQuery && typeof isQuery.then === 'function') {
+                  await isQuery;
+                }
+              } else if (eqQuery && typeof eqQuery.then === 'function') {
+                await eqQuery;
               }
-            } else if (eqQuery && typeof eqQuery.then === 'function') {
-              await eqQuery;
             }
+          } catch (delBulkErr) {
+            console.warn('Gagal menghapus transaksi migrasi/penampung di modal:', delBulkErr);
           }
-        } catch (delBulkErr) {
-          console.warn('Gagal menghapus transaksi migrasi/penampung di modal:', delBulkErr);
         }
       }
 
-      // 2. Insert transaksi untuk seluruh bulan yang baru dicentang
-      const txsToInsert = newCheckedKeys.map(key => {
+      // 2. Insert transaksi untuk seluruh bulan pasca cut-off yang baru dicentang
+      const txsToInsert = safeKeys.map(key => {
         const [yStr, mStr] = key.split('-');
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
@@ -793,7 +904,7 @@ export default function SavingsLedgerMatrixModal({
     }
   };
 
-  // Quick Action 1: Centang Semua s/d Bulan Ini
+  // Quick Action 1: Centang Semua s/d Bulan Ini (mulai setelah cut-off jika mode cut-off aktif)
   const handleCheckAllUpToNow = async () => {
     const now = new Date();
     const nowYear = now.getFullYear();
@@ -803,6 +914,9 @@ export default function SavingsLedgerMatrixModal({
     const updatedAmounts = new Map(currentMonthAmounts);
     for (const m of allGridMonths) {
       if (isMonthBeforeJoin(m.year, m.month, resolvedJoinDate)) {
+        continue;
+      }
+      if (isMonthBeforeCutOff(m.year, m.month, cutoffDate)) {
         continue;
       }
       if (m.year < nowYear || (m.year === nowYear && m.month <= nowMonth)) {
@@ -824,9 +938,13 @@ export default function SavingsLedgerMatrixModal({
     await syncBatchToDatabase(matchedKeys, updatedAmounts);
   };
 
-  // Quick Action 2: Cocokkan Otomatis dengan Saldo Impor (FIFO Matching)
+  // Quick Action 2: Cocokkan Otomatis dengan Saldo (FIFO Matching pasca cut-off)
   const handleAutoMatchWithImportBalance = async () => {
     const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
+    const fifoTarget = hasCutoffMode
+      ? Math.max(0, targetDbBalance - currentOpeningBalance)
+      : currentBaseline;
+
     setSyncing(true);
     try {
       const res = await reconcileSingleMemberDeposit(memberId, activeTab, {
@@ -834,7 +952,9 @@ export default function SavingsLedgerMatrixModal({
         joinDate: resolvedJoinDate,
         startYear,
         endYear,
-        targetBalance: currentBaseline
+        targetBalance: fifoTarget,
+        initialSavingsCutOffDate: cutoffDate,
+        isPostCutOffTarget: hasCutoffMode
       });
 
       const updatedAmounts = new Map<string, number>();
@@ -865,12 +985,14 @@ export default function SavingsLedgerMatrixModal({
       console.error('Failed to auto reconcile with import balance:', err);
       // Fallback ke modal internal logic jika terjadi kegagalan
       const fifoRes = calculateFifoAllocation(
-        currentBaseline,
+        fifoTarget,
         allGridMonths,
         activeTab,
         rateTiers,
         resolvedJoinDate,
-        memberDepositMap[activeTab]
+        memberDepositMap[activeTab],
+        undefined,
+        cutoffDate
       );
 
       const fallbackAmounts = new Map<string, number>();
@@ -893,11 +1015,11 @@ export default function SavingsLedgerMatrixModal({
     }
   };
 
-  // Quick Action 3: Batal Centang Semua (Preserve Baseline Balance)
+  // Quick Action 3: Batal Centang Semua (Lindungi Saldo Awal & Baseline Balance)
   const handleUncheckAll = async () => {
     const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
 
-    // 1. Kosongkan state centang lokal: Total Tercentang = 0
+    // 1. Kosongkan state centang lokal (hanya centang pasca saldo awal): Total Tercentang = 0
     setCheckedMonths(prev => ({
       ...prev,
       [activeTab]: new Set()
@@ -907,10 +1029,10 @@ export default function SavingsLedgerMatrixModal({
       [activeTab]: new Map()
     }));
 
-    // 2. Pertahankan Saldo Database / baselineBalance agar TIDAK BOLEH menjadi 0!
+    // 2. Pertahankan Saldo Database / Saldo Awal agar TIDAK BOLEH menjadi 0!
     setDbBalances(prev => ({
       ...prev,
-      [activeTab]: currentBaseline
+      [activeTab]: Math.max(currentBaseline, currentOpeningBalance)
     }));
 
     const memberDepositId = memberDepositMap[activeTab];
@@ -918,7 +1040,7 @@ export default function SavingsLedgerMatrixModal({
 
     setSyncing(true);
     try {
-      // 3. Pada database: Hapus HANYA mutasi yang terikat pada bulan tertentu (for_month IS NOT NULL)
+      // 3. Pada database: Hapus HANYA mutasi bulanan pasca saldo awal (for_month IS NOT NULL)
       const delRoutineQuery: any = supabase
         .from('deposit_transactions')
         .delete()
@@ -934,35 +1056,35 @@ export default function SavingsLedgerMatrixModal({
         await delRoutineQuery;
       }
 
-      // Bersihkan penampung belum teralokasi / migrasi lama jika ada agar tidak terduplikasi
-      const delUnallocatedQuery: any = supabase
-        .from('deposit_transactions')
-        .delete()
-        .eq('member_deposit_id', memberDepositId);
+      // 4. HANYA dalam mode legacy (tanpa Cut-Off Saldo Awal), reset penampung for_month IS NULL
+      // Jika mode Cut-Off aktif, Saldo Awal Simpanan (for_month IS NULL) tetap aman dan utuh!
+      if (!hasCutoffMode) {
+        const delUnallocatedQuery: any = supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', memberDepositId);
 
-      if (typeof delUnallocatedQuery.is === 'function') {
-        const isQuery = delUnallocatedQuery.is('for_month', null);
-        if (isQuery && typeof isQuery.ilike === 'function') {
-          await isQuery.ilike('description', '%');
-        } else if (isQuery && typeof isQuery.then === 'function') {
-          await isQuery;
-        }
-      }
-
-      // 4. Buat satu baris transaksi penampung saldo awal (dengan for_month = NULL
-      // dan deskripsi 'Saldo Simpanan Belum Teralokasi') senilai saldo utuh anggota
-      // agar query database tetap mengembalikan saldo riil
-      if (currentBaseline > 0) {
-        await supabase.from('deposit_transactions').insert([
-          {
-            member_deposit_id: memberDepositId,
-            amount: currentBaseline,
-            for_month: null,
-            for_year: null,
-            transaction_type: 'deposit',
-            description: 'Saldo Simpanan Belum Teralokasi'
+        if (typeof delUnallocatedQuery.is === 'function') {
+          const isQuery = delUnallocatedQuery.is('for_month', null);
+          if (isQuery && typeof isQuery.ilike === 'function') {
+            await isQuery.ilike('description', '%');
+          } else if (isQuery && typeof isQuery.then === 'function') {
+            await isQuery;
           }
-        ]);
+        }
+
+        if (currentBaseline > 0) {
+          await supabase.from('deposit_transactions').insert([
+            {
+              member_deposit_id: memberDepositId,
+              amount: currentBaseline,
+              for_month: null,
+              for_year: null,
+              transaction_type: 'deposit',
+              description: 'Saldo Simpanan Belum Teralokasi'
+            }
+          ]);
+        }
       }
 
       onSuccess?.();
@@ -1041,16 +1163,43 @@ export default function SavingsLedgerMatrixModal({
           </div>
 
           {/* Saldo Comparison Header Bar */}
-          <div className="flex items-center gap-3 bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200">
-            <div>
-              <span className="text-[11px] text-slate-500">Total Tercentang: </span>
-              <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(totalChecked)}</span>
-            </div>
-            <span className="text-slate-300">vs</span>
-            <div>
-              <span className="text-[11px] text-slate-500">Saldo Database: </span>
-              <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(targetDbBalance)}</span>
-            </div>
+          <div className="flex flex-wrap items-center gap-3 bg-slate-50 px-3.5 py-1.5 rounded-xl border border-slate-200">
+            {hasCutoffMode ? (
+              <>
+                <div className="flex items-center gap-1.5 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-[11px] text-indigo-700">
+                    Saldo Awal{parsedCutoffInfo ? ` (Cut-Off ${parsedCutoffInfo.formattedDate})` : ''}:
+                  </span>
+                  <span className="font-bold text-indigo-900 font-mono text-xs">{formatCurrency(currentOpeningBalance)}</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500">Total Tercentang (Pasca Saldo Awal): </span>
+                  <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(totalChecked)}</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500">Total Akumulasi Simpanan: </span>
+                  <span className="font-bold text-emerald-700 font-mono text-xs">{formatCurrency(totalAccumulation)}</span>
+                </div>
+                <span className="text-slate-300">vs</span>
+                <div>
+                  <span className="text-[11px] text-slate-500">Saldo Database: </span>
+                  <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(targetDbBalance)}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="text-[11px] text-slate-500">Total Tercentang: </span>
+                  <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(totalChecked)}</span>
+                </div>
+                <span className="text-slate-300">vs</span>
+                <div>
+                  <span className="text-[11px] text-slate-500">Saldo Database: </span>
+                  <span className="font-bold text-slate-800 font-mono text-xs">{formatCurrency(targetDbBalance)}</span>
+                </div>
+              </>
+            )}
             <div className="ml-1">
               {isBalanced ? (
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
@@ -1067,7 +1216,7 @@ export default function SavingsLedgerMatrixModal({
                   <AlertCircle className="w-3.5 h-3.5 text-amber-600 group-hover:scale-110 transition-transform" />
                   <span>
                     Selisih {formatCurrency(Math.abs(balanceDifference))}{' '}
-                    {totalChecked === 0 && targetDbBalance > 0
+                    {(hasCutoffMode ? totalAccumulation : totalChecked) === 0 && targetDbBalance > 0
                       ? '(Belum Dialokasikan)'
                       : `(${balanceDifference > 0 ? 'Lebih' : 'Kurang'})`}
                   </span>
@@ -1231,6 +1380,7 @@ export default function SavingsLedgerMatrixModal({
 
                       {allGridMonths.map(m => {
                         const beforeJoin = isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
+                        const beforeCutoff = isMonthBeforeCutOff(m.year, m.month, cutoffDate);
                         const isChecked = currentCheckedSet.has(m.key);
                         const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
                         const txAmount = currentMonthAmounts.get(m.key);
@@ -1253,6 +1403,24 @@ export default function SavingsLedgerMatrixModal({
                               title="Sebelum tanggal bergabung anggota"
                             >
                               -
+                            </td>
+                          );
+                        }
+
+                        if (beforeCutoff) {
+                          return (
+                            <td
+                              key={m.key}
+                              data-testid={`covered-opening-${m.key}`}
+                              className={`py-3 px-1 border-r border-b border-slate-100 bg-slate-100/70 text-slate-400 text-[10px] align-middle select-none ${
+                                isCurrentMonth ? 'ring-1 ring-inset ring-emerald-400/30' : ''
+                              }`}
+                              title={`Tercakup Saldo Awal${parsedCutoffInfo ? ` (Cut-Off ${parsedCutoffInfo.formattedDate})` : ''}`}
+                            >
+                              <div className="flex flex-col items-center justify-center gap-0.5 leading-tight">
+                                <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="font-medium text-slate-500">Tercakup Saldo Awal</span>
+                              </div>
                             </td>
                           );
                         }

@@ -76,6 +76,8 @@ export interface ReconcileSingleMemberOptions {
   memberDeposits?: any[];
   targetBalance?: number;
   lastLebaranCutOffDate?: string | null;
+  initialSavingsCutOffDate?: string | Date | null;
+  isPostCutOffTarget?: boolean;
 }
 
 export interface ReconcileSingleMemberResult {
@@ -162,6 +164,89 @@ export function isMonthSettledByCutOff(
   const cutOffIndex = cutOffYear * 12 + cutOffMonth;
 
   return targetIndex <= cutOffIndex;
+}
+
+/**
+ * Helper untuk memeriksa apakah suatu bulan berada SEBELUM bulan pengesahan Saldo Awal Simpanan (cut-off).
+ * Bulan sebelum cut-off dianggap sudah tercakup penuh di Saldo Awal dan tidak dicicil ulang.
+ */
+export function isMonthBeforeCutOff(
+  year: number,
+  month: number,
+  cutOffDate?: string | Date | null
+): boolean {
+  if (!cutOffDate) return false;
+  let cutOffYear = 0;
+  let cutOffMonth = 0;
+
+  if (typeof cutOffDate === 'string') {
+    const match = cutOffDate.trim().match(/(\d{4})-(\d{1,2})/);
+    if (match) {
+      cutOffYear = parseInt(match[1], 10);
+      cutOffMonth = parseInt(match[2], 10);
+    } else {
+      const d = new Date(cutOffDate);
+      if (isNaN(d.getTime())) return false;
+      cutOffYear = d.getFullYear();
+      cutOffMonth = d.getMonth() + 1;
+    }
+  } else {
+    if (isNaN(cutOffDate.getTime())) return false;
+    cutOffYear = cutOffDate.getFullYear();
+    cutOffMonth = cutOffDate.getMonth() + 1;
+  }
+
+  if (isNaN(cutOffYear) || isNaN(cutOffMonth) || cutOffMonth < 1 || cutOffMonth > 12) return false;
+
+  const targetIndex = year * 12 + month;
+  const cutOffIndex = cutOffYear * 12 + cutOffMonth;
+
+  return targetIndex < cutOffIndex;
+}
+
+/**
+ * Mengambil tanggal pengesahan saldo awal (initial_savings_effective_date) dari system_settings,
+ * atau fallback dari deskripsi transaksi 'Saldo Awal Simpanan'.
+ */
+export async function getInitialSavingsCutOffDate(transactions?: any[]): Promise<string | null> {
+  try {
+    const query: any = supabase.from('system_settings').select('key, value');
+    if (typeof query?.eq === 'function') {
+      const eqQ = query.eq('key', 'initial_savings_effective_date');
+      const res = typeof eqQ?.maybeSingle === 'function'
+        ? await eqQ.maybeSingle()
+        : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
+      const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      if (rowData?.value) {
+        return String(rowData.value).slice(0, 10);
+      }
+    } else if (query && typeof query.then === 'function') {
+      const res = await query;
+      const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
+      const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
+      if (found?.value) {
+        return String(found.value).slice(0, 10);
+      }
+    }
+  } catch {
+    // Abaikan dan lanjut ke fallback transaksi
+  }
+
+  if (Array.isArray(transactions) && transactions.length > 0) {
+    let latestDate = '';
+    for (const tx of transactions) {
+      const desc = String(tx?.description || '');
+      if (desc.toLowerCase().includes('saldo awal simpanan')) {
+        const match = desc.match(/(\d{4}-\d{2}-\d{2})/);
+        if (match && (!latestDate || match[1] > latestDate)) {
+          latestDate = match[1];
+        }
+      }
+    }
+    if (latestDate) return latestDate;
+  }
+
+  return null;
 }
 
 /**
@@ -252,7 +337,8 @@ export function calculateFifoAllocation(
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
   memberDepositId?: string,
-  cutOffDate?: string | Date | null
+  cutOffDate?: string | Date | null,
+  initialSavingsCutOffDate?: string | Date | null
 ): FifoAllocationResult {
   if (targetBalance <= 0) {
     return {
@@ -276,6 +362,10 @@ export function calculateFifoAllocation(
   for (let i = 0; i < sortedMonths.length; i++) {
     const m = sortedMonths[i];
     if (isMonthBeforeJoin(m.year, m.month, joinDate)) {
+      continue;
+    }
+    // Abaikan bulan sebelum tanggal pengesahan Saldo Awal Simpanan (cut-off)
+    if (isMonthBeforeCutOff(m.year, m.month, initialSavingsCutOffDate)) {
       continue;
     }
     // Abaikan bulan yang berada pada atau sebelum cut-off date jika tipe simpanan LEBARAN
@@ -328,6 +418,7 @@ export function calculateFifoAllocation(
     } else {
       const firstValid = sortedMonths.find(m => {
         if (isMonthBeforeJoin(m.year, m.month, joinDate)) return false;
+        if (isMonthBeforeCutOff(m.year, m.month, initialSavingsCutOffDate)) return false;
         if (depositTypeCode === 'LEBARAN' && isMonthSettledByCutOff(m.year, m.month, cutOffDate)) return false;
         return true;
       });
@@ -335,6 +426,22 @@ export function calculateFifoAllocation(
         nextYear = firstValid.year;
         nextMonth = firstValid.month;
         nextKey = firstValid.key;
+      } else if (initialSavingsCutOffDate) {
+        let icYear = new Date().getFullYear();
+        let icMonth = new Date().getMonth() + 1;
+        if (typeof initialSavingsCutOffDate === 'string') {
+          const match = initialSavingsCutOffDate.trim().match(/(\d{4})-(\d{1,2})/);
+          if (match) {
+            icYear = parseInt(match[1], 10);
+            icMonth = parseInt(match[2], 10);
+          }
+        } else if (!isNaN(initialSavingsCutOffDate.getTime())) {
+          icYear = initialSavingsCutOffDate.getFullYear();
+          icMonth = initialSavingsCutOffDate.getMonth() + 1;
+        }
+        nextYear = icYear;
+        nextMonth = icMonth;
+        nextKey = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
       } else if (depositTypeCode === 'LEBARAN' && cutOffDate) {
         let cYear = new Date().getFullYear();
         let cMonth = new Date().getMonth() + 1;
@@ -400,7 +507,7 @@ export function matchAutomaticFifo(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
-  options?: { includePartial?: boolean; cutOffDate?: string | Date | null }
+  options?: { includePartial?: boolean; cutOffDate?: string | Date | null; initialSavingsCutOffDate?: string | Date | null }
 ): string[] {
   const includePartial = options?.includePartial ?? true;
   const res = calculateFifoAllocation(
@@ -410,7 +517,8 @@ export function matchAutomaticFifo(
     rateTiers,
     joinDate,
     undefined,
-    options?.cutOffDate
+    options?.cutOffDate,
+    options?.initialSavingsCutOffDate
   );
   if (!includePartial && res.partialTransaction) {
     return res.matchedKeys.filter(k => k !== res.partialTransaction?.key);
@@ -687,6 +795,12 @@ export async function reconcileSingleMemberDeposit(
 
   const txs: any[] = Array.isArray(md.deposit_transactions) ? md.deposit_transactions : [];
 
+  // Resolve Tanggal Pengesahan Saldo Awal (Cut-Off) jika ada
+  let effectiveInitialCutOff: string | Date | null = options?.initialSavingsCutOffDate ?? null;
+  if (!effectiveInitialCutOff) {
+    effectiveInitialCutOff = await getInitialSavingsCutOffDate(txs);
+  }
+
   // Jika effectiveLebaranCutOff belum terisi, coba deteksi dari transaksi penarikan massal yang ada di txs
   if (targetType === 'LEBARAN' && !effectiveLebaranCutOff) {
     const massWithdrawalTx = txs.find((t: any) => {
@@ -706,9 +820,39 @@ export async function reconcileSingleMemberDeposit(
     }
   }
 
-  // 5. Tentukan saldo impor/migrasi persis seperti alur modal individual
+  // 5. Tentukan saldo yang akan direkonsiliasi:
+  // Jika mode Cut-Off Saldo Awal aktif, HANYA hitung mutasi setoran baru pasca cut-off (Saldo Awal tetap utuh).
   let targetBalance = options?.targetBalance ?? 0;
-  if (!targetBalance || targetBalance <= 0) {
+  if (effectiveInitialCutOff && (!options?.targetBalance || options?.isPostCutOffTarget === false)) {
+    let postCutOffNet = 0;
+    for (const t of txs) {
+      const desc = (t.description || '').toLowerCase();
+      const isOpeningOrBulk =
+        desc.includes('saldo awal') ||
+        desc.includes('migra') ||
+        desc.includes('historical') ||
+        desc.includes('one-time') ||
+        desc.includes('belum teralokasi');
+      const hasExplicitMonth = t.for_month !== null && t.for_month !== undefined && !isNaN(Number(t.for_month));
+
+      if (t.transaction_type === 'deposit') {
+        if (isOpeningOrBulk || !hasExplicitMonth) continue;
+        if (t.for_year && t.for_month && isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveInitialCutOff)) {
+          continue;
+        }
+        postCutOffNet += Number(t.amount || 0);
+      } else if (t.transaction_type === 'withdrawal') {
+        if (t.for_year && t.for_month && isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveInitialCutOff)) {
+          continue;
+        }
+        if (!t.for_month && t.transaction_date && String(t.transaction_date).slice(0, 10) < String(effectiveInitialCutOff).slice(0, 10)) {
+          continue;
+        }
+        postCutOffNet -= Number(t.amount || 0);
+      }
+    }
+    targetBalance = Math.max(0, postCutOffNet);
+  } else if (!targetBalance || targetBalance <= 0) {
     if (targetType === 'LEBARAN') {
       let runningBalance = 0;
       for (const t of txs) {
@@ -808,11 +952,12 @@ export async function reconcileSingleMemberDeposit(
     rateTiers,
     effectiveJoin,
     md.id,
-    targetType === 'LEBARAN' ? effectiveLebaranCutOff : undefined
+    targetType === 'LEBARAN' ? effectiveLebaranCutOff : undefined,
+    effectiveInitialCutOff
   );
   const matchedKeys = fifoResult.matchedKeys;
 
-  // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil & penampung saldo awal)
+  // 8. Hapus transaksi rutin bulanan lama pada rentang grid (lindungi mutasi migrasi riil & Saldo Awal)
   const oldRoutineTxIds = txs
     .filter((t: any) => {
       if (t.transaction_type !== 'deposit') return false;
@@ -824,6 +969,10 @@ export async function reconcileSingleMemberDeposit(
         desc.includes('one-time') ||
         desc.includes('belum teralokasi')
       ) {
+        return false;
+      }
+      // Jika mode Cut-Off Saldo Awal aktif, lindungi seluruh transaksi sebelum bulan cut-off
+      if (effectiveInitialCutOff && t.for_year && t.for_month && isMonthBeforeCutOff(t.for_year, t.for_month, effectiveInitialCutOff)) {
         return false;
       }
       // Khusus LEBARAN: lindungi seluruh transaksi yang berada pada atau sebelum cut-off date siklus selesai
@@ -852,8 +1001,8 @@ export async function reconcileSingleMemberDeposit(
     }
   }
 
-  // Juga eksekusi query delete bermetode chained seperti modal jika didukung (hanya untuk non-LEBARAN atau tanpa cut-off)
-  if (targetType !== 'LEBARAN' || !effectiveLebaranCutOff) {
+  // Juga eksekusi query delete bermetode chained seperti modal jika didukung (hanya jika BUKAN mode Cut-Off & non-LEBARAN)
+  if (!effectiveInitialCutOff && (targetType !== 'LEBARAN' || !effectiveLebaranCutOff)) {
     const deleteQuery: any = supabase
       .from('deposit_transactions')
       .delete();
@@ -878,7 +1027,8 @@ export async function reconcileSingleMemberDeposit(
   }
 
   // 9. Singkirkan transaksi gelondongan migrasi / penampung belum teralokasi jika matchedKeys > 0
-  if (matchedKeys.length > 0) {
+  // PENTING: Dalam mode Cut-Off Saldo Awal, JANGAN PERNAH menghapus/memecah Saldo Awal Simpanan!
+  if (!effectiveInitialCutOff && matchedKeys.length > 0) {
     try {
       const bulkMigrationTxIds = txs
         .filter((t: any) => {
@@ -940,8 +1090,8 @@ export async function reconcileSingleMemberDeposit(
 
   // Enforce Clean Purge per Member Deposit Account:
   // Bersihkan seluruh transaksi ledger migrasi/rekonsiliasi lama pada akun deposit ini sebelum menyisipkan mutasi baru
-  // Khusus LEBARAN dengan siklus selesai, hindari purge blanket agar mutasi masa lalu tidak terhapus
-  if (targetType !== 'LEBARAN' || !effectiveLebaranCutOff) {
+  // Khusus mode Cut-Off Saldo Awal & LEBARAN dengan siklus selesai, hindari purge blanket agar Saldo Awal / masa lalu tidak terhapus
+  if (!effectiveInitialCutOff && (targetType !== 'LEBARAN' || !effectiveLebaranCutOff)) {
     try {
       const delPurgeBuilder: any = supabase
         .from('deposit_transactions')
@@ -1112,6 +1262,9 @@ export async function bulkAutoReconcileAllMembers(
     rateTiers = [];
   }
 
+  // Ambil tanggal pengesahan Saldo Awal Simpanan (Cut-Off) sekali saja di awal
+  const initialSavingsCutOffDate = await getInitialSavingsCutOffDate();
+
   // Ambil siklus pencairan lebaran terakhir yang selesai sekali saja di awal untuk cache efisien
   let lastLebaranCutOffDate: string | null = null;
   if (typesToProcess.includes('LEBARAN')) {
@@ -1153,7 +1306,8 @@ export async function bulkAutoReconcileAllMembers(
           joinDate: member.tgl_awal_anggota || member.created_at || null,
           startYear: options?.startYear,
           endYear: options?.endYear,
-          lastLebaranCutOffDate: targetType === 'LEBARAN' ? lastLebaranCutOffDate : undefined
+          lastLebaranCutOffDate: targetType === 'LEBARAN' ? lastLebaranCutOffDate : undefined,
+          initialSavingsCutOffDate
         });
       }
       totalSuccess++;
@@ -1293,6 +1447,9 @@ export async function bulkCheckAllUpToCurrentMonth(
     rateTiers = [];
   }
 
+  // Ambil tanggal pengesahan Saldo Awal Simpanan (Cut-Off) sekali saja di awal
+  const initialSavingsCutOffDate = await getInitialSavingsCutOffDate();
+
   // Ambil siklus pencairan lebaran terakhir yang selesai sekali saja di awal untuk cache efisien
   let lastLebaranCutOffDate: string | null = null;
   if (typesToProcess.includes('LEBARAN')) {
@@ -1385,8 +1542,40 @@ export async function bulkCheckAllUpToCurrentMonth(
             continue;
           }
 
-          // Bersihkan transaksi alokasi bulanan lama (lindungi histori LEBARAN jika memiliki cut-off)
-          if (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate) {
+          // Bersihkan transaksi alokasi bulanan lama (lindungi histori LEBARAN & bulan pra-cut-off Saldo Awal)
+          if (initialSavingsCutOffDate) {
+            try {
+              const txListRes: any = await supabase
+                .from('deposit_transactions')
+                .select('id, for_year, for_month, description, transaction_type')
+                .eq('member_deposit_id', memberDepositId);
+              const existingTxs = Array.isArray(txListRes?.data) ? txListRes.data : [];
+              const postCutoffIdsToDelete = existingTxs
+                .filter((t: any) => {
+                  if (t.transaction_type !== 'deposit') return false;
+                  const desc = (t.description || '').toLowerCase();
+                  if (desc.includes('saldo awal')) return false;
+                  if (t.for_month === null || t.for_month === undefined) return false;
+                  if (t.for_year && isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), initialSavingsCutOffDate)) {
+                    return false;
+                  }
+                  if (typeCode === 'LEBARAN' && lastLebaranCutOffDate && t.for_year && isMonthSettledByCutOff(Number(t.for_year), Number(t.for_month), lastLebaranCutOffDate)) {
+                    return false;
+                  }
+                  return true;
+                })
+                .map((t: any) => t.id)
+                .filter(Boolean);
+              if (postCutoffIdsToDelete.length > 0) {
+                const delIn: any = supabase.from('deposit_transactions').delete();
+                if (typeof delIn.in === 'function') {
+                  await delIn.in('id', postCutoffIdsToDelete);
+                }
+              }
+            } catch {
+              // Abaikan jika gagal membersihkan transaksi pasca cut-off
+            }
+          } else if (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate) {
             const delQuery: any = supabase.from('deposit_transactions').delete();
             if (typeof delQuery.eq === 'function') {
               const eqQuery = delQuery.eq('member_deposit_id', memberDepositId);
@@ -1398,8 +1587,8 @@ export async function bulkCheckAllUpToCurrentMonth(
             }
           }
 
-          // Bersihkan saldo migrasi penampung belum teralokasi (for_month IS NULL) jika ada
-          if (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate) {
+          // Bersihkan saldo migrasi penampung belum teralokasi (for_month IS NULL) hanya jika BUKAN mode Cut-Off Saldo Awal
+          if (!initialSavingsCutOffDate && (typeCode !== 'LEBARAN' || !lastLebaranCutOffDate)) {
             try {
               const delBulk: any = supabase.from('deposit_transactions').delete();
               if (typeof delBulk.eq === 'function') {
@@ -1416,13 +1605,17 @@ export async function bulkCheckAllUpToCurrentMonth(
             }
           }
 
-          // Susun mutasi baru dari bulan bergabung sampai bulan berjalan saat ini
+          // Susun mutasi baru dari bulan bergabung (atau pasca cut-off) sampai bulan berjalan saat ini
           const txsToInsert: any[] = [];
           for (let y = joinYear; y <= currentYear; y++) {
             const startM = (y === joinYear) ? joinMonth : 1;
             const endM = (y === currentYear) ? currentMonth : 12;
 
             for (let mon = startM; mon <= endM; mon++) {
+              // Abaikan bulan sebelum tanggal pengesahan Saldo Awal (cut-off)
+              if (isMonthBeforeCutOff(y, mon, initialSavingsCutOffDate)) {
+                continue;
+              }
               // Abaikan bulan yang berada pada atau sebelum cut-off date jika tipe simpanan LEBARAN
               if (typeCode === 'LEBARAN' && isMonthSettledByCutOff(y, mon, lastLebaranCutOffDate)) {
                 continue;

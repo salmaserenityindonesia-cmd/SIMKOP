@@ -1,23 +1,24 @@
 ## Current Position
-- **Phase**: 94 (completed)
-- **Task**: All waves executed and verified
+- **Phase**: 95 (completed)
+- **Task**: Pemisahan Manajemen Tanggal Pencairan Lebaran ke Tab Tersendiri
 - **Status**: Complete
 
 ## Last Session Summary
-Phase 94 complete: Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota (/admin/clearance).
-- `94-1-PLAN.md` (Wave 1):
-  - Implementasi pelunasan atomik jadwal angsuran (`settleRemainingLoanSchedules`) pada `src/services/settlementService.ts` di dalam handler `processInstantPayoff`.
-  - Penambahan entri pelunasan di `loan_repayments` dengan metode `POTONG_SIMPANAN_KLIRING` untuk setiap jadwal angsuran yang belum lunas.
-  - Penyetelan status pinjaman induk `status = 'completed'` dan `sisa_pinjaman = 0`.
-  - Pembuatan skrip migrasi RPC PostgreSQL `supabase/migrations/047_settle_loan_schedules_on_clearance.sql` yang memperbarui `process_instant_payoff_clearance` dan `process_member_clearance` (commits: `db281038`, `fe34dea2`).
-- `94-2-PLAN.md` (Wave 2):
-  - Penyelarasan tooltip sel jadwal angsuran di `src/pages/admin/LoanMatrix.tsx` untuk pinjaman selesai (`isLoanCompleted = !row.isLoanActive || row.status === 'completed' || row.status === 'paid_off'`) sehingga menampilkan `Sisa Angsuran: Rp 0 (Lunas)` dengan badge hijau (`text-emerald-400`).
-  - Pembaruan `src/services/loanMatrixService.ts` agar pinjaman dengan status `completed` mematok kepatuhan 100% dan saldo tersisa 0 pada sel matriks.
-  - Penambahan unit test verifikasi pada `LoanMatrix.test.tsx` dan `loanMatrixService.test.ts` (commits: `cc24fd31`, `2476d25c`).
-- `94-3-PLAN.md` (Wave 3):
-  - Pengujian Vitest test suite (`settlementService.test.ts`, `LoanMatrix.test.tsx`, `loanMatrixService.test.ts`) sukses 100% (commits: `d2aebeb9`, `4f891e2f`).
-  - Pemeriksaan tipe statis `npx tsc --noEmit` bersih tanpa galat.
-  - Verifikasi build produksi Vite `npm run build` sukses (exit code 0).
+Phase 95 complete: Pemisahan Manajemen Tanggal Pencairan Lebaran ke Tab Tersendiri dengan Input 1 per 1 dan Tabel Riwayat pada `/admin/penarikan-simpanan`.
+- **Navigasi Tab**:
+  - Penambahan Tab ke-3 `"Tanggal Pencairan Lebaran"` di bar atas berdampingan dengan Tab Reguler dan Tab Pencairan Massal pada `src/pages/admin/penarikan-simpanan/index.tsx`.
+  - Penambahan indikator badge jumlah siklus tercatat `{cyclesCount}` yang terisi dinamis.
+- **Komponen Tab ke-3 (`LebaranDatesTab.tsx`)**:
+  - Pendaftaran tanggal pencairan 1 per 1 (`<input type="date">` dan keterangan) tanpa mode tempel bulk.
+  - Tombol eksekusi simulasi pengosongan ulang (*replay*) berantai dengan dialog konfirmasi dan spinner animasi.
+  - Tabel lengkap seluruh riwayat tanggal siklus (nomor urut, tanggal format Indonesia, nama siklus, badge sumber, jumlah penerima, total dana cair, tombol "Lihat Penerima", dan tombol "Hapus").
+  - Integrasi modal rincian nominatif penerima per siklus (`CycleRecipientsModal`).
+- **Pembersihan Tab ke-2 (`BulkLebaranTab.tsx`)**:
+  - Pembersihan panel pendaftaran tanggal dan tabel riwayat dari tab `bulk_lebaran` sehingga kembali fokus murni pada banner siklus terakhir, 3 kartu metrik saldo cair, filter pencarian, dan tabel nominatif pencairan massal.
+- **Verifikasi**:
+  - 5 test suite Vitest pada `src/pages/admin/penarikan-simpanan/` lulus 100% (9 tests).
+  - TypeScript static analysis `npx tsc --noEmit` lolos tanpa galat (exit code 0).
+  - Build produksi Vite `npm run build` sukses (exit code 0).
 
 ## Next Steps
-Phase 94 complete. Run `/verify 94` to execute independent verification or proceed with next requirements.
+Phase 95 complete. Run `/verify 95` to execute independent verification or proceed with next requirements.

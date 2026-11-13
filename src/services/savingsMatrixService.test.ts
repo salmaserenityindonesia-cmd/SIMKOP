@@ -7,6 +7,7 @@ import {
   matchAutomaticFifo,
   calculateFifoAllocation,
   isMonthBeforeJoin,
+  isMonthBeforeCutOff,
   calculateTotalChecked,
   resolveDepositTypeCode,
   MONTH_NAMES,
@@ -2162,6 +2163,144 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(res.withdrawals[0].payment_method).toBe('potong_simpanan_belanja');
       expect(res.withdrawals[0].cashier_name).toBe('Kasir Utama Toko');
       expect(res.withdrawals[0].source).toBe('sales_pos');
+    });
+  });
+
+  describe('Cut-Off Saldo Awal Utuh & Forward-Only Allocation', () => {
+    it('isMonthBeforeCutOff hanya mengembalikan true untuk bulan sebelum bulan pengesahan saldo awal', () => {
+      expect(isMonthBeforeCutOff(2026, 10, '2026-11-13')).toBe(true);
+      expect(isMonthBeforeCutOff(2026, 1, '2026-11-13')).toBe(true);
+      expect(isMonthBeforeCutOff(2026, 11, '2026-11-13')).toBe(false);
+      expect(isMonthBeforeCutOff(2026, 12, '2026-11-13')).toBe(false);
+      expect(isMonthBeforeCutOff(2026, 5, null)).toBe(false);
+    });
+
+    it('calculateFifoAllocation dan matchAutomaticFifo hanya mengalokasikan ke bulan mulai/setelah cut-off', () => {
+      const months = generateMonthGrid(2026, 2026);
+      const tiers: SavingsRateTier[] = [
+        {
+          id: 't-2026',
+          deposit_type_code: 'WAJIB',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        }
+      ];
+
+      const allocatedKeys = matchAutomaticFifo(400000, months, 'WAJIB', tiers, '2022-01-01', {
+        initialSavingsCutOffDate: '2026-11-13'
+      });
+
+      expect(allocatedKeys).toEqual(['2026-11', '2026-12']);
+    });
+
+    it('reconcileSingleMemberDeposit mempertahankan Saldo Awal Simpanan dan hanya mendistribusikan setoran baru pasca cut-off', async () => {
+      const tiers: SavingsRateTier[] = [
+        {
+          id: 't-2026',
+          deposit_type_code: 'WAJIB',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000
+        }
+      ];
+
+      const deletedIds: string[] = [];
+      const insertedRows: any[] = [];
+
+      const memberDepositsMock = [
+        {
+          id: 'md-wajib-cut',
+          member_id: 'm-cut-1',
+          deposit_type_id: 'dt-wajib',
+          deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+          deposit_transactions: [
+            {
+              id: 'tx-opening-utuh',
+              amount: 10200000,
+              transaction_type: 'deposit',
+              for_month: null,
+              for_year: null,
+              description: 'Saldo Awal Simpanan (Aktif sejak 2026-11-13)'
+            },
+            {
+              id: 'tx-new-post',
+              amount: 200000,
+              transaction_type: 'deposit',
+              for_month: 11,
+              for_year: 2026,
+              description: 'Setoran Matriks WAJIB Nov 2026'
+            }
+          ]
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'system_settings') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { key: 'initial_savings_effective_date', value: '2026-11-13' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+              error: null
+            })
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: memberDepositsMock, error: null })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation(async (_col: string, ids: string[]) => {
+                deletedIds.push(...ids);
+                return { error: null };
+              })
+            }),
+            insert: vi.fn().mockImplementation(async (rows: any[]) => {
+              insertedRows.push(...rows);
+              return { error: null };
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const res = await reconcileSingleMemberDeposit('m-cut-1', 'WAJIB', {
+        rateTiers: tiers,
+        joinDate: '2020-01-01',
+        startYear: 2026,
+        endYear: 2026,
+        initialSavingsCutOffDate: '2026-11-13'
+      });
+
+      // Saldo Awal Simpanan tidak pernah dihapus atau dipecah
+      expect(deletedIds).not.toContain('tx-opening-utuh');
+      expect(deletedIds).toContain('tx-new-post');
+      // Hanya setoran baru Rp 200.000 pasca cut-off yang didistribusikan ke 2026-11
+      expect(res.matchedKeys).toEqual(['2026-11']);
+      expect(insertedRows).toHaveLength(1);
+      expect(insertedRows[0].amount).toBe(200000);
+      expect(insertedRows[0].for_year).toBe(2026);
+      expect(insertedRows[0].for_month).toBe(11);
     });
   });
 });

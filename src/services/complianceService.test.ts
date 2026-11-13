@@ -13,6 +13,7 @@ import {
   SavingsSubItem,
   MonthSavingsCell,
   MemberNetSavings,
+  parseCutoffDateInfo,
 } from './complianceService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -2574,6 +2575,115 @@ describe('Phase 74: Cross-Year Rolling Window & Prior Balance Summary Engine', (
     expect(result.periods![0].label).toBe('Nov-25');
     expect(result.periods![11].label).toBe('Okt-26');
     expect(result.cutoffIndex).toBe(2025 * 12 + 11);
+  });
+
+  it('parseCutoffDateInfo mem-parsing tanggal YYYY-MM-DD menjadi metadata cut-off', () => {
+    const info = parseCutoffDateInfo('2026-11-13');
+    expect(info).not.toBeNull();
+    expect(info?.year).toBe(2026);
+    expect(info?.month).toBe(11);
+    expect(info?.day).toBe(13);
+    expect(info?.periodIndex).toBe(2026 * 12 + 11);
+    expect(info?.formattedDate).toBe('13 Nov 2026');
+  });
+
+  it('membukukan Saldo Awal Simpanan secara utuh tanpa mengurai mundur & menandai bulan pra-cut-off sebagai covered_by_opening', async () => {
+    const mockMembers = [
+      {
+        id: 'm-cutoff-svc-1',
+        nrp: 'NRP-CUT-01',
+        nama: 'Briptu Tegar',
+        membership_status: 'ACTIVE',
+        status: 'aktif',
+        created_at: '2020-01-01T00:00:00Z',
+      },
+    ];
+
+    const txList = [
+      {
+        id: 'tx-sa-pokok',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: null,
+        for_month: null,
+        description: 'Saldo Awal Simpanan (Aktif sejak 2026-11-13)',
+        member_deposits: { member_id: 'm-cutoff-svc-1', deposit_type_id: 'dt-pokok' },
+      },
+      {
+        id: 'tx-sa-wajib',
+        amount: 10200000,
+        transaction_type: 'deposit',
+        for_year: null,
+        for_month: null,
+        description: 'Saldo Awal Simpanan (Aktif sejak 2026-11-13)',
+        member_deposits: { member_id: 'm-cutoff-svc-1', deposit_type_id: 'dt-wajib' },
+      },
+      {
+        id: 'tx-post-nov-wajib',
+        amount: 200000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 11,
+        description: 'Setoran Matriks WAJIB Nov 2026',
+        member_deposits: { member_id: 'm-cutoff-svc-1', deposit_type_id: 'dt-wajib' },
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { key: 'initial_savings_effective_date', value: '2026-11-13' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        const chainObj: any = {
+          eq: vi.fn().mockReturnThis(),
+          lte: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(chainObj) };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue(Promise.resolve({ data: txList, error: null })),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await getComplianceMatrixData(2026);
+    expect(result.cutoffDate).toBe('2026-11-13');
+    expect(result.cutoffPeriodIndex).toBe(2026 * 12 + 11);
+
+    const row = result.rows.find((r) => r.member_id === 'm-cutoff-svc-1')!;
+    expect(row).toBeDefined();
+    // Saldo Awal Simpanan Wajib Rp 10.200.000 utuh pada priorSummary & pokokBalance Rp 100.000
+    expect(row.priorSummary?.wajib).toBe(10200000);
+    expect(row.pokokBalance).toBe(100000);
+
+    // Bulan sebelum cut-off (Jan-Okt 2026 -> index 0..9) harus berstatus 'covered_by_opening' tanpa diurai atau ditandai unpaid
+    for (let mIdx = 0; mIdx < 10; mIdx++) {
+      expect(row.months[mIdx]?.w).toBe(0);
+      expect(row.months[mIdx]?.wajib?.status).toBe('covered_by_opening');
+      expect(row.months[mIdx]?.belanja?.status).toBe('covered_by_opening');
+      expect(row.months[mIdx]?.lebaran?.status).toBe('covered_by_opening');
+    }
+
+    // Bulan pasca cut-off (Nov 2026 -> index 10) menampilkan setoran baru + running cumulative dimulai dari Saldo Awal utuh
+    expect(row.months[10]?.w).toBe(200000);
+    expect(row.months[10]?.wajib?.status).toBe('paid');
+    expect(row.months[10]?.bal_w).toBe(10400000);
+    expect(row.netSavings?.wajib).toBe(10400000);
   });
 });
 

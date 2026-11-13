@@ -286,4 +286,61 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
     // Dedi Veteran Pra-2020
     expect(markup).toContain('Pra-2020: Utuh');
   });
+
+  it('renders Pratinjau Impor Data Anggota title and clean 0-value rows for 6-column template without false discrepancy warnings', () => {
+    const sixColResult: MemberParseResult = {
+      errors: [],
+      rows: [
+        {
+          nrp: '95168420',
+          nama: 'Budi Santoso',
+          pangkat: 'Aipda',
+          bank_account_number: '367800973556',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2026-11-13',
+          jumlah_simpanan_pokok: 0,
+          jumlah_simpanan_wajib: 0,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+          jumlah_pinjaman: 0,
+          tgl_awal_pinjaman: null,
+          tenor: 0,
+          sisa_pinjaman: 0,
+          n_bulan_simpanan: 1,
+          wajib_per_bulan: 0,
+          belanja_per_bulan: 0,
+          lebaran_per_bulan: 0,
+          n_bulan_pinjaman: 1,
+          sudah_diangsur: 0,
+          angsuran_lampau_per_bulan: 0,
+        },
+      ],
+    };
+
+    const markup = renderToStaticMarkup(
+      React.createElement(MemberMigrationModal, {
+        isOpen: true,
+        onClose: vi.fn(),
+        onConfirm: vi.fn(),
+        parseResult: sixColResult,
+        isImporting: false,
+        wajibRateTiers: [
+          {
+            startYear: 2024,
+            startMonth: 1,
+            endYear: null,
+            endMonth: null,
+            monthlyAmount: 200000,
+          },
+        ],
+      })
+    );
+
+    expect(markup).toContain('Pratinjau Impor Data Anggota');
+    expect(markup).not.toContain('(14 Kolom)');
+    expect(markup).toContain('Budi Santoso');
+    expect(markup).toContain('95168420');
+    expect(markup).not.toContain('Terdapat Selisih:');
+    expect(markup).not.toContain('Selisih:');
+  });
 });

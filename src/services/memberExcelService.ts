@@ -1,6 +1,8 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 import {
+  MEMBER_IMPORT_TEMPLATE_FILENAME,
+  MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS,
   sanitizeMigrationLoanRow,
   generateMigrationLoanSchedules,
 } from '../utils/memberMigrationParser';
@@ -37,9 +39,9 @@ export interface MemberParseResult {
   errors: string[];
 }
 
-export const exportMemberTemplate = async () => {
+export const buildMemberTemplateWorkbook = async (): Promise<ExcelJS.Workbook> => {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet('Template Migrasi Anggota');
+  const worksheet = workbook.addWorksheet('Template Import Anggota');
 
   worksheet.columns = [
     { header: 'nrp', key: 'nrp', width: 15 },
@@ -48,32 +50,29 @@ export const exportMemberTemplate = async () => {
     { header: 'bank_account_number', key: 'bank_account_number', width: 25 },
     { header: 'membership_status', key: 'membership_status', width: 20 },
     { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 20 },
-    { header: 'jumlah_simpanan_pokok', key: 'jumlah_simpanan_pokok', width: 25 },
-    { header: 'jumlah_simpanan_wajib', key: 'jumlah_simpanan_wajib', width: 25 },
-    { header: 'jumlah_simpanan_belanja', key: 'jumlah_simpanan_belanja', width: 25 },
-    { header: 'jumlah_simpanan_lebaran', key: 'jumlah_simpanan_lebaran', width: 25 },
-    { header: 'jumlah_pinjaman', key: 'jumlah_pinjaman', width: 20 },
-    { header: 'tgl_awal_pinjaman', key: 'tgl_awal_pinjaman', width: 20 },
-    { header: 'tenor', key: 'tenor', width: 15 },
-    { header: 'sisa_pinjaman', key: 'sisa_pinjaman', width: 20 },
   ];
 
-  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach(k => worksheet.getColumn(k).numFmt = '@');
-  ['tgl_awal_anggota', 'tgl_awal_pinjaman'].forEach(k => worksheet.getColumn(k).numFmt = 'yyyy-mm-dd');
-
-  worksheet.addRow({
-    nrp: '12345679', nama: 'Putut Ardian', pangkat: 'Briptu', bank_account_number: '014567890', membership_status: 'ACTIVE',
-    tgl_awal_anggota: '2023-01-01', jumlah_simpanan_pokok: 100000, jumlah_simpanan_wajib: 1200000, jumlah_simpanan_belanja: 600000, jumlah_simpanan_lebaran: 300000,
-    jumlah_pinjaman: 5000000, tgl_awal_pinjaman: '2023-06-01', tenor: 12, sisa_pinjaman: 2000000
+  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+    worksheet.getColumn(k).numFmt = '@';
   });
+  worksheet.getColumn('tgl_awal_anggota').numFmt = 'yyyy-mm-dd';
 
+  for (const sampleRow of MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS) {
+    worksheet.addRow(sampleRow);
+  }
+
+  return workbook;
+};
+
+export const exportMemberTemplate = async () => {
+  const workbook = await buildMemberTemplateWorkbook();
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = window.URL.createObjectURL(blob);
 
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'template_migrasi_anggota_v2.xlsx';
+  link.download = MEMBER_IMPORT_TEMPLATE_FILENAME;
   link.click();
 
   window.URL.revokeObjectURL(url);
@@ -182,8 +181,8 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     if (value) headers[value] = colNumber;
   });
 
-  if (!headers['nrp'] || !headers['nama'] || !headers['tgl_awal_anggota']) {
-    throw new Error('Format kolom tidak valid. Pastikan kolom minimal (nrp, nama, tgl_awal_anggota) ada.');
+  if (!headers['nrp'] || !headers['nama']) {
+    throw new Error('Format kolom tidak valid. Pastikan kolom minimal (nrp, nama) ada.');
   }
 
   const allowedStatus = ['ACTIVE', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
@@ -340,8 +339,15 @@ export const executeMigration = async (
       }
       const memberId = upsertedMember.id;
 
+      const hasPositiveSavings =
+        row.jumlah_simpanan_pokok > 0 ||
+        row.jumlah_simpanan_wajib > 0 ||
+        row.jumlah_simpanan_belanja > 0 ||
+        row.jumlah_simpanan_lebaran > 0;
+
       // B. Setup Member Deposits & Transactions (Timpa Mutlak / Exact Replacement Overwrite)
-      // B.1 Hapus seluruh mutasi lama pada deposit_transactions untuk seluruh member_deposits milik memberId
+      // B.1 Hapus mutasi lama pada deposit_transactions HANYA jika file membawa nominal simpanan > 0.
+      // Jika seluruh nominal simpanan bernilai 0 (template 6 kolom), pertahankan saldo anggota lama.
       const { data: existingDeposits, error: errFetchDeposits } = await supabase
         .from('member_deposits')
         .select('id, deposit_type:deposit_types(code)')
@@ -351,7 +357,7 @@ export const executeMigration = async (
         console.warn(`Gagal memeriksa simpanan lama untuk member ${row.nrp}:`, errFetchDeposits.message);
       }
 
-      if (existingDeposits && existingDeposits.length > 0) {
+      if (hasPositiveSavings && existingDeposits && existingDeposits.length > 0) {
         const mdIds = existingDeposits.map((d: any) => d.id);
         const delQuery: any = supabase
           .from('deposit_transactions')
@@ -383,7 +389,7 @@ export const executeMigration = async (
         }
       }
 
-      // B.2 Masukkan satu mutasi transaksi saldo migrasi baru per tipe simpanan murni As-Is apa adanya dari Excel (tanpa alokasi bulan)
+      // B.2 Pastikan akun rekening member_deposits dibuatkan (saldo awal 0) dan masukkan mutasi jika amount > 0
       const depositTypesNeeded = [
         { id: typePokok, amount: row.jumlah_simpanan_pokok, isRoutine: false },
         { id: typeWajib, amount: row.jumlah_simpanan_wajib, isRoutine: true },
@@ -392,20 +398,39 @@ export const executeMigration = async (
       ];
 
       for (const dt of depositTypesNeeded) {
-        if (!dt.id || dt.amount <= 0) continue;
+        if (!dt.id) continue;
 
-        // Upsert relasi member_deposits
-        const { data: mdRecord } = await supabase.from('member_deposits')
-          .select('id').eq('member_id', memberId).eq('deposit_type_id', dt.id).single();
+        // Pastikan relasi member_deposits tersedia (bahkan saat nominal = 0)
+        const mdQueryBuilder: any = supabase.from('member_deposits')
+          .select('id').eq('member_id', memberId);
 
-        let mdId = mdRecord?.id;
-        if (!mdId) {
-          const { data: newMd } = await supabase.from('member_deposits')
-            .insert({ member_id: memberId, deposit_type_id: dt.id, is_terminated: false })
-            .select('id').single();
-          mdId = newMd?.id;
+        let mdId: string | undefined;
+        if (typeof mdQueryBuilder?.eq === 'function') {
+          const { data: mdRecord } = await mdQueryBuilder.eq('deposit_type_id', dt.id).single();
+          mdId = mdRecord?.id;
+        } else if (typeof mdQueryBuilder?.single === 'function') {
+          const { data: mdRecord } = await mdQueryBuilder.single();
+          mdId = mdRecord?.id;
         }
-        if (!mdId) continue;
+
+        if (!mdId) {
+          const mdTable: any = supabase.from('member_deposits');
+          if (typeof mdTable?.insert === 'function') {
+            const insBuilder = mdTable.insert({
+              member_id: memberId,
+              deposit_type_id: dt.id,
+              is_terminated: false,
+            });
+            if (typeof insBuilder?.select === 'function') {
+              const { data: newMd } = await insBuilder.select('id').single();
+              mdId = newMd?.id;
+            } else {
+              const insRes = await insBuilder;
+              mdId = insRes?.data?.id;
+            }
+          }
+        }
+        if (!mdId || dt.amount <= 0) continue;
 
         // Insert Transactions (Murni As-Is: for_month & for_year = null)
         const txsToInsert = [];
@@ -596,3 +621,6 @@ export const executeMigration = async (
     }
   }
 };
+
+export const parseMemberMigrationExcel = parseMemberUpload;
+export const syncMigratedMembers = executeMigration;

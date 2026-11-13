@@ -33,7 +33,7 @@ describe('PenarikanSimpanan Page with Navigation Tabs', () => {
     vi.clearAllMocks();
   });
 
-  it('renders both navigation tabs for regular withdrawal and bulk lebaran disbursement', () => {
+  it('renders 3 dedicated navigation tabs including the separate Lebaran Dates Tab', () => {
     const html = renderToStaticMarkup(<PenarikanSimpanan />);
 
     // Header & Breadcrumb
@@ -45,6 +45,9 @@ describe('PenarikanSimpanan Page with Navigation Tabs', () => {
     // Tab 2: Pencairan Massal Simpanan Lebaran
     expect(html).toContain('Pencairan Massal Simpanan Lebaran');
     expect(html).toContain('THR');
+
+    // Tab 3: Tanggal Pencairan Lebaran
+    expect(html).toContain('Tanggal Pencairan Lebaran');
 
     // Default active tab should render regular search input
     expect(html).toContain('Cari NRP atau Nama Anggota...');

@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw } from 'lucide-react';
-import { getMembersComprehensiveReport, createMember, resetAllMembersData } from '../../services/memberService';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, FileSpreadsheet, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
 import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
+import { downloadInitialSavingsTemplate, parseInitialSavingsExcel, InitialSavingsRow } from '../../utils/initialSavingsParser';
 import { useFeedback } from '../../context/FeedbackContext';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { getActiveSavingsRateTiers, getRateTiers } from '../../services/savingsRateService';
@@ -79,12 +80,14 @@ export async function triggerResetAllMembers(
 export interface ManajemenAnggotaProps {
   initialShowModal?: boolean;
   initialResetModalOpen?: boolean;
+  initialSavingsModalOpen?: boolean;
   initialActivePokokRate?: number;
 }
 
 export default function ManajemenAnggota({
   initialShowModal = false,
   initialResetModalOpen = false,
+  initialSavingsModalOpen = false,
   initialActivePokokRate,
 }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
@@ -128,6 +131,16 @@ export default function ManajemenAnggota({
   // Reset Data State
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
   const [isResetting, setIsResetting] = useState(false);
+
+  // Saldo Awal Simpanan State
+  const initialSavingsInputRef = useRef<HTMLInputElement>(null);
+  const [isInitialSavingsModalOpen, setIsInitialSavingsModalOpen] = useState(initialSavingsModalOpen);
+  const [initialSavingsRows, setInitialSavingsRows] = useState<InitialSavingsRow[]>([]);
+  const [initialSavingsFileName, setInitialSavingsFileName] = useState<string>('');
+  const [initialSavingsDate, setInitialSavingsDate] = useState<string>('');
+  const [isInitialSavingsConfirmed, setIsInitialSavingsConfirmed] = useState<boolean>(false);
+  const [isSavingInitialSavings, setIsSavingInitialSavings] = useState<boolean>(false);
+  const [isDownloadingSavingsTemplate, setIsDownloadingSavingsTemplate] = useState<boolean>(false);
 
   useEffect(() => {
     loadData();
@@ -327,6 +340,83 @@ export default function ManajemenAnggota({
     }
   };
 
+  const handleCloseInitialSavingsModal = () => {
+    if (isSavingInitialSavings) return;
+    setIsInitialSavingsModalOpen(false);
+    setInitialSavingsRows([]);
+    setInitialSavingsFileName('');
+    setInitialSavingsDate('');
+    setIsInitialSavingsConfirmed(false);
+    if (initialSavingsInputRef.current) {
+      initialSavingsInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadInitialSavingsTemplate = async () => {
+    setIsDownloadingSavingsTemplate(true);
+    try {
+      await downloadInitialSavingsTemplate(anggotaList);
+      showToast('Template Saldo Awal Simpanan berhasil diunduh.', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengunduh template saldo awal simpanan', 'error');
+    } finally {
+      setIsDownloadingSavingsTemplate(false);
+    }
+  };
+
+  const handleInitialSavingsFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseInitialSavingsExcel(file);
+      setInitialSavingsRows(parsed);
+      setInitialSavingsFileName(file.name);
+      showToast(`Berhasil membaca ${parsed.length} baris saldo awal dari ${file.name}.`, 'info');
+    } catch (err: any) {
+      setInitialSavingsRows([]);
+      setInitialSavingsFileName('');
+      showToast(err?.message || 'Gagal memproses file Excel saldo awal simpanan', 'error');
+    } finally {
+      if (initialSavingsInputRef.current) {
+        initialSavingsInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleSaveInitialSavings = async () => {
+    if (initialSavingsRows.length === 0 || !initialSavingsDate || !isInitialSavingsConfirmed) {
+      return;
+    }
+
+    setIsSavingInitialSavings(true);
+    try {
+      const result = await syncInitialSavingsBalances(initialSavingsRows, initialSavingsDate);
+      const formattedDate = new Date(`${result.effectiveDate}T00:00:00`).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      const skipNote =
+        result.skippedNrps.length > 0
+          ? ` (${result.skippedNrps.length} NRP tidak ditemukan dilewati)`
+          : '';
+      showToast(
+        `Saldo awal simpanan ${result.updatedCount} anggota berhasil disimpan dan dinyatakan aktif sejak ${formattedDate}${skipNote}.`,
+        'success'
+      );
+      setIsInitialSavingsModalOpen(false);
+      setInitialSavingsRows([]);
+      setInitialSavingsFileName('');
+      setInitialSavingsDate('');
+      setIsInitialSavingsConfirmed(false);
+      await fetchMembers();
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan saldo awal simpanan', 'error');
+    } finally {
+      setIsSavingInitialSavings(false);
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="mb-6">
@@ -368,6 +458,14 @@ export default function ManajemenAnggota({
             >
               <Upload className="w-4 h-4 mr-2" />
               Import
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsInitialSavingsModalOpen(true)}
+              className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium cursor-pointer"
+            >
+              <Wallet className="w-4 h-4 mr-2" />
+              Saldo Awal Simpanan
             </button>
             <button
               onClick={handleExportExcel}
@@ -709,6 +807,279 @@ export default function ManajemenAnggota({
           }
         }}
       />
+
+      {isInitialSavingsModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-emerald-500/20 text-emerald-300 rounded-xl border border-emerald-400/30">
+                  <Wallet className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold tracking-tight">Upload Saldo Awal Simpanan</h3>
+                  <p className="text-xs text-slate-300">
+                    Pokok, Wajib, Belanja, dan Lebaran dengan tanggal cut-off aktif &amp; verifikasi admin
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseInitialSavingsModal}
+                disabled={isSavingInitialSavings}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/50">
+              {/* Langkah 1 — Unduh Template */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full mb-1">
+                    Langkah 1
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-800">Unduh Template Saldo Awal Simpanan</h4>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Template berisi 6 kolom (<code className="bg-slate-100 px-1 rounded">nrp</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">nama</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">jumlah_simpanan_pokok</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">jumlah_simpanan_wajib</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">jumlah_simpanan_belanja</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">jumlah_simpanan_lebaran</code>) terisi daftar anggota aktif.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadInitialSavingsTemplate}
+                  disabled={isDownloadingSavingsTemplate || isSavingInitialSavings}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-emerald-600 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-sm font-semibold transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {isDownloadingSavingsTemplate ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  Unduh Template Saldo Awal (.xlsx)
+                </button>
+              </div>
+
+              {/* Langkah 2 — Pilih File Excel & Tanggal Aktif Saldo Awal */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-4">
+                <div>
+                  <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full mb-1">
+                    Langkah 2
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-800">Pilih File Excel &amp; Tanggal Aktif Saldo Awal</h4>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3.5 rounded-xl border border-dashed border-slate-300 bg-slate-50">
+                  <input
+                    ref={initialSavingsInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleInitialSavingsFileChange}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => initialSavingsInputRef.current?.click()}
+                    disabled={isSavingInitialSavings}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-sm font-medium transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Pilih File Excel (.xlsx / .xls)
+                  </button>
+                  <div className="text-xs text-slate-600">
+                    {initialSavingsFileName ? (
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        {initialSavingsFileName} ({initialSavingsRows.length} baris anggota terbaca)
+                      </span>
+                    ) : (
+                      <span>Belum ada file dipilih. Silakan pilih file Excel yang sudah diisi nominal saldo awal.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-4 space-y-2">
+                  <label className="block text-sm font-bold text-slate-800">
+                    Tanggal Saldo Awal Dinyatakan Aktif <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={initialSavingsDate}
+                    onChange={(e) => setInitialSavingsDate(e.target.value)}
+                    className="w-full sm:w-64 px-3.5 py-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                  <p className="text-xs text-slate-600">
+                    Saldo awal simpanan akan dibukukan efektif mulai tanggal ini sebagai dasar perhitungan simpanan selanjutnya.
+                  </p>
+                </div>
+              </div>
+
+              {/* Langkah 3 — Tabel Pratinjau Data */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full mb-1">
+                      Langkah 3
+                    </span>
+                    <h4 className="text-sm font-bold text-slate-800">
+                      Pratinjau Data Saldo Awal ({initialSavingsRows.length} Anggota)
+                    </h4>
+                  </div>
+                  {initialSavingsRows.length > 0 && (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                        Pokok: {formatCurrency(initialSavingsRows.reduce((s, r) => s + r.jumlah_simpanan_pokok, 0))}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-200 font-semibold">
+                        Wajib: {formatCurrency(initialSavingsRows.reduce((s, r) => s + r.jumlah_simpanan_wajib, 0))}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md bg-purple-50 text-purple-800 border border-purple-200 font-semibold">
+                        Belanja: {formatCurrency(initialSavingsRows.reduce((s, r) => s + r.jumlah_simpanan_belanja, 0))}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                        Lebaran: {formatCurrency(initialSavingsRows.reduce((s, r) => s + r.jumlah_simpanan_lebaran, 0))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {initialSavingsRows.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+                    Pratinjau data akan tampil di sini setelah file Excel diunggah.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-60">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead className="bg-slate-100 text-slate-700 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200">NRP</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Nama</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200 text-right">Pokok</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200 text-right">Wajib</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200 text-right">Belanja</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200 text-right">Lebaran</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200 text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {initialSavingsRows.slice(0, 100).map((row, idx) => {
+                          const total =
+                            row.jumlah_simpanan_pokok +
+                            row.jumlah_simpanan_wajib +
+                            row.jumlah_simpanan_belanja +
+                            row.jumlah_simpanan_lebaran;
+                          return (
+                            <tr key={`${row.nrp}-${idx}`} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 font-mono text-slate-800">{row.nrp}</td>
+                              <td className="px-3 py-2 font-medium text-slate-800">{row.nama}</td>
+                              <td className="px-3 py-2 text-right text-emerald-700 font-medium">
+                                {formatCurrency(row.jumlah_simpanan_pokok)}
+                              </td>
+                              <td className="px-3 py-2 text-right text-blue-700 font-medium">
+                                {formatCurrency(row.jumlah_simpanan_wajib)}
+                              </td>
+                              <td className="px-3 py-2 text-right text-purple-700 font-medium">
+                                {formatCurrency(row.jumlah_simpanan_belanja)}
+                              </td>
+                              <td className="px-3 py-2 text-right text-amber-700 font-medium">
+                                {formatCurrency(row.jumlah_simpanan_lebaran)}
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold text-slate-900">
+                                {formatCurrency(total)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {initialSavingsRows.length > 100 && (
+                          <tr>
+                            <td colSpan={7} className="px-3 py-2 text-center text-slate-500 bg-slate-50">
+                              ... dan {initialSavingsRows.length - 100} baris lainnya
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Langkah 4 — Keterangan & Kotak Pernyataan Verifikasi Wajib */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    Pengunggahan ini menggunakan prinsip <strong>Clean Overwrite</strong> pada transaksi saldo awal/migrasi sebelumnya agar saldo tidak terhitung ganda jika dilakukan unggah ulang.
+                  </span>
+                </div>
+
+                <label className="flex items-start gap-3 p-4 rounded-xl border border-blue-200 bg-blue-50/70 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isInitialSavingsConfirmed}
+                    onChange={(e) => setIsInitialSavingsConfirmed(e.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-xs leading-relaxed text-slate-700">
+                    <strong>Pernyataan Verifikasi Saldo Awal:</strong> Saya menyatakan bahwa data Excel yang diunggah ini telah diperiksa dan dianggap <strong>sudah benar</strong>, akan ditetapkan menjadi <strong>saldo awal Simpanan Pokok, Wajib, Belanja, dan Lebaran</strong> untuk pembukuan mulai selanjutnya, serta mulai aktif berlaku sebagai saldo awal sejak tanggal{' '}
+                    <strong className="text-blue-800 underline">
+                      {initialSavingsDate
+                        ? new Date(`${initialSavingsDate}T00:00:00`).toLocaleDateString('id-ID', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })
+                        : '[Pilih Tanggal di Atas]'}
+                    </strong>.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-white border-t border-slate-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCloseInitialSavingsModal}
+                disabled={isSavingInitialSavings}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveInitialSavings}
+                disabled={
+                  isSavingInitialSavings ||
+                  initialSavingsRows.length === 0 ||
+                  !initialSavingsDate ||
+                  !isInitialSavingsConfirmed
+                }
+                className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSavingInitialSavings ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Menyimpan...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    Simpan &amp; Aktifkan Saldo Awal
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

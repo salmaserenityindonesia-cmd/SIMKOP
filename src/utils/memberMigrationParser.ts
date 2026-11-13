@@ -165,6 +165,64 @@ export const sanitizeBankAccountNumber = (val: unknown): string | null => {
   return str;
 };
 
+export const MEMBER_IMPORT_TEMPLATE_HEADERS = [
+  'nrp',
+  'nama',
+  'pangkat',
+  'bank_account_number',
+  'membership_status',
+  'tgl_awal_anggota',
+] as const;
+
+export const MEMBER_IMPORT_TEMPLATE_FILENAME = 'template_import_anggota.xlsx';
+
+export const MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS = [
+  {
+    nrp: '95168420',
+    nama: 'Budi Santoso',
+    pangkat: 'Aipda',
+    bank_account_number: '367800973556',
+    membership_status: 'ACTIVE',
+    tgl_awal_anggota: '2026-11-13',
+  },
+];
+
+export interface SanitizedMigrationMemberRow extends SanitizedMigrationLoan {
+  nrp: string;
+  nama: string;
+  pangkat: string | null;
+  membership_status: string;
+  tgl_awal_anggota: string | null;
+  jumlah_simpanan_pokok: number;
+  jumlah_simpanan_wajib: number;
+  jumlah_simpanan_belanja: number;
+  jumlah_simpanan_lebaran: number;
+}
+
+/**
+ * Helper sanitasi lengkap baris impor/migrasi anggota (mendukung 6 kolom profil maupun 14 kolom migrasi).
+ * Kolom simpanan & pinjaman yang tidak ada atau kosong otomatis bernilai 0.
+ */
+export const sanitizeMigrationMemberRow = (row: any): SanitizedMigrationMemberRow => {
+  const loan = sanitizeMigrationLoanRow(row);
+  return {
+    nrp: row?.nrp !== undefined && row?.nrp !== null ? String(row.nrp).trim() : '',
+    nama: row?.nama !== undefined && row?.nama !== null ? String(row.nama).trim() : '',
+    pangkat: row?.pangkat ? String(row.pangkat).trim() : null,
+    bank_account_number: loan.bank_account_number,
+    membership_status: row?.membership_status ? String(row.membership_status).trim().toUpperCase() : 'ACTIVE',
+    tgl_awal_anggota: sanitizeDateString(row?.tgl_awal_anggota),
+    jumlah_simpanan_pokok: parseAmount(row?.jumlah_simpanan_pokok),
+    jumlah_simpanan_wajib: parseAmount(row?.jumlah_simpanan_wajib),
+    jumlah_simpanan_belanja: parseAmount(row?.jumlah_simpanan_belanja),
+    jumlah_simpanan_lebaran: parseAmount(row?.jumlah_simpanan_lebaran),
+    jumlah_pinjaman: loan.jumlah_pinjaman,
+    tgl_awal_pinjaman: loan.tgl_awal_pinjaman,
+    tenor: loan.tenor,
+    sisa_pinjaman: loan.sisa_pinjaman,
+  };
+};
+
 /**
  * Helper sanitasi data pinjaman dari row Excel / objek migrasi.
  */

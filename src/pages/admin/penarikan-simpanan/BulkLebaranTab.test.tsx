@@ -2,7 +2,6 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import BulkLebaranTab from './BulkLebaranTab';
-import * as bulkWithdrawalServiceModule from '../../../services/bulkWithdrawalService';
 
 // Mock Supabase
 vi.mock('../../../lib/supabaseClient', () => ({
@@ -18,7 +17,7 @@ describe('BulkLebaranTab Component', () => {
     vi.clearAllMocks();
   });
 
-  it('renders summary metric cards, action buttons, and table headers correctly', () => {
+  it('renders clean focused UI: banner, metrics, action buttons, and nominatif recipient table', () => {
     const html = renderToStaticMarkup(<BulkLebaranTab />);
 
     // Top Banner
@@ -37,13 +36,10 @@ describe('BulkLebaranTab Component', () => {
 
     // Table Headers
     expect(html).toContain('Daftar Nominatif Penerima Pencairan Simpanan Lebaran');
-    expect(html).toContain('Riwayat Siklus Pencairan Massal Simpanan Lebaran');
 
-    // Historical Dates Form & Replay Controls
-    expect(html).toContain('Riwayat Tanggal Pencairan');
-    expect(html).toContain('Simulasi Pengosongan Ulang');
-    expect(html).toContain('Kosongkan Ulang Sesuai Semua Tanggal');
-    expect(html).toContain('Tambah Tanggal Pencairan Terlewat / Historis');
-    expect(html).toContain('+ Tambah Tanggal');
+    // Verify Tab 2 is clean: historical date form & replay controls are moved out
+    expect(html).not.toContain('Tambah Tanggal Pencairan Terlewat / Historis');
+    expect(html).not.toContain('Kosongkan Ulang Sesuai Semua Tanggal');
+    expect(html).not.toContain('Riwayat Tanggal Pencairan &amp; Simulasi Pengosongan Ulang');
   });
 });

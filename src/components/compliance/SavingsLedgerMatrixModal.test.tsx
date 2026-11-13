@@ -901,4 +901,41 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Rp 200k (Mulai Januari 2026)');
     });
   });
+
+  describe('Cut-Off Saldo Awal Utuh & Forward-Only Timeline', () => {
+    it('renders transparent Saldo Awal Cut-Off summary and locks pre-cut-off months as Tercakup Saldo Awal', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-cutoff-modal"
+          memberNrp="78010999"
+          memberName="Sertu Andi CutOff"
+          joinDate="2024-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="WAJIB"
+          initialCutoffDate="2026-11-13"
+          initialOpeningBalances={{ WAJIB: 10200000 }}
+          initialDbBalances={{ WAJIB: 10400000 }}
+          initialCheckedMonths={{ WAJIB: ['2026-11'] }}
+          initialMonthAmounts={{ WAJIB: { '2026-11': 200000 } }}
+          initialLoading={false}
+        />
+      );
+
+      // Ringkasan header menampilkan Saldo Awal, Total Tercentang Pasca Saldo Awal, dan Total Akumulasi
+      expect(html).toContain('Saldo Awal (Cut-Off 13 Nov 2026):');
+      expect(html).toContain('10.200.000');
+      expect(html).toContain('Total Tercentang (Pasca Saldo Awal):');
+      expect(html).toContain('Total Akumulasi Simpanan:');
+      expect(html).toContain('10.400.000');
+      expect(html).toContain('Sesuai / Seimbang');
+
+      // Bulan pra-cut-off terkunci sebagai Tercakup Saldo Awal
+      expect(html).toContain('data-testid="covered-opening-2026-10"');
+      expect(html).toContain('Tercakup Saldo Awal');
+
+      // Bulan pasca-cut-off tetap memiliki checkbox interaktif
+      expect(html).toContain('data-testid="checkbox-2026-11"');
+      expect(html).not.toContain('data-testid="checkbox-2026-10"');
+    });
+  });
 });

@@ -12,6 +12,13 @@ import { supabase } from '../lib/supabaseClient';
 export * from './memberService';
 export * from './purchaseInvoiceService';
 export * from './depositManagementService';
+export {
+  exportMemberTemplate,
+  parseMemberUpload,
+  executeMigration,
+  type MemberParseResult,
+  type MigrationRowData,
+} from './memberExcelService';
 
 // Dashboard & Purchase Service Re-exports
 export {

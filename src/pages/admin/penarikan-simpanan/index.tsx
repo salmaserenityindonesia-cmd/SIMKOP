@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
-import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark, Users } from 'lucide-react';
+import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark, Users, Calendar } from 'lucide-react';
 import { getWithdrawableSavings, withdrawSavings, WithdrawableDeposit } from '../../../services/withdrawal.service';
 import { bulkWithdrawalService } from '../../../services/bulkWithdrawalService';
 import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalReceiptModal';
 import BulkLebaranTab from './BulkLebaranTab';
+import LebaranDatesTab from './LebaranDatesTab';
 
 interface Anggota {
   id: string;
@@ -17,7 +18,8 @@ interface Anggota {
 }
 
 export default function PenarikanSimpanan() {
-  const [activeTab, setActiveTab] = useState<'regular' | 'bulk_lebaran'>('regular');
+  const [activeTab, setActiveTab] = useState<'regular' | 'bulk_lebaran' | 'lebaran_dates'>('regular');
+  const [cyclesCount, setCyclesCount] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Anggota[]>([]);
@@ -37,6 +39,18 @@ export default function PenarikanSimpanan() {
 
   // Receipt Modal State
   const [receiptData, setReceiptData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchCyclesCount = async () => {
+      try {
+        const history = await bulkWithdrawalService.getLebaranDisbursementCycles();
+        setCyclesCount(history.length);
+      } catch (err) {
+        console.error('Error fetching cycles history count:', err);
+      }
+    };
+    fetchCyclesCount();
+  }, []);
 
   useEffect(() => {
     if (searchQuery.length >= 3) {
@@ -213,6 +227,21 @@ export default function PenarikanSimpanan() {
               THR
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('lebaran_dates')}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-bold border-b-2 transition-all relative cursor-pointer ${
+              activeTab === 'lebaran_dates'
+                ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50 rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50 rounded-t-xl'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Tanggal Pencairan Lebaran</span>
+            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-slate-100 text-slate-600">
+              {cyclesCount}
+            </span>
+          </button>
         </div>
 
         {activeTab === 'regular' ? (
@@ -343,8 +372,10 @@ export default function PenarikanSimpanan() {
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'bulk_lebaran' ? (
           <BulkLebaranTab />
+        ) : (
+          <LebaranDatesTab onCyclesUpdated={(count) => setCyclesCount(count)} />
         )}
       </div>
 

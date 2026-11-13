@@ -349,11 +349,57 @@ export async function getSavingsComplianceAvailableYears(
 
 
 export interface SavingsSubItem {
-  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled';
+  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'covered_by_opening';
   amount: number;
   targetAmount?: number;
   reference_no?: string;
   notes?: string;
+}
+
+export interface CutoffDateInfo {
+  dateStr: string;
+  year: number;
+  month: number; // 1-12
+  day: number;
+  periodIndex: number;
+  formattedDate: string;
+}
+
+export function parseCutoffDateInfo(dateStr?: string | null): CutoffDateInfo | null {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const trimmed = dateStr.trim();
+  const match = trimmed.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  let year: number;
+  let month: number;
+  let day: number;
+  let normalizedDateStr: string;
+
+  if (match) {
+    year = parseInt(match[1], 10);
+    month = parseInt(match[2], 10);
+    day = parseInt(match[3], 10);
+    if (isNaN(year) || isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+      return null;
+    }
+    normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  } else {
+    const d = new Date(trimmed);
+    if (isNaN(d.getTime())) return null;
+    year = d.getFullYear();
+    month = d.getMonth() + 1;
+    day = d.getDate();
+    normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+  return {
+    dateStr: normalizedDateStr,
+    year,
+    month,
+    day,
+    periodIndex: year * 12 + month,
+    formattedDate: `${day} ${MONTH_LABELS[month - 1]} ${year}`,
+  };
 }
 
 export interface MonthSavingsCell {
@@ -419,6 +465,7 @@ export interface MemberNetSavings {
 }
 
 export interface PriorBalanceSummary {
+  pokok?: number;
   wajib: number;
   belanja: number;
   lebaran: number;
@@ -430,10 +477,13 @@ export interface ComplianceMatrixRow {
   nrp: string;
   nama: string;
   pokokLunas: boolean;
+  pokokBalance?: number;
   compliance: number;
   balances: { w: number; b: number; l: number };
   openingBalance?: { w: number; b: number; l: number };
   priorSummary?: PriorBalanceSummary;
+  cutoffDate?: string | null;
+  cutoffPeriodIndex?: number | null;
   periods?: MonthPeriod[];
   months: (ComplianceMonthData | null)[];
   created_at?: string;
@@ -452,6 +502,10 @@ export interface ComplianceMatrixResult {
   periods?: MonthPeriod[];
   windowStartIndex?: number;
   cutoffIndex?: number;
+  cutoffDate?: string | null;
+  cutoffYear?: number | null;
+  cutoffMonth?: number | null;
+  cutoffPeriodIndex?: number | null;
 }
 
 /**
@@ -723,6 +777,7 @@ export async function getComplianceMatrixData(
   );
 
   const pokokPaidByMember = new Set<string>();
+  const openingPokokByMember: Record<string, number> = {};
   if (pokokTxs) {
     const pokokSums: Record<string, number> = {};
     pokokTxs.forEach((tx: any) => {
@@ -745,11 +800,62 @@ export async function getComplianceMatrixData(
       ? Number(activePokokTier.monthly_rate)
       : (typeList.find((dt: any) => dt.id === pokokId)?.default_amount || 100000);
     Object.keys(pokokSums).forEach((mId) => {
+      if (pokokId || pokokTypeIds.size > 0) {
+        openingPokokByMember[mId] = Math.max(0, pokokSums[mId]);
+      }
       if (pokokSums[mId] >= pokokTarget) {
         pokokPaidByMember.add(mId);
       }
     });
   }
+
+  // Ambil tanggal pengesahan saldo awal (cut-off) dari system_settings atau transaksi Saldo Awal Simpanan
+  let rawCutoffDateStr: string | null = null;
+  try {
+    const settingsQuery: any = supabase.from('system_settings').select('key, value');
+    if (typeof settingsQuery?.eq === 'function') {
+      const eqQ = settingsQuery.eq('key', 'initial_savings_effective_date');
+      const res = typeof eqQ?.maybeSingle === 'function'
+        ? await eqQ.maybeSingle()
+        : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
+      const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      if (rowData?.value) {
+        rawCutoffDateStr = String(rowData.value);
+      }
+    } else if (settingsQuery && typeof settingsQuery.then === 'function') {
+      const res = await settingsQuery;
+      const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
+      const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
+      if (found?.value) {
+        rawCutoffDateStr = String(found.value);
+      }
+    }
+  } catch {
+    // Fallback ke pemindaian deskripsi transaksi di bawah
+  }
+
+  if (!rawCutoffDateStr && Array.isArray(transactions) && transactions.length > 0) {
+    let latestExtractedDate = '';
+    for (const tx of transactions) {
+      const desc = String(tx.description || '');
+      if (desc.toLowerCase().includes('saldo awal simpanan')) {
+        const descMatch = desc.match(/(\d{4}-\d{2}-\d{2})/);
+        let candidate = descMatch ? descMatch[1] : '';
+        if (!candidate && tx.created_at) {
+          const parsed = parseCutoffDateInfo(String(tx.created_at));
+          if (parsed) candidate = parsed.dateStr;
+        }
+        if (candidate && (!latestExtractedDate || candidate > latestExtractedDate)) {
+          latestExtractedDate = candidate;
+        }
+      }
+    }
+    if (latestExtractedDate) {
+      rawCutoffDateStr = latestExtractedDate;
+    }
+  }
+
+  const cutoffInfo = parseCutoffDateInfo(rawCutoffDateStr);
 
   // 3b. Query view_member_net_savings untuk posisi saldo kas riil netto
   const netSavingsByMember: Record<string, MemberNetSavings> = {};
@@ -793,6 +899,12 @@ export async function getComplianceMatrixData(
   } catch (err) {
     // Fallback resilien ke kalkulasi log transaksi jika view belum tersedia
   }
+
+  // Helper untuk mengidentifikasi transaksi saldo awal cut-off resmi
+  const isInitialSavingsCutoffTx = (tx: any): boolean => {
+    const desc = (tx.description || '').toLowerCase();
+    return desc.includes('saldo awal simpanan');
+  };
 
   // Helper untuk mengidentifikasi transaksi gelondongan migrasi / saldo awal
   const isBulkMigrationTx = (tx: any): boolean => {
@@ -854,7 +966,7 @@ export async function getComplianceMatrixData(
   const paymentsByMember: Record<string, Record<number, MonthlyPaymentDetail>> = {};
   const withdrawalsByMember: Record<string, Record<number, { w: number; b: number; l: number }>> = {};
 
-  // Saldo bawaan pra-jendela 12 bulan (periodIndex < windowStartIndex)
+  // Saldo bawaan pra-jendela 12 bulan atau Saldo Awal Cut-Off utuh
   const openingBalances: Record<string, { w: number; b: number; l: number }> = {};
 
   const memberTxs: Record<
@@ -873,11 +985,12 @@ export async function getComplianceMatrixData(
       const amt = Number(tx.amount) || 0;
       const key = `${mId}_${tId}`;
 
+      const isCutoffOpening = isInitialSavingsCutoffTx(tx);
       const isBulk = isBulkMigrationTx(tx);
       const hasBreakdown = hasBreakdownSet.has(key);
 
-      // Jika rincian bulanan sudah ada, singkirkan transaksi gelondongan awal migrasi agar tidak terhitung dua kali
-      if (isBulk && hasBreakdown) {
+      // Jika bukan mode cut-off saldo awal dan rincian bulanan sudah ada, singkirkan transaksi gelondongan awal migrasi agar tidak terhitung dua kali
+      if (!isCutoffOpening && cutoffInfo === null && isBulk && hasBreakdown) {
         return;
       }
 
@@ -913,9 +1026,16 @@ export async function getComplianceMatrixData(
       const isWajib = wajibTypeIds.has(tId) || tId === wajibId;
       const isBelanja = belanjaTypeIds.has(tId) || tId === belanjaId;
       const isLebaran = lebaranTypeIds.has(tId) || tId === lebaranId;
+      const hasExplicitMonth = tx.for_month !== null && tx.for_month !== undefined && !isNaN(Number(tx.for_month));
 
-      // 1. Akumulasi ke Saldo Bawaan (Opening Balance) jika transaksi terjadi sebelum jendela 12 bulan
-      if (txPeriodIndex < windowStartIndex) {
+      // 1A. Mode Cut-Off Saldo Awal Utuh:
+      // Transaksi Saldo Awal Simpanan / migrasi gelondongan masuk utuh ke openingBalance (tidak diurai mundur)
+      if (
+        isCutoffOpening ||
+        (cutoffInfo !== null &&
+          (isBulk || (tx.transaction_type === 'deposit' && !hasExplicitMonth && txPeriodIndex <= cutoffInfo.periodIndex))) ||
+        (cutoffInfo === null && isBulk && !hasBreakdown && !hasExplicitMonth)
+      ) {
         if (tx.transaction_type === 'deposit') {
           if (isWajib) openingBalances[mId].w += amt;
           if (isBelanja) openingBalances[mId].b += amt;
@@ -928,7 +1048,26 @@ export async function getComplianceMatrixData(
         return;
       }
 
-      // 2. Transaksi dalam jendela 12 bulan
+      // Jika mode Cut-Off aktif dan transaksi berada sebelum bulan cut-off, abaikan dari sel bulanan (sudah terangkum di Saldo Awal)
+      if (cutoffInfo !== null && txPeriodIndex < cutoffInfo.periodIndex) {
+        return;
+      }
+
+      // 1B. Akumulasi ke Saldo Bawaan (Opening Balance) jika transaksi terjadi sebelum jendela 12 bulan (mode tanpa cut-off)
+      if (cutoffInfo === null && txPeriodIndex < windowStartIndex) {
+        if (tx.transaction_type === 'deposit') {
+          if (isWajib) openingBalances[mId].w += amt;
+          if (isBelanja) openingBalances[mId].b += amt;
+          if (isLebaran) openingBalances[mId].l += amt;
+        } else if (tx.transaction_type === 'withdrawal') {
+          if (isWajib) openingBalances[mId].w -= amt;
+          if (isBelanja) openingBalances[mId].b -= amt;
+          if (isLebaran) openingBalances[mId].l -= amt;
+        }
+        return;
+      }
+
+      // 2. Transaksi dalam jendela 12 bulan (dan >= cutoffPeriodIndex jika mode cut-off aktif)
       const colIdx = periods.findIndex((p) => p.periodIndex === txPeriodIndex);
 
       if (colIdx >= 0 && colIdx < 12) {
@@ -939,7 +1078,7 @@ export async function getComplianceMatrixData(
           if (isBelanja) withdrawalsByMember[mId][colIdx].b += amt;
           if (isLebaran) withdrawalsByMember[mId][colIdx].l += amt;
         } else if (tx.transaction_type === 'deposit') {
-          const isRoutineMonthly = tx.for_month !== null && tx.for_month !== undefined && !isBulk;
+          const isRoutineMonthly = hasExplicitMonth && !isBulk && !isCutoffOpening;
           if (isRoutineMonthly) {
             if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
             if (!paymentsByMember[mId][colIdx]) paymentsByMember[mId][colIdx] = { w: 0, b: 0, l: 0 };
@@ -985,7 +1124,7 @@ export async function getComplianceMatrixData(
     const joinYear = isNaN(joinDate.getFullYear()) ? currentYear : joinDate.getFullYear();
     const joinPeriodIndex = joinYear * 12 + (joinMonth + 1);
 
-    // Saldo bawaan pra-jendela anggota
+    // Saldo bawaan pra-jendela atau Saldo Awal Cut-Off anggota
     const openBal = openingBalances[m.id] || { w: 0, b: 0, l: 0 };
     const priorSummary: PriorBalanceSummary = {
       wajib: openBal.w,
@@ -1052,6 +1191,7 @@ export async function getComplianceMatrixData(
     for (let i = 0; i < 12; i++) {
       const colPeriod = periods[i];
       const isBeforeJoin = colPeriod.periodIndex < joinPeriodIndex;
+      const isBeforeCutoff = cutoffInfo !== null && colPeriod.periodIndex < cutoffInfo.periodIndex;
       const isFuture = !isRolling && colPeriod.periodIndex > (currentYear * 12 + currentMonth1Based);
 
       const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
@@ -1065,6 +1205,27 @@ export async function getComplianceMatrixData(
 
       if (isFuture) {
         monthsData.push(null);
+      } else if (isBeforeCutoff) {
+        const coveredItem: SavingsSubItem = {
+          status: 'covered_by_opening',
+          amount: 0,
+          notes: 'Sudah tercakup dalam Saldo Awal',
+        };
+        monthsData.push({
+          w: 0,
+          b: 0,
+          l: 0,
+          bal_w: runningCumW,
+          bal_b: runningCumB,
+          bal_l: runningCumL,
+          cum_w: runningCumW,
+          cum_b: runningCumB,
+          cum_l: runningCumL,
+          isOpeningBalanceMonth: i === 0,
+          wajib: { ...coveredItem },
+          belanja: { ...coveredItem },
+          lebaran: { ...coveredItem },
+        });
       } else if (isBeforeJoin && !hasAnyPayment) {
         monthsData.push(null);
       } else {
@@ -1086,7 +1247,7 @@ export async function getComplianceMatrixData(
           i > lastPaidColW &&
           (!billedMonthsW.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
         );
-        let statusW: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let statusW: SavingsSubItem['status'];
         let amtW = p.w;
 
         if (p.w >= applicableTariffW) {
@@ -1121,7 +1282,7 @@ export async function getComplianceMatrixData(
           i > lastPaidColB &&
           (!billedMonthsB.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
         );
-        let statusB: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let statusB: SavingsSubItem['status'];
         let amtB = p.b;
 
         if (p.b >= applicableTariffB) {
@@ -1156,7 +1317,7 @@ export async function getComplianceMatrixData(
           i > lastPaidColL &&
           (!billedMonthsL.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
         );
-        let statusL: 'paid' | 'partial' | 'unpaid' | 'not_applicable' | 'unbilled';
+        let statusL: SavingsSubItem['status'];
         let amtL = p.l;
 
         if (p.l >= applicableTariffL) {
@@ -1198,15 +1359,15 @@ export async function getComplianceMatrixData(
           lebaran: lebaranItem,
         });
 
-        if (wajibItem.status !== 'not_applicable' && wajibItem.status !== 'unbilled') {
+        if (wajibItem.status !== 'not_applicable' && wajibItem.status !== 'unbilled' && wajibItem.status !== 'covered_by_opening') {
           expectedCount += 1;
           if (wajibItem.status === 'paid') paidCount += 1;
         }
-        if (belanjaItem.status !== 'not_applicable' && belanjaItem.status !== 'unbilled') {
+        if (belanjaItem.status !== 'not_applicable' && belanjaItem.status !== 'unbilled' && belanjaItem.status !== 'covered_by_opening') {
           expectedCount += 1;
           if (belanjaItem.status === 'paid') paidCount += 1;
         }
-        if (lebaranItem.status !== 'not_applicable' && lebaranItem.status !== 'unbilled') {
+        if (lebaranItem.status !== 'not_applicable' && lebaranItem.status !== 'unbilled' && lebaranItem.status !== 'covered_by_opening') {
           expectedCount += 1;
           if (lebaranItem.status === 'paid') paidCount += 1;
         }
@@ -1253,10 +1414,13 @@ export async function getComplianceMatrixData(
       nrp: m.nrp,
       nama: m.nama,
       pokokLunas: pokokPaidByMember.has(m.id),
+      pokokBalance: openingPokokByMember[m.id] || 0,
       compliance,
       balances: { w: 0, b: 0, l: 0 },
       openingBalance: openBal,
       priorSummary,
+      cutoffDate: cutoffInfo?.dateStr || null,
+      cutoffPeriodIndex: cutoffInfo?.periodIndex || null,
       periods,
       months: monthsData,
       created_at: m.created_at,
@@ -1276,6 +1440,10 @@ export async function getComplianceMatrixData(
     periods,
     windowStartIndex: cutoffIndex,
     cutoffIndex,
+    cutoffDate: cutoffInfo?.dateStr || null,
+    cutoffYear: cutoffInfo?.year || null,
+    cutoffMonth: cutoffInfo?.month || null,
+    cutoffPeriodIndex: cutoffInfo?.periodIndex || null,
   };
 }
 

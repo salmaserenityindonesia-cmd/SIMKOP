@@ -39,9 +39,9 @@ export default function MemberMigrationModal({
     breakdown: computeReverseWajibBreakdown(r.tgl_awal_anggota, r.jumlah_simpanan_wajib, wajibRateTiers),
   }));
 
-  const countWithDifference = rowBreakdowns.filter(b => b.breakdown.hasDifference).length;
-  const countPre2020 = rowBreakdowns.filter(b => b.breakdown.isPre2020Member).length;
-  const countBalanced = rowBreakdowns.filter(b => !b.breakdown.hasDifference && !b.breakdown.isPre2020Member).length;
+  const countWithDifference = rowBreakdowns.filter(b => b.row.jumlah_simpanan_wajib > 0 && b.breakdown.hasDifference).length;
+  const countPre2020 = rowBreakdowns.filter(b => b.row.jumlah_simpanan_wajib > 0 && b.breakdown.isPre2020Member).length;
+  const countBalanced = rowBreakdowns.filter(b => b.row.jumlah_simpanan_wajib > 0 && !b.breakdown.hasDifference && !b.breakdown.isPre2020Member).length;
 
   const totalPokok = rows.reduce((sum, r) => sum + r.jumlah_simpanan_pokok, 0);
   const totalWajib = rows.reduce((sum, r) => sum + r.jumlah_simpanan_wajib, 0);
@@ -77,7 +77,7 @@ export default function MemberMigrationModal({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-7xl max-h-[90vh] flex flex-col">
         <div className="flex justify-between items-center p-6 border-b">
-          <h2 className="text-xl font-bold">Pratinjau Migrasi Anggota (14 Kolom)</h2>
+          <h2 className="text-xl font-bold">Pratinjau Impor Data Anggota</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600" disabled={isImporting}>
             <X className="w-6 h-6" />
           </button>
@@ -198,7 +198,7 @@ export default function MemberMigrationModal({
                         <div className="flex flex-col items-end">
                           <div className="flex items-center gap-1.5">
                             <span className="font-semibold">{formatRupiah(row.jumlah_simpanan_wajib)}</span>
-                            {breakdown.monthsCount > 0 && (
+                            {row.jumlah_simpanan_wajib > 0 && breakdown.monthsCount > 0 && (
                               <button
                                 type="button"
                                 title="Lihat rincian penguraian bulanan"
@@ -216,13 +216,13 @@ export default function MemberMigrationModal({
                           </div>
 
                           {/* Badge Peringatan Selisih / Info Historis */}
-                          {breakdown.isPre2020Member && (
+                          {row.jumlah_simpanan_wajib > 0 && breakdown.isPre2020Member && (
                             <span className="text-[10px] font-medium text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded mt-1 text-right">
                               Pra-2020: Utuh {formatRupiah(breakdown.pre2020LumpSum)} + {breakdown.monthsCount} bln
                             </span>
                           )}
 
-                          {breakdown.hasDifference && (
+                          {row.jumlah_simpanan_wajib > 0 && breakdown.hasDifference && (
                             <div className="flex flex-col items-end gap-0.5 mt-1 text-right">
                               <span className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
                                 Selisih: {breakdown.difference > 0 ? '+' : ''}{formatRupiah(breakdown.difference)}
@@ -233,7 +233,7 @@ export default function MemberMigrationModal({
                             </div>
                           )}
 
-                          {!breakdown.hasDifference && !breakdown.isPre2020Member && breakdown.monthsCount > 0 && (
+                          {row.jumlah_simpanan_wajib > 0 && !breakdown.hasDifference && !breakdown.isPre2020Member && breakdown.monthsCount > 0 && (
                             <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-1 text-right">
                               Seimbang ({breakdown.monthsCount} bln)
                             </span>

@@ -10,20 +10,10 @@ import {
   Search, 
   Download, 
   RefreshCw, 
-  History, 
   Landmark, 
   ShieldAlert, 
   Info, 
-  Clock, 
-  Filter, 
-  Ban, 
-  Check, 
-  Plus, 
-  Trash2, 
-  Eye, 
-  PlayCircle, 
-  ListPlus, 
-  FileText 
+  Check
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import { 
@@ -33,17 +23,14 @@ import {
   LebaranDisbursementCycle
 } from '../../../services/bulkWithdrawalService';
 import BulkDisbursementConfirmModal from './BulkDisbursementConfirmModal';
-import CycleRecipientsModal from './CycleRecipientsModal';
 
 export default function BulkLebaranTab() {
   const [simulation, setSimulation] = useState<LebaranSimulationSummary | null>(null);
   const [lastCycle, setLastCycle] = useState<LebaranDisbursementCycle | null>(null);
-  const [cyclesHistory, setCyclesHistory] = useState<LebaranDisbursementCycle[]>([]);
   
   const [isLoadingSimulation, setIsLoadingSimulation] = useState(false);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isLoadingLastCycle, setIsLoadingLastCycle] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [isReplaying, setIsReplaying] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -53,18 +40,9 @@ export default function BulkLebaranTab() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 15;
 
-  // Form Input Tanggal Historis State
-  const [inputMode, setInputMode] = useState<'single' | 'bulk'>('single');
-  const [singleDate, setSingleDate] = useState('');
-  const [singleCycleName, setSingleCycleName] = useState('');
-  const [bulkDatesText, setBulkDatesText] = useState('');
-  const [isSubmittingDate, setIsSubmittingDate] = useState(false);
-
   // Modal State
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [targetCycleForExecution, setTargetCycleForExecution] = useState<LebaranDisbursementCycle | null>(null);
-  const [selectedCycleForRecipients, setSelectedCycleForRecipients] = useState<LebaranDisbursementCycle | null>(null);
-  const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
 
   // Load Initial Data
   useEffect(() => {
@@ -74,7 +52,7 @@ export default function BulkLebaranTab() {
   const loadAllData = async () => {
     await Promise.all([
       loadSimulation(),
-      loadCyclesData()
+      loadLastCycle()
     ]);
   };
 
@@ -85,26 +63,22 @@ export default function BulkLebaranTab() {
       const sim = await bulkWithdrawalService.simulateLebaranDisbursement();
       setSimulation(sim);
     } catch (err: any) {
-      console.error('Error simulating bulk withdrawal:', err);
-      setExecutionError(err.message || 'Gagal menghitung simulasi simpanan lebaran');
+      console.error('Error loading lebaran simulation:', err);
+      setExecutionError(err.message || 'Gagal memuat simulasi pencairan lebaran.');
     } finally {
       setIsLoadingSimulation(false);
     }
   };
 
-  const loadCyclesData = async () => {
-    setIsLoadingHistory(true);
+  const loadLastCycle = async () => {
+    setIsLoadingLastCycle(true);
     try {
-      const [history, last] = await Promise.all([
-        bulkWithdrawalService.getLebaranDisbursementCycles(),
-        bulkWithdrawalService.getLastCompletedLebaranCycle()
-      ]);
-      setCyclesHistory(history);
+      const last = await bulkWithdrawalService.getLastCompletedLebaranCycle();
       setLastCycle(last);
     } catch (err: any) {
-      console.error('Error loading disbursement cycles:', err);
+      console.error('Error loading last completed cycle:', err);
     } finally {
-      setIsLoadingHistory(false);
+      setIsLoadingLastCycle(false);
     }
   };
 
@@ -128,44 +102,49 @@ export default function BulkLebaranTab() {
     });
   }, [simulation?.members, searchQuery, loanFilter]);
 
-  // Pagination
+  // Paginated Members
   const totalPages = Math.ceil(filteredMembers.length / pageSize) || 1;
   const paginatedMembers = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredMembers.slice(start, start + pageSize);
   }, [filteredMembers, currentPage, pageSize]);
 
-  // Handle Export to CSV
+  // Export CSV
   const handleExportCSV = () => {
-    if (!simulation?.members || simulation.members.length === 0) return;
-    
+    if (!simulation?.members || simulation.members.length === 0) {
+      alert('Tidak ada data nominatif untuk diekspor.');
+      return;
+    }
+
     const headers = [
       'No',
       'NRP',
       'Nama Anggota',
       'Pangkat',
-      'Bank',
       'Nomor Rekening',
-      'Saldo Dicairkan (100%)',
-      'Saldo Setelah Cair',
-      'Status Pinjaman',
+      'Nama Bank',
+      'Saldo Lebaran (Rp)',
+      'Status Pinjaman Aktif',
       'Sisa Hutang Pinjaman (Rp)'
     ];
 
-    const rows = simulation.members.map((m, idx) => [
+    const rows = filteredMembers.map((m, idx) => [
       idx + 1,
-      `"${m.nrp || ''}"`,
-      `"${(m.nama || '').replace(/"/g, '""')}"`,
-      `"${(m.pangkat || '').replace(/"/g, '""')}"`,
-      `"${(m.bankName || 'Bank BRI').replace(/"/g, '""')}"`,
-      `'${m.bankAccount || ''}`,
+      `"${m.nrp}"`,
+      `"${m.nama}"`,
+      `"${m.pangkat}"`,
+      `"${m.bankAccount}"`,
+      `"${m.bankName}"`,
       m.saldoLebaran,
-      0,
-      m.hasActiveLoan ? 'Ada Pinjaman Aktif' : 'Bebas Pinjaman',
-      m.activeLoanRemaining || 0
+      m.hasActiveLoan ? 'ADA PINJAMAN' : 'BEBAS PINJAMAN',
+      m.activeLoanRemaining
     ]);
 
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(e => e.join(','))
+    ].join('\n');
+
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -176,14 +155,14 @@ export default function BulkLebaranTab() {
     document.body.removeChild(link);
   };
 
-  // Open Execution Modal for new cycle or draft
-  const handleOpenExecutionModal = (draftCycle?: LebaranDisbursementCycle) => {
-    setTargetCycleForExecution(draftCycle || null);
+  // Open Execution Modal
+  const handleOpenExecutionModal = (cycle?: LebaranDisbursementCycle) => {
     setExecutionError(null);
+    setTargetCycleForExecution(cycle || null);
     setIsConfirmModalOpen(true);
   };
 
-  // Execute Bulk Disbursement
+  // Confirm Disbursement Execution
   const handleConfirmDisbursement = async (payload: {
     cycleName: string;
     cutOffDate: string;
@@ -194,10 +173,10 @@ export default function BulkLebaranTab() {
     setSuccessMessage(null);
 
     try {
-      let currentUserId: string | undefined;
+      let currentUserId: string | null = null;
       try {
         const { data: userData } = await supabase.auth.getUser();
-        currentUserId = userData?.user?.id;
+        currentUserId = userData?.user?.id || null;
       } catch (_) {}
 
       let cycleId = targetCycleForExecution?.id;
@@ -206,8 +185,7 @@ export default function BulkLebaranTab() {
         const newCycle = await bulkWithdrawalService.createDisbursementDraft({
           cycleName: payload.cycleName,
           cutOffDate: payload.cutOffDate,
-          notes: payload.notes,
-          createdBy: currentUserId
+          notes: payload.notes
         });
         cycleId = newCycle.id;
       }
@@ -228,112 +206,6 @@ export default function BulkLebaranTab() {
     } finally {
       setIsExecuting(false);
     }
-  };
-
-  // Handle Add Single Historical Date
-  const handleAddSingleHistoricalDate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!singleDate) {
-      alert('Silakan pilih tanggal pencairan terlebih dahulu.');
-      return;
-    }
-
-    setIsSubmittingDate(true);
-    setExecutionError(null);
-    try {
-      await bulkWithdrawalService.addHistoricalDisbursementDate(
-        singleDate,
-        singleCycleName || undefined
-      );
-      setSuccessMessage(`Tanggal historis ${singleDate} berhasil ditambahkan ke daftar siklus.`);
-      setSingleDate('');
-      setSingleCycleName('');
-      await loadCyclesData();
-    } catch (err: any) {
-      alert(err.message || 'Gagal menambahkan tanggal historis');
-    } finally {
-      setIsSubmittingDate(false);
-    }
-  };
-
-  // Handle Add Bulk Historical Dates
-  const handleAddBulkHistoricalDates = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const rawLines = bulkDatesText.split('\n').map(l => l.trim()).filter(Boolean);
-    if (rawLines.length === 0) {
-      alert('Silakan masukkan minimal satu tanggal (format YYYY-MM-DD per baris).');
-      return;
-    }
-
-    setIsSubmittingDate(true);
-    setExecutionError(null);
-    try {
-      const result = await bulkWithdrawalService.addHistoricalDisbursementDates(rawLines);
-      if (result.errors.length > 0) {
-        alert(`Berhasil menambahkan ${result.added} tanggal. Terdapat peringatan:\n` + result.errors.join('\n'));
-      } else {
-        setSuccessMessage(`Berhasil menambahkan ${result.added} tanggal siklus historis sekaligus.`);
-      }
-      setBulkDatesText('');
-      await loadCyclesData();
-    } catch (err: any) {
-      alert(err.message || 'Gagal menambahkan kumpulan tanggal historis');
-    } finally {
-      setIsSubmittingDate(false);
-    }
-  };
-
-  // Handle Delete Cycle Date
-  const handleDeleteCycle = async (cycle: LebaranDisbursementCycle) => {
-    const cycleDate = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
-    if (!window.confirm(`Hapus tanggal siklus "${cycle.cycle_name}" (${cycleDate}) dari daftar riwayat?`)) {
-      return;
-    }
-
-    try {
-      await bulkWithdrawalService.deleteHistoricalDisbursementDate(cycle.id);
-      setSuccessMessage(`Siklus "${cycle.cycle_name}" berhasil dihapus.`);
-      await loadCyclesData();
-    } catch (err: any) {
-      alert(err.message || 'Gagal menghapus siklus');
-    }
-  };
-
-  // Handle Replay All Cycles (Simulasi Pengosongan Ulang)
-  const handleExecuteReplay = async () => {
-    if (cyclesHistory.length === 0) {
-      alert('Belum ada tanggal siklus pencairan yang terdaftar. Tambahkan tanggal pencairan terlebih dahulu.');
-      return;
-    }
-
-    const confirmMsg = 
-      `Apakah Anda yakin ingin menjalankan SIMULASI PENGOSONGAN ULANG (REPLAY) sesuai seluruh ${cyclesHistory.length} tanggal siklus tercatat?\n\n` +
-      `Sistem akan mengosongkan mutasi penarikan lebaran sebelumnya dan menghitung ulang setoran anggota secara berantai dari tanggal tertua s/d terbaru sehingga saldo terkini terhitung presisi dari tanggal pencairan terakhir.`;
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsReplaying(true);
-    setExecutionError(null);
-    setSuccessMessage(null);
-
-    try {
-      const replayResult = await bulkWithdrawalService.executeReplayAllCycles();
-      setSuccessMessage(
-        `Pengosongan ulang berhasil dieksekusi (${replayResult.mode === 'rpc' ? 'Engine Atomik Database' : 'Kalkulasi Fallback Klien'}). Total ${replayResult.totalCycles} siklus dan ${replayResult.totalRecipients} mutasi pencairan telah disinkronkan senilai Rp ${replayResult.totalAmount.toLocaleString('id-ID')}. Saldo berjalan telah disegarkan!`
-      );
-      await loadAllData();
-    } catch (err: any) {
-      console.error('Error executing replay:', err);
-      setExecutionError(err.message || 'Gagal menjalankan simulasi pengosongan ulang.');
-    } finally {
-      setIsReplaying(false);
-    }
-  };
-
-  // View Recipients
-  const handleViewRecipients = (cycle: LebaranDisbursementCycle) => {
-    setSelectedCycleForRecipients(cycle);
-    setIsRecipientsModalOpen(true);
   };
 
   return (
@@ -358,203 +230,62 @@ export default function BulkLebaranTab() {
             <p className="font-semibold text-base md:text-lg mt-1 text-white">
               {lastCycle ? (
                 <>
-                  Siklus Terakhir Dicairkan:{' '}
-                  <span className="text-emerald-100 font-bold">
-                    {new Date(lastCycle.disbursement_date || lastCycle.cut_off_date).toLocaleDateString('id-ID', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric'
-                    })}
-                  </span>{' '}
-                  ({lastCycle.cycle_name}) — Total{' '}
-                  <span className="text-yellow-300 font-bold">
-                    Rp {Number(lastCycle.total_amount || 0).toLocaleString('id-ID')}
-                  </span>{' '}
-                  ({lastCycle.total_members} Penerima)
+                  Pencairan Terakhir: <span className="underline decoration-emerald-400 decoration-2">{lastCycle.cycle_name}</span> ({new Date(lastCycle.disbursement_date || lastCycle.cut_off_date || lastCycle.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })})
                 </>
               ) : (
-                'Belum ada riwayat siklus pencairan massal simpanan lebaran sebelumnya.'
+                'Belum ada riwayat siklus pencairan lebaran yang tercatat'
               )}
             </p>
+            {lastCycle && (
+              <p className="text-xs text-emerald-100/90 mt-0.5">
+                Total terealisasi: {lastCycle.total_members.toLocaleString('id-ID')} anggota • Rp {Number(lastCycle.total_amount || 0).toLocaleString('id-ID')}
+              </p>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-2 self-end md:self-center">
           <button
             onClick={loadAllData}
-            disabled={isLoadingSimulation || isLoadingHistory || isReplaying}
-            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 active:bg-white/30 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
-            title="Muat ulang seluruh data"
+            disabled={isLoadingSimulation || isLoadingLastCycle}
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 active:bg-white/30 text-white rounded-xl text-xs font-medium backdrop-blur-md transition-all flex items-center gap-1.5 border border-white/15 cursor-pointer"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSimulation || isReplaying ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSimulation || isLoadingLastCycle ? 'animate-spin' : ''}`} />
             Segarkan
           </button>
         </div>
       </div>
 
-      {/* Success Notification Alert */}
+      {/* Alert Notifications */}
       {successMessage && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl flex items-start justify-between gap-3 animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            <p className="text-sm font-semibold">{successMessage}</p>
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-sm flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            <p className="font-medium leading-relaxed">{successMessage}</p>
           </div>
-          <button 
-            onClick={() => setSuccessMessage(null)}
-            className="text-emerald-700 hover:text-emerald-900 text-xs font-bold"
-          >
-            Tutup
-          </button>
-        </div>
-      )}
-
-      {/* Error Alert */}
-      {executionError && (
-        <div className="p-4 bg-red-50 border border-red-200 text-red-900 rounded-2xl flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-            <p className="text-sm font-semibold">{executionError}</p>
-          </div>
-          <button 
-            onClick={() => setExecutionError(null)}
-            className="text-red-700 hover:text-red-900 text-xs font-bold"
-          >
-            Tutup
-          </button>
-        </div>
-      )}
-
-      {/* Panel Manajemen Tanggal Pencairan & Simulasi Pengosongan Ulang (Replay) */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
-                <History className="w-5 h-5" />
-              </div>
-              <h3 className="font-bold text-slate-800 text-base md:text-lg">
-                Riwayat Tanggal Pencairan & Simulasi Pengosongan Ulang
-              </h3>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Catat tanggal pencairan historis masa lalu dan jalankan simulasi pengosongan berantai (*replay*) untuk menghitung sisa saldo simpanan lebaran anggota secara presisi.
-            </p>
-          </div>
-
           <button
-            onClick={handleExecuteReplay}
-            disabled={isReplaying || cyclesHistory.length === 0}
-            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl text-sm shadow-md shadow-indigo-100 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            title="Mengosongkan dan menghitung ulang mutasi penarikan simpanan lebaran sesuai seluruh tanggal terdaftar"
+            onClick={() => setSuccessMessage(null)}
+            className="text-emerald-500 hover:text-emerald-700 font-bold text-xs"
           >
-            <PlayCircle className={`w-4 h-4 ${isReplaying ? 'animate-spin' : ''}`} />
-            <span>
-              {isReplaying 
-                ? 'Sedang Menjalankan Simulasi Replay...' 
-                : `Kosongkan Ulang Sesuai Semua Tanggal (${cyclesHistory.length} Siklus)`}
-            </span>
+            ✕
           </button>
         </div>
+      )}
 
-        {/* Form Tambah Tanggal Historis */}
-        <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5 text-indigo-600" />
-              Tambah Tanggal Pencairan Terlewat / Historis
-            </span>
-            <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-lg text-xs">
-              <button
-                type="button"
-                onClick={() => setInputMode('single')}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-                  inputMode === 'single' ? 'bg-white text-slate-800 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Input Satu Tanggal
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputMode('bulk')}
-                className={`px-2.5 py-1 rounded-md font-medium transition-all ${
-                  inputMode === 'bulk' ? 'bg-white text-slate-800 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Input Banyak Sekaligus (Bulk)
-              </button>
-            </div>
+      {executionError && (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <p className="font-medium leading-relaxed">{executionError}</p>
           </div>
-
-          {inputMode === 'single' ? (
-            <form onSubmit={handleAddSingleHistoricalDate} className="flex flex-wrap items-center gap-3">
-              <div className="flex-1 min-w-[180px] max-w-xs">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Tanggal Pencairan
-                </label>
-                <input
-                  type="date"
-                  value={singleDate}
-                  onChange={(e) => setSingleDate(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-              </div>
-
-              <div className="flex-1 min-w-[220px]">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Keterangan / Nama Siklus (Opsional)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Contoh: Lebaran Idul Fitri 2024"
-                  value={singleCycleName}
-                  onChange={(e) => setSingleCycleName(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div className="pt-5">
-                <button
-                  type="submit"
-                  disabled={isSubmittingDate || !singleDate}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Tambah Tanggal</span>
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleAddBulkHistoricalDates} className="space-y-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Tempel Daftar Tanggal (YYYY-MM-DD per baris)
-                </label>
-                <textarea
-                  rows={4}
-                  placeholder={`2023-04-20\n2024-04-10\n2025-03-30`}
-                  value={bulkDatesText}
-                  onChange={(e) => setBulkDatesText(e.target.value)}
-                  className="w-full p-2.5 font-mono text-xs bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Setiap baris akan otomatis didaftarkan sebagai siklus historis terpisah.
-                </p>
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSubmittingDate || !bulkDatesText.trim()}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
-                >
-                  <ListPlus className="w-3.5 h-3.5" />
-                  <span>+ Tambah Semua Tanggal</span>
-                </button>
-              </div>
-            </form>
-          )}
+          <button
+            onClick={() => setExecutionError(null)}
+            className="text-red-500 hover:text-red-700 font-bold text-xs"
+          >
+            Tutup
+          </button>
         </div>
-      </div>
+      )}
 
       {/* Metric Cards (Simulasi) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -650,7 +381,7 @@ export default function BulkLebaranTab() {
           <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-medium">
             <button
               onClick={() => { setLoanFilter('all'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 loanFilter === 'all'
                   ? 'bg-white text-slate-800 shadow-sm font-bold'
                   : 'text-slate-600 hover:text-slate-900'
@@ -660,7 +391,7 @@ export default function BulkLebaranTab() {
             </button>
             <button
               onClick={() => { setLoanFilter('no_loan'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 loanFilter === 'no_loan'
                   ? 'bg-white text-emerald-700 shadow-sm font-bold'
                   : 'text-slate-600 hover:text-emerald-700'
@@ -670,7 +401,7 @@ export default function BulkLebaranTab() {
             </button>
             <button
               onClick={() => { setLoanFilter('with_loan'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
+              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 loanFilter === 'with_loan'
                   ? 'bg-white text-amber-700 shadow-sm font-bold'
                   : 'text-slate-600 hover:text-amber-700'
@@ -685,35 +416,36 @@ export default function BulkLebaranTab() {
         <div className="flex items-center gap-2.5">
           <button
             onClick={loadSimulation}
-            disabled={isLoadingSimulation || isReplaying}
-            className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+            disabled={isLoadingSimulation}
+            className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Refresh data nominatif simulasi"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoadingSimulation ? 'animate-spin' : ''}`} />
-            <span>Refresh Simulasi</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSimulation ? 'animate-spin' : ''}`} />
+            Refresh Simulasi
           </button>
 
           <button
             onClick={handleExportCSV}
-            disabled={!simulation?.members || simulation.members.length === 0}
-            className="px-4 py-2 border border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 font-semibold rounded-xl text-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+            disabled={isLoadingSimulation || !simulation || simulation.members.length === 0}
+            className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Unduh daftar nominatif ke format file CSV/Excel"
           >
-            <Download className="w-4 h-4" />
-            <span>Ekspor Nominatif</span>
+            <Download className="w-3.5 h-3.5" />
+            Ekspor Nominatif
           </button>
 
           <button
             onClick={() => handleOpenExecutionModal()}
-            disabled={isLoadingSimulation || isReplaying || !simulation || simulation.totalMembers === 0}
-            className="px-5 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-xl text-sm shadow-sm shadow-red-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isLoadingSimulation || !simulation || simulation.totalMembers === 0}
+            className="px-5 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-bold rounded-xl text-sm shadow-sm shadow-red-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            <ShieldAlert className="w-4 h-4" />
-            <span>Eksekusi Pencairan Massal</span>
+            <Coins className="w-4 h-4" />
+            Eksekusi Pencairan Massal
           </button>
         </div>
       </div>
 
-      {/* Tabel Daftar Nominatif */}
+      {/* Table Nominatif Penerima */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
@@ -721,30 +453,22 @@ export default function BulkLebaranTab() {
               Daftar Nominatif Penerima Pencairan Simpanan Lebaran
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Menampilkan {filteredMembers.length} dari {simulation?.totalMembers || 0} anggota penerima yang memenuhi syarat
+              Menampilkan {paginatedMembers.length} dari {filteredMembers.length} anggota yang berhak menerima pencairan THR
             </p>
           </div>
-          {filteredMembers.length > 0 && (
-            <span className="text-xs font-semibold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg">
-              Halaman {currentPage} dari {totalPages}
-            </span>
-          )}
+          <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
+            Halaman {currentPage} dari {totalPages}
+          </span>
         </div>
 
         {isLoadingSimulation ? (
-          <div className="py-20 flex flex-col items-center justify-center text-slate-500 gap-3">
-            <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm font-medium">Sedang memuat data simulasi simpanan lebaran...</p>
+          <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
+            <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-xs font-medium">Memuat dan menghitung nominatif saldo simpanan lebaran...</p>
           </div>
         ) : filteredMembers.length === 0 ? (
-          <div className="py-16 text-center text-slate-400">
-            <Coins className="w-12 h-12 mx-auto mb-3 opacity-40 text-slate-500" />
-            <p className="text-base font-semibold text-slate-600">Tidak ada data nominatif</p>
-            <p className="text-xs text-slate-400 mt-1">
-              {searchQuery || loanFilter !== 'all'
-                ? 'Tidak ada anggota yang cocok dengan filter pencarian.'
-                : 'Belum ada saldo simpanan lebaran aktif yang siap dicairkan.'}
-            </p>
+          <div className="py-16 text-center text-slate-400 text-sm">
+            Tidak ada anggota yang memenuhi kriteria pencarian / filter saldo simpanan lebaran.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -752,64 +476,55 @@ export default function BulkLebaranTab() {
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-600 font-semibold text-xs uppercase tracking-wider">
                   <th className="py-3 px-4 w-12 text-center">No</th>
-                  <th className="py-3 px-4">NRP</th>
-                  <th className="py-3 px-4">Nama Anggota</th>
-                  <th className="py-3 px-4">Bank & Rekening</th>
-                  <th className="py-3 px-4 text-right">Saldo Dicairkan (100%)</th>
-                  <th className="py-3 px-4 text-center">Saldo Akhir</th>
-                  <th className="py-3 px-4">Catatan Pinjaman</th>
+                  <th className="py-3 px-4">Anggota</th>
+                  <th className="py-3 px-4">Rekening Tujuan</th>
+                  <th className="py-3 px-4 text-right">Saldo Lebaran (Cair)</th>
+                  <th className="py-3 px-4 text-center">Status Pinjaman</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedMembers.map((member, idx) => {
-                  const absoluteIndex = (currentPage - 1) * pageSize + idx + 1;
+                  const globalIdx = (currentPage - 1) * pageSize + idx + 1;
                   return (
-                    <tr 
-                      key={member.memberId}
-                      className="hover:bg-slate-50/80 transition-colors"
-                    >
+                    <tr key={member.memberId} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-mono">
-                        {absoluteIndex}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono font-medium text-slate-700">
-                        {member.nrp || '-'}
+                        {globalIdx}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-800">{member.nama}</div>
-                        <div className="text-xs text-slate-400">{member.pangkat || 'Anggota'}</div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-1.5 text-slate-700 font-medium">
-                          <Landmark className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{member.bankName}</span>
-                        </div>
                         <div className="text-xs text-slate-500 font-mono">
-                          {member.bankAccount ? member.bankAccount : (
-                            <span className="text-amber-600 italic">Belum ada no rekening</span>
-                          )}
+                          NRP: {member.nrp} • {member.pangkat}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-right font-bold text-emerald-600">
-                        Rp {member.saldoLebaran.toLocaleString('id-ID')}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="inline-block px-2 py-0.5 bg-slate-100 text-slate-600 font-mono text-xs rounded font-medium">
-                          Rp 0
-                        </span>
-                      </td>
                       <td className="py-3.5 px-4">
-                        {member.hasActiveLoan ? (
-                          <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-medium">
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span>
-                              Ada Pinjaman (Sisa Rp {member.activeLoanRemaining.toLocaleString('id-ID')})
-                            </span>
+                        {member.bankAccount ? (
+                          <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-slate-700">
+                            <Landmark className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{member.bankName || 'Bank'}</span>
+                            <span className="font-bold text-slate-900">{member.bankAccount}</span>
                           </div>
                         ) : (
-                          <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg text-xs font-medium">
-                            <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span>Bebas Pinjaman</span>
-                          </div>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-medium rounded">
+                            <AlertTriangle className="w-3 h-3 text-amber-500" /> Belum ada rekening
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <span className="font-black text-emerald-600 text-base">
+                          Rp {member.saldoLebaran.toLocaleString('id-ID')}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        {member.hasActiveLoan ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-xs font-medium rounded-full" title={`Sisa Hutang: Rp ${member.activeLoanRemaining.toLocaleString('id-ID')}`}>
+                            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                            Ada Pinjaman
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium rounded-full">
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                            Bebas Pinjaman
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -820,205 +535,31 @@ export default function BulkLebaranTab() {
           </div>
         )}
 
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
-            <span className="text-xs text-slate-500">
-              Menampilkan {paginatedMembers.length} dari {filteredMembers.length} baris
+        {/* Pagination Footer */}
+        {filteredMembers.length > pageSize && (
+          <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>
+              Menampilkan {(currentPage - 1) * pageSize + 1} s/d {Math.min(currentPage * pageSize, filteredMembers.length)} dari {filteredMembers.length} data
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                onClick={() => setCurrentPage(p => Math.max(p - 1, 1))}
                 disabled={currentPage === 1}
-                className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 disabled:opacity-40 transition-colors"
+                className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 Sebelumnya
               </button>
-              <span className="text-xs font-semibold px-2 text-slate-700">
+              <span className="font-semibold text-slate-700">
                 {currentPage} / {totalPages}
               </span>
               <button
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))}
                 disabled={currentPage === totalPages}
-                className="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-medium hover:bg-slate-100 disabled:opacity-40 transition-colors"
+                className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
               >
                 Selanjutnya
               </button>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* Tabel Riwayat Siklus Pencairan Massal & Detail Penerima */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <History className="w-5 h-5 text-slate-500" />
-            <div>
-              <h3 className="font-bold text-slate-800 text-base">
-                Riwayat Siklus Pencairan Massal Simpanan Lebaran
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Daftar siklus pencairan yang terdaftar, diajukan, atau dicatat dalam simulasi berantai
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={loadCyclesData}
-            disabled={isLoadingHistory}
-            className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory ? 'animate-spin' : ''}`} />
-            Refresh Riwayat
-          </button>
-        </div>
-
-        {isLoadingHistory ? (
-          <div className="py-12 flex justify-center items-center text-slate-400">
-            <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : cyclesHistory.length === 0 ? (
-          <div className="py-12 text-center text-slate-400 text-sm">
-            Belum ada riwayat siklus pencairan massal lebaran yang tercatat.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-600 font-semibold text-xs uppercase tracking-wider">
-                  <th className="py-3 px-4 w-12 text-center">No</th>
-                  <th className="py-3 px-4">Tanggal Pencairan</th>
-                  <th className="py-3 px-4">Nama Siklus</th>
-                  <th className="py-3 px-4 text-center">Sumber</th>
-                  <th className="py-3 px-4 text-center">Jumlah Penerima</th>
-                  <th className="py-3 px-4 text-right">Total Cair (Rp)</th>
-                  <th className="py-3 px-4 text-center">Status</th>
-                  <th className="py-3 px-4 text-center">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {cyclesHistory.map((cycle, idx) => {
-                  const dateStr = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
-                  const displayDate = dateStr ? new Date(dateStr).toLocaleDateString('id-ID', {
-                    day: 'numeric',
-                    month: 'short',
-                    year: 'numeric'
-                  }) : '-';
-
-                  // Badge Sumber
-                  const src = cycle.source_type || 'MASSAL';
-                  let sourceBadge = (
-                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold rounded-md">
-                      Massal
-                    </span>
-                  );
-                  if (src === 'HISTORICAL_INPUT') {
-                    sourceBadge = (
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 text-[11px] font-semibold rounded-md">
-                        Input Historis
-                      </span>
-                    );
-                  } else if (src === 'MANUAL') {
-                    sourceBadge = (
-                      <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-semibold rounded-md">
-                        Manual
-                      </span>
-                    );
-                  }
-
-                  // Badge Status
-                  let badge = (
-                    <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg">
-                      {cycle.status}
-                    </span>
-                  );
-
-                  if (cycle.status === 'COMPLETED') {
-                    badge = (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Selesai
-                      </span>
-                    );
-                  } else if (cycle.status === 'APPROVED') {
-                    badge = (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-lg">
-                        <Clock className="w-3.5 h-3.5 text-blue-600" /> Disetujui
-                      </span>
-                    );
-                  } else if (cycle.status === 'DRAFT') {
-                    badge = (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-lg">
-                        <Clock className="w-3.5 h-3.5 text-amber-600" /> Draf
-                      </span>
-                    );
-                  } else if (cycle.status === 'REJECTED') {
-                    badge = (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-red-100 text-red-800 text-xs font-bold rounded-lg">
-                        <Ban className="w-3.5 h-3.5 text-red-600" /> Dibatalkan
-                      </span>
-                    );
-                  }
-
-                  return (
-                    <tr key={cycle.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-mono">
-                        {idx + 1}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono font-medium text-slate-700 text-xs">
-                        {displayDate}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-800">{cycle.cycle_name}</div>
-                        {cycle.notes && (
-                          <div className="text-xs text-slate-400 font-normal">{cycle.notes}</div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {sourceBadge}
-                      </td>
-                      <td className="py-3.5 px-4 text-center font-bold text-slate-700">
-                        {cycle.total_members.toLocaleString('id-ID')}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-black text-slate-800">
-                        Rp {Number(cycle.total_amount || 0).toLocaleString('id-ID')}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {badge}
-                      </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleViewRecipients(cycle)}
-                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1"
-                            title="Lihat daftar nominatif penerima pada tanggal ini"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Lihat Penerima</span>
-                          </button>
-
-                          {cycle.status === 'DRAFT' && (
-                            <button
-                              onClick={() => handleOpenExecutionModal(cycle)}
-                              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-colors"
-                            >
-                              Eksekusi
-                            </button>
-                          )}
-
-                          <button
-                            onClick={() => handleDeleteCycle(cycle)}
-                            className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors"
-                            title="Hapus tanggal siklus ini"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
         )}
       </div>
@@ -1037,16 +578,6 @@ export default function BulkLebaranTab() {
         error={executionError}
         defaultCycleName={targetCycleForExecution?.cycle_name}
         defaultCutOffDate={targetCycleForExecution?.cut_off_date}
-      />
-
-      {/* Modal Rincian Penerima Per Siklus */}
-      <CycleRecipientsModal
-        isOpen={isRecipientsModalOpen}
-        onClose={() => {
-          setIsRecipientsModalOpen(false);
-          setSelectedCycleForRecipients(null);
-        }}
-        cycle={selectedCycleForRecipients}
       />
     </div>
   );

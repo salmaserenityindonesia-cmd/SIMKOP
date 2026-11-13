@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ExcelJS from 'exceljs';
-import { calculateExcelDatedifMonths, parseMemberUpload, executeMigration, MemberParseResult, parseAmount, parseNumber } from './memberExcelService';
+import {
+  calculateExcelDatedifMonths,
+  parseMemberUpload,
+  executeMigration,
+  MemberParseResult,
+  parseAmount,
+  parseNumber,
+  buildMemberTemplateWorkbook,
+  exportMemberTemplate,
+} from './memberExcelService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -1479,6 +1488,236 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
 
       // Verify repayments created for all 6 schedules
       expect(insertedRepaymentsPayload).toHaveLength(6);
+    });
+  });
+
+  describe('6-Column Member Import Template & Zero-Fallback Backward Compatibility', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('buildMemberTemplateWorkbook generates strictly 6 basic profile columns with sample row', async () => {
+      const workbook = await buildMemberTemplateWorkbook();
+      const sheet = workbook.worksheets[0];
+      expect(sheet).toBeDefined();
+
+      const headerValues: string[] = [];
+      sheet.getRow(1).eachCell((cell) => {
+        if (cell.value) headerValues.push(String(cell.value));
+      });
+
+      expect(headerValues).toEqual([
+        'nrp',
+        'nama',
+        'pangkat',
+        'bank_account_number',
+        'membership_status',
+        'tgl_awal_anggota',
+      ]);
+
+      const sampleRow = sheet.getRow(2);
+      expect(sampleRow.getCell(1).value).toBe('95168420');
+      expect(sampleRow.getCell(2).value).toBe('Budi Santoso');
+      expect(sampleRow.getCell(3).value).toBe('Aipda');
+      expect(sampleRow.getCell(4).value).toBe('367800973556');
+      expect(sampleRow.getCell(5).value).toBe('ACTIVE');
+      expect(sampleRow.getCell(6).value).toBe('2026-11-13');
+    });
+
+    it('exportMemberTemplate downloads file named template_import_anggota.xlsx', async () => {
+      const mockLink = {
+        href: '',
+        download: '',
+        click: vi.fn(),
+      };
+      const origDoc = globalThis.document;
+      const origWindow = globalThis.window;
+      const origCreateObjectURL = globalThis.URL.createObjectURL;
+      const origRevokeObjectURL = globalThis.URL.revokeObjectURL;
+
+      globalThis.document = {
+        createElement: vi.fn().mockReturnValue(mockLink),
+      } as any;
+      globalThis.URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+      globalThis.URL.revokeObjectURL = vi.fn();
+      globalThis.window = { URL: globalThis.URL } as any;
+
+      try {
+        await exportMemberTemplate();
+        expect(mockLink.download).toBe('template_import_anggota.xlsx');
+        expect(mockLink.click).toHaveBeenCalledTimes(1);
+      } finally {
+        globalThis.document = origDoc;
+        globalThis.window = origWindow;
+        globalThis.URL.createObjectURL = origCreateObjectURL;
+        globalThis.URL.revokeObjectURL = origRevokeObjectURL;
+      }
+    });
+
+    it('parseMemberUpload parses 6-column Excel file and defaults missing savings/loan columns to 0/null', async () => {
+      const sixColHeaders = [
+        'nrp',
+        'nama',
+        'pangkat',
+        'bank_account_number',
+        'membership_status',
+        'tgl_awal_anggota',
+      ];
+      const sixColRows = [
+        ['95168420', 'Budi Santoso', 'Aipda', '367800973556', 'ACTIVE', '2026-11-13'],
+        ['95168421', 'Andi Wijaya', 'Bripka', '', '', ''],
+      ];
+
+      const file = await createMockExcelFile(sixColHeaders, sixColRows);
+      const result = await parseMemberUpload(file);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.rows).toHaveLength(2);
+
+      const r1 = result.rows[0];
+      expect(r1.nrp).toBe('95168420');
+      expect(r1.nama).toBe('Budi Santoso');
+      expect(r1.pangkat).toBe('Aipda');
+      expect(r1.bank_account_number).toBe('367800973556');
+      expect(r1.membership_status).toBe('ACTIVE');
+      expect(r1.tgl_awal_anggota).toBe('2026-11-13');
+      expect(r1.jumlah_simpanan_pokok).toBe(0);
+      expect(r1.jumlah_simpanan_wajib).toBe(0);
+      expect(r1.jumlah_simpanan_belanja).toBe(0);
+      expect(r1.jumlah_simpanan_lebaran).toBe(0);
+      expect(r1.jumlah_pinjaman).toBe(0);
+      expect(r1.tgl_awal_pinjaman).toBeNull();
+      expect(r1.tenor).toBe(0);
+      expect(r1.sisa_pinjaman).toBe(0);
+
+      const r2 = result.rows[1];
+      expect(r2.nrp).toBe('95168421');
+      expect(r2.membership_status).toBe('ACTIVE');
+      expect(r2.tgl_awal_anggota).toBeNull();
+      expect(r2.jumlah_simpanan_pokok).toBe(0);
+      expect(r2.jumlah_pinjaman).toBe(0);
+    });
+
+    it('executeMigration with 6-column zero savings/loans provisions member_deposits without deleting or inserting transactions or loans', async () => {
+      const insertedMemberDeposits: any[] = [];
+      const deleteTxCalled = vi.fn();
+      const insertTxCalled = vi.fn();
+      const insertLoanCalled = vi.fn();
+
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', name: 'Simpanan Pokok' },
+                { id: 'dt-wajib', name: 'Simpanan Wajib' },
+                { id: 'dt-belanja', name: 'Simpanan Belanja' },
+                { id: 'dt-lebaran', name: 'Simpanan Lebaran' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loan_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({
+                  data: [{ id: 'lt-default', name: 'Pinjaman Reguler' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'new-member-6col' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              eq: vi.fn().mockImplementation(() => ({
+                eq: vi.fn().mockImplementation(() => ({
+                  single: vi.fn().mockResolvedValue({ data: null, error: null }),
+                })),
+                then: (resolve: any) => resolve({ data: [{ id: 'existing-md-1' }], error: null }),
+              })),
+            })),
+            insert: vi.fn().mockImplementation((payload) => {
+              insertedMemberDeposits.push(payload);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: `md-new-${payload.deposit_type_id}` }, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: deleteTxCalled,
+            insert: insertTxCalled,
+          };
+        }
+        if (table === 'loans') {
+          return {
+            insert: insertLoanCalled,
+          };
+        }
+        return { select: vi.fn().mockReturnThis() };
+      });
+
+      const parseResult: MemberParseResult = {
+        rows: [
+          {
+            nrp: '95168420',
+            nama: 'Budi Santoso',
+            pangkat: 'Aipda',
+            bank_account_number: '367800973556',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2026-11-13',
+            jumlah_simpanan_pokok: 0,
+            jumlah_simpanan_wajib: 0,
+            jumlah_simpanan_belanja: 0,
+            jumlah_simpanan_lebaran: 0,
+            jumlah_pinjaman: 0,
+            tgl_awal_pinjaman: null,
+            tenor: 0,
+            sisa_pinjaman: 0,
+            n_bulan_simpanan: 1,
+            wajib_per_bulan: 0,
+            belanja_per_bulan: 0,
+            lebaran_per_bulan: 0,
+            n_bulan_pinjaman: 1,
+            sudah_diangsur: 0,
+            angsuran_lampau_per_bulan: 0,
+          },
+        ],
+        errors: [],
+      };
+
+      await executeMigration(parseResult);
+
+      // Rekening simpanan tetap diinisialisasi (4 tipe simpanan)
+      expect(insertedMemberDeposits).toHaveLength(4);
+      expect(insertedMemberDeposits.map((d) => d.deposit_type_id)).toEqual([
+        'dt-pokok',
+        'dt-wajib',
+        'dt-belanja',
+        'dt-lebaran',
+      ]);
+
+      // Tidak ada penghapusan saldo lama & tidak ada mutasi kosong & tidak ada pinjaman
+      expect(deleteTxCalled).not.toHaveBeenCalled();
+      expect(insertTxCalled).not.toHaveBeenCalled();
+      expect(insertLoanCalled).not.toHaveBeenCalled();
     });
   });
 });

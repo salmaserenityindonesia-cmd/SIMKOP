@@ -551,6 +551,74 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(res.successCount).toBe(1);
       expect(insertedTransactions).toHaveLength(0);
     });
+
+    it('tidak menghapus mutasi anggota lama saat mengimpor profil 6 kolom dengan nominal simpanan 0', async () => {
+      const mockDepositTypes = [
+        { id: 'dt-sp', code: 'SP', name: 'Simpanan Pokok' },
+        { id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' },
+        { id: 'dt-sb', code: 'SB', name: 'Simpanan Belanja' },
+        { id: 'dt-sl', code: 'SL', name: 'Simpanan Lebaran' },
+      ];
+
+      const deleteTxSpy = vi.fn();
+      const insertTxSpy = vi.fn();
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'uuid-existing-member', nrp: '95168420', created_at: '2026-11-13' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-ex-sp', member_id: 'uuid-existing-member', deposit_type_id: 'dt-sp' },
+                  { id: 'md-ex-sw', member_id: 'uuid-existing-member', deposit_type_id: 'dt-sw' },
+                ],
+                error: null,
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: deleteTxSpy,
+            insert: insertTxSpy,
+          };
+        }
+        return {};
+      });
+
+      const sixColProfileInput: MemberImportInput[] = [
+        {
+          nrp: '95168420',
+          nama: 'Budi Santoso',
+          pangkat: 'Aipda',
+          bank_account_number: '367800973556',
+          membership_status: 'ACTIVE',
+          tgl_awal_anggota: '2026-11-13',
+        },
+      ];
+
+      const res = await importMembersChunked(sixColProfileInput);
+      expect(res.successCount).toBe(1);
+      expect(deleteTxSpy).not.toHaveBeenCalled();
+      expect(insertTxSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('getDepositTypes', () => {

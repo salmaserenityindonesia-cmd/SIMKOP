@@ -32,7 +32,8 @@ import {
   getRolling12Months,
   getRolling12MonthRange,
   getSavingsComplianceAvailableYears,
-  ImportSavingsMatrixLedgerResult
+  ImportSavingsMatrixLedgerResult,
+  parseCutoffDateInfo
 } from '../../services/complianceService';
 import MemberLedgerModal from '../../components/members/MemberLedgerModal';
 import SavingsLedgerMatrixModal from '../../components/compliance/SavingsLedgerMatrixModal';
@@ -232,13 +233,17 @@ export const fetchComplianceMatrixData = async (
   setData: (d: ComplianceMatrixRow[]) => void,
   setTargets: (t: any) => void,
   setTotalSetoran: (s: number) => void,
-  setRateTiers?: (r: SavingsRateTier[]) => void
+  setRateTiers?: (r: SavingsRateTier[]) => void,
+  setCutoffDate?: (d: string | null) => void
 ): Promise<{ rows: ComplianceMatrixRow[]; targets?: any; totalSetoran: number; rateTiers?: SavingsRateTier[] } | null> => {
   setLoading(true);
   try {
     const yearNum = typeof targetYear === 'string' ? parseInt(targetYear, 10) : targetYear;
     const matrixData = await getComplianceMatrixData(yearNum);
     setData(matrixData.rows || []);
+    if (setCutoffDate) {
+      setCutoffDate(matrixData.cutoffDate ?? null);
+    }
     if (matrixData.targets) {
       setTargets(matrixData.targets);
     }
@@ -322,6 +327,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   }, [data, currentPeriod]);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
+  const [cutoffDate, setCutoffDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(initialData === undefined);
   const [selectedMember, setSelectedMember] = useState<{
     id: string;
@@ -368,11 +374,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   } | null>(null);
   const [isPokokModalOpen, setIsPokokModalOpen] = useState(false);
 
+  const effectiveCutoffDate = useMemo(() => {
+    if (cutoffDate) return cutoffDate;
+    const rowCutoff = data.find(r => r.cutoffDate)?.cutoffDate;
+    return rowCutoff || null;
+  }, [cutoffDate, data]);
+
+  const cutoffInfo = useMemo(() => parseCutoffDateInfo(effectiveCutoffDate), [effectiveCutoffDate]);
+
   const feedback = useContext(FeedbackContext);
 
   const handleReloadAfterBulk = async () => {
     clearTierCache();
-    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
     setShowConfirmBulkModal(false);
     setBulkResult(null);
     if (feedback?.showToast) {
@@ -382,7 +396,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
   const handleReloadAfterBulkCheck = async () => {
     clearTierCache();
-    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
     setShowCheckAllConfirmModal(false);
     setBulkCheckSummary(null);
     if (feedback?.showToast) {
@@ -400,7 +414,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   }, []);
 
   useEffect(() => {
-    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+    fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
     if (onYearChange) {
       onYearChange(year);
     }
@@ -506,9 +520,14 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       targetAmount: targetL,
     };
 
-    const isWajibUnbilled = wajibItem.status === 'unbilled' || wajibItem.status === 'not_applicable';
-    const isBelanjaUnbilled = belanjaItem.status === 'unbilled' || belanjaItem.status === 'not_applicable';
-    const isLebaranUnbilled = lebaranItem.status === 'unbilled' || lebaranItem.status === 'not_applicable';
+    const isWajibCovered = wajibItem.status === 'covered_by_opening';
+    const isBelanjaCovered = belanjaItem.status === 'covered_by_opening';
+    const isLebaranCovered = lebaranItem.status === 'covered_by_opening';
+
+    const isWajibUnbilled = wajibItem.status === 'unbilled' || wajibItem.status === 'not_applicable' || isWajibCovered;
+    const isBelanjaUnbilled = belanjaItem.status === 'unbilled' || belanjaItem.status === 'not_applicable' || isBelanjaCovered;
+    const isLebaranUnbilled = lebaranItem.status === 'unbilled' || lebaranItem.status === 'not_applicable' || isLebaranCovered;
+    const isMonthAllCovered = isWajibCovered && isBelanjaCovered && isLebaranCovered;
 
     const isWajibPartial = !isWajibUnbilled && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
     const isBelanjaPartial = !isBelanjaUnbilled && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
@@ -523,9 +542,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           joinDate: row.tgl_awal_anggota || row.created_at
         })}
         className="relative group flex flex-col gap-0.5 py-1 px-1.5 text-[11px] leading-tight font-mono select-none rounded hover:bg-slate-100/80 cursor-pointer transition-colors"
-        title={`Klik untuk rincian buku besar ${row.nama} - ${MONTHS[monthIndex]} ${year}`}
+        title={isMonthAllCovered
+          ? `Sudah tercakup dalam Saldo Awal (${colPeriod?.label || `${MONTHS[monthIndex]} ${year}`})`
+          : `Klik untuk rincian buku besar ${row.nama} - ${MONTHS[monthIndex]} ${year}`
+        }
       >
-        {monthIndex === 0 && totalOpeningBal > 0 && (
+        {monthIndex === 0 && totalOpeningBal > 0 && !effectiveCutoffDate && !isMonthAllCovered && (
           <span
             className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1 py-0.5 rounded border border-slate-200 block text-center truncate mb-0.5"
             title={`Saldo Bawaan (pra-jendela): Rp ${totalOpeningBal.toLocaleString('id-ID')}`}
@@ -604,7 +626,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <div className="text-right">
                 <div>
                   {isWajibUnbilled ? (
-                    <span className="text-slate-400">{wajibItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                    <span className="text-slate-400">
+                      {isWajibCovered
+                        ? 'Sudah tercakup dalam Saldo Awal'
+                        : wajibItem.status === 'unbilled'
+                        ? 'Belum Terbit Tagihan'
+                        : '-'}
+                    </span>
                   ) : isWajibPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(wajibItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetW).toLocaleString('id-ID')} (Kurang Rp {Number(targetW - Number(wajibItem.amount)).toLocaleString('id-ID')})
@@ -629,7 +657,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <div className="text-right">
                 <div>
                   {isBelanjaUnbilled ? (
-                    <span className="text-slate-400">{belanjaItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                    <span className="text-slate-400">
+                      {isBelanjaCovered
+                        ? 'Sudah tercakup dalam Saldo Awal'
+                        : belanjaItem.status === 'unbilled'
+                        ? 'Belum Terbit Tagihan'
+                        : '-'}
+                    </span>
                   ) : isBelanjaPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(belanjaItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetB).toLocaleString('id-ID')} (Kurang Rp {Number(targetB - Number(belanjaItem.amount)).toLocaleString('id-ID')})
@@ -654,7 +688,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <div className="text-right">
                 <div>
                   {isLebaranUnbilled ? (
-                    <span className="text-slate-400">{lebaranItem.status === 'unbilled' ? 'Belum Terbit Tagihan' : '-'}</span>
+                    <span className="text-slate-400">
+                      {isLebaranCovered
+                        ? 'Sudah tercakup dalam Saldo Awal'
+                        : lebaranItem.status === 'unbilled'
+                        ? 'Belum Terbit Tagihan'
+                        : '-'}
+                    </span>
                   ) : isLebaranPartial ? (
                     <span className="text-amber-400 font-medium">
                       Setoran Parsial: Rp {Number(lebaranItem.amount).toLocaleString('id-ID')} dari kewajiban Rp {Number(targetL).toLocaleString('id-ID')} (Kurang Rp {Number(targetL - Number(lebaranItem.amount)).toLocaleString('id-ID')})
@@ -933,9 +973,15 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                   Informasi Anggota
                 </th>
-                <th className="py-3 px-3 bg-slate-100/80 border-b border-r border-slate-200 text-center min-w-[120px] font-semibold text-slate-700 text-xs">
-                  <div>{rollingMonths.length > 0 ? `Saldo Pra ${rollingMonths[0].label}` : 'Saldo Awal'}</div>
-                  <div className="text-[10px] font-normal text-slate-500">Akumulasi Lampau</div>
+                <th className="py-3 px-3 bg-slate-100/80 border-b border-r border-slate-200 text-center min-w-[130px] font-semibold text-slate-700 text-xs">
+                  <div>Saldo Awal</div>
+                  <div className="text-[10px] font-normal text-slate-500">
+                    {cutoffInfo
+                      ? `Per ${cutoffInfo.formattedDate}`
+                      : rollingMonths.length > 0
+                      ? `Per ${rollingMonths[0].label}`
+                      : 'Cut-Off Saldo Awal'}
+                  </div>
                 </th>
                 {rollingMonths.map((col, idx) => {
                   const isCurrentMonth = idx === rollingMonths.length - 1;
@@ -1048,6 +1094,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                   </td>
                   
                   <td className="px-3 py-3 bg-slate-50/70 border-b border-r border-slate-200 text-xs select-none" data-testid={`prior-summary-${row.nrp}`}>
+                    <div className="text-slate-600 whitespace-nowrap">P: Rp {Number(row.pokokBalance ?? row.priorSummary?.pokok ?? 0).toLocaleString('id-ID')}</div>
                     <div className="font-semibold text-slate-700 whitespace-nowrap">W: Rp {Number(row.priorSummary?.wajib || 0).toLocaleString('id-ID')}</div>
                     <div className="text-slate-500 whitespace-nowrap">B: Rp {Number(row.priorSummary?.belanja || 0).toLocaleString('id-ID')}</div>
                     <div className="text-slate-500 whitespace-nowrap">L: Rp {Number(row.priorSummary?.lebaran || 0).toLocaleString('id-ID')}</div>
@@ -1171,9 +1218,10 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           memberName={selectedMember.nama}
           joinDate={selectedMember.joinDate}
           initialRateTiers={rateTiers}
+          initialCutoffDate={effectiveCutoffDate}
           onClose={() => setSelectedMember(null)}
           onSuccess={() => {
-            fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+            fetchComplianceMatrixData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
           }}
         />
       )}

@@ -91,6 +91,11 @@ vi.mock('../../services/memberService', () => ({
     deposits_deleted: 1,
     message: 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
   }),
+  syncInitialSavingsBalances: vi.fn().mockResolvedValue({
+    updatedCount: 1,
+    skippedNrps: [],
+    effectiveDate: '2026-01-01',
+  }),
 }));
 
 vi.mock('../../services/memberExporter', () => ({
@@ -139,6 +144,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       // Verification: Toolbar buttons present
       expect(html).toContain('Template');
       expect(html).toContain('Import');
+      expect(html).toContain('Saldo Awal Simpanan');
       expect(html).toContain('Tambah Anggota');
       expect(html).toContain('Excel');
       expect(html).toContain('PDF');
@@ -371,6 +377,21 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       );
 
       consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('Upload Saldo Awal Simpanan Modal UI Structure', () => {
+    it('renders Upload Saldo Awal Simpanan modal with template button, effective date input, verification checkbox, and disabled submit button', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota initialSavingsModalOpen={true} />);
+
+      expect(html).toContain('Upload Saldo Awal Simpanan');
+      expect(html).toContain('Unduh Template Saldo Awal (.xlsx)');
+      expect(html).toContain('Tanggal Saldo Awal Dinyatakan Aktif');
+      expect(html).toContain('type="date"');
+      expect(html).toContain('Pernyataan Verifikasi Saldo Awal:');
+      expect(html).toContain('type="checkbox"');
+      expect(html).toContain('Simpan &amp; Aktifkan Saldo Awal');
+      expect(html).toContain('disabled=""');
     });
   });
 });

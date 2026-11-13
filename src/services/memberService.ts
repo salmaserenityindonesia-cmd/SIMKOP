@@ -1,6 +1,9 @@
 import { supabase } from '../lib/supabaseClient';
 import type { Simpanan } from './depositManagementService';
 import { getActiveSavingsRateTiers } from './savingsRateService';
+import type { InitialSavingsRow } from '../utils/initialSavingsParser';
+
+export type { InitialSavingsRow };
 
 function shouldFallback(e: any): boolean {
   if (!e) return false;
@@ -482,7 +485,13 @@ export async function importMembersChunked(
           accounts = (allMemberDeposits || []).filter((amd: any) => amd.member_id === mid);
         }
 
-        if (accounts && accounts.length > 0) {
+        const jmlWajib = Number(m.jumlah_simpanan_wajib) || 0;
+        const jmlBelanja = Number(m.jumlah_simpanan_belanja) || 0;
+        const jmlLebaran = Number(m.jumlah_simpanan_lebaran) || 0;
+        const jmlPokok = Number(m.jumlah_simpanan_pokok) || 0;
+        const hasPositiveSavings = jmlWajib > 0 || jmlBelanja > 0 || jmlLebaran > 0 || jmlPokok > 0;
+
+        if (hasPositiveSavings && accounts && accounts.length > 0) {
           const accountIds = accounts.map((a: any) => a.id).filter(Boolean);
           if (accountIds.length > 0) {
             const { error: delErr } = await supabase
@@ -517,11 +526,6 @@ export async function importMembersChunked(
         const bId = findAccId('SB', typeBelanja);
         const lId = findAccId('SL', typeLebaran);
         const pId = findAccId('SP', typePokok);
-
-        const jmlWajib = Number(m.jumlah_simpanan_wajib) || 0;
-        const jmlBelanja = Number(m.jumlah_simpanan_belanja) || 0;
-        const jmlLebaran = Number(m.jumlah_simpanan_lebaran) || 0;
-        const jmlPokok = Number(m.jumlah_simpanan_pokok) || 0;
 
         if (wId && jmlWajib > 0) {
           transactionsToInsert.push({
@@ -1027,4 +1031,238 @@ export async function resetAllMembersData(): Promise<ResetMembersResult> {
       `Gagal mereset data anggota dan pembukuan: ${fallbackErr?.message || 'Terjadi kesalahan sistem'}`
     );
   }
+}
+
+export interface InitialSavingsSyncResult {
+  updatedCount: number;
+  skippedNrps: string[];
+  effectiveDate: string;
+}
+
+/**
+ * Menyimpan saldo awal simpanan anggota (Pokok, Wajib, Belanja, Lebaran) berdasarkan NRP
+ * dengan prinsip Clean Overwrite dan mencatat tanggal aktif saldo awal ke system_settings & audit_logs.
+ */
+export async function syncInitialSavingsBalances(
+  rows: InitialSavingsRow[],
+  effectiveDate: string
+): Promise<InitialSavingsSyncResult> {
+  const trimmedDate = typeof effectiveDate === 'string' ? effectiveDate.trim() : '';
+  if (!trimmedDate || !/^\d{4}-\d{2}-\d{2}$/.test(trimmedDate)) {
+    throw new Error('Tanggal aktif saldo awal wajib diisi dengan format YYYY-MM-DD yang valid.');
+  }
+
+  const parsedEffectiveDate = new Date(`${trimmedDate}T00:00:00`);
+  if (isNaN(parsedEffectiveDate.getTime())) {
+    throw new Error('Tanggal aktif saldo awal wajib diisi dengan format YYYY-MM-DD yang valid.');
+  }
+
+  if (!rows || rows.length === 0) {
+    throw new Error('Tidak ada data baris saldo awal untuk disimpan.');
+  }
+
+  const effectiveIso = parsedEffectiveDate.toISOString();
+
+  // 1. Pemetaan NRP -> anggota.id
+  let memberRows: Array<{ id: string; nrp: string }> = [];
+  const { data: queriedMembers, error: memberFetchErr } = await supabase
+    .from('anggota')
+    .select('id, nrp');
+
+  if (memberFetchErr) {
+    throw new Error(`Gagal memuat data anggota: ${memberFetchErr.message}`);
+  }
+  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string }>;
+
+  // Jika jumlah anggota >= 1000, muat seluruh halaman via fetchAllAnggotaPaged agar tidak terpotong
+  if (memberRows.length >= 1000) {
+    try {
+      const paged = await fetchAllAnggotaPaged();
+      if (paged.length > memberRows.length) {
+        memberRows = paged.map((a) => ({ id: a.id, nrp: a.nrp }));
+      }
+    } catch (e) {
+      console.warn('Gagal memuat anggota paged tambahan:', e);
+    }
+  }
+
+  const memberMap = new Map<string, string>();
+  for (const m of memberRows) {
+    if (m.nrp) {
+      memberMap.set(String(m.nrp).trim(), m.id);
+    }
+  }
+
+  // 2. Pemetaan deposit_types (POKOK, WAJIB, BELANJA, LEBARAN)
+  let { data: dTypes, error: dtErr } = await supabase.from('deposit_types').select('*');
+  if (dtErr) {
+    throw new Error(`Gagal memuat jenis simpanan: ${dtErr.message}`);
+  }
+
+  if (!dTypes || dTypes.length === 0) {
+    const seeds = [
+      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true },
+    ];
+    await supabase.from('deposit_types').insert(seeds);
+    const { data: refreshed } = await supabase.from('deposit_types').select('*');
+    dTypes = refreshed || [];
+  }
+
+  const typeMap: Record<string, string> = {};
+  (dTypes || []).forEach((dt: any) => {
+    if (dt.code) typeMap[String(dt.code).toLowerCase()] = dt.id;
+    if (dt.name) typeMap[String(dt.name).toLowerCase()] = dt.id;
+  });
+
+  const keys = Object.keys(typeMap);
+  const resolveTypeId = (codes: string[], namePatterns: string[]) => {
+    for (const c of codes) {
+      if (typeMap[c]) return typeMap[c];
+    }
+    const matchedKey = keys.find((k) => namePatterns.some((p) => k.includes(p)));
+    return matchedKey ? typeMap[matchedKey] : undefined;
+  };
+
+  const typePokok = resolveTypeId(['pokok', 'sp'], ['pokok']);
+  const typeWajib = resolveTypeId(['wajib', 'sw'], ['wajib']);
+  const typeBelanja = resolveTypeId(['belanja', 'sb'], ['belanja']);
+  const typeLebaran = resolveTypeId(['lebaran', 'sl'], ['lebaran', 'hari raya']);
+
+  let updatedCount = 0;
+  const skippedNrps: string[] = [];
+
+  // 3. Proses per anggota dengan Clean Overwrite pada deposit_transactions
+  for (const row of rows) {
+    const nrpKey = String(row.nrp || '').trim();
+    const memberId = memberMap.get(nrpKey);
+
+    if (!memberId) {
+      if (nrpKey) skippedNrps.push(nrpKey);
+      continue;
+    }
+
+    const { data: existingAccounts, error: accErr } = await supabase
+      .from('member_deposits')
+      .select('id, deposit_type_id')
+      .eq('member_id', memberId);
+
+    if (accErr) {
+      throw new Error(`Gagal memuat rekening simpanan anggota ${nrpKey}: ${accErr.message}`);
+    }
+
+    const accountByType = new Map<string, string>();
+    (existingAccounts || []).forEach((acc: any) => {
+      if (acc.deposit_type_id && acc.id) {
+        accountByType.set(acc.deposit_type_id, acc.id);
+      }
+    });
+
+    const savingsEntries = [
+      { typeId: typePokok, amount: Number(row.jumlah_simpanan_pokok) || 0 },
+      { typeId: typeWajib, amount: Number(row.jumlah_simpanan_wajib) || 0 },
+      { typeId: typeBelanja, amount: Number(row.jumlah_simpanan_belanja) || 0 },
+      { typeId: typeLebaran, amount: Number(row.jumlah_simpanan_lebaran) || 0 },
+    ];
+
+    for (const entry of savingsEntries) {
+      if (!entry.typeId) continue;
+
+      let depositAccountId = accountByType.get(entry.typeId);
+      if (!depositAccountId) {
+        const { data: createdAcc, error: createAccErr } = await supabase
+          .from('member_deposits')
+          .insert({
+            member_id: memberId,
+            deposit_type_id: entry.typeId,
+            is_terminated: false,
+          })
+          .select('id')
+          .single();
+
+        if (createAccErr || !createdAcc?.id) {
+          throw new Error(
+            `Gagal membuat rekening simpanan anggota ${nrpKey}: ${createAccErr?.message || 'ID kosong'}`
+          );
+        }
+        depositAccountId = createdAcc.id;
+        accountByType.set(entry.typeId, depositAccountId as string);
+      }
+
+      // Clean Overwrite: bersihkan transaksi saldo awal / migrasi sebelumnya untuk rekening ini
+      const delBase: any = supabase
+        .from('deposit_transactions')
+        .delete()
+        .eq('member_deposit_id', depositAccountId);
+
+      let delErr: any = null;
+      if (typeof delBase?.or === 'function' && typeof delBase.then !== 'function') {
+        const res = await delBase.or('description.ilike.%Saldo Awal%,description.ilike.%Migrasi%,for_month.is.null');
+        delErr = res?.error;
+      } else {
+        const res = await delBase;
+        delErr = res?.error;
+      }
+
+      if (delErr) {
+        throw new Error(`Gagal membersihkan saldo awal lama anggota ${nrpKey}: ${delErr.message}`);
+      }
+
+      if (entry.amount > 0) {
+        const { error: insTxErr } = await supabase.from('deposit_transactions').insert({
+          member_deposit_id: depositAccountId,
+          transaction_type: 'deposit',
+          amount: entry.amount,
+          description: `Saldo Awal Simpanan (Aktif sejak ${trimmedDate})`,
+          for_month: null,
+          for_year: null,
+          created_at: effectiveIso,
+        });
+
+        if (insTxErr) {
+          throw new Error(`Gagal menyimpan transaksi saldo awal anggota ${nrpKey}: ${insTxErr.message}`);
+        }
+      }
+    }
+
+    updatedCount++;
+  }
+
+  // 4. Catat metadata ke system_settings & audit_logs
+  try {
+    await supabase.from('system_settings').upsert(
+      {
+        key: 'initial_savings_effective_date',
+        value: trimmedDate,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' }
+    );
+  } catch (e) {
+    console.warn('Gagal menyimpan initial_savings_effective_date ke system_settings:', e);
+  }
+
+  try {
+    await supabase.from('audit_logs').insert({
+      table_name: 'deposit_transactions',
+      action: 'UPLOAD_INITIAL_SAVINGS',
+      record_id: trimmedDate,
+      new_data: {
+        effective_date: trimmedDate,
+        updated_count: updatedCount,
+        skipped_nrps: skippedNrps,
+      },
+      notes: `Upload Saldo Awal Simpanan aktif sejak ${trimmedDate} (${updatedCount} anggota diperbarui)`,
+    });
+  } catch (e) {
+    console.warn('Gagal mencatat UPLOAD_INITIAL_SAVINGS ke audit_logs:', e);
+  }
+
+  return {
+    updatedCount,
+    skippedNrps,
+    effectiveDate: trimmedDate,
+  };
 }

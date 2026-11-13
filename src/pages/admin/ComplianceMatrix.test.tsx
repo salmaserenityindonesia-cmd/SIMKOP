@@ -1626,12 +1626,13 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         <ComplianceMatrix initialData={[rowWithPriorSummary as any]} initialYear="2026" />
       );
 
-      // Verify column header for prior balance
-      expect(html).toContain('Saldo Pra Nov-25');
-      expect(html).toContain('Akumulasi Lampau');
+      // Verify column header for opening balance
+      expect(html).toContain('Saldo Awal');
+      expect(html).toContain('Per Nov-25');
 
       // Verify row cell data-testid and formatted amounts
       expect(html).toContain('data-testid="prior-summary-NRP-PRIOR-1"');
+      expect(html).toContain('P: Rp 0');
       expect(html).toContain('W: Rp 250.000');
       expect(html).toContain('B: Rp 120.000');
       expect(html).toContain('L: Rp 75.000');
@@ -1703,6 +1704,90 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       // Verifikasi Leonardo DiCaprio memiliki badge lunas
       expect(html).toContain('Pokok: Lunas');
       expect(html).not.toContain('data-testid="pay-pokok-btn-34763422"');
+    });
+
+    it('renders dynamic Per [Tanggal Pengesahan] header, P/W/B/L opening balances, and neutral covered_by_opening cells in cut-off mode', () => {
+      const periods2026 = Array.from({ length: 12 }, (_, idx) => ({
+        year: 2026,
+        month: idx + 1,
+        label: `${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'][idx]}-26`,
+        periodIndex: 2026 * 12 + (idx + 1),
+      }));
+
+      const coveredCell = {
+        w: 0,
+        b: 0,
+        l: 0,
+        bal_w: 10200000,
+        bal_b: 500000,
+        bal_l: 300000,
+        cum_w: 10200000,
+        cum_b: 500000,
+        cum_l: 300000,
+        wajib: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
+        belanja: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
+        lebaran: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
+      };
+
+      const postCutoffPaidCell = {
+        w: 200000,
+        b: 50000,
+        l: 50000,
+        bal_w: 10400000,
+        bal_b: 550000,
+        bal_l: 350000,
+        cum_w: 10400000,
+        cum_b: 550000,
+        cum_l: 350000,
+        wajib: { status: 'paid' as const, amount: 200000, targetAmount: 200000 },
+        belanja: { status: 'paid' as const, amount: 50000, targetAmount: 50000 },
+        lebaran: { status: 'paid' as const, amount: 50000, targetAmount: 50000 },
+      };
+
+      const months2026 = [
+        ...Array.from({ length: 10 }, () => coveredCell),
+        postCutoffPaidCell,
+        null,
+      ];
+
+      const rowCutOff = {
+        member_id: 'm-cutoff-1',
+        nrp: 'NRP-CUTOFF-1',
+        nama: 'Serda Budi CutOff',
+        pokokLunas: true,
+        pokokBalance: 100000,
+        cutoffDate: '2026-11-13',
+        compliance: 100,
+        balances: { w: 200000, b: 50000, l: 50000 },
+        periods: periods2026,
+        priorSummary: {
+          pokok: 100000,
+          wajib: 10200000,
+          belanja: 500000,
+          lebaran: 300000,
+          total: 11000000,
+        },
+        netSavings: {
+          wajib: 10400000,
+          belanja: 550000,
+          lebaran: 350000,
+          total: 11300000,
+        },
+        months: months2026,
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialData={[rowCutOff as any]} initialYear="2026" />
+      );
+
+      expect(html).toContain('Saldo Awal');
+      expect(html).toContain('Per 13 Nov 2026');
+      expect(html).toContain('P: Rp 100.000');
+      expect(html).toContain('W: Rp 10.200.000');
+      expect(html).toContain('B: Rp 500.000');
+      expect(html).toContain('L: Rp 300.000');
+      expect(html).toContain('Sudah tercakup dalam Saldo Awal');
+      expect(html).toContain('200.000');
     });
   });
 });
