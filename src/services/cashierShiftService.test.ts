@@ -930,5 +930,74 @@ describe('cashierShiftService', () => {
       expect(list[0].cashier_name).toBe('Kasir Satu');
       expect(list[0].shift_number).toBe('SHF-20261028-100000');
     });
+
+    it('should query using WIB (+07:00) opened_at/closed_at filter when .or is available and include early morning WIB shifts in local fallback', async () => {
+      const orMock = vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'shift-wib',
+            cashier_id: 'cashier-1',
+            shift_number: 'SHF-20261114-063000',
+            opened_at: '2026-11-13T23:30:00.000Z', // 06:30 WIB on 2026-11-14
+            closed_at: '2026-11-13T23:45:00.000Z',
+            initial_cash: 50000,
+            cash_sales: 20000,
+            expected_cash: 70000,
+            actual_cash: 70000,
+            difference: 0,
+            status: 'closed',
+          },
+        ],
+        error: null,
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                or: orMock,
+              }),
+            }),
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'cashier-1', nama: 'Kasir Pagi' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const list = await getShiftHistory('2026-11-14', '2026-11-14');
+      expect(orMock).toHaveBeenCalledWith(
+        'and(opened_at.gte.2026-11-14T00:00:00+07:00,opened_at.lte.2026-11-14T23:59:59.999+07:00),and(closed_at.gte.2026-11-14T00:00:00+07:00,closed_at.lte.2026-11-14T23:59:59.999+07:00)'
+      );
+      expect(list).toHaveLength(1);
+      expect(list[0].cashier_name).toBe('Kasir Pagi');
+
+      // Also verify local fallback when Supabase returns an error
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                or: vi.fn().mockResolvedValue({ data: null, error: { message: 'Offline' } }),
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const fallbackList = await getShiftHistory('2026-11-14', '2026-11-14');
+      expect(fallbackList).toHaveLength(1);
+      expect(fallbackList[0].id).toBe('shift-wib');
+    });
   });
 });

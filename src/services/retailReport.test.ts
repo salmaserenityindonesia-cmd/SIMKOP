@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getEndOfDayReport, getFastMovingProducts, getStockValuation } from './retail-report.service';
+import {
+  getEndOfDayReport,
+  getFastMovingProducts,
+  getStockValuation,
+  getShiftReconciliationReport,
+} from './retail-report.service';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -119,6 +124,118 @@ describe('Retail Report Service', () => {
       expect(report.paidCredit).toBe(0);
       expect(report.transactions).toHaveLength(0);
     });
+
+    it('should query using WIB (+07:00) date bounds, filter completed sales, fallback paid_cash for cash scheme, and populate completed_at', async () => {
+      const gteMock = vi.fn().mockReturnThis();
+      const lteMock = vi.fn().mockReturnThis();
+      const eqMock = vi.fn().mockReturnThis();
+
+      const mockSales = [
+        {
+          id: 'sale-early-wib',
+          sale_number: 'INV-WIB-001',
+          total_amount: 45000,
+          discount: 0,
+          subtotal: 45000,
+          paid_cash: 0,
+          paid_deposit: 0,
+          paid_credit: 0,
+          payment_scheme: 'cash',
+          sale_status: 'completed',
+          cashier_id: 'user-1',
+          member_id: null,
+          created_at: '2026-11-13T23:30:00.000Z', // 2026-11-14T06:30:00+07:00
+        },
+      ];
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'sales') {
+          const chain: any = {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            gte: gteMock,
+            lte: lteMock,
+            eq: eqMock,
+            then: (resolve: any) => resolve({ data: mockSales, error: null }),
+          };
+          return chain;
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [{ id: 'user-1', nama: 'Kasir Pagi' }], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const report = await getEndOfDayReport('2026-11-14', '2026-11-14');
+
+      expect(eqMock).toHaveBeenCalledWith('sale_status', 'completed');
+      expect(gteMock).toHaveBeenCalledWith('created_at', '2026-11-14T00:00:00+07:00');
+      expect(lteMock).toHaveBeenCalledWith('created_at', '2026-11-14T23:59:59.999+07:00');
+      expect(report.totalOmzet).toBe(45000);
+      expect(report.paidCash).toBe(45000);
+      expect(report.transactions[0].paid_cash).toBe(45000);
+      expect(report.transactions[0].completed_at).toBe('2026-11-13T23:30:00.000Z');
+      expect(report.transactions[0].pengelola?.nama).toBe('Kasir Pagi');
+    });
+  });
+
+  describe('getShiftReconciliationReport', () => {
+    it('should query cashier_shifts with WIB (+07:00) opened_at/closed_at filter and map pengelola names', async () => {
+      const orMock = vi.fn().mockReturnThis();
+      const orderMock = vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'shift-wib-1',
+            cashier_id: 'cashier-1',
+            shift_number: 'SHF-20261114-063000',
+            opened_at: '2026-11-13T23:30:00.000Z',
+            closed_at: '2026-11-14T00:30:00.000Z',
+            initial_cash: 100000,
+            cash_sales: 45000,
+            expected_cash: 145000,
+            actual_cash: 145000,
+            difference: 0,
+            status: 'closed',
+            notes: 'Shift pagi WIB',
+          },
+        ],
+        error: null,
+      });
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              or: orMock,
+              order: orderMock,
+            }),
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [{ id: 'cashier-1', nama: 'Budi Kasir' }], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const shifts = await getShiftReconciliationReport('2026-11-14', '2026-11-14');
+
+      expect(orMock).toHaveBeenCalledWith(
+        'and(opened_at.gte.2026-11-14T00:00:00+07:00,opened_at.lte.2026-11-14T23:59:59.999+07:00),and(closed_at.gte.2026-11-14T00:00:00+07:00,closed_at.lte.2026-11-14T23:59:59.999+07:00)'
+      );
+      expect(shifts).toHaveLength(1);
+      expect(shifts[0].cashier_name).toBe('Budi Kasir');
+      expect(shifts[0].actual_cash).toBe(145000);
+    });
   });
 
   describe('getFastMovingProducts', () => {
@@ -127,7 +244,7 @@ describe('Retail Report Service', () => {
       const mockSaleItems = [
         { sale_id: 'sale-1', product_id: 'prod-1', product_name: 'Beras 5kg', quantity: 2, unit_price: 65000 },
         { sale_id: 'sale-1', product_id: 'prod-2', product_name: 'Minyak Goreng 2L', quantity: 5, unit_price: 35000 },
-        { sale_id: 'sale-2', product_id: 'prod-1', product_name: 'Beras 5kg', quantity: 3, unit_price: 65000 },
+        { sale_id: 'sale-2', product_id: 'prod-1', product_name: 'Beras 5kg', qty: 3, price: 65000 },
       ];
       const mockProducts = [
         { id: 'prod-1', sku: 'BRS-01', name: 'Beras 5kg', buy_price: 55000, sell_price: 65000, category_id: 'cat-sembako' },
@@ -135,13 +252,18 @@ describe('Retail Report Service', () => {
       ];
       const mockCategories = [{ id: 'cat-sembako', name: 'Sembako' }];
 
+      const gteMock = vi.fn().mockReturnThis();
+      const lteMock = vi.fn().mockReturnThis();
+      const eqMock = vi.fn().mockReturnThis();
+
       const mockFrom = supabase.from as any;
       mockFrom.mockImplementation((table: string) => {
         if (table === 'sales') {
           return {
             select: vi.fn().mockReturnThis(),
-            gte: vi.fn().mockReturnThis(),
-            lte: vi.fn().mockReturnThis(),
+            eq: eqMock,
+            gte: gteMock,
+            lte: lteMock,
             then: (resolve: any) => resolve({ data: mockSales, error: null }),
           };
         }
@@ -172,6 +294,9 @@ describe('Retail Report Service', () => {
       const fastMoving = await getFastMovingProducts('2026-09-01', '2026-09-30');
 
       expect(fastMoving).toHaveLength(2);
+      expect(gteMock).toHaveBeenCalledWith('created_at', '2026-09-01T00:00:00+07:00');
+      expect(lteMock).toHaveBeenCalledWith('created_at', '2026-09-30T23:59:59.999+07:00');
+      expect(eqMock).toHaveBeenCalledWith('sale_status', 'completed');
       // Both had qty: prod-1 has 2+3=5, prod-2 has 5.
       // For prod-1: qty = 5, omzet = 5 * 65,000 = 325,000, hpp = 5 * 55,000 = 275,000, labaKotor = 50,000
       // Margin = (50,000 / 325,000) * 100 = 15.38%

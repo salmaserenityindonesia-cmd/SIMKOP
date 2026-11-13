@@ -57,14 +57,89 @@ export const getShiftReconciliationReport = async (
   cashierId?: string
 ): Promise<CashierShift[]> => {
   try {
-    const list = await getShiftHistory(startDate, endDate);
-    if (cashierId && cashierId !== 'all') {
-      return list.filter(s => s.cashier_id === cashierId);
+    const startIso = startDate ? `${startDate}T00:00:00+07:00` : undefined;
+    const endIso = endDate ? `${endDate}T23:59:59.999+07:00` : undefined;
+
+    let query = supabase
+      .from('cashier_shifts')
+      .select('*');
+
+    if (startIso && endIso && typeof (query as any).or === 'function') {
+      query = query.or(
+        `and(opened_at.gte.${startIso},opened_at.lte.${endIso}),and(closed_at.gte.${startIso},closed_at.lte.${endIso})`
+      );
+    } else {
+      if (startIso) {
+        query = query.gte('opened_at', startIso);
+      }
+      if (endIso) {
+        query = query.lte('opened_at', endIso);
+      }
     }
-    return list;
+
+    if (cashierId && cashierId !== 'all' && typeof (query as any).eq === 'function') {
+      query = query.eq('cashier_id', cashierId);
+    }
+
+    const { data: shiftsData, error: shiftsError } = await query.order('opened_at', { ascending: false });
+    if (shiftsError) throw shiftsError;
+
+    if (shiftsData && shiftsData.length > 0) {
+      const cashierIds = [...new Set(shiftsData.map(d => d.cashier_id).filter(Boolean))];
+      const cashierMap: Record<string, string> = {};
+      if (cashierIds.length > 0) {
+        try {
+          const { data: pengelolaList } = await supabase
+            .from('pengelola')
+            .select('id, nama')
+            .in('id', cashierIds);
+          pengelolaList?.forEach(p => {
+            cashierMap[p.id] = p.nama;
+          });
+        } catch {
+          // ignore lookup errors
+        }
+      }
+
+      const list: CashierShift[] = shiftsData.map(row => ({
+        id: row.id,
+        cashier_id: row.cashier_id,
+        shift_number: row.shift_number,
+        opened_at: row.opened_at,
+        closed_at: row.closed_at,
+        initial_cash: sanitizeNumber(row.initial_cash),
+        cash_sales: sanitizeNumber(row.cash_sales),
+        expected_cash: sanitizeNumber(row.expected_cash),
+        actual_cash: sanitizeNumber(row.actual_cash),
+        difference: sanitizeNumber(row.difference),
+        status: row.status,
+        notes: row.notes,
+        cashier_name: cashierMap[row.cashier_id] || undefined,
+        created_at: row.created_at
+      }));
+
+      if (cashierId && cashierId !== 'all') {
+        return list.filter(s => s.cashier_id === cashierId);
+      }
+      return list;
+    }
+
+    const fallbackList = await getShiftHistory(startDate, endDate);
+    if (cashierId && cashierId !== 'all') {
+      return fallbackList.filter(s => s.cashier_id === cashierId);
+    }
+    return fallbackList;
   } catch (err: any) {
     console.warn('Gagal memuat riwayat rekonsiliasi shift:', err?.message || err);
-    return [];
+    try {
+      const fallbackList = await getShiftHistory(startDate, endDate);
+      if (cashierId && cashierId !== 'all') {
+        return fallbackList.filter(s => s.cashier_id === cashierId);
+      }
+      return fallbackList;
+    } catch {
+      return [];
+    }
   }
 };
 
@@ -82,25 +157,40 @@ export const getEndOfDayReport = async (
     shifts = [];
   }
 
-  // Step 1: Fetch sales with date & cashier filters (no join needed)
-  let salesQuery = supabase
-    .from('sales')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const startIso = startDate ? `${startDate}T00:00:00+07:00` : undefined;
+  const endIso = endDate ? `${endDate}T23:59:59.999+07:00` : undefined;
 
-  if (startDate) salesQuery = salesQuery.gte('created_at', `${startDate}T00:00:00.000Z`);
-  if (endDate) salesQuery = salesQuery.lte('created_at', `${endDate}T23:59:59.999Z`);
-  if (cashierId && cashierId !== 'all') salesQuery = salesQuery.eq('cashier_id', cashierId);
+  // Step 1: Fetch completed sales with WIB date & cashier filters
+  const buildSalesQuery = (selectClause: string) => {
+    let q = supabase
+      .from('sales')
+      .select(selectClause)
+      .order('created_at', { ascending: false });
 
-  const { data: sales, error: salesError } = await salesQuery;
-  if (salesError) throw salesError;
+    if (typeof (q as any).eq === 'function') {
+      q = q.eq('sale_status', 'completed');
+    }
+    if (startIso) q = q.gte('created_at', startIso);
+    if (endIso) q = q.lte('created_at', endIso);
+    if (cashierId && cashierId !== 'all' && typeof (q as any).eq === 'function') {
+      q = q.eq('cashier_id', cashierId);
+    }
+    return q;
+  };
+
+  let { data: sales, error: salesError } = await buildSalesQuery('*, sale_items(*)');
+  if (salesError) {
+    const fallbackRes = await buildSalesQuery('*');
+    if (fallbackRes.error) throw fallbackRes.error;
+    sales = fallbackRes.data;
+  }
   if (!sales || sales.length === 0) {
     return { totalOmzet: 0, totalDiscount: 0, totalSubtotal: 0, paidCash: 0, paidDeposit: 0, paidCredit: 0, transactions: [], shifts };
   }
 
   // Step 2: Collect unique cashier & member IDs for lookup
-  const cashierIds = [...new Set(sales.map(s => s.cashier_id).filter(Boolean))];
-  const memberIds = [...new Set(sales.map(s => s.member_id).filter(Boolean))];
+  const cashierIds = [...new Set(sales.map((s: any) => s.cashier_id).filter(Boolean))];
+  const memberIds = [...new Set(sales.map((s: any) => s.member_id).filter(Boolean))];
 
   // Step 3: Fetch pengelola (cashiers) separately
   const cashierMap: Record<string, any> = {};
@@ -126,16 +216,29 @@ export const getEndOfDayReport = async (
   let totalOmzet = 0, totalDiscount = 0, totalSubtotal = 0;
   let paidCash = 0, paidDeposit = 0, paidCredit = 0;
 
-  const transactions = sales.map(sale => {
-    totalOmzet += Math.max(0, sanitizeNumber(sale.total_amount));
-    totalDiscount += Math.max(0, sanitizeNumber(sale.discount));
-    totalSubtotal += Math.max(0, sanitizeNumber(sale.subtotal));
-    paidCash += Math.max(0, sanitizeNumber(sale.paid_cash));
-    paidDeposit += Math.max(0, sanitizeNumber(sale.paid_deposit));
-    paidCredit += Math.max(0, sanitizeNumber(sale.paid_credit));
+  const transactions = sales.map((sale: any) => {
+    const totalAmount = Math.max(0, sanitizeNumber(sale.total_amount));
+    const discountVal = Math.max(0, sanitizeNumber(sale.discount));
+    const subtotalVal = Math.max(0, sanitizeNumber(sale.subtotal));
+    const depositVal = Math.max(0, sanitizeNumber(sale.paid_deposit));
+    const creditVal = Math.max(0, sanitizeNumber(sale.paid_credit));
+    let cashVal = Math.max(0, sanitizeNumber(sale.paid_cash));
+
+    if (cashVal === 0 && sale.payment_scheme === 'cash' && depositVal === 0 && creditVal === 0) {
+      cashVal = totalAmount;
+    }
+
+    totalOmzet += totalAmount;
+    totalDiscount += discountVal;
+    totalSubtotal += subtotalVal;
+    paidCash += cashVal;
+    paidDeposit += depositVal;
+    paidCredit += creditVal;
 
     return {
       ...sale,
+      paid_cash: cashVal,
+      completed_at: sale.completed_at || sale.created_at,
       pengelola: cashierMap[sale.cashier_id] || null,
       anggota: memberMap[sale.member_id] || null,
     };
@@ -150,12 +253,18 @@ export const getFastMovingProducts = async (
   endDate?: string,
   categoryId?: string
 ): Promise<FastMovingProduct[]> => {
-  // Step 1: Get qualifying sale IDs from the date range
+  const startIso = startDate ? `${startDate}T00:00:00+07:00` : undefined;
+  const endIso = endDate ? `${endDate}T23:59:59.999+07:00` : undefined;
+
+  // Step 1: Get qualifying completed sale IDs from the WIB date range
   let salesQuery = supabase
     .from('sales')
     .select('id');
-  if (startDate) salesQuery = salesQuery.gte('created_at', `${startDate}T00:00:00.000Z`);
-  if (endDate) salesQuery = salesQuery.lte('created_at', `${endDate}T23:59:59.999Z`);
+  if (typeof (salesQuery as any).eq === 'function') {
+    salesQuery = salesQuery.eq('sale_status', 'completed');
+  }
+  if (startIso) salesQuery = salesQuery.gte('created_at', startIso);
+  if (endIso) salesQuery = salesQuery.lte('created_at', endIso);
 
   const { data: salesData, error: salesError } = await salesQuery;
   if (salesError) throw salesError;
@@ -166,7 +275,7 @@ export const getFastMovingProducts = async (
   // Step 2: Fetch sale_items for those sale IDs
   const { data: items, error: itemsError } = await supabase
     .from('sale_items')
-    .select('sale_id, product_id, product_name, quantity, unit_price')
+    .select('*')
     .in('sale_id', saleIds);
 
   if (itemsError) throw itemsError;
@@ -174,15 +283,19 @@ export const getFastMovingProducts = async (
 
   // Step 3: Get unique product IDs and fetch product details
   const productIds = [...new Set(items.map(i => i.product_id).filter(Boolean))];
-  const { data: products, error: productsError } = await supabase
-    .from('products')
-    .select('id, sku, name, buy_price, sell_price, category_id')
-    .in('id', productIds);
+  let products: any[] = [];
+  if (productIds.length > 0) {
+    const { data: prodData, error: productsError } = await supabase
+      .from('products')
+      .select('id, sku, name, buy_price, sell_price, category_id')
+      .in('id', productIds);
 
-  if (productsError) throw productsError;
+    if (productsError) throw productsError;
+    products = prodData || [];
+  }
 
   // Step 4: Fetch categories for those products
-  const categoryIds = [...new Set((products || []).map(p => p.category_id).filter(Boolean))];
+  const categoryIds = [...new Set(products.map(p => p.category_id).filter(Boolean))];
   const categoryMap: Record<string, string> = {};
   if (categoryIds.length > 0) {
     const { data: cats } = await supabase
@@ -193,7 +306,7 @@ export const getFastMovingProducts = async (
   }
 
   const productMap: Record<string, any> = {};
-  (products || []).forEach(p => { productMap[p.id] = { ...p, categoryName: categoryMap[p.category_id] || 'Lainnya' }; });
+  products.forEach(p => { productMap[p.id] = { ...p, categoryName: categoryMap[p.category_id] || 'Lainnya' }; });
 
   // Step 5: Aggregate by product
   const aggregation: Record<string, FastMovingProduct> = {};
@@ -215,8 +328,8 @@ export const getFastMovingProducts = async (
       };
     }
 
-    const qty = Math.max(0, sanitizeNumber(item.quantity));
-    let price = Math.max(0, sanitizeNumber(item.unit_price));
+    const qty = Math.max(0, sanitizeNumber(item.quantity ?? item.qty));
+    let price = Math.max(0, sanitizeNumber(item.unit_price ?? item.price));
     let buyPrice = Math.max(0, sanitizeNumber(prod?.buy_price));
 
     // Guardrail against abnormal unit price

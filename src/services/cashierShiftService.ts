@@ -211,17 +211,21 @@ function addShiftToLocalHistory(shift: CashierShift): void {
 }
 
 /**
- * Filter local history by date range
+ * Filter local history by date range (WIB +07:00, checking opened_at or closed_at)
  */
 function filterLocalShiftHistory(startDate?: string, endDate?: string): CashierShift[] {
   let list = getLocalShiftHistory();
-  if (startDate) {
-    const start = new Date(`${startDate}T00:00:00.000Z`).getTime();
-    list = list.filter(s => new Date(s.opened_at).getTime() >= start);
-  }
-  if (endDate) {
-    const end = new Date(`${endDate}T23:59:59.999Z`).getTime();
-    list = list.filter(s => new Date(s.opened_at).getTime() <= end);
+  const start = startDate ? new Date(`${startDate}T00:00:00+07:00`).getTime() : null;
+  const end = endDate ? new Date(`${endDate}T23:59:59.999+07:00`).getTime() : null;
+
+  if (start !== null || end !== null) {
+    list = list.filter(s => {
+      const openedTime = s.opened_at ? new Date(s.opened_at).getTime() : NaN;
+      const closedTime = s.closed_at ? new Date(s.closed_at).getTime() : NaN;
+      const openedInRange = !Number.isNaN(openedTime) && (start === null || openedTime >= start) && (end === null || openedTime <= end);
+      const closedInRange = !Number.isNaN(closedTime) && (start === null || closedTime >= start) && (end === null || closedTime <= end);
+      return openedInRange || closedInRange;
+    });
   }
   return list.sort((a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime());
 }
@@ -728,11 +732,20 @@ export async function getShiftHistory(startDate?: string, endDate?: string): Pro
       .select('*')
       .order('opened_at', { ascending: false });
 
-    if (startDate) {
-      query = query.gte('opened_at', `${startDate}T00:00:00.000Z`);
-    }
-    if (endDate) {
-      query = query.lte('opened_at', `${endDate}T23:59:59.999Z`);
+    const startIso = startDate ? `${startDate}T00:00:00+07:00` : undefined;
+    const endIso = endDate ? `${endDate}T23:59:59.999+07:00` : undefined;
+
+    if (startIso && endIso && typeof (query as any).or === 'function') {
+      query = query.or(
+        `and(opened_at.gte.${startIso},opened_at.lte.${endIso}),and(closed_at.gte.${startIso},closed_at.lte.${endIso})`
+      );
+    } else {
+      if (startIso) {
+        query = query.gte('opened_at', startIso);
+      }
+      if (endIso) {
+        query = query.lte('opened_at', endIso);
+      }
     }
 
     const { data, error } = await query;

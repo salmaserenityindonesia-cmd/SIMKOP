@@ -174,7 +174,7 @@ export default function LaporanRetail() {
       .catch(() => {});
   }, []);
 
-  const fetchAll = useCallback(async () => {
+  const loadRetailReport = useCallback(async (isManualSync = false) => {
     setLoading(true);
     setError(null);
     try {
@@ -184,21 +184,34 @@ export default function LaporanRetail() {
         getStockValuation(),
         getShiftReconciliationReport(startDate, endDate),
       ]);
+      const resolvedShifts = shifts && shifts.length > 0 ? shifts : (eod?.shifts || []);
       setEodData(eod);
       setFastMoving(fast);
       setStockData(stock);
-      setShiftHistory(shifts && shifts.length > 0 ? shifts : (eod?.shifts || []));
+      setShiftHistory(resolvedShifts);
+
+      if (isManualSync) {
+        const txCount = eod?.transactions?.length ?? 0;
+        const shiftCount = resolvedShifts.length;
+        showToast(
+          `Sinkronisasi POS berhasil: ${txCount} transaksi dan ${shiftCount} sesi shift dimuat.`,
+          'success'
+        );
+      }
     } catch (e: any) {
-      setError(e?.message || 'Gagal memuat data. Periksa koneksi dan konfigurasi Supabase.');
+      const errMsg = e?.message || 'Gagal memuat data. Periksa koneksi dan konfigurasi Supabase.';
+      console.error('Error loading retail report:', e);
+      setError(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate]);
+  }, [startDate, endDate, showToast]);
 
   // Auto-load on mount and when dates change
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    loadRetailReport(false);
+  }, [loadRetailReport]);
 
   // Preset buttons
   const applyPreset = (preset: 'today' | 'yesterday' | 'month') => {
@@ -263,7 +276,7 @@ export default function LaporanRetail() {
               {new Date().toLocaleString('id-ID', { month: 'long', year: 'numeric' })}
             </span>
             <button
-              onClick={fetchAll}
+              onClick={() => loadRetailReport(true)}
               disabled={loading}
               className="flex items-center gap-2 px-4 py-2 bg-[#0D9488] text-white rounded-lg hover:bg-[#0B7A70] transition shadow-sm font-medium disabled:opacity-60"
             >
@@ -542,8 +555,9 @@ export default function LaporanRetail() {
                         </thead>
                         <tbody className="divide-y divide-[#E2E8F0]">
                           {(eodData?.transactions ?? []).map((t: any) => {
-                            const waktu = t.completed_at
-                              ? new Date(t.completed_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+                            const waktuSource = t.completed_at || t.created_at;
+                            const waktu = waktuSource
+                              ? new Date(waktuSource).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
                               : '-';
                             return (
                               <tr key={t.id} className="hover:bg-slate-50">
