@@ -387,6 +387,52 @@ describe('complianceService - getSavingsComplianceAvailableYears', () => {
     });
   });
 
+  it('Kasus 7: Mengunci batas paling awal dropdown tahun ke cutoffYear ketika initial_savings_effective_date ditetapkan', async () => {
+    const members = [
+      { id: 'm-1', nama: 'Siti Aminah', nrp: '002', status: 'aktif', created_at: '2023-02-15T00:00:00Z' },
+    ];
+    const txs: any[] = [
+      {
+        amount: 50000,
+        transaction_type: 'deposit',
+        member_deposits: { member_id: 'm-1', deposit_type_id: 'dt-pokok' },
+        created_at: '2023-02-15T00:00:00Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: members, error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return { select: vi.fn().mockResolvedValue({ data: txs, error: null }) };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { key: 'initial_savings_effective_date', value: '2026-10-10' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const years = await getSavingsComplianceAvailableYears(fixedRefDate);
+    expect(years).toEqual([2026]);
+  });
+
   describe('matchDepositType helper tests', () => {
     it('mencocokkan tipe simpanan berdasarkan code SP/POKOK, SW/WAJIB, SL/LEBARAN', () => {
       const types = [
@@ -2663,10 +2709,14 @@ describe('Phase 74: Cross-Year Rolling Window & Prior Balance Summary Engine', (
 
     const result = await getComplianceMatrixData(2026);
     expect(result.cutoffDate).toBe('2026-11-13');
+    expect(result.cutoffYear).toBe(2026);
+    expect(result.cutoffMonth).toBe(11);
     expect(result.cutoffPeriodIndex).toBe(2026 * 12 + 11);
 
     const row = result.rows.find((r) => r.member_id === 'm-cutoff-svc-1')!;
     expect(row).toBeDefined();
+    expect(row.cutoffYear).toBe(2026);
+    expect(row.cutoffMonth).toBe(11);
     // Saldo Awal Simpanan Wajib Rp 10.200.000 utuh pada priorSummary & pokokBalance Rp 100.000
     expect(row.priorSummary?.wajib).toBe(10200000);
     expect(row.pokokBalance).toBe(100000);
@@ -2674,6 +2724,7 @@ describe('Phase 74: Cross-Year Rolling Window & Prior Balance Summary Engine', (
     // Bulan sebelum cut-off (Jan-Okt 2026 -> index 0..9) harus berstatus 'covered_by_opening' tanpa diurai atau ditandai unpaid
     for (let mIdx = 0; mIdx < 10; mIdx++) {
       expect(row.months[mIdx]?.w).toBe(0);
+      expect(row.months[mIdx]?.isBeforeCutoff).toBe(true);
       expect(row.months[mIdx]?.wajib?.status).toBe('covered_by_opening');
       expect(row.months[mIdx]?.belanja?.status).toBe('covered_by_opening');
       expect(row.months[mIdx]?.lebaran?.status).toBe('covered_by_opening');

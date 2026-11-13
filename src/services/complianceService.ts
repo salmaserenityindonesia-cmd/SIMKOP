@@ -166,7 +166,7 @@ export async function getSavingsComplianceAvailableYears(
     // 3. Fetch deposit transactions with automatic paging (supporting >1000 records)
     const { data: transactions, error: txError } = await fetchAllPaged(
       'deposit_transactions',
-      'amount, transaction_type, for_year, for_month, created_at, member_deposits!inner(member_id, deposit_type_id)'
+      'amount, transaction_type, for_year, for_month, created_at, description, member_deposits!inner(member_id, deposit_type_id)'
     );
 
     if (txError) {
@@ -334,9 +334,15 @@ export async function getSavingsComplianceAvailableYears(
       }
     }
 
-    const startYear = Math.min(...candidateYears);
+    const cutoffInfo = await resolveCutoffDateInfo(txList);
+
+    let startYear = Math.min(...candidateYears);
+    if (cutoffInfo?.year) {
+      startYear = Math.max(startYear, cutoffInfo.year);
+    }
+    const maxYear = Math.max(currentYear, cutoffInfo?.year || currentYear);
     const years: number[] = [];
-    for (let y = currentYear; y >= startYear; y--) {
+    for (let y = maxYear; y >= startYear; y--) {
       years.push(y);
     }
 
@@ -346,6 +352,8 @@ export async function getSavingsComplianceAvailableYears(
     return [currentYear];
   }
 }
+
+export const getComplianceAvailableYears = getSavingsComplianceAvailableYears;
 
 
 export interface SavingsSubItem {
@@ -402,6 +410,55 @@ export function parseCutoffDateInfo(dateStr?: string | null): CutoffDateInfo | n
   };
 }
 
+async function resolveCutoffDateInfo(transactions?: any[] | null): Promise<CutoffDateInfo | null> {
+  let rawCutoffDateStr: string | null = null;
+  try {
+    const settingsQuery: any = supabase.from('system_settings').select('key, value');
+    if (typeof settingsQuery?.eq === 'function') {
+      const eqQ = settingsQuery.eq('key', 'initial_savings_effective_date');
+      const res = typeof eqQ?.maybeSingle === 'function'
+        ? await eqQ.maybeSingle()
+        : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
+      const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      if (rowData?.value) {
+        rawCutoffDateStr = String(rowData.value);
+      }
+    } else if (settingsQuery && typeof settingsQuery.then === 'function') {
+      const res = await settingsQuery;
+      const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
+      const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
+      if (found?.value) {
+        rawCutoffDateStr = String(found.value);
+      }
+    }
+  } catch {
+    // Fallback ke pemindaian deskripsi transaksi di bawah
+  }
+
+  if (!rawCutoffDateStr && Array.isArray(transactions) && transactions.length > 0) {
+    let latestExtractedDate = '';
+    for (const tx of transactions) {
+      const desc = String(tx.description || '');
+      if (desc.toLowerCase().includes('saldo awal simpanan')) {
+        const descMatch = desc.match(/(\d{4}-\d{2}-\d{2})/);
+        let candidate = descMatch ? descMatch[1] : '';
+        if (!candidate && tx.created_at) {
+          const parsed = parseCutoffDateInfo(String(tx.created_at));
+          if (parsed) candidate = parsed.dateStr;
+        }
+        if (candidate && (!latestExtractedDate || candidate > latestExtractedDate)) {
+          latestExtractedDate = candidate;
+        }
+      }
+    }
+    if (latestExtractedDate) {
+      rawCutoffDateStr = latestExtractedDate;
+    }
+  }
+
+  return parseCutoffDateInfo(rawCutoffDateStr);
+}
+
 export interface MonthSavingsCell {
   month: number;
   wajib: SavingsSubItem;
@@ -452,6 +509,7 @@ export interface ComplianceMonthData {
   cum_b?: number;
   cum_l?: number;
   isOpeningBalanceMonth?: boolean;
+  isBeforeCutoff?: boolean;
   wajib?: SavingsSubItem;
   belanja?: SavingsSubItem;
   lebaran?: SavingsSubItem;
@@ -483,6 +541,8 @@ export interface ComplianceMatrixRow {
   openingBalance?: { w: number; b: number; l: number };
   priorSummary?: PriorBalanceSummary;
   cutoffDate?: string | null;
+  cutoffYear?: number | null;
+  cutoffMonth?: number | null;
   cutoffPeriodIndex?: number | null;
   periods?: MonthPeriod[];
   months: (ComplianceMonthData | null)[];
@@ -810,52 +870,7 @@ export async function getComplianceMatrixData(
   }
 
   // Ambil tanggal pengesahan saldo awal (cut-off) dari system_settings atau transaksi Saldo Awal Simpanan
-  let rawCutoffDateStr: string | null = null;
-  try {
-    const settingsQuery: any = supabase.from('system_settings').select('key, value');
-    if (typeof settingsQuery?.eq === 'function') {
-      const eqQ = settingsQuery.eq('key', 'initial_savings_effective_date');
-      const res = typeof eqQ?.maybeSingle === 'function'
-        ? await eqQ.maybeSingle()
-        : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
-      const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
-      if (rowData?.value) {
-        rawCutoffDateStr = String(rowData.value);
-      }
-    } else if (settingsQuery && typeof settingsQuery.then === 'function') {
-      const res = await settingsQuery;
-      const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
-      const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
-      if (found?.value) {
-        rawCutoffDateStr = String(found.value);
-      }
-    }
-  } catch {
-    // Fallback ke pemindaian deskripsi transaksi di bawah
-  }
-
-  if (!rawCutoffDateStr && Array.isArray(transactions) && transactions.length > 0) {
-    let latestExtractedDate = '';
-    for (const tx of transactions) {
-      const desc = String(tx.description || '');
-      if (desc.toLowerCase().includes('saldo awal simpanan')) {
-        const descMatch = desc.match(/(\d{4}-\d{2}-\d{2})/);
-        let candidate = descMatch ? descMatch[1] : '';
-        if (!candidate && tx.created_at) {
-          const parsed = parseCutoffDateInfo(String(tx.created_at));
-          if (parsed) candidate = parsed.dateStr;
-        }
-        if (candidate && (!latestExtractedDate || candidate > latestExtractedDate)) {
-          latestExtractedDate = candidate;
-        }
-      }
-    }
-    if (latestExtractedDate) {
-      rawCutoffDateStr = latestExtractedDate;
-    }
-  }
-
-  const cutoffInfo = parseCutoffDateInfo(rawCutoffDateStr);
+  const cutoffInfo = await resolveCutoffDateInfo(transactions);
 
   // 3b. Query view_member_net_savings untuk posisi saldo kas riil netto
   const netSavingsByMember: Record<string, MemberNetSavings> = {};
@@ -1222,6 +1237,7 @@ export async function getComplianceMatrixData(
           cum_b: runningCumB,
           cum_l: runningCumL,
           isOpeningBalanceMonth: i === 0,
+          isBeforeCutoff: true,
           wajib: { ...coveredItem },
           belanja: { ...coveredItem },
           lebaran: { ...coveredItem },
@@ -1420,6 +1436,8 @@ export async function getComplianceMatrixData(
       openingBalance: openBal,
       priorSummary,
       cutoffDate: cutoffInfo?.dateStr || null,
+      cutoffYear: cutoffInfo?.year || null,
+      cutoffMonth: cutoffInfo?.month || null,
       cutoffPeriodIndex: cutoffInfo?.periodIndex || null,
       periods,
       months: monthsData,

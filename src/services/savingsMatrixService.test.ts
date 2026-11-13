@@ -4,6 +4,7 @@ import {
   bulkAutoReconcileAllMembers,
   reconcileSingleMemberDeposit,
   generateMonthGrid,
+  generateMemberTimeline,
   matchAutomaticFifo,
   calculateFifoAllocation,
   isMonthBeforeJoin,
@@ -2301,6 +2302,22 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(insertedRows[0].amount).toBe(200000);
       expect(insertedRows[0].for_year).toBe(2026);
       expect(insertedRows[0].for_month).toBe(11);
+    });
+
+    it('generateMemberTimeline starts directly at cut-off period for Taufik Santoso (10 Okt 2026) without pre-cut-off months', () => {
+      const timeline = generateMemberTimeline('2026-10-10', '2025-12-01', 2026);
+      expect(timeline).toEqual([
+        { year: 2026, month: 10, label: 'Okt-26', key: '2026-10' },
+        { year: 2026, month: 11, label: 'Nov-26', key: '2026-11' },
+        { year: 2026, month: 12, label: 'Des-26', key: '2026-12' }
+      ]);
+      expect(timeline.some(m => m.key === '2025-12' || m.key === '2026-09')).toBe(false);
+    });
+
+    it('generateMemberTimeline falls back to joinDate when effectiveDate is null', () => {
+      const timeline = generateMemberTimeline(null, '2025-11-15', 2026);
+      expect(timeline[0]).toEqual({ year: 2025, month: 11, label: 'Nov-25', key: '2025-11' });
+      expect(timeline).toHaveLength(14); // Nov-25, Des-25 + 12 bulan 2026
     });
   });
 });

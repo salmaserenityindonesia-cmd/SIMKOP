@@ -264,17 +264,139 @@ export async function getLastCompletedLebaranCutOff(): Promise<string | null> {
 
 export { getLastCompletedLebaranCycle };
 
+export interface TimelineMonthItem {
+  year: number;
+  month: number;
+  label: string;
+  key: string;
+}
+
+function parseYearMonthFromDate(dateVal?: string | Date | null): { year: number; month: number } | null {
+  if (!dateVal) return null;
+  if (typeof dateVal === 'string') {
+    const match = dateVal.trim().match(/(\d{4})-(\d{1,2})/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      if (!isNaN(y) && !isNaN(m) && m >= 1 && m <= 12) {
+        return { year: y, month: m };
+      }
+    }
+    const d = new Date(dateVal);
+    if (!isNaN(d.getTime())) {
+      return { year: d.getFullYear(), month: d.getMonth() + 1 };
+    }
+    return null;
+  }
+  if (dateVal instanceof Date && !isNaN(dateVal.getTime())) {
+    return { year: dateVal.getFullYear(), month: dateVal.getMonth() + 1 };
+  }
+  return null;
+}
+
 /**
- * Menghasilkan daftar bulan dalam format grid (default terurut kronologis asc, atau desc)
+ * Menghasilkan timeline bulan matriks anggota mulai dari periode pengesahan saldo awal (cut-off)
+ * hingga akhir tahun target, atau fallback ke tanggal bergabung anggota jika cut-off belum ditetapkan.
+ * Tidak menghasilkan kolom bulan pra-cut-off.
+ */
+export function generateMemberTimeline(
+  effectiveDateOrOptions?:
+    | string
+    | Date
+    | null
+    | {
+        effectiveDate?: string | Date | null;
+        cutOffDate?: string | Date | null;
+        joinDate?: string | Date | null;
+        startYear?: number;
+        endYear?: number;
+        order?: 'asc' | 'desc';
+      },
+  joinDateArg?: string | Date | null,
+  endYearArg?: number,
+  orderArg: 'asc' | 'desc' = 'asc'
+): TimelineMonthItem[] {
+  const opts =
+    typeof effectiveDateOrOptions === 'object' &&
+    effectiveDateOrOptions !== null &&
+    !(effectiveDateOrOptions instanceof Date)
+      ? effectiveDateOrOptions
+      : null;
+
+  const effectiveDate: string | Date | null | undefined = opts
+    ? (opts.effectiveDate ?? opts.cutOffDate)
+    : (effectiveDateOrOptions as string | Date | null | undefined);
+  const joinDate = opts ? (joinDateArg ?? opts.joinDate) : joinDateArg;
+  const order = opts ? (opts.order ?? orderArg) : orderArg;
+  const fallbackStartYear = opts ? opts.startYear : undefined;
+  const resolvedEndYearOpt = opts ? (endYearArg ?? opts.endYear) : endYearArg;
+
+  const effectivePeriod = parseYearMonthFromDate(effectiveDate);
+  const joinPeriod = parseYearMonthFromDate(joinDate);
+
+  let startYear: number;
+  let startMonth: number;
+
+  if (effectivePeriod) {
+    startYear = effectivePeriod.year;
+    startMonth = effectivePeriod.month;
+  } else if (joinPeriod) {
+    startYear = joinPeriod.year;
+    startMonth = joinPeriod.month;
+  } else {
+    startYear = fallbackStartYear ?? 2024;
+    startMonth = 1;
+  }
+
+  const eYear = resolvedEndYearOpt ?? Math.max(2026, new Date().getFullYear(), startYear);
+
+  const list: TimelineMonthItem[] = [];
+  for (let y = startYear; y <= eYear; y++) {
+    const firstMonth = y === startYear ? startMonth : 1;
+    for (let m = firstMonth; m <= 12; m++) {
+      list.push({
+        year: y,
+        month: m,
+        label: `${MONTH_NAMES[m - 1]}-${String(y).slice(-2)}`,
+        key: `${y}-${String(m).padStart(2, '0')}`
+      });
+    }
+  }
+
+  if (order === 'desc') {
+    return list.sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year;
+      return b.month - a.month;
+    });
+  }
+  return list;
+}
+
+/**
+ * Menghasilkan daftar bulan dalam format grid (default terurut kronologis asc, atau desc).
+ * Mendukung parameter opsional bulan mulai atau tanggal cut-off pengesahan saldo awal.
  */
 export function generateMonthGrid(
   startYear: number,
   endYear: number,
-  order: 'asc' | 'desc' = 'asc'
+  order: 'asc' | 'desc' = 'asc',
+  effectiveDateOrStartMonth?: number | string | Date | null
 ): Array<{ year: number; month: number; label: string; key: string }> {
+  if (typeof effectiveDateOrStartMonth === 'string' || effectiveDateOrStartMonth instanceof Date) {
+    return generateMemberTimeline(effectiveDateOrStartMonth, null, endYear, order);
+  }
+
+  const startMonth =
+    typeof effectiveDateOrStartMonth === 'number' &&
+    effectiveDateOrStartMonth >= 1 &&
+    effectiveDateOrStartMonth <= 12
+      ? effectiveDateOrStartMonth
+      : 1;
+
   const list: Array<{ year: number; month: number; label: string; key: string }> = [];
   for (let y = startYear; y <= endYear; y++) {
-    for (let m = 1; m <= 12; m++) {
+    const firstMonth = y === startYear ? startMonth : 1;
+    for (let m = firstMonth; m <= 12; m++) {
       list.push({
         year: y,
         month: m,
@@ -543,7 +665,7 @@ export function resolveDepositTypeCode(typeObj: any): 'WAJIB' | 'BELANJA' | 'LEB
 
 /**
  * Melakukan rekonsiliasi FIFO otomatis saldo buku besar simpanan untuk satu anggota individual.
- * Logika ini identik dan selaras dengan aksi "Cocokkan Otomatis dengan Saldo Impor" pada modal buku besar individual.
+ * Digunakan untuk rekonsiliasi saldo simpanan anggota secara otomatis berbasis FIFO.
  */
 export async function reconcileSingleMemberDeposit(
   memberId: string,
@@ -932,7 +1054,7 @@ export async function reconcileSingleMemberDeposit(
     return { success: true, memberDepositId: md.id, matchedKeys: [], insertedCount: 0 };
   }
 
-  // 6. Grid rentang tahun
+  // 6. Grid rentang tahun / timeline bulan mulai dari periode pengesahan saldo awal (cut-off) ke depan
   let sYear = options?.startYear ?? 2024;
   if (!options?.startYear && effectiveJoin) {
     const d = new Date(effectiveJoin);
@@ -942,7 +1064,12 @@ export async function reconcileSingleMemberDeposit(
   }
   const currentYear = new Date().getFullYear();
   const eYear = options?.endYear ?? Math.max(2026, currentYear);
-  const monthGrid = generateMonthGrid(sYear, eYear);
+  const monthGrid = effectiveInitialCutOff
+    ? generateMemberTimeline(effectiveInitialCutOff, effectiveJoin, eYear)
+    : generateMonthGrid(sYear, eYear);
+  if (effectiveInitialCutOff && monthGrid.length > 0) {
+    sYear = monthGrid[0].year;
+  }
 
   // 7. Hitung bulan yang tercentang menggunakan algoritma FIFO (termasuk alokasi sisa saldo parsial)
   const fifoResult = calculateFifoAllocation(
@@ -1146,7 +1273,7 @@ export const autoReconcileSavingsLedger = reconcileSingleMemberDeposit;
 
 /**
  * Menjalankan rekonsiliasi otomatis saldo buku besar simpanan massal untuk seluruh anggota aktif
- * dengan mengeksekusi logika reconcileSingleMemberDeposit yang identik dengan modal per anggota.
+ * dengan mengeksekusi logika reconcileSingleMemberDeposit untuk setiap anggota.
  */
 export async function bulkAutoReconcileAllMembers(
   depositTypeCode: string = 'ALL',

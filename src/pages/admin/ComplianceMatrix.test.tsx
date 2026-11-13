@@ -1706,7 +1706,7 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).not.toContain('data-testid="pay-pokok-btn-34763422"');
     });
 
-    it('renders dynamic Per [Tanggal Pengesahan] header, P/W/B/L opening balances, and neutral covered_by_opening cells in cut-off mode', () => {
+    it('renders dynamic Per [Tanggal Pengesahan] header, P/W/B/L opening balances, and hides pre-cut-off month columns in cut-off mode', () => {
       const periods2026 = Array.from({ length: 12 }, (_, idx) => ({
         year: 2026,
         month: idx + 1,
@@ -1724,6 +1724,7 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         cum_w: 10200000,
         cum_b: 500000,
         cum_l: 300000,
+        isBeforeCutoff: true,
         wajib: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
         belanja: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
         lebaran: { status: 'covered_by_opening' as const, amount: 0, notes: 'Sudah tercakup dalam Saldo Awal' },
@@ -1757,6 +1758,8 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         pokokLunas: true,
         pokokBalance: 100000,
         cutoffDate: '2026-11-13',
+        cutoffYear: 2026,
+        cutoffMonth: 11,
         compliance: 100,
         balances: { w: 200000, b: 50000, l: 50000 },
         periods: periods2026,
@@ -1781,13 +1784,100 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       );
 
       expect(html).toContain('Saldo Awal');
-      expect(html).toContain('Per 13 Nov 2026');
+      expect(html).toContain('(Per 13 Nov 2026)');
+      expect(html).toContain('min-w-[165px] whitespace-nowrap');
       expect(html).toContain('P: Rp 100.000');
       expect(html).toContain('W: Rp 10.200.000');
       expect(html).toContain('B: Rp 500.000');
       expect(html).toContain('L: Rp 300.000');
-      expect(html).toContain('Sudah tercakup dalam Saldo Awal');
       expect(html).toContain('200.000');
+
+      // Pre-cut-off month columns (Jan-26 s/d Okt-26) must not appear in table
+      for (const hiddenLabel of ['Jan-26', 'Feb-26', 'Mar-26', 'Apr-26', 'Mei-26', 'Jun-26', 'Jul-26', 'Ags-26', 'Sep-26', 'Okt-26']) {
+        expect(html).not.toContain(`<div>${hiddenLabel}</div>`);
+      }
+      expect(html).not.toContain('Sudah tercakup dalam Saldo Awal');
+
+      // Post-cut-off month columns (Nov-26, Des-26) must be rendered
+      expect(html).toContain('<div>Nov-26</div>');
+      expect(html).toContain('<div>Des-26</div>');
+    });
+
+    it('hides Jan-26 through Sep-26 columns for cutoffDate 2026-10-10, renders Okt-26..Des-26, and uses colSpan 6 when empty', () => {
+      const periods2026 = Array.from({ length: 12 }, (_, idx) => ({
+        year: 2026,
+        month: idx + 1,
+        label: `${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'][idx]}-26`,
+        periodIndex: 2026 * 12 + (idx + 1),
+      }));
+
+      const octPaidCell = {
+        w: 210000,
+        b: 25000,
+        l: 50000,
+        bal_w: 10410000,
+        bal_b: 525000,
+        bal_l: 350000,
+        cum_w: 10410000,
+        cum_b: 525000,
+        cum_l: 350000,
+        wajib: { status: 'paid' as const, amount: 210000, targetAmount: 210000 },
+        belanja: { status: 'paid' as const, amount: 25000, targetAmount: 25000 },
+        lebaran: { status: 'paid' as const, amount: 50000, targetAmount: 50000 },
+      };
+
+      const rowOctCutoff = {
+        member_id: 'm-oct-1',
+        nrp: 'NRP-OCT-1',
+        nama: 'Serda Andi Okt',
+        pokokLunas: true,
+        pokokBalance: 100000,
+        cutoffDate: '2026-10-10',
+        cutoffYear: 2026,
+        cutoffMonth: 10,
+        compliance: 100,
+        balances: { w: 210000, b: 25000, l: 50000 },
+        periods: periods2026,
+        priorSummary: {
+          pokok: 100000,
+          wajib: 10200000,
+          belanja: 500000,
+          lebaran: 300000,
+          total: 11000000,
+        },
+        months: [
+          ...Array.from({ length: 9 }, () => null),
+          octPaidCell,
+          null,
+          null,
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialData={[rowOctCutoff as any]}
+          initialYear="2026"
+          initialCutoffDate="2026-10-10"
+        />
+      );
+
+      expect(html).toContain('(Per 10 Okt 2026)');
+      for (const hiddenLabel of ['Jan-26', 'Feb-26', 'Mar-26', 'Apr-26', 'Mei-26', 'Jun-26', 'Jul-26', 'Ags-26', 'Sep-26']) {
+        expect(html).not.toContain(`<div>${hiddenLabel}</div>`);
+      }
+      expect(html).toContain('<div>Okt-26</div>');
+      expect(html).toContain('<div>Nov-26</div>');
+      expect(html).toContain('<div>Des-26</div>');
+      expect(html).toContain('210.000');
+
+      const emptyHtml = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialData={[]}
+          initialYear="2026"
+          initialCutoffDate="2026-10-10"
+        />
+      );
+      expect(emptyHtml).toContain('colSpan="6"');
     });
   });
 });

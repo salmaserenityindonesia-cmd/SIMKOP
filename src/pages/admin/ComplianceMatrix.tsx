@@ -85,6 +85,7 @@ export interface ComplianceMatrixProps {
   initialShowImportModal?: boolean;
   initialShowExportDropdown?: boolean;
   initialIsExporting?: boolean;
+  initialCutoffDate?: string | null;
 }
 
 export const handleExportSavingsMatrix = async (
@@ -295,6 +296,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialShowImportModal,
   initialShowExportDropdown,
   initialIsExporting,
+  initialCutoffDate,
 }) => {
   const currentYearStr = new Date().getFullYear().toString();
   const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
@@ -309,15 +311,41 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
   const [data, setData] = useState<ComplianceMatrixRow[]>(initialData || []);
+  const [cutoffDate, setCutoffDate] = useState<string | null>(initialCutoffDate ?? null);
+
+  const effectiveCutoffDate = useMemo(() => {
+    if (cutoffDate) return cutoffDate;
+    const rowCutoff = data.find(r => r.cutoffDate)?.cutoffDate;
+    return rowCutoff || null;
+  }, [cutoffDate, data]);
+
+  const cutoffInfo = useMemo(() => parseCutoffDateInfo(effectiveCutoffDate), [effectiveCutoffDate]);
+
+  const selectedYear = useMemo(() => parseInt(year, 10) || new Date().getFullYear(), [year]);
+  const cutoffYear = cutoffInfo?.year ?? data.find(r => r.cutoffYear)?.cutoffYear ?? null;
+  const cutoffMonth = cutoffInfo?.month ?? data.find(r => r.cutoffMonth)?.cutoffMonth ?? null;
+
+  const visibleMonths = useMemo(() => {
+    const allMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    if (cutoffYear && cutoffMonth && selectedYear === cutoffYear) {
+      return allMonths.filter((m) => m >= cutoffMonth);
+    }
+    if (cutoffYear && selectedYear < cutoffYear) {
+      return [];
+    }
+    return allMonths;
+  }, [selectedYear, cutoffYear, cutoffMonth]);
 
   const currentPeriod = useMemo(() => {
     const now = new Date();
-    const selectedYear = parseInt(year, 10);
+    if (effectiveCutoffDate) {
+      return { year: selectedYear, month: 12 };
+    }
     if (!isNaN(selectedYear) && selectedYear !== now.getFullYear()) {
       return { year: selectedYear, month: 12 };
     }
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
-  }, [year]);
+  }, [selectedYear, effectiveCutoffDate]);
 
   const rollingMonths = useMemo(() => {
     if (data.length > 0 && data[0]?.periods && data[0].periods.length === 12) {
@@ -327,7 +355,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   }, [data, currentPeriod]);
   const [targets, setTargets] = useState({ wajib: 25000, belanja: 50000, lebaran: 50000 });
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(DEFAULT_RATE_TIERS);
-  const [cutoffDate, setCutoffDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(initialData === undefined);
   const [selectedMember, setSelectedMember] = useState<{
     id: string;
@@ -373,14 +400,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     membership_status?: string;
   } | null>(null);
   const [isPokokModalOpen, setIsPokokModalOpen] = useState(false);
-
-  const effectiveCutoffDate = useMemo(() => {
-    if (cutoffDate) return cutoffDate;
-    const rowCutoff = data.find(r => r.cutoffDate)?.cutoffDate;
-    return rowCutoff || null;
-  }, [cutoffDate, data]);
-
-  const cutoffInfo = useMemo(() => parseCutoffDateInfo(effectiveCutoffDate), [effectiveCutoffDate]);
 
   const feedback = useContext(FeedbackContext);
 
@@ -973,17 +992,24 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 <th className="sticky left-0 bg-slate-50 z-10 py-3 px-4 border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[260px] w-64 md:w-[280px] shrink-0">
                   Informasi Anggota
                 </th>
-                <th className="py-3 px-3 bg-slate-100/80 border-b border-r border-slate-200 text-center min-w-[130px] font-semibold text-slate-700 text-xs">
+                <th className="py-3 px-3 bg-slate-100/80 border-b border-r border-slate-200 text-center min-w-[165px] whitespace-nowrap font-semibold text-slate-700 text-xs">
                   <div>Saldo Awal</div>
                   <div className="text-[10px] font-normal text-slate-500">
                     {cutoffInfo
-                      ? `Per ${cutoffInfo.formattedDate}`
+                      ? `(Per ${cutoffInfo.formattedDate})`
                       : rollingMonths.length > 0
                       ? `Per ${rollingMonths[0].label}`
                       : 'Cut-Off Saldo Awal'}
                   </div>
                 </th>
-                {rollingMonths.map((col, idx) => {
+                {visibleMonths.map((monthNum) => {
+                  const idx = monthNum - 1;
+                  const col = rollingMonths[idx] || {
+                    year: selectedYear,
+                    month: monthNum,
+                    label: `${MONTHS[idx]}-${String(selectedYear).slice(-2)}`,
+                    periodIndex: selectedYear * 12 + monthNum,
+                  };
                   const isCurrentMonth = idx === rollingMonths.length - 1;
                   return (
                     <th
@@ -1004,7 +1030,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={15} className="text-center py-8 text-slate-500">
+                  <td colSpan={visibleMonths.length + 3} className="text-center py-8 text-slate-500">
                     <div className="flex flex-col items-center justify-center space-y-3">
                       <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
                       <p>Memuat data matriks...</p>
@@ -1013,7 +1039,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                 </tr>
               ) : paginatedData.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="text-center py-8 text-slate-500">
+                  <td colSpan={visibleMonths.length + 3} className="text-center py-8 text-slate-500">
                     {search.trim() ? `Tidak ada data anggota yang cocok dengan pencarian "${search}".` : 'Tidak ada data anggota ditemukan.'}
                   </td>
                 </tr>
@@ -1093,18 +1119,20 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                     </div>
                   </td>
                   
-                  <td className="px-3 py-3 bg-slate-50/70 border-b border-r border-slate-200 text-xs select-none" data-testid={`prior-summary-${row.nrp}`}>
+                  <td className="px-3 py-3 bg-slate-50/70 border-b border-r border-slate-200 text-xs select-none min-w-[165px] whitespace-nowrap" data-testid={`prior-summary-${row.nrp}`}>
                     <div className="text-slate-600 whitespace-nowrap">P: Rp {Number(row.pokokBalance ?? row.priorSummary?.pokok ?? 0).toLocaleString('id-ID')}</div>
                     <div className="font-semibold text-slate-700 whitespace-nowrap">W: Rp {Number(row.priorSummary?.wajib || 0).toLocaleString('id-ID')}</div>
                     <div className="text-slate-500 whitespace-nowrap">B: Rp {Number(row.priorSummary?.belanja || 0).toLocaleString('id-ID')}</div>
                     <div className="text-slate-500 whitespace-nowrap">L: Rp {Number(row.priorSummary?.lebaran || 0).toLocaleString('id-ID')}</div>
                   </td>
                   
-                  {row.months.map((month, idx) => {
+                  {visibleMonths.map((monthNum) => {
+                    const idx = monthNum - 1;
+                    const month = row.months[idx] ?? null;
                     const isCurrentMonth = idx === rollingMonths.length - 1;
                     return (
                       <td
-                        key={idx}
+                        key={monthNum}
                         className={`py-3 px-1 border-b border-slate-100 align-middle ${
                           isCurrentMonth ? 'bg-emerald-50/20 border-x-2 border-x-emerald-100/50' : ''
                         }`}

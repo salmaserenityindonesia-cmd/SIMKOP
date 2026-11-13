@@ -151,7 +151,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
 
       // Quick actions buttons
       expect(html).toContain('Centang Semua s/d Bulan Ini');
-      expect(html).toContain('Cocokkan Otomatis dengan Saldo Impor');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Impor');
       expect(html).toContain('Batal Centang Semua');
 
       // Close button
@@ -903,39 +903,63 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
   });
 
   describe('Cut-Off Saldo Awal Utuh & Forward-Only Timeline', () => {
-    it('renders transparent Saldo Awal Cut-Off summary and locks pre-cut-off months as Tercakup Saldo Awal', () => {
+    it('renders single Saldo Awal opening column followed directly by forward months (Okt-26, Nov-26, Des-26) and hides pre-cut-off columns', () => {
       const html = renderToStaticMarkup(
         <SavingsLedgerMatrixModal
-          memberId="m-cutoff-modal"
-          memberNrp="78010999"
-          memberName="Sertu Andi CutOff"
-          joinDate="2024-01-01"
+          memberId="m-taufik"
+          memberNrp="78010888"
+          memberName="Taufik Santoso"
+          joinDate="2025-12-01"
           onClose={vi.fn()}
           initialActiveTab="WAJIB"
-          initialCutoffDate="2026-11-13"
-          initialOpeningBalances={{ WAJIB: 10200000 }}
-          initialDbBalances={{ WAJIB: 10400000 }}
-          initialCheckedMonths={{ WAJIB: ['2026-11'] }}
-          initialMonthAmounts={{ WAJIB: { '2026-11': 200000 } }}
+          initialCutoffDate="2026-10-10"
+          initialOpeningBalances={{ WAJIB: 5600000 }}
+          initialDbBalances={{ WAJIB: 5800000 }}
+          initialCheckedMonths={{ WAJIB: ['2026-10'] }}
+          initialMonthAmounts={{ WAJIB: { '2026-10': 200000 } }}
           initialLoading={false}
         />
       );
 
+      // Sub-header dinamis sesuai tanggal cut-off
+      expect(html).toContain('Grid Buku Besar Simpanan (Mulai Cut-Off 10 Okt 2026)');
+
       // Ringkasan header menampilkan Saldo Awal, Total Tercentang Pasca Saldo Awal, dan Total Akumulasi
-      expect(html).toContain('Saldo Awal (Cut-Off 13 Nov 2026):');
-      expect(html).toContain('10.200.000');
+      expect(html).toContain('Saldo Awal (Cut-Off 10 Okt 2026):');
+      expect(html).toContain('5.600.000');
       expect(html).toContain('Total Tercentang (Pasca Saldo Awal):');
       expect(html).toContain('Total Akumulasi Simpanan:');
-      expect(html).toContain('10.400.000');
+      expect(html).toContain('5.800.000');
       expect(html).toContain('Sesuai / Seimbang');
 
-      // Bulan pra-cut-off terkunci sebagai Tercakup Saldo Awal
-      expect(html).toContain('data-testid="covered-opening-2026-10"');
-      expect(html).toContain('Tercakup Saldo Awal');
+      // Kolom Saldo Awal pembuka tampil utuh di sebelah Tahun & Item
+      expect(html).toContain('data-testid="opening-balance-col-header"');
+      expect(html).toContain('Sah per 10 Okt 2026');
+      expect(html).toContain('data-testid="opening-balance-col-cell"');
+      expect(html).toContain('Rp 5.600.000');
+      expect(html).toContain('Akumulasi Lampau Sah');
 
-      // Bulan pasca-cut-off tetap memiliki checkbox interaktif
+      // Seluruh kolom bulan sebelum cut-off (Des-25 s/d Sep-26) dan label lama "Tercakup Saldo Awal" HILANG
+      expect(html).not.toContain('Tercakup Saldo Awal');
+      expect(html).not.toContain('data-testid="covered-opening-2026-09"');
+      expect(html).not.toContain('<div>Des-25</div>');
+      expect(html).not.toContain('<div>Sep-26</div>');
+      expect(html).not.toContain('data-testid="checkbox-2026-09"');
+
+      // Bulan mulai periode cut-off dan seterusnya (Okt-26, Nov-26, Des-26) tampil dengan checkbox aktif
+      const idxOpeningCol = html.indexOf('data-testid="opening-balance-col-header"');
+      const idxOkt26 = html.indexOf('<div>Okt-26</div>');
+      const idxNov26 = html.indexOf('<div>Nov-26</div>');
+      const idxDes26 = html.indexOf('<div>Des-26</div>');
+
+      expect(idxOpeningCol).toBeGreaterThan(-1);
+      expect(idxOkt26).toBeGreaterThan(idxOpeningCol);
+      expect(idxNov26).toBeGreaterThan(idxOkt26);
+      expect(idxDes26).toBeGreaterThan(idxNov26);
+
+      expect(html).toContain('data-testid="checkbox-2026-10"');
       expect(html).toContain('data-testid="checkbox-2026-11"');
-      expect(html).not.toContain('data-testid="checkbox-2026-10"');
+      expect(html).toContain('data-testid="checkbox-2026-12"');
     });
   });
 });

@@ -5,7 +5,6 @@ import {
   AlertCircle,
   CheckSquare,
   Square,
-  RotateCcw,
   FileText,
   History,
   AlertTriangle,
@@ -25,10 +24,10 @@ import {
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
 import {
-  reconcileSingleMemberDeposit,
   calculateTotalChecked,
   calculateFifoAllocation,
   matchAutomaticFifo,
+  generateMemberTimeline,
   saveMonthDepositWithEvidence,
   cancelMonthDepositWithReason,
   getMonthAuditHistory,
@@ -196,6 +195,7 @@ export {
   calculateTotalChecked,
   calculateFifoAllocation,
   matchAutomaticFifo,
+  generateMemberTimeline,
   isMonthBeforeCutOff,
   getInitialSavingsCutOffDate
 };
@@ -339,6 +339,22 @@ export default function SavingsLedgerMatrixModal({
     LEBARAN: initialOpeningBalances?.LEBARAN ?? 0
   });
 
+  useEffect(() => {
+    if (initialCutoffDate !== undefined) {
+      setCutoffDate(initialCutoffDate ?? null);
+    }
+  }, [initialCutoffDate]);
+
+  useEffect(() => {
+    if (initialOpeningBalances) {
+      setOpeningBalances(prev => ({
+        WAJIB: initialOpeningBalances.WAJIB ?? prev.WAJIB,
+        BELANJA: initialOpeningBalances.BELANJA ?? prev.BELANJA,
+        LEBARAN: initialOpeningBalances.LEBARAN ?? prev.LEBARAN
+      }));
+    }
+  }, [initialOpeningBalances]);
+
   // State bulan tercentang per jenis simpanan: Set of 'YYYY-MM'
   const [checkedMonths, setCheckedMonths] = useState<Record<DepositTabType, Set<string>>>({
     WAJIB: new Set(initialCheckedMonths?.WAJIB || []),
@@ -370,20 +386,25 @@ export default function SavingsLedgerMatrixModal({
 
   const [resolvedJoinDate, setResolvedJoinDate] = useState<string | null>(joinDate || null);
 
-  // Hitung rentang tahun untuk grid
-  const { startYear, endYear, allGridMonths } = useMemo(() => {
-    let sYear = 2024;
-    if (resolvedJoinDate) {
-      const d = new Date(resolvedJoinDate);
-      if (!isNaN(d.getTime())) {
-        sYear = Math.min(2024, d.getFullYear());
-      }
-    }
+  // Hitung timeline bulan untuk grid (mulai dari periode cut-off saldo awal jika tersedia)
+  const { startYear, endYear, timelineMonths, allGridMonths } = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const eYear = Math.max(2026, currentYear);
-    const months = generateMonthGrid(sYear, eYear);
-    return { startYear: sYear, endYear: eYear, allGridMonths: months };
-  }, [resolvedJoinDate]);
+    const months = cutoffDate
+      ? generateMemberTimeline(cutoffDate, resolvedJoinDate, eYear)
+      : (() => {
+          let sYear = 2024;
+          if (resolvedJoinDate) {
+            const d = new Date(resolvedJoinDate);
+            if (!isNaN(d.getTime())) {
+              sYear = Math.min(2024, d.getFullYear());
+            }
+          }
+          return generateMonthGrid(sYear, eYear);
+        })();
+    const sYear = months.length > 0 ? months[0].year : 2024;
+    return { startYear: sYear, endYear: eYear, timelineMonths: months, allGridMonths: months };
+  }, [cutoffDate, resolvedJoinDate]);
 
   // Penanda waktu bulan berjalan untuk auto-scroll dan penanda visual
   const today = useMemo(() => new Date(), []);
@@ -398,7 +419,7 @@ export default function SavingsLedgerMatrixModal({
   useEffect(() => {
     if (!loading) {
       const timer = setTimeout(() => {
-        if (currentMonthColRef.current) {
+        if (typeof currentMonthColRef.current?.scrollIntoView === 'function') {
           currentMonthColRef.current.scrollIntoView({
             behavior: 'smooth',
             block: 'nearest',
@@ -408,7 +429,7 @@ export default function SavingsLedgerMatrixModal({
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [loading, activeTab]);
+  }, [loading, activeTab, cutoffDate]);
 
   // Load tiers, member deposit accounts, and existing transactions
   useEffect(() => {
@@ -550,6 +571,7 @@ export default function SavingsLedgerMatrixModal({
 
             let net = 0;
             let openingAmt = 0;
+            let preCutoffMonthlyNet = 0;
             let postCutoffNet = 0;
             for (const t of txs) {
               const amt = Number(t.amount || 0);
@@ -566,6 +588,12 @@ export default function SavingsLedgerMatrixModal({
                 } else if (
                   t.for_year &&
                   t.for_month &&
+                  isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveCutoffDate)
+                ) {
+                  preCutoffMonthlyNet += t.transaction_type === 'withdrawal' ? -amt : amt;
+                } else if (
+                  t.for_year &&
+                  t.for_month &&
                   !isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), effectiveCutoffDate)
                 ) {
                   postCutoffNet += t.transaction_type === 'withdrawal' ? -amt : amt;
@@ -574,7 +602,9 @@ export default function SavingsLedgerMatrixModal({
             }
 
             if (effectiveCutoffDate) {
-              const resolvedOpening = Math.max(openingAmt, initialOpeningBalances?.[tab] || 0);
+              const effectiveOpeningAmt =
+                openingAmt > 0 ? openingAmt : Math.max(0, preCutoffMonthlyNet);
+              const resolvedOpening = Math.max(effectiveOpeningAmt, initialOpeningBalances?.[tab] || 0);
               newOpeningBalances[tab] = resolvedOpening;
               const computedBalance = Math.max(
                 resolvedOpening + Math.max(0, postCutoffNet),
@@ -938,84 +968,7 @@ export default function SavingsLedgerMatrixModal({
     await syncBatchToDatabase(matchedKeys, updatedAmounts);
   };
 
-  // Quick Action 2: Cocokkan Otomatis dengan Saldo (FIFO Matching pasca cut-off)
-  const handleAutoMatchWithImportBalance = async () => {
-    const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
-    const fifoTarget = hasCutoffMode
-      ? Math.max(0, targetDbBalance - currentOpeningBalance)
-      : currentBaseline;
-
-    setSyncing(true);
-    try {
-      const res = await reconcileSingleMemberDeposit(memberId, activeTab, {
-        rateTiers,
-        joinDate: resolvedJoinDate,
-        startYear,
-        endYear,
-        targetBalance: fifoTarget,
-        initialSavingsCutOffDate: cutoffDate,
-        isPostCutOffTarget: hasCutoffMode
-      });
-
-      const updatedAmounts = new Map<string, number>();
-      if (res.allocatedTransactions && res.allocatedTransactions.length > 0) {
-        for (const tx of res.allocatedTransactions) {
-          updatedAmounts.set(tx.key, tx.amount);
-        }
-      } else {
-        for (const key of res.matchedKeys) {
-          const [yStr, mStr] = key.split('-');
-          const y = parseInt(yStr, 10);
-          const m = parseInt(mStr, 10);
-          updatedAmounts.set(key, getApplicableRate(activeTab, y, m, rateTiers));
-        }
-      }
-
-      setCheckedMonths(prev => ({
-        ...prev,
-        [activeTab]: new Set(res.matchedKeys)
-      }));
-      setMonthAmounts(prev => ({
-        ...prev,
-        [activeTab]: updatedAmounts
-      }));
-
-      onSuccess?.();
-    } catch (err) {
-      console.error('Failed to auto reconcile with import balance:', err);
-      // Fallback ke modal internal logic jika terjadi kegagalan
-      const fifoRes = calculateFifoAllocation(
-        fifoTarget,
-        allGridMonths,
-        activeTab,
-        rateTiers,
-        resolvedJoinDate,
-        memberDepositMap[activeTab],
-        undefined,
-        cutoffDate
-      );
-
-      const fallbackAmounts = new Map<string, number>();
-      for (const tx of fifoRes.allocatedTransactions) {
-        fallbackAmounts.set(tx.key, tx.amount);
-      }
-
-      setCheckedMonths(prev => ({
-        ...prev,
-        [activeTab]: new Set(fifoRes.matchedKeys)
-      }));
-      setMonthAmounts(prev => ({
-        ...prev,
-        [activeTab]: fallbackAmounts
-      }));
-
-      await syncBatchToDatabase(fifoRes.matchedKeys, fallbackAmounts);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Quick Action 3: Batal Centang Semua (Lindungi Saldo Awal & Baseline Balance)
+  // Quick Action 2: Batal Centang Semua (Lindungi Saldo Awal & Baseline Balance)
   const handleUncheckAll = async () => {
     const currentBaseline = baselineBalancesRef.current[activeTab] || dbBalances[activeTab] || 0;
 
@@ -1102,6 +1055,14 @@ export default function SavingsLedgerMatrixModal({
     if (isNaN(d.getTime())) return '-';
     return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
   }, [resolvedJoinDate]);
+
+  // Format tampilan tanggal pengesahan saldo awal (cut-off)
+  const formattedCutoffDate = useMemo(() => {
+    if (parsedCutoffInfo?.formattedDate) return parsedCutoffInfo.formattedDate;
+    if (cutoffDate) return cutoffDate;
+    if (formattedJoinDate && formattedJoinDate !== '-') return formattedJoinDate;
+    return `1 Jan ${startYear}`;
+  }, [parsedCutoffInfo, cutoffDate, formattedJoinDate, startYear]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -1264,14 +1225,6 @@ export default function SavingsLedgerMatrixModal({
               Centang Semua s/d Bulan Ini
             </button>
             <button
-              onClick={handleAutoMatchWithImportBalance}
-              disabled={syncing || loading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:opacity-50"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Cocokkan Otomatis dengan Saldo Impor
-            </button>
-            <button
               onClick={handleUncheckAll}
               disabled={syncing || loading}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg text-xs font-medium shadow-sm transition-colors disabled:opacity-50"
@@ -1295,7 +1248,9 @@ export default function SavingsLedgerMatrixModal({
               {/* Petunjuk Tarif */}
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
                 <span className="font-medium">
-                  Grid Matriks Bulan ({startYear} – {endYear})
+                  {cutoffDate
+                    ? `Grid Buku Besar Simpanan (Mulai Cut-Off ${formattedCutoffDate})`
+                    : `Grid Buku Besar Simpanan (${startYear} – ${endYear})`}
                 </span>
                 <div className="flex items-center gap-2 flex-wrap" data-testid="legend-rate-tiers">
                   <span className="text-[11px] text-slate-400">Keterangan Badge Tarif Aktif:</span>
@@ -1343,7 +1298,16 @@ export default function SavingsLedgerMatrixModal({
                       <th className="sticky left-0 bg-slate-100 z-10 py-2.5 px-3 text-left border-r border-slate-200 min-w-[130px]">
                         Tahun &amp; Item
                       </th>
-                      {allGridMonths.map(m => {
+                      <th
+                        data-testid="opening-balance-col-header"
+                        className="px-4 py-3 text-center bg-indigo-50/80 border-r border-slate-200 min-w-[150px]"
+                      >
+                        <div className="text-xs font-bold text-indigo-900">Saldo Awal</div>
+                        <div className="text-[10px] font-medium text-indigo-600">
+                          Sah per {formattedCutoffDate}
+                        </div>
+                      </th>
+                      {timelineMonths.map(m => {
                         const isCurrentMonth = m.year === currentCalYear && m.month === currentCalMonth;
                         return (
                           <th
@@ -1378,9 +1342,20 @@ export default function SavingsLedgerMatrixModal({
                         </div>
                       </td>
 
-                      {allGridMonths.map(m => {
-                        const beforeJoin = isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
-                        const beforeCutoff = isMonthBeforeCutOff(m.year, m.month, cutoffDate);
+                      <td
+                        data-testid="opening-balance-col-cell"
+                        className="px-4 py-4 text-center bg-indigo-50/40 border-r border-b border-slate-200"
+                      >
+                        <div className="text-sm font-extrabold text-indigo-900">
+                          Rp {Number(currentOpeningBalance || 0).toLocaleString('id-ID')}
+                        </div>
+                        <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700">
+                          Akumulasi Lampau Sah
+                        </div>
+                      </td>
+
+                      {timelineMonths.map(m => {
+                        const beforeJoin = !cutoffDate && isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
                         const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
                         const txAmount = currentMonthAmounts.get(m.key);
@@ -1403,24 +1378,6 @@ export default function SavingsLedgerMatrixModal({
                               title="Sebelum tanggal bergabung anggota"
                             >
                               -
-                            </td>
-                          );
-                        }
-
-                        if (beforeCutoff) {
-                          return (
-                            <td
-                              key={m.key}
-                              data-testid={`covered-opening-${m.key}`}
-                              className={`py-3 px-1 border-r border-b border-slate-100 bg-slate-100/70 text-slate-400 text-[10px] align-middle select-none ${
-                                isCurrentMonth ? 'ring-1 ring-inset ring-emerald-400/30' : ''
-                              }`}
-                              title={`Tercakup Saldo Awal${parsedCutoffInfo ? ` (Cut-Off ${parsedCutoffInfo.formattedDate})` : ''}`}
-                            >
-                              <div className="flex flex-col items-center justify-center gap-0.5 leading-tight">
-                                <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="font-medium text-slate-500">Tercakup Saldo Awal</span>
-                              </div>
                             </td>
                           );
                         }
