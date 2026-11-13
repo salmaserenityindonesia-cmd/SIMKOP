@@ -2507,4 +2507,326 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
   });
 });
 
+describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-20T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('getLoanMatrixAvailableYears membatasi tahun dropdown minimal dari cutoffYear (2026) meski pinjaman cair 2023', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { disbursed_at: '2023-01-10T00:00:00.000Z', created_at: '2023-01-01T00:00:00.000Z' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { due_date: '2028-10-01' },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { value: '2026-11-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const years = await getLoanMatrixAvailableYears();
+    expect(years).toEqual([2028, 2027, 2026]);
+    expect(years).not.toContain(2025);
+    expect(years).not.toContain(2023);
+  });
+
+  it('getLoanMatrix mengabaikan tunggakan pra-cut-off dan merangkum openingPaid/openingRemaining secara utuh', async () => {
+    const loans = [
+      {
+        id: 'loan-cut-1',
+        loan_number: 'PJ-CUT-001',
+        member_id: 'mem-cut-1',
+        principal_amount: 12000000,
+        agreed_tenor_months: 12,
+        monthly_target: 1000000,
+        status: 'active',
+        disbursed_at: '2025-11-01T00:00:00.000Z',
+        created_at: '2025-11-01T00:00:00.000Z',
+        notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)',
+        member: { id: 'mem-cut-1', nrp: '77001122', nama: 'Mayor CutOff' },
+        loan_types: { name: 'Pinjaman Reguler' },
+      },
+    ];
+
+    const schedules = [
+      // Pre-cut-off paid (Sep 2026) -> included in openingPaid
+      { id: 'sc-9', loan_id: 'loan-cut-1', period_number: 9, due_date: '2026-09-15', target_amount: 1000000, paid_amount: 5000000, status: 'paid', loan: loans[0] },
+      // Pre-cut-off unpaid (Okt 2026) -> MUST NOT trigger UNPAID or affect YTD compliance!
+      { id: 'sc-10', loan_id: 'loan-cut-1', period_number: 10, due_date: '2026-10-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid', loan: loans[0] },
+      // Post-cut-off paid (Nov 2026)
+      { id: 'sc-11', loan_id: 'loan-cut-1', period_number: 11, due_date: '2026-11-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid', loan: loans[0] },
+      // Post-cut-off projected (Des 2026)
+      { id: 'sc-12', loan_id: 'loan-cut-1', period_number: 12, due_date: '2026-12-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid', loan: loans[0] },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: loans, error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-cut-1' }], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { value: '2026-11-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    expect(matrix.cutoffDate).toBe('2026-11-01');
+    expect(matrix.cutoffYear).toBe(2026);
+    expect(matrix.cutoffMonth).toBe(11);
+    expect(matrix.formattedCutoffDate).toBe('1 Nov 2026');
+    expect(matrix.unpaidMembersCount).toBe(0);
+    expect(matrix.complianceYTD).toBe(100);
+    expect(matrix.totalCollectedYTD).toBe(1000000);
+
+    const row = matrix.members[0];
+    expect(row.openingPaid).toBe(5000000);
+    expect(row.openingRemaining).toBe(7000000);
+    expect(row.months[10].status).toBe('NONE');
+    expect(row.months[11].status).toBe('PAID');
+    expect(row.months[12].status).toBe('PROJECTED');
+    expect(row.complianceYTD).toBe(100);
+  });
+
+  it('getLoanInteractiveGrid memisahkan jadwal pra-cut-off menjadi openingPaidBalance dan hanya mengembalikan periode maju', async () => {
+    const mockLoan = {
+      id: 'loan-grid-cut',
+      loan_number: 'PJ-GRID-01',
+      principal_amount: 6000000,
+      amount: 6000000,
+      tenor: 6,
+      monthly_target: 1000000,
+      disbursed_at: '2026-07-01T00:00:00.000Z',
+      status: 'active',
+      notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)',
+      member: { id: 'mem-grid-1', nama: 'Sertu Maju', nrp: '55443322' },
+    };
+
+    const mockSchedules = [
+      { id: 'sg-1', loan_id: 'loan-grid-cut', period_number: 1, due_date: '2026-09-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sg-2', loan_id: 'loan-grid-cut', period_number: 2, due_date: '2026-10-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sg-3', loan_id: 'loan-grid-cut', period_number: 3, due_date: '2026-11-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sg-4', loan_id: 'loan-grid-cut', period_number: 4, due_date: '2026-12-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: mockLoan, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: mockSchedules, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { setting_value: '2026-11-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const grid = await getLoanInteractiveGrid('loan-grid-cut');
+    expect(grid.cutoffDate).toBe('2026-11-01');
+    expect(grid.formattedCutoffDate).toBe('1 Nov 2026');
+    expect(grid.openingPaidBalance).toBe(2000000);
+    expect(grid.openingPaidPeriodsCount).toBe(2);
+    expect(grid.openingRemainingBalance).toBe(4000000);
+    expect(grid.forwardPaidTotal).toBe(1000000);
+    expect(grid.totalPaid).toBe(3000000);
+    expect(grid.sisaPinjaman).toBe(3000000);
+    expect(grid.periods.map(p => p.periodNumber)).toEqual([3, 4]);
+  });
+
+  it('checkAllLoanUpToCurrentMonth & uncheckAllLoanSchedules hanya menyentuh periode pasca cut-off dan melindungi saldo awal', async () => {
+    const schedules = [
+      { id: 'pre-1', loan_id: 'loan-protect', period_number: 1, due_date: '2026-10-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+      { id: 'post-1', loan_id: 'loan-protect', period_number: 2, due_date: '2026-11-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
+    ];
+    const updatedIds: string[] = [];
+    const deletedFilters: Array<{ method: string; value: any }> = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'loan-protect', notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)' },
+                error: null,
+              }),
+            }),
+          }),
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null }),
+          }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { value: '2026-11-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        const eqResult: any = Promise.resolve({ data: schedules, error: null });
+        eqResult.order = vi.fn().mockResolvedValue({ data: schedules, error: null });
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue(eqResult),
+          }),
+          update: vi.fn().mockImplementation((_payload: any) => ({
+            in: vi.fn().mockImplementation((_inCol: string, vals: string[]) => {
+              updatedIds.push(...vals);
+              return Promise.resolve({ error: null });
+            }),
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              if (col === 'id') {
+                updatedIds.push(val);
+                return Promise.resolve({ error: null });
+              }
+              return {
+                in: vi.fn().mockImplementation((_inCol: string, vals: string[]) => {
+                  updatedIds.push(...vals);
+                  return Promise.resolve({ error: null });
+                }),
+              };
+            }),
+          })),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          insert: vi.fn().mockResolvedValue({ error: null }),
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockImplementation((col2: string, vals: string[]) => {
+              deletedFilters.push({ method: col2, value: vals });
+              return Promise.resolve({ error: null });
+            }),
+            eq: vi.fn().mockImplementation((_c: string, _v: string) => ({
+              in: vi.fn().mockImplementation((col2: string, vals: string[]) => {
+                deletedFilters.push({ method: col2, value: vals });
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          }),
+        };
+      }
+      return {};
+    });
+
+    await checkAllLoanUpToCurrentMonth('loan-protect');
+    expect(updatedIds).toEqual(['post-1']);
+
+    updatedIds.length = 0;
+    await uncheckAllLoanSchedules('loan-protect');
+    expect(updatedIds).toEqual(['post-1']);
+    expect(deletedFilters).toEqual([{ method: 'schedule_id', value: ['post-1'] }]);
+  });
+});
+
+
 

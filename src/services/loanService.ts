@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { getActiveSavingsRateTiers } from './savingsRateService';
 import { LoanType } from './koperasiService';
+import type { InitialLoanRow } from '../utils/initialLoansParser';
 import {
   ApproveLoanRpcResponse,
   RecordLoanRepaymentRpcResponse,
@@ -99,8 +100,328 @@ export async function getActiveLoanTypes(): Promise<LoanType[]> {
 
 export type LoanApplicationStatusTab = 'PENDING' | 'APPROVED' | 'ALL';
 
+export interface InitialLoansSyncResult {
+  insertedCount: number;
+  skippedCount: number;
+  skippedNrps: string[];
+  effectiveDate: string;
+}
+
+function formatDateYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function buildMonthlyDueDate(baseDateStr: string, periodNumber: number): string {
+  const parts = baseDateStr.split('-').map((p) => parseInt(p, 10));
+  const baseYear = parts[0];
+  const baseMonth = parts[1] - 1;
+  const baseDay = parts[2];
+
+  const targetMonthOffset = baseMonth + periodNumber;
+  const targetYear = baseYear + Math.floor(targetMonthOffset / 12);
+  const targetMonth = ((targetMonthOffset % 12) + 12) % 12;
+  const maxDayInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const clampedDay = Math.min(baseDay, maxDayInMonth);
+
+  return formatDateYmd(new Date(targetYear, targetMonth, clampedDay));
+}
+
+/**
+ * Menyimpan saldo awal pinjaman anggota berdasarkan NRP dan jenis pinjaman Master Produk
+ * dengan Clean Overwrite, pembuatan jadwal angsuran (alokasi FIFO total_terangsur),
+ * ringkasan repayment historis, serta pencatatan ke system_settings & audit_logs.
+ */
+export async function syncInitialLoanBalances(
+  rows: InitialLoanRow[],
+  effectiveDate: string
+): Promise<InitialLoansSyncResult> {
+  const trimmedDate = typeof effectiveDate === 'string' ? effectiveDate.trim() : '';
+  if (!trimmedDate || !/^\d{4}-\d{2}-\d{2}$/.test(trimmedDate)) {
+    throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
+  }
+
+  const parsedEffectiveDate = new Date(`${trimmedDate}T00:00:00`);
+  if (isNaN(parsedEffectiveDate.getTime())) {
+    throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
+  }
+
+  if (!rows || rows.length === 0) {
+    throw new Error('Tidak ada data baris saldo awal pinjaman untuk disimpan.');
+  }
+
+  // 1. Pemetaan NRP -> anggota.id
+  let memberRows: Array<{ id: string; nrp: string }> = [];
+  const { data: queriedMembers, error: memberFetchErr } = await supabase
+    .from('anggota')
+    .select('id, nrp');
+
+  if (memberFetchErr) {
+    throw new Error(`Gagal memuat data anggota: ${memberFetchErr.message}`);
+  }
+  memberRows = (queriedMembers || []) as Array<{ id: string; nrp: string }>;
+
+  if (memberRows.length >= 1000) {
+    try {
+      const allPaged: Array<{ id: string; nrp: string }> = [];
+      let offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        const queryAny: any = supabase.from('anggota').select('id, nrp');
+        if (typeof queryAny?.range !== 'function') break;
+        const { data: pageData, error: pageErr } = await queryAny.range(offset, offset + pageSize - 1);
+        if (pageErr || !pageData || pageData.length === 0) break;
+        allPaged.push(...pageData);
+        if (pageData.length < pageSize) break;
+        offset += pageSize;
+      }
+      if (allPaged.length > memberRows.length) {
+        memberRows = allPaged;
+      }
+    } catch (e) {
+      console.warn('Gagal memuat halaman tambahan anggota:', e);
+    }
+  }
+
+  const memberMap = new Map<string, string>();
+  for (const m of memberRows) {
+    if (m.nrp) {
+      memberMap.set(String(m.nrp).trim(), m.id);
+    }
+  }
+
+  // 2. Fallback pemetaan loan_types jika ada baris yang belum memiliki loan_type_id
+  const loanTypeLookup = new Map<string, string>();
+  const needsLoanTypeLookup = rows.some((r) => !r.loan_type_id && r.jenis_pinjaman);
+  if (needsLoanTypeLookup) {
+    const { data: lTypes, error: ltErr } = await supabase
+      .from('loan_types')
+      .select('id, code, name');
+    if (!ltErr && Array.isArray(lTypes)) {
+      for (const lt of lTypes as Array<{ id: string; code?: string; name?: string }>) {
+        if (lt.code) loanTypeLookup.set(String(lt.code).trim().toLowerCase(), lt.id);
+        if (lt.name) loanTypeLookup.set(String(lt.name).trim().toLowerCase(), lt.id);
+      }
+    }
+  }
+
+  let insertedCount = 0;
+  let skippedCount = 0;
+  const skippedNrps: string[] = [];
+
+  for (const row of rows) {
+    const nrpKey = String(row.nrp || '').trim();
+    const memberId = memberMap.get(nrpKey);
+    const resolvedLoanTypeId =
+      row.loan_type_id ||
+      (row.jenis_pinjaman
+        ? loanTypeLookup.get(String(row.jenis_pinjaman).trim().toLowerCase()) || null
+        : null);
+
+    if (Number(row.jumlah_pinjaman) <= 0 || !memberId || !resolvedLoanTypeId) {
+      skippedCount++;
+      if (nrpKey) skippedNrps.push(nrpKey);
+      continue;
+    }
+
+    const cleanTypeCode = String(row.jenis_pinjaman || row.loan_type_name || 'PINJ')
+      .toUpperCase()
+      .replace(/\s+/g, '');
+    const loanNumber = `SALDO-AWAL-${nrpKey}-${cleanTypeCode}`;
+
+    // Clean Overwrite: hapus saldo awal pinjaman lama untuk member & jenis pinjaman terkait
+    const { data: existingLoans, error: existingLoansErr } = await supabase
+      .from('loans')
+      .select('id, loan_number, loan_type_id, notes')
+      .eq('member_id', memberId);
+
+    if (existingLoansErr) {
+      throw new Error(`Gagal memeriksa pinjaman lama anggota ${nrpKey}: ${existingLoansErr.message}`);
+    }
+
+    const oldLoanIds = (existingLoans || [])
+      .filter((l: any) => {
+        const sameNumber = l.loan_number === loanNumber;
+        const sameInitialType =
+          l.loan_type_id === resolvedLoanTypeId &&
+          String(l.notes || '').includes('Saldo Awal Pinjaman');
+        return sameNumber || sameInitialType;
+      })
+      .map((l: any) => l.id)
+      .filter(Boolean);
+
+    if (oldLoanIds.length > 0) {
+      const { error: delRepayErr } = await supabase
+        .from('loan_repayments')
+        .delete()
+        .in('loan_id', oldLoanIds);
+      if (delRepayErr) {
+        throw new Error(`Gagal membersihkan riwayat angsuran lama anggota ${nrpKey}: ${delRepayErr.message}`);
+      }
+
+      const { error: delSchedErr } = await supabase
+        .from('loan_schedules')
+        .delete()
+        .in('loan_id', oldLoanIds);
+      if (delSchedErr) {
+        throw new Error(`Gagal membersihkan jadwal angsuran lama anggota ${nrpKey}: ${delSchedErr.message}`);
+      }
+
+      const { error: delLoanErr } = await supabase
+        .from('loans')
+        .delete()
+        .in('id', oldLoanIds);
+      if (delLoanErr) {
+        throw new Error(`Gagal membersihkan pinjaman saldo awal lama anggota ${nrpKey}: ${delLoanErr.message}`);
+      }
+    }
+
+    const principalAmount = Number(row.jumlah_pinjaman);
+    const tenor = Math.max(1, Math.floor(Number(row.tenor) || 1));
+    const monthlyInstallment =
+      Number(row.nilai_angsuran) > 0
+        ? Math.round(Number(row.nilai_angsuran))
+        : Math.round(principalAmount / tenor);
+    const totalTerangsur = Math.max(0, Number(row.total_terangsur) || 0);
+    const sisaPinjaman = Math.max(0, principalAmount - totalTerangsur);
+    const loanStatus = sisaPinjaman <= 0 ? 'completed' : 'active';
+    const disbursedDateStr =
+      row.tgl_awal_pinjaman && /^\d{4}-\d{2}-\d{2}$/.test(row.tgl_awal_pinjaman.trim())
+        ? row.tgl_awal_pinjaman.trim()
+        : trimmedDate;
+
+    const loanPayload = {
+      loan_number: loanNumber,
+      member_id: memberId,
+      loan_type_id: resolvedLoanTypeId,
+      principal_amount: principalAmount,
+      amount: principalAmount,
+      agreed_tenor_months: tenor,
+      tenor: tenor,
+      planned_installment_amount: monthlyInstallment,
+      monthly_target: monthlyInstallment,
+      disbursed_at: disbursedDateStr,
+      status: loanStatus,
+      notes: `Saldo Awal Pinjaman (Aktif sejak ${trimmedDate})`,
+    };
+
+    const { data: newLoan, error: insLoanErr } = await supabase
+      .from('loans')
+      .insert(loanPayload)
+      .select('id')
+      .single();
+
+    if (insLoanErr || !newLoan?.id) {
+      throw new Error(
+        `Gagal menyimpan saldo awal pinjaman anggota ${nrpKey}: ${insLoanErr?.message || 'ID pinjaman kosong'}`
+      );
+    }
+
+    // Bangun jadwal angsuran sebanyak tenor dengan alokasi FIFO total_terangsur
+    let remainingPaid = totalTerangsur;
+    const schedulesToInsert = [];
+
+    for (let period = 1; period <= tenor; period++) {
+      const targetAmount = monthlyInstallment;
+      let paidAmount = 0;
+      let status: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+
+      if (remainingPaid >= targetAmount) {
+        status = 'paid';
+        paidAmount = targetAmount;
+        remainingPaid -= targetAmount;
+      } else if (remainingPaid > 0) {
+        status = 'partial';
+        paidAmount = remainingPaid;
+        remainingPaid = 0;
+      }
+
+      schedulesToInsert.push({
+        loan_id: newLoan.id,
+        period_number: period,
+        due_date: buildMonthlyDueDate(disbursedDateStr, period),
+        target_amount: targetAmount,
+        paid_amount: paidAmount,
+        status,
+      });
+    }
+
+    if (schedulesToInsert.length > 0) {
+      const { error: insSchedErr } = await supabase
+        .from('loan_schedules')
+        .insert(schedulesToInsert);
+
+      if (insSchedErr) {
+        throw new Error(
+          `Gagal menyimpan jadwal angsuran saldo awal anggota ${nrpKey}: ${insSchedErr.message}`
+        );
+      }
+    }
+
+    if (totalTerangsur > 0) {
+      const { error: insRepayErr } = await supabase.from('loan_repayments').insert({
+        loan_id: newLoan.id,
+        schedule_id: null,
+        payment_method: 'SALDO_AWAL',
+        amount_paid: totalTerangsur,
+        payment_date: new Date(`${trimmedDate}T00:00:00`).toISOString(),
+        notes: `Total Terangsur s/d Pengesahan Saldo Awal (${trimmedDate})`,
+      });
+
+      if (insRepayErr) {
+        throw new Error(
+          `Gagal menyimpan ringkasan angsuran saldo awal anggota ${nrpKey}: ${insRepayErr.message}`
+        );
+      }
+    }
+
+    insertedCount++;
+  }
+
+  // 3. Catat metadata ke system_settings & audit_logs
+  try {
+    await supabase.from('system_settings').upsert(
+      {
+        key: 'initial_loans_effective_date',
+        value: trimmedDate,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'key' }
+    );
+  } catch (e) {
+    console.warn('Gagal menyimpan initial_loans_effective_date ke system_settings:', e);
+  }
+
+  try {
+    await supabase.from('audit_logs').insert({
+      table_name: 'loans',
+      action: 'UPLOAD_INITIAL_LOANS',
+      record_id: trimmedDate,
+      new_data: {
+        effective_date: trimmedDate,
+        inserted_count: insertedCount,
+        skipped_count: skippedCount,
+        skipped_nrps: skippedNrps,
+      },
+      notes: `Upload Saldo Awal Pinjaman aktif sejak ${trimmedDate} (${insertedCount} pinjaman disimpan)`,
+    });
+  } catch (e) {
+    console.warn('Gagal mencatat UPLOAD_INITIAL_LOANS ke audit_logs:', e);
+  }
+
+  return {
+    insertedCount,
+    skippedCount,
+    skippedNrps,
+    effectiveDate: trimmedDate,
+  };
+}
+
 export const loanService = {
   getActiveLoanTypes,
+  syncInitialLoanBalances,
   async getLoanApplications(statusTab: LoanApplicationStatusTab = 'PENDING') {
     let query: any = supabase
       .from('loans')

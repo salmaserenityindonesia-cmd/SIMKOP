@@ -98,6 +98,18 @@ vi.mock('../../services/memberService', () => ({
   }),
 }));
 
+vi.mock('../../services/loanService', () => ({
+  getActiveLoanTypes: vi.fn().mockResolvedValue([
+    { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler', max_duration_months: 12, is_active: true },
+  ]),
+  syncInitialLoanBalances: vi.fn().mockResolvedValue({
+    insertedCount: 1,
+    skippedCount: 0,
+    skippedNrps: [],
+    effectiveDate: '2026-03-01',
+  }),
+}));
+
 vi.mock('../../services/memberExporter', () => ({
   exportMembersToExcel: vi.fn().mockResolvedValue({}),
   exportMembersToPdf: vi.fn().mockResolvedValue({}),
@@ -145,6 +157,10 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('Template');
       expect(html).toContain('Import');
       expect(html).toContain('Saldo Awal Simpanan');
+      expect(html).toContain('Saldo Awal Pinjaman');
+      expect(html).toContain('border-amber-300');
+      expect(html).toContain('bg-amber-50');
+      expect(html).toContain('text-amber-800');
       expect(html).toContain('Tambah Anggota');
       expect(html).toContain('Excel');
       expect(html).toContain('PDF');
@@ -391,6 +407,22 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('Pernyataan Verifikasi Saldo Awal:');
       expect(html).toContain('type="checkbox"');
       expect(html).toContain('Simpan &amp; Aktifkan Saldo Awal');
+      expect(html).toContain('disabled=""');
+    });
+  });
+
+  describe('Upload Saldo Awal Pinjaman Modal UI Structure', () => {
+    it('renders Upload Saldo Awal Pinjaman modal with Amber palette, template button, cut-off date input, confirmation checkbox, and disabled submit button', () => {
+      const html = renderToStaticMarkup(<ManajemenAnggota initialLoansModalOpen={true} />);
+
+      expect(html).toContain('Upload Saldo Awal Pinjaman');
+      expect(html).toContain('Unduh Template Saldo Awal Pinjaman (.xlsx)');
+      expect(html).toContain('Tanggal Saldo Awal Pinjaman Dinyatakan Aktif');
+      expect(html).toContain('type="date"');
+      expect(html).toContain('Pernyataan Konfirmasi Saldo Awal Pinjaman:');
+      expect(html).toContain('type="checkbox"');
+      expect(html).toContain('Simpan &amp; Aktifkan Saldo Awal Pinjaman');
+      expect(html).toContain('bg-amber-600');
       expect(html).toContain('disabled=""');
     });
   });

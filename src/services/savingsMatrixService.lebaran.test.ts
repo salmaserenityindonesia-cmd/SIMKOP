@@ -5,7 +5,6 @@ import {
   calculateFifoAllocation,
   matchAutomaticFifo,
   reconcileSingleMemberDeposit,
-  bulkAutoReconcileAllMembers,
   generateMonthGrid
 } from './savingsMatrixService';
 import { supabase } from '../lib/supabaseClient';
@@ -409,116 +408,6 @@ describe('savingsMatrixService - Lebaran Cycle Protection & Cut-Off Reconciliati
         expect(deletedIds).not.toContain(d.id);
       });
       expect(deletedIds).not.toContain(massWithdrawal.id);
-    });
-  });
-
-  describe('bulkAutoReconcileAllMembers caching cut_off_date', () => {
-    it('queries getLastCompletedLebaranCycle once and passes cached cut_off_date to all members', async () => {
-      const mockMembers = [
-        { id: 'm-1', nrp: '001', nama: 'Budi', created_at: '2024-01-01', status: 'aktif' },
-        { id: 'm-2', nrp: '002', nama: 'Siti', created_at: '2024-01-01', status: 'aktif' }
-      ];
-
-      let cycleQueryCount = 0;
-
-      (supabase.from as any).mockImplementation((table: string) => {
-        if (table === 'lebaran_disbursement_cycles') {
-          cycleQueryCount++;
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockReturnValue({
-                    maybeSingle: vi.fn().mockResolvedValue({
-                      data: {
-                        id: 'cycle-1',
-                        cycle_name: 'Idul Fitri 2025',
-                        cut_off_date: '2025-03-31',
-                        status: 'COMPLETED'
-                      },
-                      error: null
-                    })
-                  })
-                })
-              })
-            })
-          };
-        }
-        if (table === 'anggota') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                order: vi.fn().mockResolvedValue({ data: mockMembers, error: null })
-              })
-            })
-          };
-        }
-        if (table === 'deposit_types') {
-          return {
-            select: vi.fn().mockResolvedValue({
-              data: [{ id: 'dt-lebaran', name: 'Simpanan Lebaran', code: 'LEBARAN' }],
-              error: null
-            })
-          };
-        }
-        if (table === 'savings_rate_tiers') {
-          return {
-            select: vi.fn().mockReturnValue({
-              order: vi.fn().mockReturnValue({
-                order: vi.fn().mockResolvedValue({ data: mockTiers, error: null })
-              })
-            })
-          };
-        }
-        if (table === 'member_deposits') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
-                })
-              }),
-              in: vi.fn().mockResolvedValue({ data: [], error: null })
-            }),
-            insert: vi.fn().mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'new-md-id' }, error: null })
-              })
-            })
-          };
-        }
-        if (table === 'deposit_transactions') {
-          return {
-            delete: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ data: null, error: null }),
-              eq: vi.fn().mockReturnValue({
-                gte: vi.fn().mockReturnValue({
-                  lte: vi.fn().mockReturnValue({
-                    eq: vi.fn().mockReturnValue({
-                      neq: vi.fn().mockResolvedValue({ data: null, error: null })
-                    })
-                  })
-                }),
-                is: vi.fn().mockReturnValue({
-                  ilike: vi.fn().mockResolvedValue({ data: null, error: null })
-                }),
-                or: vi.fn().mockResolvedValue({ data: null, error: null })
-              })
-            }),
-            insert: vi.fn().mockResolvedValue({ data: [], error: null })
-          };
-        }
-        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
-      });
-
-      const res = await bulkAutoReconcileAllMembers('LEBARAN');
-
-      expect(res.success).toBe(true);
-      expect(res.totalMembers).toBe(2);
-      expect(res.totalSuccess).toBe(2);
-
-      // Query ke siklus hanya terjadi 1x di awal untuk seluruh anggota
-      expect(cycleQueryCount).toBe(1);
     });
   });
 });

@@ -6,7 +6,6 @@ import {
   loadComplianceAvailableYearsData,
   fetchComplianceMatrixData,
   fetchComplianceData,
-  handleBulkAutoReconcile,
   handleBulkCheckAllUpToNow,
   handleExportSavingsMatrix,
   handleImportMatrixSuccess,
@@ -17,7 +16,7 @@ import {
   ComplianceMatrixResult,
   ComplianceMatrixRow,
 } from '../../services/complianceService';
-import { bulkAutoReconcileAllMembers, bulkCheckAllUpToCurrentMonth } from '../../services/savingsMatrixService';
+import { bulkCheckAllUpToCurrentMonth } from '../../services/savingsMatrixService';
 import { supabase } from '../../lib/supabaseClient';
 import { exportSavingsMatrixExcel } from '../../utils/savingsMatrixExporter';
 
@@ -44,11 +43,6 @@ vi.mock('../../components/compliance/SavingsMatrixImportModal', () => ({
 
 // Mock savingsMatrixService
 vi.mock('../../services/savingsMatrixService', () => ({
-  bulkAutoReconcileAllMembers: vi.fn().mockImplementation(async (type, onProgress) => {
-    onProgress?.({ processed: 5, total: 10, currentMemberName: 'Budi' });
-    onProgress?.({ processed: 10, total: 10, currentMemberName: 'Siti' });
-    return { success: true, totalMembers: 10, totalSuccess: 10, totalFailed: 0 };
-  }),
   bulkCheckAllUpToCurrentMonth: vi.fn().mockImplementation(async (type, onProgress) => {
     onProgress?.({ current: 5, total: 10, currentMemberName: 'Budi' });
     onProgress?.({ current: 10, total: 10, currentMemberName: 'Siti' });
@@ -434,145 +428,11 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
     });
   });
 
-  describe('Bulk Auto-Reconcile Toolbar, Modal & Execution Flow', () => {
-    it('renders "Cocokkan Otomatis Semua Anggota" button on the toolbar', () => {
+  describe('Bulk Check-All Toolbar, Modal & Execution Flow (without Auto-Reconcile)', () => {
+    it('does not render "Cocokkan Otomatis Semua Anggota" button or bulk auto-reconcile modal on the toolbar', () => {
       const html = renderToStaticMarkup(<ComplianceMatrix />);
-      expect(html).toContain('Cocokkan Otomatis Semua Anggota');
-      expect(html).toContain('title="Cocokkan otomatis saldo simpanan seluruh anggota ke buku besar bulanan"');
-    });
-
-    it('renders bulk reconcile confirmation modal with title, info banner, and deposit type options', () => {
-      const html = renderToStaticMarkup(
-        <ComplianceMatrix initialShowConfirmBulkModal={true} />
-      );
-
-      // Verify modal is visible
-      expect(html).toContain('data-testid="bulk-reconcile-modal"');
-      expect(html).toContain('Cocokkan Otomatis Simpanan Seluruh Anggota');
-      expect(html).toContain('Sinkronisasi saldo simpanan riil ke buku besar bulanan');
-      expect(html).toContain('Algoritma Rekonsiliasi Otomatis FIFO');
-
-      // Verify deposit type radio options
-      expect(html).toContain('Semua Jenis Simpanan');
-      expect(html).toContain('Simpanan Wajib');
-      expect(html).toContain('Simpanan Belanja Bulanan');
-      expect(html).toContain('Simpanan Hari Raya/Lebaran');
-
-      // Verify action buttons
-      expect(html).toContain('Batal');
-      expect(html).toContain('Mulai Pencocokan Otomatis');
-    });
-
-    it('renders modal in-progress state with animated progress bar, percentage, and current member name', () => {
-      const html = renderToStaticMarkup(
-        <ComplianceMatrix
-          initialShowConfirmBulkModal={true}
-          initialBulkReconciling={true}
-          initialBulkProgress={{
-            processed: 75,
-            total: 100,
-            currentMemberName: 'Bambang Pamungkas',
-          }}
-        />
-      );
-
-      expect(html).toContain('data-testid="bulk-reconcile-in-progress"');
-      expect(html).toContain('Memproses 75 dari 100 anggota...');
-      expect(html).toContain('75%');
-      expect(html).toContain('Bambang Pamungkas');
-      expect(html).toContain('Mohon tidak menutup jendela atau merefresh halaman');
-    });
-
-    it('renders modal completion result state with success summary and reload button', () => {
-      const html = renderToStaticMarkup(
-        <ComplianceMatrix
-          initialShowConfirmBulkModal={true}
-          initialBulkReconciling={false}
-          initialBulkResult={{
-            totalSuccess: 98,
-            totalFailed: 2,
-          }}
-        />
-      );
-
-      expect(html).toContain('data-testid="bulk-reconcile-result"');
-      expect(html).toContain('Rekonsiliasi Selesai!');
-      expect(html).toContain('98 anggota');
-      expect(html).toContain('2 anggota');
-      expect(html).toContain('Selesai &amp; Muat Ulang Matriks');
-    });
-
-    it('handleBulkAutoReconcile invokes bulkAutoReconcileAllMembers, tracks progress, and returns result', async () => {
-      const setIsBulkReconciling = vi.fn();
-      const progressUpdates: any[] = [];
-      const setBulkProgress = vi.fn((p) => progressUpdates.push(p));
-      const setBulkResult = vi.fn();
-      const onComplete = vi.fn();
-
-      const result = await handleBulkAutoReconcile(
-        'ALL',
-        setIsBulkReconciling,
-        setBulkProgress,
-        setBulkResult,
-        onComplete
-      );
-
-      // Verify service was called with 'ALL'
-      expect(bulkAutoReconcileAllMembers).toHaveBeenCalledWith('ALL', expect.any(Function));
-
-      // Verify loading state changes
-      expect(setIsBulkReconciling).toHaveBeenCalledWith(true);
-      expect(setIsBulkReconciling).toHaveBeenLastCalledWith(false);
-
-      // Verify progress callbacks fired
-      expect(progressUpdates).toEqual([
-        { processed: 0, total: 0 },
-        { processed: 5, total: 10, currentMemberName: 'Budi' },
-        { processed: 10, total: 10, currentMemberName: 'Siti' },
-      ]);
-
-      // Verify result state was set
-      expect(setBulkResult).toHaveBeenCalledWith({
-        totalSuccess: 10,
-        totalFailed: 0,
-      });
-
-      // Verify onComplete callback
-      expect(onComplete).toHaveBeenCalledTimes(1);
-
-      // Verify returned result object
-      expect(result).toEqual({
-        success: true,
-        totalMembers: 10,
-        totalSuccess: 10,
-        totalFailed: 0,
-      });
-    });
-
-    it('handleBulkAutoReconcile handles service exceptions gracefully', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      (bulkAutoReconcileAllMembers as any).mockRejectedValueOnce(new Error('Database lock'));
-
-      const setIsBulkReconciling = vi.fn();
-      const setBulkProgress = vi.fn();
-      const setBulkResult = vi.fn();
-
-      const result = await handleBulkAutoReconcile(
-        'WAJIB',
-        setIsBulkReconciling,
-        setBulkProgress,
-        setBulkResult
-      );
-
-      expect(setIsBulkReconciling).toHaveBeenCalledWith(true);
-      expect(setIsBulkReconciling).toHaveBeenLastCalledWith(false);
-      expect(setBulkResult).toHaveBeenCalledWith({
-        totalSuccess: 0,
-        totalFailed: 1,
-      });
-      expect(result).toBeNull();
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      consoleErrorSpy.mockRestore();
+      expect(html).not.toContain('Cocokkan Otomatis Semua Anggota');
+      expect(html).not.toContain('data-testid="bulk-reconcile-modal"');
     });
 
     it('renders toolbar button for Centang Semua s/d Bulan Ini with correct attributes', () => {

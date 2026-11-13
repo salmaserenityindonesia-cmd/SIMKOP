@@ -1033,6 +1033,11 @@ export async function resetAllMembersData(): Promise<ResetMembersResult> {
   }
 }
 
+export {
+  syncInitialLoanBalances,
+  type InitialLoansSyncResult,
+} from './loanService';
+
 export interface InitialSavingsSyncResult {
   updatedCount: number;
   skippedNrps: string[];

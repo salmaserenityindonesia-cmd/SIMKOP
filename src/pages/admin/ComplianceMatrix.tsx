@@ -14,11 +14,8 @@ import {
   FileSpreadsheet,
   AlertTriangle,
   Eye,
-  RefreshCw,
-  AlertCircle,
   Loader2,
   Sparkles,
-  Layers,
   X,
   ChevronDown,
   Upload,
@@ -43,9 +40,6 @@ import { exportSavingsMatrixExcel, DepositTypeKey } from '../../utils/savingsMat
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
 import {
-  bulkAutoReconcileAllMembers,
-  BulkReconcileProgress,
-  BulkReconcileResult,
   bulkCheckAllUpToCurrentMonth,
   BulkCheckProgress
 } from '../../services/savingsMatrixService';
@@ -72,11 +66,6 @@ export interface ComplianceMatrixProps {
     nama: string;
     joinDate?: string | null;
   } | null;
-  initialShowConfirmBulkModal?: boolean;
-  initialBulkReconciling?: boolean;
-  initialBulkTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
-  initialBulkProgress?: { processed: number; total: number; currentMemberName?: string };
-  initialBulkResult?: { totalSuccess: number; totalFailed: number } | null;
   initialShowCheckAllConfirmModal?: boolean;
   initialBulkChecking?: boolean;
   initialBulkCheckTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
@@ -173,35 +162,6 @@ export const loadComplianceAvailableYearsData = async (
   }
 };
 
-export const handleBulkAutoReconcile = async (
-  targetType: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL',
-  setIsBulkReconciling: (loading: boolean) => void,
-  setBulkProgress: (prog: { processed: number; total: number; currentMemberName?: string }) => void,
-  setBulkResult: (res: { totalSuccess: number; totalFailed: number } | null) => void,
-  onComplete?: () => void
-): Promise<BulkReconcileResult | null> => {
-  setIsBulkReconciling(true);
-  setBulkProgress({ processed: 0, total: 0 });
-  setBulkResult(null);
-  try {
-    const res = await bulkAutoReconcileAllMembers(targetType, (p) => {
-      setBulkProgress(p);
-    });
-    setBulkResult({
-      totalSuccess: res.totalSuccess,
-      totalFailed: res.totalFailed,
-    });
-    if (onComplete) onComplete();
-    return res;
-  } catch (err) {
-    console.error('Bulk auto-reconcile error:', err);
-    setBulkResult({ totalSuccess: 0, totalFailed: 1 });
-    return null;
-  } finally {
-    setIsBulkReconciling(false);
-  }
-};
-
 export const handleBulkCheckAllUpToNow = async (
   targetType: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL',
   setIsBulkChecking: (loading: boolean) => void,
@@ -283,11 +243,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   onYearChange,
   initialData,
   initialSelectedMember,
-  initialShowConfirmBulkModal,
-  initialBulkReconciling,
-  initialBulkTargetType,
-  initialBulkProgress,
-  initialBulkResult,
   initialShowCheckAllConfirmModal,
   initialBulkChecking,
   initialBulkCheckTargetType,
@@ -364,18 +319,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   } | null>(initialSelectedMember || null);
   const [totalSetoran, setTotalSetoran] = useState(0);
 
-  const [showConfirmBulkModal, setShowConfirmBulkModal] = useState(initialShowConfirmBulkModal || false);
-  const [isBulkReconciling, setIsBulkReconciling] = useState(initialBulkReconciling || false);
-  const [bulkTargetType, setBulkTargetType] = useState<'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL'>(
-    initialBulkTargetType || 'ALL'
-  );
-  const [bulkProgress, setBulkProgress] = useState<{ processed: number; total: number; currentMemberName?: string }>(
-    initialBulkProgress || { processed: 0, total: 0 }
-  );
-  const [bulkResult, setBulkResult] = useState<{ totalSuccess: number; totalFailed: number } | null>(
-    initialBulkResult || null
-  );
-
   const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(initialShowCheckAllConfirmModal || false);
   const [isBulkChecking, setIsBulkChecking] = useState(initialBulkChecking || false);
   const [bulkCheckTargetType, setBulkCheckTargetType] = useState<'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL'>(
@@ -402,16 +345,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   const [isPokokModalOpen, setIsPokokModalOpen] = useState(false);
 
   const feedback = useContext(FeedbackContext);
-
-  const handleReloadAfterBulk = async () => {
-    clearTierCache();
-    await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
-    setShowConfirmBulkModal(false);
-    setBulkResult(null);
-    if (feedback?.showToast) {
-      feedback.showToast('Data matriks berhasil disinkronisasi', 'success');
-    }
-  };
 
   const handleReloadAfterBulkCheck = async () => {
     clearTierCache();
@@ -952,7 +885,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               setBulkCheckSummary(null);
               setShowCheckAllConfirmModal(true);
             }}
-            disabled={isBulkChecking || isBulkReconciling}
+            disabled={isBulkChecking}
             title="Centang lunas semua anggota dari tanggal bergabung sampai bulan ini"
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
           >
@@ -960,18 +893,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
             <span>Centang Semua s/d Bulan Ini</span>
           </button>
 
-          <button
-            onClick={() => {
-              setBulkResult(null);
-              setShowConfirmBulkModal(true);
-            }}
-            disabled={isBulkReconciling || isBulkChecking}
-            title="Cocokkan otomatis saldo simpanan seluruh anggota ke buku besar bulanan"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${isBulkReconciling ? 'animate-spin' : ''}`} />
-            <span>Cocokkan Otomatis Semua Anggota</span>
-          </button>
           <button className="flex items-center px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-200 transition-colors">
             <Download className="w-4 h-4 mr-2" />
             Export Rekap Excel
@@ -1254,239 +1175,6 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         />
       )}
 
-      {/* Modal Dialog Konfirmasi & Progress Pencocokan Otomatis Massal */}
-      {showConfirmBulkModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
-          data-testid="bulk-reconcile-modal"
-        >
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                  <RefreshCw className={`w-5 h-5 ${isBulkReconciling ? 'animate-spin' : ''}`} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Cocokkan Otomatis Simpanan Seluruh Anggota
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Sinkronisasi saldo simpanan riil ke buku besar bulanan
-                  </p>
-                </div>
-              </div>
-              {!isBulkReconciling && (
-                <button
-                  onClick={async () => {
-                    if (bulkResult) {
-                      await handleReloadAfterBulk();
-                    } else {
-                      setShowConfirmBulkModal(false);
-                      setBulkResult(null);
-                    }
-                  }}
-                  data-testid="close-bulk-modal-btn"
-                  className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-5">
-              {/* State 1: In Progress */}
-              {isBulkReconciling && (
-                <div className="space-y-4 py-2" data-testid="bulk-reconcile-in-progress">
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-                    <span className="flex items-center gap-1.5">
-                      <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
-                      <span>
-                        Memproses {bulkProgress.processed} dari {bulkProgress.total || 0} anggota...
-                      </span>
-                    </span>
-                    <span className="text-emerald-700 font-bold">
-                      {bulkProgress.total > 0
-                        ? Math.round((bulkProgress.processed / bulkProgress.total) * 100)
-                        : 0}
-                      %
-                    </span>
-                  </div>
-
-                  {/* Progress Bar Track */}
-                  <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden p-0.5 border border-slate-200">
-                    <div
-                      className="bg-emerald-600 h-full rounded-full transition-all duration-300 ease-out"
-                      style={{
-                        width: `${
-                          bulkProgress.total > 0
-                            ? Math.min(100, Math.round((bulkProgress.processed / bulkProgress.total) * 100))
-                            : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-
-                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/80 text-xs text-slate-600 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Anggota Sedang Diproses:</span>
-                      <span className="font-semibold text-slate-800" data-testid="bulk-current-member">
-                        {bulkProgress.currentMemberName || 'Menginisialisasi antrean...'}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 italic text-center pt-1">
-                      Mohon tidak menutup jendela atau merefresh halaman saat pencocokan sedang berlangsung.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* State 2: Completed Result */}
-              {!isBulkReconciling && bulkResult !== null && (
-                <div className="py-2 text-center space-y-4" data-testid="bulk-reconcile-result">
-                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
-                    <CheckCircle2 className="w-8 h-8" />
-                  </div>
-                  <div>
-                    <h4 className="text-base font-bold text-slate-900">
-                      Rekonsiliasi Selesai!
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Saldo simpanan seluruh anggota telah berhasil dipetakan ke buku besar bulanan.
-                    </p>
-                  </div>
-
-                  <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 text-xs space-y-1.5 text-left">
-                    <div className="flex justify-between items-center text-emerald-900 font-semibold">
-                      <span>Anggota Berhasil Direkonsiliasi:</span>
-                      <span className="text-emerald-700 font-bold" data-testid="result-success-count">
-                        {bulkResult.totalSuccess} anggota
-                      </span>
-                    </div>
-                    {bulkResult.totalFailed > 0 && (
-                      <div className="flex justify-between items-center text-red-700 font-semibold">
-                        <span>Anggota Gagal:</span>
-                        <span className="text-red-600 font-bold" data-testid="result-failed-count">
-                          {bulkResult.totalFailed} anggota
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* State 3: Confirmation / Initial Setup */}
-              {!isBulkReconciling && bulkResult === null && (
-                <div className="space-y-4" data-testid="bulk-reconcile-confirmation">
-                  {/* Info Box */}
-                  <div className="flex items-start gap-3 bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-900">
-                    <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="font-semibold text-blue-950">
-                        Algoritma Rekonsiliasi Otomatis FIFO
-                      </p>
-                      <p className="text-blue-800 leading-relaxed">
-                        Sistem akan memetakan total saldo simpanan riil/migrasi seluruh anggota aktif ke kotak-kotak bulan buku besar sesuai tarif berjenjang yang berlaku secara FIFO. Mutasi awal migrasi tetap aman dan tidak akan terhapus.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Target Type Selector */}
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Pilih Jenis Simpanan:
-                    </label>
-                    <div className="grid grid-cols-1 gap-2">
-                      {[
-                        { id: 'ALL', label: 'Semua Jenis Simpanan', desc: 'Simpanan Wajib, Belanja Bulanan, dan Hari Raya' },
-                        { id: 'WAJIB', label: 'Simpanan Wajib', desc: 'Hanya mencocokkan simpanan wajib' },
-                        { id: 'BELANJA', label: 'Simpanan Belanja Bulanan', desc: 'Hanya mencocokkan simpanan belanja bulanan' },
-                        { id: 'LEBARAN', label: 'Simpanan Hari Raya/Lebaran', desc: 'Hanya mencocokkan simpanan hari raya' },
-                      ].map((opt) => (
-                        <label
-                          key={opt.id}
-                          className={`flex items-start gap-3 p-3 rounded-xl border text-xs cursor-pointer transition-colors ${
-                            bulkTargetType === opt.id
-                              ? 'border-emerald-500 bg-emerald-50/60 text-emerald-950 font-medium'
-                              : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="bulkTargetType"
-                            value={opt.id}
-                            checked={bulkTargetType === opt.id}
-                            onChange={() => setBulkTargetType(opt.id as any)}
-                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
-                          />
-                          <div>
-                            <div className="font-semibold text-slate-900">{opt.label}</div>
-                            <div className="text-[11px] text-slate-500">{opt.desc}</div>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
-              {/* During Execution: Progress indicator text */}
-              {isBulkReconciling && (
-                <p className="text-xs text-slate-400 italic">
-                  Proses sedang berjalan, mohon tunggu...
-                </p>
-              )}
-
-              {/* After Execution: Close and Refresh Button */}
-              {!isBulkReconciling && bulkResult !== null && (
-                <button
-                  onClick={handleReloadAfterBulk}
-                  data-testid="complete-bulk-modal-btn"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
-                >
-                  Selesai & Muat Ulang Matriks
-                </button>
-              )}
-
-              {/* Before Execution: Cancel & Start Buttons */}
-              {!isBulkReconciling && bulkResult === null && (
-                <>
-                  <button
-                    onClick={() => setShowConfirmBulkModal(false)}
-                    className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleBulkAutoReconcile(
-                        bulkTargetType,
-                        setIsBulkReconciling,
-                        setBulkProgress,
-                        setBulkResult,
-                        async () => {
-                          clearTierCache();
-                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
-                        }
-                      );
-                    }}
-                    data-testid="start-bulk-reconcile-btn"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                    <span>Mulai Pencocokan Otomatis</span>
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Modal Dialog Konfirmasi & Progress Centang Semua s/d Bulan Ini Massal */}
       {showCheckAllConfirmModal && (
         <div
@@ -1719,7 +1407,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                         setBulkCheckSummary,
                         async () => {
                           clearTierCache();
-                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers);
+                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
                         }
                       );
                     }}

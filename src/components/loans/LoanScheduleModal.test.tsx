@@ -19,8 +19,10 @@ import {
 } from '../../services/loanMatrixService';
 
 // Mock loanMatrixService
-vi.mock('../../services/loanMatrixService', () => {
+vi.mock('../../services/loanMatrixService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/loanMatrixService')>();
   return {
+    ...actual,
     MONTH_NAMES: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'],
     getLoanInteractiveGrid: vi.fn(),
     toggleLoanSchedulePaid: vi.fn(),
@@ -256,7 +258,7 @@ describe('LoanScheduleModal Component Tests', () => {
       );
 
       expect(html).toContain('Centang Semua s/d Bulan Ini');
-      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
       expect(html).toContain('Batal Centang Semua');
 
       // Status Legend
@@ -637,6 +639,153 @@ describe('LoanScheduleModal Component Tests', () => {
       // Verify evidence modal receipt input auto-filled with KW-PINJ prefix and anti-collision suffix
       expect(html).toContain('data-testid="evidence-receipt-input"');
       expect(html).toMatch(/value="KW-PINJ\/PJ-2026-001\/B5\/\d{8}-[A-Z0-9]{3}"/);
+    });
+  });
+
+  describe('Cut-Off Saldo Awal Terangsur & Angsuran Maju', () => {
+    it('replaces pre-cut-off periods with opening balance column and renders only forward periods', () => {
+      const preAndForwardData: LoanInteractiveGridSummary = {
+        ...mockLoanGridData,
+        principalAmount: 3000000,
+        totalPaid: 1500000,
+        sisaPinjaman: 1500000,
+        periods: [
+          {
+            id: 'sched-pre-1',
+            loanId: 'loan-123',
+            periodNumber: 1,
+            dueDate: '2026-09-15',
+            targetAmount: 500000,
+            paidAmount: 500000,
+            status: 'PAID',
+            label: 'Bulan 1 [Sep-26]',
+            isCurrentMonth: false,
+            repayments: [],
+          },
+          {
+            id: 'sched-pre-2',
+            loanId: 'loan-123',
+            periodNumber: 2,
+            dueDate: '2026-10-15',
+            targetAmount: 500000,
+            paidAmount: 500000,
+            status: 'PAID',
+            label: 'Bulan 2 [Okt-26]',
+            isCurrentMonth: false,
+            repayments: [],
+          },
+          {
+            id: 'sched-fwd-3',
+            loanId: 'loan-123',
+            periodNumber: 3,
+            dueDate: '2026-11-15',
+            targetAmount: 500000,
+            paidAmount: 500000,
+            status: 'PAID',
+            label: 'Bulan 3 [Nov-26]',
+            isCurrentMonth: true,
+            repayments: [],
+          },
+          {
+            id: 'sched-fwd-4',
+            loanId: 'loan-123',
+            periodNumber: 4,
+            dueDate: '2026-12-15',
+            targetAmount: 500000,
+            paidAmount: 0,
+            status: 'PROJECTED',
+            label: 'Bulan 4 [Des-26]',
+            isCurrentMonth: false,
+            repayments: [],
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Bripda Ahmad Fadli"
+          onClose={vi.fn()}
+          initialData={preAndForwardData}
+          initialCutoffDate="2026-11-01"
+        />
+      );
+
+      expect(html).toContain('data-testid="opening-balance-col-header"');
+      expect(html).toContain('Saldo Awal Terangsur');
+      expect(html).toContain('Sah per 1 Nov 2026');
+      expect(html).toContain('data-testid="opening-balance-col-cell"');
+      expect(html).toMatch(/Rp\s*1\.000\.000/);
+      expect(html).toContain('Akumulasi 2 Periode');
+      expect(html).toMatch(/Sisa Awal:\s*Rp\s*2\.000\.000/);
+
+      expect(html).not.toContain('Bulan 1 [Sep-26]');
+      expect(html).not.toContain('Bulan 2 [Okt-26]');
+      expect(html).toContain('Bulan 3 [Nov-26]');
+      expect(html).toContain('Bulan 4 [Des-26]');
+      expect(html).toContain('Saldo Awal + Periode 3 s/d 4');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+    });
+
+    it('renders service-aggregated openingPaidBalance and openingRemainingBalance when pre-cut-off periods are already filtered out', () => {
+      const serviceFilteredData: LoanInteractiveGridSummary = {
+        ...mockLoanGridData,
+        principalAmount: 60000000,
+        tenor: 60,
+        monthlyTarget: 1000000,
+        totalPaid: 53000000,
+        sisaPinjaman: 7000000,
+        cutoffDate: '2026-11-01',
+        formattedCutoffDate: '1 Nov 2026',
+        openingPaidBalance: 52000000,
+        openingRemainingBalance: 8000000,
+        openingPaidPeriodsCount: 52,
+        forwardPaidTotal: 1000000,
+        periods: [
+          {
+            id: 'sched-53',
+            loanId: 'loan-123',
+            periodNumber: 53,
+            dueDate: '2026-11-15',
+            targetAmount: 1000000,
+            paidAmount: 1000000,
+            status: 'PAID',
+            label: 'Bulan 53 [Nov-26]',
+            isCurrentMonth: true,
+            repayments: [],
+          },
+          {
+            id: 'sched-54',
+            loanId: 'loan-123',
+            periodNumber: 54,
+            dueDate: '2026-12-15',
+            targetAmount: 1000000,
+            paidAmount: 0,
+            status: 'PROJECTED',
+            label: 'Bulan 54 [Des-26]',
+            isCurrentMonth: false,
+            repayments: [],
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-123"
+          memberNrp="92040123"
+          memberName="Kapten CutOff"
+          onClose={vi.fn()}
+          initialData={serviceFilteredData}
+        />
+      );
+
+      expect(html).toContain('Sah per 1 Nov 2026');
+      expect(html).toMatch(/Rp\s*52\.000\.000/);
+      expect(html).toContain('Akumulasi 52 Periode');
+      expect(html).toMatch(/Sisa Awal:\s*Rp\s*8\.000\.000/);
+      expect(html).toContain('Bulan 53 [Nov-26]');
+      expect(html).toContain('Bulan 54 [Des-26]');
     });
   });
 });

@@ -13,6 +13,10 @@ export * from './memberService';
 export * from './purchaseInvoiceService';
 export * from './depositManagementService';
 export {
+  syncInitialLoanBalances,
+  type InitialLoansSyncResult,
+} from './loanService';
+export {
   exportMemberTemplate,
   parseMemberUpload,
   executeMigration,

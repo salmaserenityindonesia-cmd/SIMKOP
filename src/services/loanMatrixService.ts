@@ -1,5 +1,176 @@
 import { supabase } from '../lib/supabaseClient';
 
+export const MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
+  'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'
+];
+
+export interface LoanCutoffDateInfo {
+  dateStr: string;
+  year: number;
+  month: number;
+  day: number;
+  periodIndex: number;
+  formattedDate: string;
+}
+
+export function parseLoanCutoffDateInfo(
+  rawDateStr?: string | Date | null
+): LoanCutoffDateInfo | null {
+  if (!rawDateStr) return null;
+
+  let year = 0;
+  let month = 0;
+  let day = 0;
+  let normalizedDateStr = '';
+
+  if (rawDateStr instanceof Date) {
+    if (isNaN(rawDateStr.getTime())) return null;
+    year = rawDateStr.getFullYear();
+    month = rawDateStr.getMonth() + 1;
+    day = rawDateStr.getDate();
+    normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  } else {
+    const trimmed = String(rawDateStr).trim();
+    if (!trimmed) return null;
+    const match = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (match) {
+      year = parseInt(match[1], 10);
+      month = parseInt(match[2], 10);
+      day = parseInt(match[3], 10);
+      if (isNaN(year) || isNaN(month) || isNaN(day) || month < 1 || month > 12 || day < 1 || day > 31) {
+        return null;
+      }
+      normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    } else {
+      const d = new Date(trimmed);
+      if (isNaN(d.getTime())) return null;
+      year = d.getFullYear();
+      month = d.getMonth() + 1;
+      day = d.getDate();
+      normalizedDateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  return {
+    dateStr: normalizedDateStr,
+    year,
+    month,
+    day,
+    periodIndex: year * 12 + month,
+    formattedDate: `${day} ${MONTH_NAMES[month - 1]} ${year}`,
+  };
+}
+
+export function extractLoanCutoffDateFromNotes(
+  notesOrItems?: string | any[] | null
+): string | null {
+  if (!notesOrItems) return null;
+
+  const extractFromText = (text: string): string | null => {
+    const lower = text.toLowerCase();
+    if (!lower.includes('saldo awal pinjaman') && !lower.includes('pengesahan saldo awal')) {
+      return null;
+    }
+    const match = text.match(/(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : null;
+  };
+
+  if (typeof notesOrItems === 'string') {
+    return extractFromText(notesOrItems);
+  }
+
+  if (Array.isArray(notesOrItems)) {
+    let latestDate = '';
+    for (const item of notesOrItems) {
+      if (!item) continue;
+      const candidateNotes =
+        typeof item === 'string'
+          ? item
+          : String(item.notes || item.loan?.notes || '');
+      if (!candidateNotes) continue;
+      const extracted = extractFromText(candidateNotes);
+      if (extracted && (!latestDate || extracted > latestDate)) {
+        latestDate = extracted;
+      }
+    }
+    return latestDate || null;
+  }
+
+  return null;
+}
+
+export function isScheduleBeforeLoanCutOff(
+  dueDateOrYear: string | number | null | undefined,
+  monthOrCutoff?: number | string | Date | null,
+  cutOffDateArg?: string | Date | null
+): boolean {
+  let targetYear = 0;
+  let targetMonth = 0;
+  let cutOffDate: string | Date | null | undefined;
+
+  if (typeof dueDateOrYear === 'number') {
+    targetYear = dueDateOrYear;
+    targetMonth = typeof monthOrCutoff === 'number' ? monthOrCutoff : 0;
+    cutOffDate = cutOffDateArg;
+  } else if (typeof dueDateOrYear === 'string') {
+    cutOffDate = monthOrCutoff as string | Date | null | undefined;
+    const match = dueDateOrYear.trim().match(/^(\d{4})-(\d{1,2})/);
+    if (match) {
+      targetYear = parseInt(match[1], 10);
+      targetMonth = parseInt(match[2], 10);
+    } else {
+      const d = new Date(dueDateOrYear);
+      if (isNaN(d.getTime())) return false;
+      targetYear = d.getFullYear();
+      targetMonth = d.getMonth() + 1;
+    }
+  } else {
+    return false;
+  }
+
+  if (!cutOffDate || isNaN(targetYear) || isNaN(targetMonth) || targetMonth < 1 || targetMonth > 12) {
+    return false;
+  }
+
+  const cutoffInfo = parseLoanCutoffDateInfo(cutOffDate);
+  if (!cutoffInfo) return false;
+
+  const targetIndex = targetYear * 12 + targetMonth;
+  return targetIndex < cutoffInfo.periodIndex;
+}
+
+export async function getInitialLoansCutOffDate(loansOrItems?: any[]): Promise<string | null> {
+  try {
+    const query: any = supabase.from('system_settings')?.select?.('key, value');
+    if (query) {
+      if (typeof query.eq === 'function') {
+        const eqQ = query.eq('key', 'initial_loans_effective_date');
+        const res = typeof eqQ?.maybeSingle === 'function'
+          ? await eqQ.maybeSingle()
+          : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
+        const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+        const rawVal = rowData?.value ?? rowData?.setting_value;
+        if (rawVal) {
+          return String(rawVal).slice(0, 10);
+        }
+      } else if (typeof query.then === 'function') {
+        const res = await query;
+        const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
+        const found = rows.find((r: any) => (r?.key ?? r?.setting_key) === 'initial_loans_effective_date');
+        const foundVal = found?.value ?? found?.setting_value;
+        if (foundVal) {
+          return String(foundVal).slice(0, 10);
+        }
+      }
+    }
+  } catch {
+    // Fallback ke catatan loans.notes
+  }
+
+  return extractLoanCutoffDateFromNotes(loansOrItems);
+}
+
 export interface LoanMatrixMonth {
   month: number;
   year?: number;
@@ -40,6 +211,9 @@ export interface LoanMatrixMember {
   complianceYTD: number;
   priorYearPaid?: number;
   priorYearRemaining?: number;
+  openingPaid?: number;
+  openingRemaining?: number;
+  cutoffDate?: string | null;
   anggota?: { id: string; nrp: string; nama: string; pangkat?: string };
   loan_types?: { id: string; code: string; name: string };
 }
@@ -48,6 +222,10 @@ export type LoanMatrixRow = LoanMatrixMember;
 
 export interface LoanMatrixSummary {
   year?: number;
+  cutoffDate?: string | null;
+  cutoffYear?: number | null;
+  cutoffMonth?: number | null;
+  formattedCutoffDate?: string | null;
   complianceYTD: number;
   totalCollectedYTD: number;
   projectedNextMonth: number;
@@ -88,7 +266,14 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   }
 
   if (loanIds.length === 0) {
+    const emptyCutoffStr = await getInitialLoansCutOffDate();
+    const emptyCutoffInfo = parseLoanCutoffDateInfo(emptyCutoffStr);
     return {
+      year,
+      cutoffDate: emptyCutoffInfo?.dateStr || null,
+      cutoffYear: emptyCutoffInfo?.year || null,
+      cutoffMonth: emptyCutoffInfo?.month || null,
+      formattedCutoffDate: emptyCutoffInfo?.formattedDate || null,
       complianceYTD: 100,
       totalCollectedYTD: 0,
       projectedNextMonth: 0,
@@ -118,6 +303,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         planned_installment_amount,
         disbursed_at,
         status,
+        notes,
         loan_types ( id, code, name ),
         member:anggota (
           id,
@@ -135,11 +321,17 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     throw scheduleError;
   }
 
+  const cutoffDateStr = await getInitialLoansCutOffDate(
+    (schedules || []).map((s: any) => s.loan).filter(Boolean)
+  );
+  const cutoffInfo = parseLoanCutoffDateInfo(cutoffDateStr);
+
   const currentMonth = new Date().getMonth() + 1; // 1-12
   const currentYear = new Date().getFullYear();
 
   // Model baris matriks berbasis loan.id (1 Baris = 1 Pinjaman Aktif/Berjalan)
   const loansMap: Record<string, LoanMatrixMember> = {};
+  const rawLoanMap: Record<string, any> = {};
 
   let totalTargetYTD = 0;
   let totalCollectedYTD = 0;
@@ -150,6 +342,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   const loanBalances: Record<string, number> = {};
   const loanCumulativePaid: Record<string, number> = {};
   const loanPriorYearPaid: Record<string, number> = {};
+  const loanForwardPaid: Record<string, number> = {};
 
   (schedules || []).forEach((sched: any) => {
     const loan = sched.loan;
@@ -157,17 +350,28 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     const member = loan.member || loan.anggota;
     if (!member) return;
 
+    rawLoanMap[loan.id] = loan;
+
     const dueDate = new Date(sched.due_date);
     const month = dueDate.getMonth() + 1;
     const scheduleYear = dueDate.getFullYear();
     const parsedYear = sched.due_date ? parseInt(String(sched.due_date).substring(0, 4), 10) : scheduleYear;
-    const isBeforeSelectedYear = (parsedYear < year) || (sched.due_date && sched.due_date < startOfYear);
+    const schedulePeriodIndex = parsedYear * 12 + month;
+
+    const isBeforeCutOff = cutoffInfo
+      ? schedulePeriodIndex < cutoffInfo.periodIndex
+      : ((parsedYear < year) || Boolean(sched.due_date && sched.due_date < startOfYear));
 
     if (loanPriorYearPaid[loan.id] === undefined) {
       loanPriorYearPaid[loan.id] = 0;
     }
-    if (isBeforeSelectedYear) {
+    if (loanForwardPaid[loan.id] === undefined) {
+      loanForwardPaid[loan.id] = 0;
+    }
+    if (isBeforeCutOff) {
       loanPriorYearPaid[loan.id] += Number(sched.paid_amount || 0);
+    } else {
+      loanForwardPaid[loan.id] += Number(sched.paid_amount || 0);
     }
 
     // Initialize running balance for this loan if not exists
@@ -210,6 +414,9 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         complianceYTD: 0,
         priorYearPaid: 0,
         priorYearRemaining: 0,
+        openingPaid: 0,
+        openingRemaining: 0,
+        cutoffDate: cutoffInfo?.dateStr || null,
         anggota: member,
         loan_types: loanType,
       };
@@ -239,7 +446,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     const isLoanCompleted = loan.status === 'completed' || loan.status === 'paid_off';
 
     // ONLY populate matrix cell and YTD stats if the schedule is in the requested matrix year
-    if (scheduleYear === year) {
+    // AND NOT before the cut-off date (pre-cut-off periods are summarized in Saldo Awal Pinjaman)
+    if (scheduleYear === year && !(cutoffInfo && schedulePeriodIndex < cutoffInfo.periodIndex)) {
       // Determine cell status
       let cellStatus: LoanMatrixMonth['status'] = 'NONE';
       
@@ -347,14 +555,28 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       }
     }
 
-    const priorPaid = loanPriorYearPaid[row.id || row.loanId || ''] || 0;
-    row.priorYearPaid = priorPaid;
-    row.priorYearRemaining = isRowCompleted ? 0 : Math.max(0, Number(row.principalAmount || 0) - priorPaid);
+    const rowId = row.id || row.loanId || '';
+    const prePaid = loanPriorYearPaid[rowId] || 0;
+    const forwardPaid = loanForwardPaid[rowId] || 0;
+    const importedPaid = cutoffInfo ? getImportedRepaidBalance(rawLoanMap[rowId]) : 0;
+    const openingPaid = (forwardPaid === 0 && importedPaid > prePaid) ? importedPaid : prePaid;
+    const openingRemaining = isRowCompleted ? 0 : Math.max(0, Number(row.principalAmount || 0) - openingPaid);
+
+    row.openingPaid = openingPaid;
+    row.openingRemaining = openingRemaining;
+    row.priorYearPaid = openingPaid;
+    row.priorYearRemaining = openingRemaining;
+    row.cutoffDate = cutoffInfo?.dateStr || null;
   });
 
   const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 100;
 
   return {
+    year,
+    cutoffDate: cutoffInfo?.dateStr || null,
+    cutoffYear: cutoffInfo?.year || null,
+    cutoffMonth: cutoffInfo?.month || null,
+    formattedCutoffDate: cutoffInfo?.formattedDate || null,
     complianceYTD: overallComplianceYTD,
     totalCollectedYTD,
     projectedNextMonth,
@@ -393,7 +615,7 @@ export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
 
     const { data: oldestActiveLoan, error: oldestError } = await supabase
       .from('loans')
-      .select('disbursed_at, created_at')
+      .select('disbursed_at, created_at, notes')
       .in('status', ['active', 'approved'])
       .order('disbursed_at', { ascending: true, nullsFirst: false })
       .limit(1)
@@ -433,6 +655,13 @@ export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
       }
     }
 
+    const cutoffDateStr = await getInitialLoansCutOffDate(oldestActiveLoan ? [oldestActiveLoan] : undefined);
+    const cutoffInfo = parseLoanCutoffDateInfo(cutoffDateStr);
+    if (cutoffInfo) {
+      startYear = Math.max(startYear, cutoffInfo.year);
+      endYear = Math.max(endYear, startYear);
+    }
+
     const years: number[] = [];
     for (let y = endYear; y >= startYear; y--) {
       years.push(y);
@@ -444,11 +673,6 @@ export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
     return [currentYear];
   }
 };
-
-export const MONTH_NAMES = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-  'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'
-];
 
 export interface LoanGridPeriod {
   id: string;
@@ -487,6 +711,12 @@ export interface LoanInteractiveGridSummary {
   notes?: string | null;
   sisa_pinjaman?: number;
   jumlah_terangsur?: number;
+  cutoffDate?: string | null;
+  formattedCutoffDate?: string | null;
+  openingPaidBalance?: number;
+  openingRemainingBalance?: number;
+  openingPaidPeriodsCount?: number;
+  forwardPaidTotal?: number;
 }
 
 export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanInteractiveGridSummary> => {
@@ -542,15 +772,72 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
   const tenor = Number(loan.tenor || 0);
   const monthlyTarget = Number(loan.monthly_target || 0);
 
-  const totalPaidFromRepayments = (repayments || []).reduce(
-    (sum: number, r: any) => sum + Number(r.amount_paid || 0),
-    0
-  );
-  const totalPaidFromSchedules = (schedules || []).reduce(
-    (sum: number, s: any) => sum + Number(s.paid_amount || 0),
-    0
-  );
-  const totalPaid = Math.max(totalPaidFromRepayments, totalPaidFromSchedules);
+  const cutoffDateStr = await getInitialLoansCutOffDate([loan, ...(repayments || [])]);
+  const cutoffInfo = parseLoanCutoffDateInfo(cutoffDateStr);
+
+  let openingPaidBalance = 0;
+  let openingRemainingBalance = principalAmount;
+  let openingPaidPeriodsCount = 0;
+  let forwardPaidTotal = 0;
+  let totalPaid = 0;
+  let targetSchedulesForGrid = schedules || [];
+
+  if (cutoffInfo) {
+    const preCutoffSchedules = (schedules || []).filter((s: any) =>
+      isScheduleBeforeLoanCutOff(s.due_date, cutoffInfo.dateStr)
+    );
+    const forwardRawSchedules = (schedules || []).filter((s: any) =>
+      !isScheduleBeforeLoanCutOff(s.due_date, cutoffInfo.dateStr)
+    );
+
+    const preCutoffSchedulePaid = preCutoffSchedules.reduce(
+      (sum: number, s: any) => sum + Math.round(Number(s.paid_amount || 0)),
+      0
+    );
+
+    const saldoAwalRepayment = (repayments || [])
+      .filter((r: any) =>
+        r.payment_method === 'SALDO_AWAL' ||
+        (r.schedule_id === null && String(r.notes || '').toLowerCase().includes('saldo awal'))
+      )
+      .reduce((sum: number, r: any) => sum + Math.round(Number(r.amount_paid || 0)), 0);
+
+    const forwardSchedulePaid = forwardRawSchedules.reduce(
+      (sum: number, s: any) => sum + Math.round(Number(s.paid_amount || 0)),
+      0
+    );
+    const forwardScheduleIds = new Set(forwardRawSchedules.map((s: any) => s.id));
+    const forwardRepaymentsPaid = (repayments || [])
+      .filter((r: any) => r.schedule_id && forwardScheduleIds.has(r.schedule_id))
+      .reduce((sum: number, r: any) => sum + Math.round(Number(r.amount_paid || 0)), 0);
+
+    forwardPaidTotal = Math.max(forwardSchedulePaid, forwardRepaymentsPaid);
+
+    openingPaidBalance = forwardPaidTotal === 0
+      ? Math.max(preCutoffSchedulePaid, saldoAwalRepayment)
+      : (preCutoffSchedulePaid > 0 ? preCutoffSchedulePaid : saldoAwalRepayment);
+
+    openingRemainingBalance = Math.max(0, principalAmount - openingPaidBalance);
+
+    const paidPreCutoffCount = preCutoffSchedules.filter(
+      (s: any) => Number(s.paid_amount || 0) > 0 || s.status === 'paid'
+    ).length;
+    openingPaidPeriodsCount = paidPreCutoffCount > 0 ? paidPreCutoffCount : preCutoffSchedules.length;
+
+    totalPaid = openingPaidBalance + forwardPaidTotal;
+    targetSchedulesForGrid = forwardRawSchedules;
+  } else {
+    const totalPaidFromRepayments = (repayments || []).reduce(
+      (sum: number, r: any) => sum + Number(r.amount_paid || 0),
+      0
+    );
+    const totalPaidFromSchedules = (schedules || []).reduce(
+      (sum: number, s: any) => sum + Number(s.paid_amount || 0),
+      0
+    );
+    totalPaid = Math.max(totalPaidFromRepayments, totalPaidFromSchedules);
+    forwardPaidTotal = totalPaid;
+  }
 
   const sisaPinjaman = Math.max(0, principalAmount - totalPaid);
   const isBalanced = totalPaid >= principalAmount;
@@ -560,7 +847,7 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
   const currentMonth = now.getMonth() + 1;
   const todayStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-  const periods: LoanGridPeriod[] = (schedules || []).map((sched: any) => {
+  const periods: LoanGridPeriod[] = targetSchedulesForGrid.map((sched: any) => {
     const d = new Date(sched.due_date);
     const sYear = d.getFullYear();
     const sMonth = d.getMonth() + 1;
@@ -630,6 +917,12 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     isBalanced,
     periods,
     notes: loan.notes || null,
+    cutoffDate: cutoffInfo?.dateStr || null,
+    formattedCutoffDate: cutoffInfo?.formattedDate || null,
+    openingPaidBalance,
+    openingRemainingBalance,
+    openingPaidPeriodsCount,
+    forwardPaidTotal,
   };
 };
 
@@ -866,8 +1159,29 @@ export const checkAllLoanUpToCurrentMonth = async (
     throw schedErr;
   }
 
+  let cutoffDateStr = await getInitialLoansCutOffDate();
+  if (!cutoffDateStr) {
+    try {
+      const loanQ: any = supabase.from('loans')?.select?.('notes');
+      if (loanQ && typeof loanQ.eq === 'function') {
+        const eqQ = loanQ.eq('id', loanId);
+        const res = typeof eqQ?.maybeSingle === 'function'
+          ? await eqQ.maybeSingle()
+          : (typeof eqQ?.single === 'function' ? await eqQ.single() : null);
+        if (res?.data?.notes) {
+          cutoffDateStr = extractLoanCutoffDateFromNotes(res.data.notes);
+        }
+      }
+    } catch {
+      // ignore if loans select is not stubbed
+    }
+  }
+
   let checkedCount = 0;
-  const targetSchedules = (schedules || []).filter((s: any) => s.due_date <= endOfCurrentMonthStr);
+  const targetSchedules = (schedules || []).filter((s: any) =>
+    s.due_date <= endOfCurrentMonthStr &&
+    !(cutoffDateStr && isScheduleBeforeLoanCutOff(s.due_date, cutoffDateStr))
+  );
 
   for (const sched of targetSchedules) {
     const targetAmount = Number(sched.target_amount || 0);
@@ -915,6 +1229,84 @@ export const checkAllLoanUpToCurrentMonth = async (
 };
 
 export const uncheckAllLoanSchedules = async (loanId: string): Promise<void> => {
+  let cutoffDateStr = await getInitialLoansCutOffDate();
+  if (!cutoffDateStr) {
+    try {
+      const loanQ: any = supabase.from('loans')?.select?.('notes');
+      if (loanQ && typeof loanQ.eq === 'function') {
+        const eqQ = loanQ.eq('id', loanId);
+        const res = typeof eqQ?.maybeSingle === 'function'
+          ? await eqQ.maybeSingle()
+          : (typeof eqQ?.single === 'function' ? await eqQ.single() : null);
+        if (res?.data?.notes) {
+          cutoffDateStr = extractLoanCutoffDateFromNotes(res.data.notes);
+        }
+      }
+    } catch {
+      // ignore if loans select is not stubbed
+    }
+  }
+
+  const schedTable: any = supabase.from('loan_schedules');
+  if (cutoffDateStr && schedTable && typeof schedTable.select === 'function') {
+    const { data: schedules, error: schedErr } = await schedTable
+      .select('id, due_date')
+      .eq('loan_id', loanId);
+
+    if (schedErr) {
+      console.error('Error fetching loan schedules before uncheck:', schedErr);
+      throw schedErr;
+    }
+
+    const forwardIds = (schedules || [])
+      .filter((s: any) => !isScheduleBeforeLoanCutOff(s.due_date, cutoffDateStr))
+      .map((s: any) => s.id)
+      .filter(Boolean);
+
+    if (forwardIds.length > 0) {
+      const delRepayQ: any = supabase.from('loan_repayments').delete();
+      if (typeof delRepayQ.in === 'function') {
+        const { error: delErr } = await delRepayQ.in('schedule_id', forwardIds);
+        if (delErr) throw delErr;
+      } else {
+        for (const sid of forwardIds) {
+          const { error: delErr } = await supabase
+            .from('loan_repayments')
+            .delete()
+            .eq('schedule_id', sid);
+          if (delErr) throw delErr;
+        }
+      }
+
+      const updSchedQ: any = supabase
+        .from('loan_schedules')
+        .update({ paid_amount: 0, status: 'unpaid' });
+      if (typeof updSchedQ.in === 'function') {
+        const { error: updErr } = await updSchedQ.in('id', forwardIds);
+        if (updErr) throw updErr;
+      } else {
+        for (const sid of forwardIds) {
+          const { error: updErr } = await supabase
+            .from('loan_schedules')
+            .update({ paid_amount: 0, status: 'unpaid' })
+            .eq('id', sid);
+          if (updErr) throw updErr;
+        }
+      }
+    }
+
+    const { error: loanErr } = await supabase
+      .from('loans')
+      .update({ status: 'active' })
+      .eq('id', loanId);
+
+    if (loanErr) {
+      console.error('Error resetting loan status:', loanErr);
+      throw loanErr;
+    }
+    return;
+  }
+
   const { error: delErr } = await supabase
     .from('loan_repayments')
     .delete()
@@ -1025,6 +1417,7 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
       principal_amount,
       monthly_target,
       status,
+      notes,
       member:anggota (
         id,
         nrp,
@@ -1056,6 +1449,7 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
 
   // 4. Eksekusi pemrosesan secara bertahap (batch loop per pinjaman)
   const loanList = activeLoans || [];
+  const systemCutoffDate = await getInitialLoansCutOffDate(loanList);
   const total = loanList.length;
   let successCount = 0;
   let failCount = 0;
@@ -1088,8 +1482,11 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
       const { data: schedules, error: schedErr } = await schedQuery;
       if (schedErr) throw schedErr;
 
+      const loanCutoffDate = extractLoanCutoffDateFromNotes(loan.notes) || systemCutoffDate;
+
       const targetSchedules = (schedules || []).filter((s: any) => {
         if (!s.due_date) return false;
+        if (isScheduleBeforeLoanCutOff(s.due_date, loanCutoffDate)) return false;
         const isDue = s.due_date <= cutoffDateStr || s.due_date <= cutoffDateIso;
         const target = Number(s.target_amount || 0);
         const paid = Number(s.paid_amount || 0);

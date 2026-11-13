@@ -217,7 +217,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('SIMKOP / Simpan Pinjam / Matriks Pinjaman');
       expect(html).toContain('Export Excel');
       expect(html).toContain('Centang Semua s/d Bulan Ini');
-      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
 
       // KPI card titles
       expect(html).toContain('Kepatuhan YTD');
@@ -545,19 +545,18 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
     });
   });
 
-  describe('Bulk Actions: Centang Semua s/d Bulan Ini & Cocokkan Otomatis dengan Saldo Terangsur', () => {
-    it('renders both bulk action buttons with proper attributes and testids', () => {
+  describe('Bulk Actions: Centang Semua s/d Bulan Ini (Tanpa Cocokkan Otomatis)', () => {
+    it('renders Centang Semua s/d Bulan Ini and omits removed Cocokkan Otomatis button', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
 
       expect(html).toContain('data-testid="bulk-check-all-btn"');
-      expect(html).toContain('data-testid="bulk-reconcile-btn"');
-      expect(html).toContain('title="Centang lunas seluruh pinjaman anggota dari awal tenor s/d bulan ini"');
-      expect(html).toContain('title="Cocokkan otomatis saldo terangsur seluruh pinjaman anggota (FIFO Reconcile)"');
+      expect(html).not.toContain('data-testid="bulk-reconcile-btn"');
+      expect(html).toContain('title="Centang lunas seluruh pinjaman anggota pasca saldo awal s/d bulan ini"');
       expect(html).toContain('Centang Semua s/d Bulan Ini');
-      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
 
-    it('renders both buttons disabled during active background execution', () => {
+    it('renders buttons disabled during active background execution', () => {
       // Buttons should have disabled:opacity-50 class and be ready for interactive clicks
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
       expect(html).toContain('disabled:opacity-50');
@@ -567,13 +566,6 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
       expect(html).toContain('Centang Semua s/d Bulan Ini');
       expect(html).toContain('data-testid="bulk-check-all-btn"');
-    });
-
-    it('renders bulk reconcile button with proper styling, title, and initial ready state', () => {
-      const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
-      expect(html).toContain('data-testid="bulk-reconcile-btn"');
-      expect(html).toContain('bg-emerald-600');
-      expect(html).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
   });
 
@@ -602,7 +594,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(headerSlice).not.toContain('Cocokkan Otomatis');
     });
 
-    it('renders all three action buttons inside the filter toolbar container alongside year selector', () => {
+    it('renders action buttons inside the filter toolbar container alongside year selector', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
 
       // Find the filter toolbar segment (between Filter Toolbar container and Status Legend)
@@ -618,25 +610,23 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(toolbarSlice).toContain('Semua Status');
       expect(toolbarSlice).toContain('data-testid="bulk-check-all-btn"');
       expect(toolbarSlice).toContain('Centang Semua s/d Bulan Ini');
-      expect(toolbarSlice).toContain('data-testid="bulk-reconcile-btn"');
-      expect(toolbarSlice).toContain('Cocokkan Otomatis dengan Saldo Terangsur');
+      expect(toolbarSlice).not.toContain('data-testid="bulk-reconcile-btn"');
+      expect(toolbarSlice).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
       expect(toolbarSlice).toContain('data-testid="export-excel-btn"');
       expect(toolbarSlice).toContain('Export Excel');
       expect(toolbarSlice).toContain('Tahun:');
 
       // Verify chronological / DOM ordering in toolbar:
-      // Search -> Status Filter -> Bulk Check -> Bulk Reconcile -> Export Excel -> Year Selector
+      // Search -> Status Filter -> Bulk Check -> Export Excel -> Year Selector
       const searchPos = toolbarSlice.indexOf('Cari NRP atau Nama...');
       const filterPos = toolbarSlice.indexOf('Semua Status');
       const checkAllPos = toolbarSlice.indexOf('data-testid="bulk-check-all-btn"');
-      const reconcilePos = toolbarSlice.indexOf('data-testid="bulk-reconcile-btn"');
       const exportPos = toolbarSlice.indexOf('data-testid="export-excel-btn"');
       const yearPos = toolbarSlice.indexOf('Tahun:');
 
       expect(searchPos).toBeLessThan(filterPos);
       expect(filterPos).toBeLessThan(checkAllPos);
-      expect(checkAllPos).toBeLessThan(reconcilePos);
-      expect(reconcilePos).toBeLessThan(exportPos);
+      expect(checkAllPos).toBeLessThan(exportPos);
       expect(exportPos).toBeLessThan(yearPos);
     });
 
@@ -817,32 +807,34 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       ],
     };
 
-    it('renders the header "Saldo Pra Jan-26" with subtitle "Akumulasi Lampau"', () => {
+    it('renders the header "Saldo Awal Pinjaman" with subtitle "Sah per Jan-26"', () => {
       const html = renderToStaticMarkup(
         <LoanMatrix initialData={priorYearSummaryData} initialYear={2026} />
       );
 
-      expect(html).toContain('Saldo Pra Jan-26');
-      expect(html).toContain('Akumulasi Lampau');
+      expect(html).toContain('Saldo Awal Pinjaman');
+      expect(html).toContain('Sah per Jan-26');
     });
 
-    it('dynamically slices the 2-digit year for the column header (e.g. 2025 -> "Saldo Pra Jan-25")', () => {
+    it('dynamically slices the 2-digit year for the column header fallback (e.g. 2025 -> "Sah per Jan-25")', () => {
       const html = renderToStaticMarkup(
         <LoanMatrix initialData={{ ...priorYearSummaryData, year: 2025 }} initialYear={2025} />
       );
 
-      expect(html).toContain('Saldo Pra Jan-25');
+      expect(html).toContain('Saldo Awal Pinjaman');
+      expect(html).toContain('Sah per Jan-25');
     });
 
-    it('renders prior year repayment summary cell with Pokok, Lunas, and Sisa amounts', () => {
+    it('renders prior year repayment summary cell with Pokok, Terbayar, and Sisa amounts', () => {
       const html = renderToStaticMarkup(
         <LoanMatrix initialData={priorYearSummaryData} initialYear={2026} />
       );
 
       expect(html).toContain('data-testid="prior-summary-mem-prior-1"');
+      expect(html).toContain('Terbayar:');
       // Pokok
       expect(html).toContain('Rp 12.000.000');
-      // Lunas
+      // Terbayar / openingPaid
       expect(html).toContain('Rp 5.000.000');
       // Sisa
       expect(html).toContain('Rp 7.000.000');
@@ -1019,6 +1011,68 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('text-amber-400');
       expect(html).toContain('Rp 500.000');
       expect(html).toContain('50%');
+    });
+  });
+
+  describe('Cut-Off Saldo Awal Utuh & Angsuran Maju (Cut-Off Forward Mode)', () => {
+    it('hides pre-cut-off month columns (Jan-Okt) and displays opening balance Sah per 1 Nov 2026', () => {
+      const cutoffData: LoanMatrixSummary = {
+        year: 2026,
+        cutoffDate: '2026-11-01',
+        cutoffYear: 2026,
+        cutoffMonth: 11,
+        formattedCutoffDate: '1 Nov 2026',
+        complianceYTD: 100,
+        totalCollectedYTD: 1000000,
+        projectedNextMonth: 1000000,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            memberId: 'mem-cut-1',
+            loanId: 'loan-cut-1',
+            nrp: '77889900',
+            nama: 'Kapten CutOff',
+            principalAmount: 60000000,
+            openingPaid: 52000000,
+            openingRemaining: 8000000,
+            priorYearPaid: 52000000,
+            priorYearRemaining: 8000000,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 100,
+            months: {
+              1: { month: 1, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              2: { month: 2, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              3: { month: 3, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              4: { month: 4, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              5: { month: 5, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              6: { month: 6, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              7: { month: 7, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              8: { month: 8, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              9: { month: 9, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              10: { month: 10, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+              11: { month: 11, status: 'PAID', targetAmount: 1000000, paidAmount: 1000000, periodNumber: 53, tenor: 60 },
+              12: { month: 12, status: 'PROJECTED', targetAmount: 1000000, paidAmount: 0, periodNumber: 54, tenor: 60 },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={cutoffData} initialYear={2026} />
+      );
+
+      expect(html).toContain('Saldo Awal Pinjaman');
+      expect(html).toContain('Sah per 1 Nov 2026');
+      expect(html).toContain('Rp 52.000.000');
+      expect(html).toContain('Rp 8.000.000');
+
+      const theadSlice = html.slice(html.indexOf('<thead'), html.indexOf('</thead>'));
+      expect(theadSlice).toContain('>Nov<');
+      expect(theadSlice).toContain('>Des<');
+      expect(theadSlice).not.toContain('>Jan<');
+      expect(theadSlice).not.toContain('>Okt<');
+      expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
   });
 });

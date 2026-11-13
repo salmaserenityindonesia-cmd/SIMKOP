@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, FileSpreadsheet, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
+import { getActiveLoanTypes, syncInitialLoanBalances } from '../../services/loanService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
@@ -10,6 +11,7 @@ import MemberMigrationDetailModal from '../../components/members/MemberMigration
 import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { exportMemberTemplate, parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { downloadInitialSavingsTemplate, parseInitialSavingsExcel, InitialSavingsRow } from '../../utils/initialSavingsParser';
+import { downloadInitialLoansTemplate, parseInitialLoansExcel, InitialLoanRow } from '../../utils/initialLoansParser';
 import { useFeedback } from '../../context/FeedbackContext';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { getActiveSavingsRateTiers, getRateTiers } from '../../services/savingsRateService';
@@ -81,6 +83,7 @@ export interface ManajemenAnggotaProps {
   initialShowModal?: boolean;
   initialResetModalOpen?: boolean;
   initialSavingsModalOpen?: boolean;
+  initialLoansModalOpen?: boolean;
   initialActivePokokRate?: number;
 }
 
@@ -88,6 +91,7 @@ export default function ManajemenAnggota({
   initialShowModal = false,
   initialResetModalOpen = false,
   initialSavingsModalOpen = false,
+  initialLoansModalOpen = false,
   initialActivePokokRate,
 }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
@@ -142,6 +146,17 @@ export default function ManajemenAnggota({
   const [isSavingInitialSavings, setIsSavingInitialSavings] = useState<boolean>(false);
   const [isDownloadingSavingsTemplate, setIsDownloadingSavingsTemplate] = useState<boolean>(false);
 
+  // Saldo Awal Pinjaman State
+  const initialLoansInputRef = useRef<HTMLInputElement>(null);
+  const [isInitialLoansModalOpen, setIsInitialLoansModalOpen] = useState(initialLoansModalOpen);
+  const [initialLoansRows, setInitialLoansRows] = useState<InitialLoanRow[]>([]);
+  const [initialLoansFileName, setInitialLoansFileName] = useState<string>('');
+  const [initialLoansDate, setInitialLoansDate] = useState<string>('');
+  const [isInitialLoansConfirmed, setIsInitialLoansConfirmed] = useState<boolean>(false);
+  const [isSavingInitialLoans, setIsSavingInitialLoans] = useState<boolean>(false);
+  const [isDownloadingLoansTemplate, setIsDownloadingLoansTemplate] = useState<boolean>(false);
+  const [activeLoanTypes, setActiveLoanTypes] = useState<LoanType[]>([]);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -149,13 +164,17 @@ export default function ManajemenAnggota({
   async function loadData() {
     try {
       setLoading(true);
-      const [data, rates] = await Promise.all([
+      const [data, rates, loanTypes] = await Promise.all([
         fetchAllAnggotaPaged(),
-        initialActivePokokRate !== undefined ? Promise.resolve(null) : getActiveSavingsRateTiers().catch(() => null)
+        initialActivePokokRate !== undefined ? Promise.resolve(null) : getActiveSavingsRateTiers().catch(() => null),
+        getActiveLoanTypes().catch(() => []),
       ]);
       setAnggotaList(data);
       if (rates && (rates['POKOK'] || rates['SP'])) {
         setActivePokokRate(rates['POKOK'] || rates['SP']);
+      }
+      if (Array.isArray(loanTypes) && loanTypes.length > 0) {
+        setActiveLoanTypes(loanTypes);
       }
     } catch (err: any) {
       setError(err.message || 'Gagal memuat data');
@@ -417,6 +436,120 @@ export default function ManajemenAnggota({
     }
   };
 
+  const handleOpenInitialLoansModal = async () => {
+    setIsInitialLoansModalOpen(true);
+    if (activeLoanTypes.length === 0) {
+      try {
+        const types = await getActiveLoanTypes();
+        if (Array.isArray(types)) {
+          setActiveLoanTypes(types);
+        }
+      } catch (err) {
+        console.warn('Gagal memuat jenis pinjaman aktif:', err);
+      }
+    }
+  };
+
+  const handleCloseInitialLoansModal = () => {
+    if (isSavingInitialLoans) return;
+    setIsInitialLoansModalOpen(false);
+    setInitialLoansRows([]);
+    setInitialLoansFileName('');
+    setInitialLoansDate('');
+    setIsInitialLoansConfirmed(false);
+    if (initialLoansInputRef.current) {
+      initialLoansInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadInitialLoansTemplate = async () => {
+    setIsDownloadingLoansTemplate(true);
+    try {
+      let loanTypesToUse = activeLoanTypes;
+      if (loanTypesToUse.length === 0) {
+        loanTypesToUse = await getActiveLoanTypes().catch(() => []);
+        if (loanTypesToUse.length > 0) setActiveLoanTypes(loanTypesToUse);
+      }
+      await downloadInitialLoansTemplate(anggotaList, loanTypesToUse);
+      showToast('Template Saldo Awal Pinjaman berhasil diunduh.', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengunduh template saldo awal pinjaman', 'error');
+    } finally {
+      setIsDownloadingLoansTemplate(false);
+    }
+  };
+
+  const handleInitialLoansFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      let loanTypesToUse = activeLoanTypes;
+      if (loanTypesToUse.length === 0) {
+        loanTypesToUse = await getActiveLoanTypes().catch(() => []);
+        if (loanTypesToUse.length > 0) setActiveLoanTypes(loanTypesToUse);
+      }
+      const parsed = await parseInitialLoansExcel(file, loanTypesToUse);
+      setInitialLoansRows(parsed);
+      setInitialLoansFileName(file.name);
+      const invalidCount = parsed.filter((r) => !r.isValid).length;
+      if (invalidCount > 0) {
+        showToast(
+          `Terbaca ${parsed.length} baris pinjaman dari ${file.name} (${invalidCount} jenis pinjaman belum cocok dengan Master Produk).`,
+          'warning'
+        );
+      } else {
+        showToast(`Berhasil membaca ${parsed.length} baris saldo awal pinjaman dari ${file.name}.`, 'info');
+      }
+    } catch (err: any) {
+      setInitialLoansRows([]);
+      setInitialLoansFileName('');
+      showToast(err?.message || 'Gagal memproses file Excel saldo awal pinjaman', 'error');
+    } finally {
+      if (initialLoansInputRef.current) {
+        initialLoansInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleSaveInitialLoans = async () => {
+    if (
+      initialLoansRows.length === 0 ||
+      initialLoansRows.some((r) => !r.isValid) ||
+      !initialLoansDate ||
+      !isInitialLoansConfirmed
+    ) {
+      return;
+    }
+
+    setIsSavingInitialLoans(true);
+    try {
+      const result = await syncInitialLoanBalances(initialLoansRows, initialLoansDate);
+      const formattedDate = new Date(`${result.effectiveDate}T00:00:00`).toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+      const skipNote =
+        result.skippedCount > 0
+          ? ` (${result.skippedCount} baris dilewati)`
+          : '';
+      showToast(
+        `Saldo awal pinjaman (${result.insertedCount} data) berhasil disimpan dan dinyatakan aktif sejak ${formattedDate}${skipNote}.`,
+        'success'
+      );
+      setIsInitialLoansModalOpen(false);
+      setInitialLoansRows([]);
+      setInitialLoansFileName('');
+      setInitialLoansDate('');
+      setIsInitialLoansConfirmed(false);
+      await fetchMembers();
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan saldo awal pinjaman', 'error');
+    } finally {
+      setIsSavingInitialLoans(false);
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="mb-6">
@@ -466,6 +599,14 @@ export default function ManajemenAnggota({
             >
               <Wallet className="w-4 h-4 mr-2" />
               Saldo Awal Simpanan
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenInitialLoansModal}
+              className="flex items-center px-4 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-md hover:bg-amber-100 transition-colors text-sm font-medium cursor-pointer"
+            >
+              <Banknote className="w-4 h-4 mr-2 text-amber-700" />
+              Saldo Awal Pinjaman
             </button>
             <button
               onClick={handleExportExcel}
@@ -1073,6 +1214,283 @@ export default function ManajemenAnggota({
                   <>
                     <CheckCircle2 className="w-4 h-4" />
                     Simpan &amp; Aktifkan Saldo Awal
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isInitialLoansModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] flex flex-col overflow-hidden border border-amber-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-slate-900 text-white border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Banknote className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold tracking-tight">Upload Saldo Awal Pinjaman</h3>
+                  <p className="text-xs text-slate-300">
+                    Migrasi saldo pinjaman aktif sesuai jenis pinjaman Master Produk dengan tanggal cut-off &amp; verifikasi admin
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseInitialLoansModal}
+                disabled={isSavingInitialLoans}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-amber-50/20">
+              {/* Langkah 1 — Unduh Template */}
+              <div className="bg-white rounded-xl border border-amber-200/80 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full mb-1">
+                    Langkah 1
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-800">Unduh Template Saldo Awal Pinjaman</h4>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Template berisi 8 kolom (<code className="bg-amber-50 px-1 rounded">nrp</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">nama</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">jenis_pinjaman</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">jumlah_pinjaman</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">tgl_awal_pinjaman</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">nilai_angsuran</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">tenor</code>,{' '}
+                    <code className="bg-amber-50 px-1 rounded">total_terangsur</code>) beserta sheet referensi jenis pinjaman aktif Master Produk.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDownloadInitialLoansTemplate}
+                  disabled={isDownloadingLoansTemplate || isSavingInitialLoans}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-amber-500 text-amber-700 bg-amber-50 hover:bg-amber-100 text-sm font-semibold transition-colors shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {isDownloadingLoansTemplate ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  Unduh Template Saldo Awal Pinjaman (.xlsx)
+                </button>
+              </div>
+
+              {/* Langkah 2 — Pilih File Excel & Tanggal Aktif Saldo Awal Pinjaman */}
+              <div className="bg-white rounded-xl border border-orange-200/80 p-4 space-y-4">
+                <div>
+                  <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-orange-800 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full mb-1">
+                    Langkah 2
+                  </span>
+                  <h4 className="text-sm font-bold text-slate-800">Pilih File Excel &amp; Tanggal Aktif Saldo Awal Pinjaman</h4>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3.5 rounded-xl border border-dashed border-amber-300 bg-amber-50/40">
+                  <input
+                    ref={initialLoansInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleInitialLoansFileChange}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => initialLoansInputRef.current?.click()}
+                    disabled={isSavingInitialLoans}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-sm font-medium transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Pilih File Excel (.xlsx / .xls)
+                  </button>
+                  <div className="text-xs text-slate-600">
+                    {initialLoansFileName ? (
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800">
+                        <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+                        {initialLoansFileName} ({initialLoansRows.length} baris pinjaman terbaca)
+                      </span>
+                    ) : (
+                      <span>Belum ada file dipilih. Silakan pilih file Excel saldo awal pinjaman yang sudah diisi.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-orange-50/80 border border-orange-200 rounded-xl p-4 space-y-2">
+                  <label className="block text-sm font-bold text-slate-800">
+                    Tanggal Saldo Awal Pinjaman Dinyatakan Aktif <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={initialLoansDate}
+                    onChange={(e) => setInitialLoansDate(e.target.value)}
+                    className="w-full sm:w-64 px-3.5 py-2 rounded-lg border border-orange-300 bg-white text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  />
+                  <p className="text-xs text-slate-600">
+                    Saldo awal pinjaman dan sisa kewajiban angsuran akan dibukukan efektif mulai tanggal ini hingga dinyatakan lunas.
+                  </p>
+                </div>
+              </div>
+
+              {/* Langkah 3 — Tabel Pratinjau Data Pinjaman */}
+              <div className="bg-white rounded-xl border border-amber-200/80 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full mb-1">
+                      Langkah 3
+                    </span>
+                    <h4 className="text-sm font-bold text-slate-800">
+                      Pratinjau Data Saldo Awal Pinjaman ({initialLoansRows.length} Pinjaman)
+                    </h4>
+                  </div>
+                  {initialLoansRows.length > 0 && (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-semibold">
+                        Total Pinjaman: {formatCurrency(initialLoansRows.reduce((s, r) => s + r.jumlah_pinjaman, 0))}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+                        Total Terangsur: {formatCurrency(initialLoansRows.reduce((s, r) => s + r.total_terangsur, 0))}
+                      </span>
+                      <span className="px-2.5 py-1 rounded-md bg-orange-50 text-orange-900 border border-orange-200 font-semibold">
+                        Sisa Pinjaman: {formatCurrency(initialLoansRows.reduce((s, r) => s + r.sisa_pinjaman, 0))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {initialLoansRows.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-500 border border-dashed border-amber-200 rounded-lg bg-amber-50/30">
+                    Pratinjau data pinjaman akan tampil di sini setelah file Excel diunggah.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-64">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead className="bg-amber-50 text-slate-700 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200">NRP</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200">Nama</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200">Jenis Pinjaman</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200 text-right">Jumlah Pinjaman</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200">Tgl Awal Pinjaman</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200 text-right">Nilai Angsuran</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200 text-center">Tenor</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200 text-right">Total Terangsur</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-amber-200 text-right">Sisa Pinjaman</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white">
+                        {initialLoansRows.slice(0, 100).map((row, idx) => (
+                          <tr key={`${row.nrp}-${row.jenis_pinjaman}-${idx}`} className={row.isValid ? 'hover:bg-amber-50/40' : 'bg-red-50/60'}>
+                            <td className="px-3 py-2 font-mono text-slate-800">{row.nrp}</td>
+                            <td className="px-3 py-2 font-medium text-slate-800">{row.nama}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-slate-800">{row.loan_type_name}</div>
+                              {!row.isValid && (
+                                <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200 text-[10px] font-semibold">
+                                  {row.errorMessage || 'Tidak valid'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-slate-800">
+                              {formatCurrency(row.jumlah_pinjaman)}
+                            </td>
+                            <td className="px-3 py-2 text-slate-600">{row.tgl_awal_pinjaman || '-'}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">
+                              {formatCurrency(row.nilai_angsuran)}
+                            </td>
+                            <td className="px-3 py-2 text-center font-medium text-slate-700">
+                              {row.tenor} bln
+                            </td>
+                            <td className="px-3 py-2 text-right text-emerald-700 font-medium">
+                              {formatCurrency(row.total_terangsur)}
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-amber-800">
+                              {formatCurrency(row.sisa_pinjaman)}
+                            </td>
+                          </tr>
+                        ))}
+                        {initialLoansRows.length > 100 && (
+                          <tr>
+                            <td colSpan={9} className="px-3 py-2 text-center text-slate-500 bg-slate-50">
+                              ... dan {initialLoansRows.length - 100} baris lainnya
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Langkah 4 — Kotak Pernyataan & Konfirmasi Wajib */}
+              <div className="bg-white rounded-xl border border-amber-200/80 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-xs text-orange-900 bg-orange-50 border border-orange-200 rounded-lg p-3">
+                  <AlertTriangle className="w-4 h-4 text-orange-600 shrink-0" />
+                  <span>
+                    Pengunggahan ini menggunakan prinsip <strong>Clean Overwrite</strong> pada pinjaman saldo awal sebelumnya untuk anggota &amp; jenis pinjaman yang sama agar kewajiban pinjaman tidak ganda.
+                  </span>
+                </div>
+
+                <label className="flex items-start gap-3 p-4 rounded-xl border border-amber-300 bg-amber-50/80 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={isInitialLoansConfirmed}
+                    onChange={(e) => setIsInitialLoansConfirmed(e.target.checked)}
+                    className="mt-1 w-4 h-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                  />
+                  <span className="text-xs leading-relaxed text-slate-800">
+                    <strong>Pernyataan Konfirmasi Saldo Awal Pinjaman:</strong> Saya sepenuhnya mengerti dan menyatakan bahwa data pinjaman yang diunggah ini telah diperiksa dan dianggap <strong>sudah benar</strong>, akan ditetapkan menjadi <strong>saldo awal pinjaman mulai saat ini sampai dinyatakan lunas nanti</strong>, serta mulai aktif berlaku sebagai saldo awal pinjaman sejak tanggal{' '}
+                    <strong className="text-amber-900 underline">
+                      {initialLoansDate
+                        ? new Date(`${initialLoansDate}T00:00:00`).toLocaleDateString('id-ID', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })
+                        : '[Pilih Tanggal di Atas]'}
+                    </strong>.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-white border-t border-amber-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleCloseInitialLoansModal}
+                disabled={isSavingInitialLoans}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveInitialLoans}
+                disabled={
+                  isSavingInitialLoans ||
+                  initialLoansRows.length === 0 ||
+                  initialLoansRows.some((r) => !r.isValid) ||
+                  !initialLoansDate ||
+                  !isInitialLoansConfirmed
+                }
+                className="inline-flex items-center gap-2 px-5 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSavingInitialLoans ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Menyimpan...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    Simpan &amp; Aktifkan Saldo Awal Pinjaman
                   </>
                 )}
               </button>

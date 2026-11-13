@@ -9,7 +9,6 @@ import {
   AlertCircle,
   CheckSquare,
   Square,
-  RotateCcw,
   Receipt,
   FileText,
   Loader2,
@@ -21,9 +20,11 @@ import {
   getLoanInteractiveGrid,
   toggleLoanSchedulePaid,
   checkAllLoanUpToCurrentMonth,
-  autoReconcileLoanInstallments,
   uncheckAllLoanSchedules,
   calculateRemainingInstallmentDeficit,
+  parseLoanCutoffDateInfo,
+  extractLoanCutoffDateFromNotes,
+  isScheduleBeforeLoanCutOff,
   LoanInteractiveGridSummary,
   LoanGridPeriod,
   MONTH_NAMES,
@@ -40,6 +41,8 @@ export interface LoanScheduleModalProps {
   initialData?: LoanInteractiveGridSummary | null;
   initialLoading?: boolean;
   initialEvidencePeriod?: LoanGridPeriod | null;
+  initialCutoffDate?: string | null;
+  initialOpeningPaidBalance?: number;
 }
 
 /**
@@ -113,6 +116,8 @@ export default function LoanScheduleModal({
   initialData = null,
   initialLoading,
   initialEvidencePeriod = null,
+  initialCutoffDate,
+  initialOpeningPaidBalance,
 }: LoanScheduleModalProps) {
   const [data, setData] = useState<LoanInteractiveGridSummary | null>(initialData);
   const [loading, setLoading] = useState(initialLoading ?? (initialData ? false : true));
@@ -234,36 +239,22 @@ export default function LoanScheduleModal({
     }
   };
 
-  // Quick Action 2: Cocokkan Otomatis dengan Saldo Terangsur (FIFO Reconcile)
-  const handleAutoReconcile = async () => {
-    setSyncing(true);
-    try {
-      const availablePaid = baselineRepaidBalanceRef.current > 0
-        ? baselineRepaidBalanceRef.current
-        : (data?.totalPaid ?? 0);
-      await autoReconcileLoanInstallments(loanId, availablePaid);
-      await fetchGridData();
-      onSuccess?.();
-    } catch (err) {
-      console.error('Failed to auto reconcile loan installments:', err);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Quick Action 3: Batal Centang Semua
+  // Quick Action 2: Batal Centang Semua
   const handleUncheckAll = async () => {
     setSyncing(true);
     try {
       await uncheckAllLoanSchedules(loanId);
-      // Set status lokal semua baris jadwal angsuran menjadi paid_amount = 0, status = 'UNPAID'
+      // Reset status baris jadwal angsuran pasca cut-off dengan tetap mempertahankan saldo awal terangsur
       setData(prev => {
         if (!prev) return null;
+        const preservedOpening =
+          initialOpeningPaidBalance ?? prev.openingPaidBalance ?? openingPaidBalance ?? 0;
         return {
           ...prev,
-          totalPaid: 0,
-          sisaPinjaman: prev.principalAmount,
-          isBalanced: false,
+          totalPaid: preservedOpening,
+          forwardPaidTotal: 0,
+          sisaPinjaman: Math.max(0, prev.principalAmount - preservedOpening),
+          isBalanced: preservedOpening >= prev.principalAmount,
           periods: prev.periods.map(p => ({
             ...p,
             paidAmount: 0,
@@ -364,6 +355,67 @@ export default function LoanScheduleModal({
   const totalPaid = data?.totalPaid || 0;
   const sisa = data?.sisaPinjaman || 0;
   const isBalanced = data?.isBalanced || totalPaid >= principal;
+
+  const effectiveCutoffDate =
+    initialCutoffDate ??
+    data?.cutoffDate ??
+    extractLoanCutoffDateFromNotes((data as any)?.notes) ??
+    null;
+  const cutoffInfo = useMemo(
+    () => parseLoanCutoffDateInfo(effectiveCutoffDate),
+    [effectiveCutoffDate]
+  );
+  const formattedCutoffDate =
+    data?.formattedCutoffDate ??
+    cutoffInfo?.formattedDate ??
+    'Awal';
+
+  const { visiblePeriods, openingPaidBalance, openingPaidPeriodsCount } = useMemo(() => {
+    const allPeriods = data?.periods || [];
+    if (!effectiveCutoffDate) {
+      const explicitOpening =
+        initialOpeningPaidBalance ?? data?.openingPaidBalance ?? 0;
+      const explicitCount = data?.openingPaidPeriodsCount ?? 0;
+      return {
+        visiblePeriods: allPeriods,
+        openingPaidBalance: explicitOpening,
+        openingPaidPeriodsCount: explicitCount,
+      };
+    }
+
+    const preCutoff = allPeriods.filter(p =>
+      isScheduleBeforeLoanCutOff(p.dueDate, effectiveCutoffDate)
+    );
+    const forward = allPeriods.filter(
+      p => !isScheduleBeforeLoanCutOff(p.dueDate, effectiveCutoffDate)
+    );
+    const preCutoffPaid = preCutoff.reduce(
+      (sum, p) => sum + Number(p.paidAmount || 0),
+      0
+    );
+    const computedOpening =
+      initialOpeningPaidBalance ??
+      (data?.openingPaidBalance !== undefined
+        ? Math.max(data.openingPaidBalance, preCutoffPaid)
+        : preCutoffPaid);
+    const computedCount =
+      data?.openingPaidPeriodsCount !== undefined
+        ? Math.max(data.openingPaidPeriodsCount, preCutoff.length)
+        : preCutoff.length;
+
+    return {
+      visiblePeriods: forward,
+      openingPaidBalance: computedOpening,
+      openingPaidPeriodsCount: computedCount,
+    };
+  }, [data, effectiveCutoffDate, initialOpeningPaidBalance]);
+
+  const openingRemainingBalance = useMemo(() => {
+    if (data?.openingRemainingBalance !== undefined && initialOpeningPaidBalance === undefined) {
+      return data.openingRemainingBalance;
+    }
+    return Math.max(0, (data?.principalAmount || 0) - openingPaidBalance);
+  }, [data, openingPaidBalance, initialOpeningPaidBalance]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -482,15 +534,6 @@ export default function LoanScheduleModal({
               </button>
               <button
                 type="button"
-                onClick={handleAutoReconcile}
-                disabled={syncing || loading}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:opacity-50"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Cocokkan Otomatis dengan Saldo Terangsur
-              </button>
-              <button
-                type="button"
                 onClick={handleUncheckAll}
                 disabled={syncing || loading}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg text-xs font-medium shadow-sm transition-colors disabled:opacity-50"
@@ -525,7 +568,7 @@ export default function LoanScheduleModal({
               <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
               <p className="text-sm text-slate-500 font-medium">Memuat data buku bantu angsuran pinjaman...</p>
             </div>
-          ) : !data || data.periods.length === 0 ? (
+          ) : !data || (visiblePeriods.length === 0 && !effectiveCutoffDate && openingPaidBalance === 0) ? (
             <div className="text-center py-16 bg-white rounded-xl border border-slate-200 text-slate-500">
               <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="font-semibold text-slate-700">Tidak ada jadwal angsuran ditemukan</p>
@@ -536,7 +579,11 @@ export default function LoanScheduleModal({
               {/* Header Grid Summary */}
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
                 <span className="font-medium">
-                  Grid Jadwal Angsuran (Periode 1 s/d {data.tenor})
+                  {(effectiveCutoffDate || openingPaidBalance > 0)
+                    ? visiblePeriods.length > 0
+                      ? `Grid Jadwal Angsuran (Saldo Awal + Periode ${visiblePeriods[0].periodNumber} s/d ${visiblePeriods[visiblePeriods.length - 1].periodNumber})`
+                      : 'Grid Jadwal Angsuran (Saldo Awal Utuh)'
+                    : `Grid Jadwal Angsuran (Periode 1 s/d ${data.tenor})`}
                 </span>
                 <div className="text-[11px] text-slate-500">
                   Target Angsuran per Bulan: <strong className="font-mono text-slate-800">{formatCurrency(data.monthlyTarget)}</strong>
@@ -551,7 +598,16 @@ export default function LoanScheduleModal({
                       <th className="sticky left-0 bg-slate-100 z-10 py-2.5 px-3 text-left border-r border-slate-200 min-w-[140px]">
                         Periode &amp; Item
                       </th>
-                      {data.periods.map(period => (
+                      <th
+                        data-testid="opening-balance-col-header"
+                        className="py-2.5 px-3 text-center border-r border-amber-200 bg-amber-50/70 min-w-[165px] whitespace-nowrap"
+                      >
+                        <div className="text-slate-800 font-bold">Saldo Awal Terangsur</div>
+                        <div className="text-[10px] font-medium text-amber-700">
+                          Sah per {formattedCutoffDate}
+                        </div>
+                      </th>
+                      {visiblePeriods.map(period => (
                         <th
                           key={period.id}
                           ref={period.isCurrentMonth ? currentMonthColRef : null}
@@ -583,7 +639,26 @@ export default function LoanScheduleModal({
                         </div>
                       </td>
 
-                      {data.periods.map(period => {
+                      <td
+                        data-testid="opening-balance-col-cell"
+                        className="py-3 px-3 border-r border-b border-amber-200 bg-amber-50/40 align-middle"
+                      >
+                        <div className="flex flex-col items-center justify-center gap-1">
+                          <span className="font-mono font-bold text-xs text-emerald-700 whitespace-nowrap">
+                            {formatCurrency(openingPaidBalance)}
+                          </span>
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold whitespace-nowrap">
+                            {openingPaidPeriodsCount > 0
+                              ? `Akumulasi ${openingPaidPeriodsCount} Periode`
+                              : 'Saldo Awal Sah'}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                            Sisa Awal: {formatCurrency(openingRemainingBalance)}
+                          </span>
+                        </div>
+                      </td>
+
+                      {visiblePeriods.map(period => {
                         const isPaid = period.status === 'PAID';
                         const isPartial = period.status === 'PARTIAL';
                         const isUnpaid = period.status === 'UNPAID';
