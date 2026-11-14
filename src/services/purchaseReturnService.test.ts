@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+  purchaseReturnService,
   getSuppliers,
   getPurchaseReturns,
   getPurchaseReturnDetail,
@@ -384,6 +385,40 @@ describe('purchaseReturnService', () => {
       const result = await completeReturnClaim(ret.id);
       expect(result.success).toBe(true);
       expect(result.claim_status).toBe('SELESAI_DIGANTI');
+    });
+
+    it('should preserve supabase "this" context when calling supabase.rpc via service object or destructuring', async () => {
+      const returnId = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+      const mockRpcResult = {
+        success: true,
+        return_id: returnId,
+        claim_status: 'SELESAI_DIGANTI',
+        items_restocked: 1,
+        total_restocked_qty: 2,
+        completed_at: new Date().toISOString()
+      };
+
+      const restRpcMock = vi.fn().mockResolvedValue({ data: mockRpcResult, error: null });
+      (supabase as any).rest = { rpc: restRpcMock };
+      (supabase.rpc as any).mockImplementation(function (this: any, fnName: string, params: any) {
+        // Simulates SupabaseClient.prototype.rpc accessing this.rest
+        expect(this).toBe(supabase);
+        return this.rest.rpc(fnName, params);
+      });
+
+      try {
+        const viaService = await purchaseReturnService.completeReturnClaim(returnId, undefined, 'Via service');
+        expect(viaService).toEqual(mockRpcResult);
+
+        const { completeReturnClaim: destructuredFn } = purchaseReturnService;
+        const viaDestructuring = await destructuredFn(returnId, undefined, 'Via destructuring');
+        expect(viaDestructuring).toEqual(mockRpcResult);
+
+        expect(restRpcMock).toHaveBeenCalledTimes(2);
+      } finally {
+        delete (supabase as any).rest;
+        (supabase.rpc as any).mockReset();
+      }
     });
   });
 

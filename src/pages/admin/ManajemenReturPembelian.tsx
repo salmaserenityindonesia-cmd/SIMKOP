@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import {
+  purchaseReturnService,
   getPurchaseReturns,
   getPurchaseReturnDetail,
   completeReturnClaim,
@@ -230,13 +231,12 @@ export default function ManajemenReturPembelian() {
     if (!claimReturn) return;
     try {
       setIsProcessingClaim(true);
-      const result = await completeReturnClaim(claimReturn.id, currentUser?.id, claimNotes.trim());
-      showToast(
-        `Klaim selesai! Sebanyak ${result.total_restocked_qty || 'semua'} unit barang telah otomatis ditambahkan kembali ke stok gudang.`,
-        'success'
-      );
+      await purchaseReturnService.completeReturnClaim(claimReturn.id, currentUser?.id, claimNotes.trim());
       setIsClaimModalOpen(false);
-      fetchReturns();
+      setClaimReturn(null);
+      setClaimNotes('');
+      showToast('Barang pengganti berhasil diterima dan stok produk telah ditambahkan kembali ke inventori.', 'success');
+      await fetchReturns();
     } catch (err: any) {
       showToast(err.message || 'Gagal menyelesaikan klaim retur.', 'error');
     } finally {

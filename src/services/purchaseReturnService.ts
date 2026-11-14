@@ -663,9 +663,8 @@ export async function completeReturnClaim(
 
   // 1. Coba panggil RPC atomic complete_return_claim
   try {
-    const rpcFn = supabase.rpc;
-    if (typeof rpcFn === 'function') {
-      const res = await rpcFn('complete_return_claim', {
+    if (typeof supabase?.rpc === 'function') {
+      const res = await supabase.rpc('complete_return_claim', {
         p_return_id: isValidUUID(returnId) ? returnId : null,
         p_user_id: isValidUUID(userId) ? userId : null,
         p_notes: notes?.trim() || null
@@ -768,9 +767,16 @@ async function executeFallbackCompleteReturnClaim(
         }
 
         // Perbarui status retur
+        const existingNotes = remoteReturn.notes || null;
+        const trimmedNotes = notes?.trim();
+        const updatedNotes = trimmedNotes
+          ? `${existingNotes ? existingNotes + ' | ' : ''}Diterima: ${trimmedNotes}`
+          : existingNotes;
+
         await tableReturns.update({
           claim_status: 'SELESAI_DIGANTI',
           replacement_received_at: nowIso,
+          notes: updatedNotes,
           updated_at: nowIso
         }).eq('id', returnId);
 
@@ -856,6 +862,10 @@ async function executeFallbackCompleteReturnClaim(
 
   mockRet.claim_status = 'SELESAI_DIGANTI';
   mockRet.replacement_received_at = nowIso;
+  const trimmedNotes = notes?.trim();
+  if (trimmedNotes) {
+    mockRet.notes = `${mockRet.notes ? mockRet.notes + ' | ' : ''}Diterima: ${trimmedNotes}`;
+  }
   mockRet.updated_at = nowIso;
 
   const auditId = `audit-${Date.now()}`;
@@ -1003,3 +1013,25 @@ function updateInMemoryReturn(
 
   return { ...target };
 }
+
+export const purchaseReturnService = {
+  isValidUUID,
+  setMockSuppliers,
+  getMockSuppliers,
+  setMockReturnProducts,
+  getMockReturnProducts,
+  setMockReturns,
+  getMockReturns,
+  setMockReturnItems,
+  getMockReturnItems,
+  getMockReturnAuditLogs,
+  resetPurchaseReturnMockState,
+  generateReturnNumber,
+  shouldFallback,
+  getSuppliers,
+  getPurchaseReturns,
+  getPurchaseReturnDetail,
+  createPurchaseReturn,
+  completeReturnClaim,
+  updatePurchaseReturn,
+};
