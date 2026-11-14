@@ -12,6 +12,7 @@ import { supabase } from '../lib/supabaseClient';
 export * from './memberService';
 export * from './purchaseInvoiceService';
 export * from './depositManagementService';
+export * from './setoranService';
 export {
   bulkSetAllProductStock,
   updateProductSellPriceFromPos,
