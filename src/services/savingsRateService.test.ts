@@ -5,11 +5,15 @@ import {
   deleteRateTier,
   getApplicableRate,
   getActiveSavingsRateTiers,
+  resolveSavingsMonthlyRate,
+  buildSavingsRateResolver,
+  loadSavingsRateConfig,
   getPreviousMonth,
   clearTierCache,
   DEFAULT_RATE_TIERS,
   SAVINGS_RATE_TIERS_STORAGE_KEY,
-  SavingsRateTier
+  SavingsRateTier,
+  DepositTypeRateRef
 } from './savingsRateService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -61,29 +65,77 @@ describe('savingsRateService', () => {
   });
 
   describe('getApplicableRate', () => {
+    const SAMPLE_TIERS: SavingsRateTier[] = [
+      {
+        id: 't-wajib-1',
+        deposit_type_code: 'WAJIB',
+        start_year: 2024,
+        start_month: 1,
+        end_year: 2025,
+        end_month: 10,
+        monthly_rate: 150000
+      },
+      {
+        id: 't-wajib-2',
+        deposit_type_code: 'WAJIB',
+        start_year: 2025,
+        start_month: 11,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 200000
+      },
+      {
+        id: 't-belanja-1',
+        deposit_type_code: 'BELANJA',
+        start_year: 2024,
+        start_month: 1,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 25000
+      },
+      {
+        id: 't-lebaran-1',
+        deposit_type_code: 'LEBARAN',
+        start_year: 2024,
+        start_month: 1,
+        end_year: 2025,
+        end_month: 10,
+        monthly_rate: 50000
+      }
+    ];
+
+    const SAMPLE_DEPOSIT_TYPES: DepositTypeRateRef[] = [
+      { code: 'POKOK', name: 'Simpanan Pokok', default_amount: 100000 },
+      { code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 175000 },
+      { code: 'BELANJA', name: 'Simpanan Belanja', default_amount: 30000 },
+      { code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 300000 }
+    ];
+
     it('should return 150000 for WAJIB in October 2025 (old rate)', () => {
-      const rate = getApplicableRate('WAJIB', 2025, 10);
+      const rate = getApplicableRate('WAJIB', 2025, 10, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES);
       expect(rate).toBe(150000);
     });
 
     it('should return 200000 for WAJIB in November 2025 (new rate)', () => {
-      const rate = getApplicableRate('WAJIB', 2025, 11);
+      const rate = getApplicableRate('WAJIB', 2025, 11, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES);
       expect(rate).toBe(200000);
     });
 
     it('should return 200000 for WAJIB for future months like 2026-06', () => {
-      const rate = getApplicableRate('WAJIB', 2026, 6);
+      const rate = getApplicableRate('WAJIB', 2026, 6, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES);
       expect(rate).toBe(200000);
     });
 
-    it('should return earliest rate 150000 for WAJIB before 2024-01 (e.g., 2023-05)', () => {
-      const rate = getApplicableRate('WAJIB', 2023, 5);
-      expect(rate).toBe(150000);
+    it('should fall back to master deposit_types.default_amount before earliest closed tier (e.g., 2023-05)', () => {
+      const rate = getApplicableRate('WAJIB', 2023, 5, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES);
+      expect(rate).toBe(175000);
     });
 
-    it('should return default rate 25000 for BELANJA and 50000 for LEBARAN', () => {
-      expect(getApplicableRate('BELANJA', 2025, 5)).toBe(25000);
-      expect(getApplicableRate('LEBARAN', 2025, 4)).toBe(50000);
+    it('should prioritize tier when present and fall back to master default_amount outside tier bounds', () => {
+      expect(getApplicableRate('BELANJA', 2025, 5, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES)).toBe(25000);
+      expect(getApplicableRate('LEBARAN', 2025, 4, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES)).toBe(50000);
+      // Outside LEBARAN closed tier -> falls back to Master Produk default_amount (300000)
+      expect(getApplicableRate('LEBARAN', 2026, 11, SAMPLE_TIERS, SAMPLE_DEPOSIT_TYPES)).toBe(300000);
     });
 
     it('should work with custom cachedTiers passed into the function', () => {
@@ -112,14 +164,13 @@ describe('savingsRateService', () => {
       expect(getApplicableRate('WAJIB', 2025, 3, customTiers)).toBe(300000);
     });
 
-    it('should fall back to hardcoded defaults if tier list is completely empty', () => {
-      expect(getApplicableRate('WAJIB', 2025, 10, [])).toBe(150000);
-      expect(getApplicableRate('WAJIB', 2025, 11, [])).toBe(200000);
-      expect(getApplicableRate('BELANJA', 2025, 1, [])).toBe(25000);
-      expect(getApplicableRate('LEBARAN', 2025, 1, [])).toBe(50000);
-      expect(getApplicableRate('POKOK', 2025, 1, [])).toBe(100000);
-      expect(getApplicableRate('SP', 2025, 1, [])).toBe(100000);
-      expect(getApplicableRate('UNKNOWN', 2025, 1, [])).toBe(0);
+    it('should return 0 without hardcoded overrides if both tier list and deposit_types are empty', () => {
+      expect(getApplicableRate('WAJIB', 2025, 10, [], [])).toBe(0);
+      expect(getApplicableRate('WAJIB', 2025, 11, [], [])).toBe(0);
+      expect(getApplicableRate('BELANJA', 2025, 1, [], [])).toBe(0);
+      expect(getApplicableRate('LEBARAN', 2025, 1, [], [])).toBe(0);
+      expect(getApplicableRate('POKOK', 2025, 1, [], [])).toBe(0);
+      expect(getApplicableRate('UNKNOWN', 2025, 1, [], [])).toBe(0);
     });
 
     it('should correctly evaluate tiered rates across multi-year timeline sequence', () => {
@@ -537,12 +588,27 @@ describe('savingsRateService', () => {
         }
       ];
 
-      (supabase.from as any).mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          order: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: mockTiers, error: null })
-          })
-        })
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: mockTiers, error: null })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-pokok', code: 'SP', name: 'Simpanan Pokok', default_amount: 100000, is_active: true }
+              ],
+              error: null
+            })
+          };
+        }
+        return {};
       });
 
       const rates = await getActiveSavingsRateTiers(2026, 5);
@@ -556,7 +622,7 @@ describe('savingsRateService', () => {
       expect(rates['SL']).toBe(60000);
     });
 
-    it('should fallback gracefully to hardcoded defaults if database query fails', async () => {
+    it('should return empty dictionary without hardcoded fallbacks if database queries fail and no cache exists', async () => {
       (supabase.from as any).mockReturnValue({
         select: vi.fn().mockReturnValue({
           order: vi.fn().mockReturnValue({
@@ -566,14 +632,97 @@ describe('savingsRateService', () => {
       });
 
       const rates = await getActiveSavingsRateTiers(2026, 1);
-      expect(rates['POKOK']).toBe(100000);
-      expect(rates['SP']).toBe(100000);
-      expect(rates['WAJIB']).toBe(200000);
-      expect(rates['SW']).toBe(200000);
-      expect(rates['BELANJA']).toBe(25000);
-      expect(rates['SB']).toBe(25000);
-      expect(rates['LEBARAN']).toBe(50000);
-      expect(rates['SL']).toBe(50000);
+      expect(rates).toEqual({});
+    });
+  });
+
+  describe('resolveSavingsMonthlyRate & buildSavingsRateResolver', () => {
+    it('prioritizes active savings_rate_tiers over deposit_types.default_amount for LEBARAN', () => {
+      const tiers: SavingsRateTier[] = [
+        {
+          id: 't-leb-2026',
+          deposit_type_code: 'LEBARAN',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 300000
+        }
+      ];
+      const masterTypes: DepositTypeRateRef[] = [
+        { code: 'SL', name: 'Simpanan Lebaran', default_amount: 200000 }
+      ];
+
+      expect(resolveSavingsMonthlyRate('LEBARAN', 2026, 11, tiers, masterTypes)).toBe(300000);
+      expect(resolveSavingsMonthlyRate('SL', 2026, 11, tiers, masterTypes)).toBe(300000);
+      expect(resolveSavingsMonthlyRate('Simpanan Lebaran', 2026, 11, tiers, masterTypes)).toBe(300000);
+    });
+
+    it('falls back to deposit_types.default_amount when no tier in savings_rate_tiers matches period', () => {
+      const tiers: SavingsRateTier[] = [
+        {
+          id: 't-leb-old',
+          deposit_type_code: 'LEBARAN',
+          start_year: 2024,
+          start_month: 1,
+          end_year: 2025,
+          end_month: 12,
+          monthly_rate: 50000
+        }
+      ];
+      const masterTypes: DepositTypeRateRef[] = [
+        { code: 'SL', name: 'Simpanan Lebaran', default_amount: 300000 }
+      ];
+
+      const { getRateForPeriod, hasActiveTier } = buildSavingsRateResolver(tiers, masterTypes);
+      expect(hasActiveTier('LEBARAN', 2025, 12)).toBe(true);
+      expect(getRateForPeriod('LEBARAN', 2025, 12)).toBe(50000);
+
+      expect(hasActiveTier('LEBARAN', 2026, 11)).toBe(false);
+      expect(getRateForPeriod('LEBARAN', 2026, 11)).toBe(300000);
+    });
+
+    it('loadSavingsRateConfig combines Supabase savings_rate_tiers and deposit_types faithfully', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'savings_rate_tiers') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 't-1',
+                      deposit_type_code: 'WAJIB',
+                      start_year: 2026,
+                      start_month: 1,
+                      end_year: null,
+                      end_month: null,
+                      monthly_rate: 250000
+                    }
+                  ],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-1', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 150000, is_active: true },
+                { id: 'dt-2', code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 300000, is_active: true }
+              ],
+              error: null
+            })
+          };
+        }
+        return {};
+      });
+
+      const resolver = await loadSavingsRateConfig(true);
+      expect(resolver.getRateForPeriod('WAJIB', 2026, 11)).toBe(250000);
+      expect(resolver.getRateForPeriod('LEBARAN', 2026, 11)).toBe(300000);
     });
   });
 });

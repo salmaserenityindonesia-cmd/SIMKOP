@@ -11,7 +11,58 @@ import SavingsLedgerMatrixModal, {
   matchAutomaticFifo
 } from './SavingsLedgerMatrixModal';
 import { supabase } from '../../lib/supabaseClient';
-import { DEFAULT_RATE_TIERS } from '../../services/savingsRateService';
+import {
+  DEFAULT_RATE_TIERS,
+  SavingsRateTier
+} from '../../services/savingsRateService';
+
+const TEST_RATE_TIERS: SavingsRateTier[] = [
+  {
+    id: 'test-wajib-old',
+    deposit_type_code: 'WAJIB',
+    start_year: 2024,
+    start_month: 1,
+    end_year: 2025,
+    end_month: 10,
+    monthly_rate: 150000,
+  },
+  {
+    id: 'test-wajib-new',
+    deposit_type_code: 'WAJIB',
+    start_year: 2025,
+    start_month: 11,
+    end_year: null,
+    end_month: null,
+    monthly_rate: 200000,
+  },
+  {
+    id: 'test-belanja-old',
+    deposit_type_code: 'BELANJA',
+    start_year: 2024,
+    start_month: 1,
+    end_year: 2025,
+    end_month: 10,
+    monthly_rate: 25000,
+  },
+  {
+    id: 'test-belanja-new',
+    deposit_type_code: 'BELANJA',
+    start_year: 2025,
+    start_month: 11,
+    end_year: null,
+    end_month: null,
+    monthly_rate: 50000,
+  },
+  {
+    id: 'test-lebaran',
+    deposit_type_code: 'LEBARAN',
+    start_year: 2024,
+    start_month: 1,
+    end_year: null,
+    end_month: null,
+    monthly_rate: 50000,
+  },
+];
 
 // Mock supabaseClient
 vi.mock('../../lib/supabaseClient', () => {
@@ -204,6 +255,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
           memberName="Briptu Agus Susanto"
           joinDate="2024-01-01"
           onClose={vi.fn()}
+          initialRateTiers={TEST_RATE_TIERS}
           initialDbBalances={{ WAJIB: 3000000 }}
           initialCheckedMonths={{ WAJIB: dummyCheckedKeys }}
         />
@@ -222,6 +274,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
           memberName="Briptu Agus Susanto"
           joinDate="2024-01-01"
           onClose={vi.fn()}
+          initialRateTiers={TEST_RATE_TIERS}
           initialDbBalances={{ WAJIB: 3000000 }}
           initialCheckedMonths={{ WAJIB: ['2024-01'] }} // 150.000 vs 3.000.000
         />
@@ -292,6 +345,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
           joinDate="2022-08-01"
           onClose={vi.fn()}
           initialLoading={false}
+          initialRateTiers={TEST_RATE_TIERS}
           initialDbBalances={{ WAJIB: 60000 }}
           initialCheckedMonths={{ WAJIB: ['2026-09'] }}
           initialMonthAmounts={{ WAJIB: { '2026-09': 60000 } }}
@@ -311,7 +365,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
     it('uses custom partial amounts when provided', () => {
       const keys = ['2024-01', '2026-09'];
       const customAmounts = new Map<string, number>([['2026-09', 60000]]);
-      const total = calculateTotalChecked(keys, 'WAJIB', DEFAULT_RATE_TIERS, customAmounts);
+      const total = calculateTotalChecked(keys, 'WAJIB', TEST_RATE_TIERS, customAmounts);
       // 2024-01 is 150.000, 2026-09 is overridden with 60.000 -> 210.000
       expect(total).toBe(210000);
     });
@@ -395,12 +449,12 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
         targetBalance,
         grid,
         'WAJIB',
-        DEFAULT_RATE_TIERS,
+        TEST_RATE_TIERS,
         joinDate
       );
 
       // Hitung akumulasi
-      const totalAccumulated = calculateTotalChecked(matched, 'WAJIB', DEFAULT_RATE_TIERS);
+      const totalAccumulated = calculateTotalChecked(matched, 'WAJIB', TEST_RATE_TIERS);
 
       expect(totalAccumulated).toBe(3000000);
       // 2024: 12 bulan x 150k = 1.800.000
@@ -425,11 +479,11 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
         targetBalance,
         grid,
         'WAJIB',
-        DEFAULT_RATE_TIERS,
+        TEST_RATE_TIERS,
         joinDate
       );
 
-      const totalAccumulated = calculateTotalChecked(matched, 'WAJIB', DEFAULT_RATE_TIERS);
+      const totalAccumulated = calculateTotalChecked(matched, 'WAJIB', TEST_RATE_TIERS);
       expect(totalAccumulated).toBe(3700000);
       expect(matched.length).toBe(24); // 12 (2024) + 12 (2025)
       expect(matched).toContain('2025-10'); // Rp 150k
@@ -447,7 +501,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
         targetBalance,
         grid,
         'WAJIB',
-        DEFAULT_RATE_TIERS,
+        TEST_RATE_TIERS,
         joinDate
       );
 
@@ -457,7 +511,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(matched).not.toContain('2024-04');
 
       expect(matched).toEqual(['2024-05', '2024-06', '2024-07', '2024-08']);
-      expect(calculateTotalChecked(matched, 'WAJIB', DEFAULT_RATE_TIERS)).toBe(600000);
+      expect(calculateTotalChecked(matched, 'WAJIB', TEST_RATE_TIERS)).toBe(600000);
     });
 
     it('returns empty array when target balance is 0 or negative', () => {
@@ -894,11 +948,34 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
           onClose={vi.fn()}
           initialActiveTab="WAJIB"
           initialRateTiers={[]}
+          initialDepositTypes={[{ code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 200000 }]}
           initialLoading={false}
         />
       );
 
-      expect(html).toContain('Rp 200k (Mulai Januari 2026)');
+      expect(html).toContain('Rp 200k (Default Master Produk)');
+    });
+
+    it('resolves Simpanan Lebaran rate dynamically from master deposit_types when no tier is configured and evaluates partial balance accurately', () => {
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="m-lebaran-parity"
+          memberNrp="78010999"
+          memberName="Briptu Lebaran"
+          joinDate="2026-01-01"
+          onClose={vi.fn()}
+          initialActiveTab="LEBARAN"
+          initialRateTiers={[]}
+          initialDepositTypes={[{ code: 'SL', name: 'Simpanan Lebaran', default_amount: 300000 }]}
+          initialLoading={false}
+          initialDbBalances={{ LEBARAN: 200000 }}
+          initialCheckedMonths={{ LEBARAN: ['2026-11'] }}
+          initialMonthAmounts={{ LEBARAN: { '2026-11': 200000 } }}
+        />
+      );
+
+      expect(html).toContain('Rp 300k (Default Master Produk)');
+      expect(html).toContain('Parsial: Rp 200.000 / 300.000');
     });
   });
 

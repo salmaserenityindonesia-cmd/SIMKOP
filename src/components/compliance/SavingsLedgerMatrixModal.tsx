@@ -20,7 +20,9 @@ import { supabase } from '../../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
+  buildSavingsRateResolver,
   SavingsRateTier,
+  DepositTypeRateRef,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
 import {
@@ -53,6 +55,7 @@ export interface SavingsLedgerMatrixModalProps {
   onSuccess?: () => void;
   initialActiveTab?: DepositTabType;
   initialRateTiers?: SavingsRateTier[];
+  initialDepositTypes?: DepositTypeRateRef[];
   initialDbBalances?: Partial<Record<DepositTabType, number>>;
   initialCheckedMonths?: Partial<Record<DepositTabType, string[]>>;
   initialMonthAmounts?: Partial<Record<DepositTabType, Record<string, number> | Map<string, number>>>;
@@ -209,6 +212,7 @@ export default function SavingsLedgerMatrixModal({
   onSuccess,
   initialActiveTab = 'WAJIB',
   initialRateTiers,
+  initialDepositTypes,
   initialDbBalances,
   initialCheckedMonths,
   initialMonthAmounts,
@@ -229,6 +233,18 @@ export default function SavingsLedgerMatrixModal({
   const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || DEFAULT_RATE_TIERS);
+  const [depositTypes, setDepositTypes] = useState<DepositTypeRateRef[]>(initialDepositTypes || []);
+
+  useEffect(() => {
+    if (initialDepositTypes && initialDepositTypes.length > 0) {
+      setDepositTypes(initialDepositTypes);
+    }
+  }, [initialDepositTypes]);
+
+  const rateResolver = useMemo(
+    () => buildSavingsRateResolver(rateTiers, depositTypes),
+    [rateTiers, depositTypes]
+  );
 
   useEffect(() => {
     if (initialRateTiers && initialRateTiers.length > 0) {
@@ -463,7 +479,10 @@ export default function SavingsLedgerMatrixModal({
         }
 
         // 3. Ambil data deposit types untuk mapping id
-        const { data: dTypes } = await supabase.from('deposit_types').select('id, name, code');
+        const { data: dTypes } = await supabase
+          .from('deposit_types')
+          .select('id, name, code, default_amount, is_active');
+        setDepositTypes(dTypes || []);
         const dtList = dTypes || [];
         const findDtId = (keywords: string[], fallbackCode: string) => {
           const match = dtList.find((dt: any) => {
@@ -682,8 +701,8 @@ export default function SavingsLedgerMatrixModal({
   const currentCheckedSet = checkedMonths[activeTab] || new Set();
   const currentMonthAmounts = monthAmounts[activeTab] || new Map<string, number>();
   const totalChecked = useMemo(() => {
-    return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers, currentMonthAmounts);
-  }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts]);
+    return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers, currentMonthAmounts, depositTypes);
+  }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts, depositTypes]);
 
   const currentOpeningBalance = openingBalances[activeTab] || 0;
   const hasCutoffMode = Boolean(cutoffDate) || currentOpeningBalance > 0;
@@ -695,7 +714,7 @@ export default function SavingsLedgerMatrixModal({
 
   // Handler buka form bukti setoran
   const handleOpenEvidenceModal = (year: number, month: number, label: string) => {
-    const rate = getApplicableRate(activeTab, year, month, rateTiers);
+    const rate = rateResolver.getRateForPeriod(activeTab, year, month);
     setSelectedCellForEvidence({ year, month, label, rate });
     setEvidenceAmount(rate);
     setEvidenceReferenceNo(`KW-${year}/${String(month).padStart(2, '0')}/${memberNrp || '01'}`);
@@ -907,7 +926,7 @@ export default function SavingsLedgerMatrixModal({
         const [yStr, mStr] = key.split('-');
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
-        const rate = getApplicableRate(activeTab, y, m, rateTiers);
+        const rate = rateResolver.getRateForPeriod(activeTab, y, m);
         const amt = customAmounts ? (customAmounts.get(key) ?? rate) : rate;
         const isPartial = amt < rate && amt > 0;
         return {
@@ -951,7 +970,7 @@ export default function SavingsLedgerMatrixModal({
       }
       if (m.year < nowYear || (m.year === nowYear && m.month <= nowMonth)) {
         matchedKeys.push(m.key);
-        const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
+        const rate = rateResolver.getRateForPeriod(activeTab, m.year, m.month);
         updatedAmounts.set(m.key, rate);
       }
     }
@@ -1280,13 +1299,14 @@ export default function SavingsLedgerMatrixModal({
                         </span>
                       );
                     })
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 border border-emerald-300 text-emerald-800">
-                      {activeTab === 'WAJIB' && 'Rp 200k (Mulai Januari 2026)'}
-                      {activeTab === 'BELANJA' && 'Rp 50k (Mulai Januari 2026)'}
-                      {activeTab === 'LEBARAN' && 'Rp 300k (Mulai Januari 2026)'}
-                    </span>
-                  )}
+                  ) : (() => {
+                    const fallbackRate = rateResolver.getRateForPeriod(activeTab, currentCalYear, currentCalMonth);
+                    return (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 border border-emerald-300 text-emerald-800">
+                        {fallbackRate > 0 ? `${formatRateBadge(fallbackRate)} (Default Master Produk)` : 'Tarif belum diatur'}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1357,7 +1377,7 @@ export default function SavingsLedgerMatrixModal({
                       {timelineMonths.map(m => {
                         const beforeJoin = !cutoffDate && isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
-                        const rate = getApplicableRate(activeTab, m.year, m.month, rateTiers);
+                        const rate = rateResolver.getRateForPeriod(activeTab, m.year, m.month);
                         const txAmount = currentMonthAmounts.get(m.key);
                         const isPartial = isChecked && typeof txAmount === 'number' && txAmount > 0 && txAmount < rate;
                         const badgeClass = isPartial

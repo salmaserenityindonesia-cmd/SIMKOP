@@ -2,7 +2,13 @@ import { supabase } from '../lib/supabaseClient';
 import { fetchAllPaged, matchDepositType, parseCutoffDateInfo } from './complianceService';
 import { ensureMandatoryDepositsAndEnroll } from './depositManagementService';
 import { getInitialLoansCutOffDate, parseLoanCutoffDateInfo } from './loanMatrixService';
-import { getActivePokokTariff, getApplicableTierRate, getRateTiers, SavingsRateTier } from './savingsRateService';
+import {
+  getActivePokokTariff,
+  getApplicableTierRate,
+  getRateTiers,
+  buildSavingsRateResolver,
+  SavingsRateTier
+} from './savingsRateService';
 import { getInitialSavingsCutOffDate } from './savingsMatrixService';
 import { getKoperasiProfile, KoperasiProfile } from './settingsService';
 
@@ -324,6 +330,15 @@ export async function calculateMemberCumulativeBills(
     rateTiers = await getRateTiers(undefined, false);
   }
 
+  const normalizedDepositTypesForResolver = depositTypes.map((dt: any) => ({
+    ...dt,
+    default_amount: dt.default_amount ?? dt.monthly_amount ?? 0,
+  }));
+  const { getRateForPeriod } = buildSavingsRateResolver(
+    rateTiers,
+    normalizedDepositTypesForResolver
+  );
+
   // 3. Fetch all deposit_transactions for this member's accounts
   const memberDepositIds = memberDeposits.map((md: any) => md.id).filter(Boolean);
   let allMemberTxs: any[] = [];
@@ -392,9 +407,12 @@ export async function calculateMemberCumulativeBills(
       return tx.transaction_type === 'withdrawal' ? sum - amt : sum + amt;
     }, 0);
 
+    const resolvedPokok = getRateForPeriod('POKOK', selectedYear, selectedMonth);
     const targetPokok =
       activePokokRate > 0
         ? activePokokRate
+        : resolvedPokok > 0
+        ? resolvedPokok
         : Number(pokokType.default_amount ?? (pokokType as any).monthly_amount ?? 0);
     const deficit = Math.max(0, targetPokok - netPokokPaid);
 
@@ -469,18 +487,7 @@ export async function calculateMemberCumulativeBills(
       const year = Math.floor((p - 1) / 12);
       const month = ((p - 1) % 12) + 1;
 
-      let rate = 0;
-      if (['WAJIB', 'BELANJA', 'LEBARAN'].includes(canonicalCode)) {
-        rate = getApplicableTierRate(rateTiers, canonicalCode, year, month);
-      } else {
-        const matchingTiers = rateTiers.filter(
-          (t) => String(t.deposit_type_code || '').toUpperCase() === canonicalCode
-        );
-        rate =
-          matchingTiers.length > 0
-            ? getApplicableTierRate(rateTiers, canonicalCode, year, month)
-            : Number(dt.default_amount ?? dt.monthly_amount ?? 0);
-      }
+      const rate = getRateForPeriod(canonicalCode || dt.code || dt.name || '', year, month);
 
       if (rate <= 0) continue;
       hasPositiveTariff = true;

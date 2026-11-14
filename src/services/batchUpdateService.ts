@@ -4,6 +4,7 @@ import {
   getApplicableRate,
   getActivePokokTariff,
   getRateTiers,
+  buildSavingsRateResolver,
   SavingsRateTier,
 } from './savingsRateService';
 
@@ -118,6 +119,7 @@ export function buildSavingsTemplateRows(
   rateTiers?: SavingsRateTier[]
 ): SavingsTemplateRow[] {
   const rows: SavingsTemplateRow[] = [];
+  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers || [], depositTypes);
 
   const getDepositTypeInfo = (dep: MemberDepositItem): DepositTypeItem | undefined => {
     if (dep.deposit_types) {
@@ -131,7 +133,7 @@ export function buildSavingsTemplateRows(
 
   let effectivePokokTarget = Number(pokokTargetAmount) > 0 ? Number(pokokTargetAmount) : 0;
   if (effectivePokokTarget <= 0) {
-    const rateFromTier = rateTiers ? getApplicableRate('POKOK', year, month, rateTiers) : 0;
+    const rateFromTier = getRateForPeriod('POKOK', year, month);
     if (rateFromTier > 0) {
       effectivePokokTarget = rateFromTier;
     } else {
@@ -190,8 +192,8 @@ export function buildSavingsTemplateRows(
       for (const dep of memberRecurringDeps) {
         const dt = getDepositTypeInfo(dep);
         const typeCode = dt?.code || '';
-        const rateFromTier = getApplicableRate(typeCode, year, month, rateTiers);
-        const expected = rateFromTier > 0 ? rateFromTier : (dt?.default_amount || 0);
+        const resolvedRate = getRateForPeriod(typeCode || dt?.name || '', year, month);
+        const expected = resolvedRate > 0 ? resolvedRate : (dt?.default_amount || 0);
 
         const memberTxs = txsForMonth.filter(tx => tx.member_deposit_id === dep.id);
         const paid = memberTxs.reduce((sum, tx) => {
@@ -221,8 +223,8 @@ export function buildSavingsTemplateRows(
       const standardCodes = ['WAJIB', 'LEBARAN', 'BELANJA'];
       for (const code of standardCodes) {
         const matchedDt = depositTypes.find(t => (t.code || '').toUpperCase() === code);
-        const rateFromTier = getApplicableRate(code, year, month, rateTiers);
-        const expected = rateFromTier > 0 ? rateFromTier : (matchedDt?.default_amount || 0);
+        const resolvedRate = getRateForPeriod(code, year, month);
+        const expected = resolvedRate > 0 ? resolvedRate : (matchedDt?.default_amount || 0);
 
         rows.push({
           nrp: m.nrp,
@@ -318,10 +320,12 @@ export const generateSavingsBatchTemplate = async (
 
   const rateTiers = await getRateTiers(undefined, false).catch(() => []);
 
+  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, depositTypes || []);
+
   // Ambil nominal tarif Simpanan Pokok aktif
   let pokokTargetAmount = await getActivePokokTariff().catch(() => 0);
   if (!pokokTargetAmount || pokokTargetAmount <= 0) {
-    pokokTargetAmount = getApplicableRate('POKOK', year, month, rateTiers);
+    pokokTargetAmount = getRateForPeriod('POKOK', year, month);
   }
   if (!pokokTargetAmount || pokokTargetAmount <= 0) {
     const matchedDt = (depositTypes || []).find(t => isPokokDepositType(t));

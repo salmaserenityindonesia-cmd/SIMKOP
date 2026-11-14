@@ -912,7 +912,41 @@ describe('memberService - getActiveMemberDepositDefaults', () => {
 
     const defaults = await getActiveMemberDepositDefaults();
     expect(defaults.pokok).toBe(100000);
-    expect(defaults.wajib).toBe(200000); // 200000 is DEFAULT_RATE_TIERS / fallback rate for WAJIB
+    expect(defaults.wajib).toBe(50000);
+    expect(defaults.belanja).toBe(25000);
+    expect(defaults.lebaran).toBe(30000);
+  });
+
+  it('mengambil default dari master deposit_types jika savings_rate_tiers kosong', async () => {
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'savings_rate_tiers') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { code: 'POKOK', name: 'Simpanan Pokok', default_amount: 120000, is_active: true },
+              { code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 200000, is_active: true },
+              { code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 300000, is_active: true },
+            ],
+            error: null,
+          }),
+        };
+      }
+      return {};
+    });
+
+    const defaults = await getActiveMemberDepositDefaults();
+    expect(defaults.pokok).toBe(120000);
+    expect(defaults.wajib).toBe(200000);
+    expect(defaults.lebaran).toBe(300000);
   });
 });
 

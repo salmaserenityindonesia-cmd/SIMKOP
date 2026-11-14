@@ -2,7 +2,9 @@ import { supabase } from '../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
-  SavingsRateTier
+  buildSavingsRateResolver,
+  SavingsRateTier,
+  DepositTypeRateRef
 } from './savingsRateService';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
 
@@ -402,7 +404,8 @@ export function calculateTotalChecked(
   checkedKeys: Iterable<string>,
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
-  customAmounts?: Map<string, number> | Record<string, number>
+  customAmounts?: Map<string, number> | Record<string, number>,
+  depositTypes?: DepositTypeRateRef[]
 ): number {
   let total = 0;
   for (const key of checkedKeys) {
@@ -419,7 +422,7 @@ export function calculateTotalChecked(
     const y = parseInt(yStr, 10);
     const m = parseInt(mStr, 10);
     if (!isNaN(y) && !isNaN(m)) {
-      total += getApplicableRate(depositTypeCode, y, m, rateTiers);
+      total += getApplicableRate(depositTypeCode, y, m, rateTiers, depositTypes);
     }
   }
   return total;
@@ -440,7 +443,8 @@ export function calculateFifoAllocation(
   joinDate?: string | Date | null,
   memberDepositId?: string,
   cutOffDate?: string | Date | null,
-  initialSavingsCutOffDate?: string | Date | null
+  initialSavingsCutOffDate?: string | Date | null,
+  depositTypes?: DepositTypeRateRef[]
 ): FifoAllocationResult {
   if (targetBalance <= 0) {
     return {
@@ -475,7 +479,7 @@ export function calculateFifoAllocation(
       continue;
     }
 
-    const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers);
+    const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers, depositTypes);
     if (rate <= 0) continue;
 
     lastProcessedMonth = { year: m.year, month: m.month };
@@ -568,7 +572,7 @@ export function calculateFifoAllocation(
       }
     }
 
-    const applicableRate = getApplicableRate(depositTypeCode, nextYear, nextMonth, rateTiers);
+    const applicableRate = getApplicableRate(depositTypeCode, nextYear, nextMonth, rateTiers, depositTypes);
 
     partialTransaction = {
       member_deposit_id: memberDepositId,
@@ -609,7 +613,7 @@ export function matchAutomaticFifo(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
-  options?: { includePartial?: boolean; cutOffDate?: string | Date | null; initialSavingsCutOffDate?: string | Date | null }
+  options?: { includePartial?: boolean; cutOffDate?: string | Date | null; initialSavingsCutOffDate?: string | Date | null; depositTypes?: DepositTypeRateRef[] }
 ): string[] {
   const includePartial = options?.includePartial ?? true;
   const res = calculateFifoAllocation(
@@ -620,7 +624,8 @@ export function matchAutomaticFifo(
     joinDate,
     undefined,
     options?.cutOffDate,
-    options?.initialSavingsCutOffDate
+    options?.initialSavingsCutOffDate,
+    options?.depositTypes
   );
   if (!includePartial && res.partialTransaction) {
     return res.matchedKeys.filter(k => k !== res.partialTransaction?.key);
@@ -731,7 +736,7 @@ export async function reconcileSingleMemberDeposit(
     try {
       const { data: dTypes } = await supabase
         .from('deposit_types')
-        .select('id, name, code');
+        .select('id, name, code, default_amount');
       dtList = dTypes || [];
     } catch (err) {
       console.warn('Gagal memuat deposit_types:', err);
@@ -1060,7 +1065,8 @@ export async function reconcileSingleMemberDeposit(
     effectiveJoin,
     md.id,
     targetType === 'LEBARAN' ? effectiveLebaranCutOff : undefined,
-    effectiveInitialCutOff
+    effectiveInitialCutOff,
+    dtList
   );
   const matchedKeys = fifoResult.matchedKeys;
 
@@ -1334,7 +1340,7 @@ export async function bulkCheckAllUpToCurrentMonth(
   try {
     const { data: dtData } = await supabase
       .from('deposit_types')
-      .select('id, code, name');
+      .select('id, code, name, default_amount');
     depTypes = dtData || [];
   } catch (err) {
     console.warn('Gagal memuat deposit_types:', err);
@@ -1382,6 +1388,7 @@ export async function bulkCheckAllUpToCurrentMonth(
     }
   }
 
+  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, depTypes);
   let totalSuccess = 0;
   let totalFailed = 0;
   const BATCH_MEMBER_SIZE = 25;
@@ -1540,7 +1547,7 @@ export async function bulkCheckAllUpToCurrentMonth(
                 continue;
               }
 
-              const rateAmount = getApplicableRate(typeCode, y, mon, rateTiers) || 200000;
+              const rateAmount = getRateForPeriod(typeCode, y, mon) || 200000;
 
               txsToInsert.push({
                 member_deposit_id: memberDepositId,

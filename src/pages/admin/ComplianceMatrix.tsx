@@ -48,6 +48,7 @@ import {
   getRateTiers,
   getApplicableRate,
   getApplicableTierRate,
+  buildSavingsRateResolver,
   SavingsRateTier,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
@@ -412,9 +413,14 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     const colPeriod = rollingMonths[monthIndex];
     const yearNum = colPeriod?.year ?? parseInt(year, 10);
     const monthNum = colPeriod?.month ?? (monthIndex + 1);
-    const applicableTariffW = getApplicableTierRate(rateTiers, 'WAJIB', yearNum, monthNum) || (targets.wajib || 210000);
-    const applicableTariffB = getApplicableTierRate(rateTiers, 'BELANJA', yearNum, monthNum) || (targets.belanja || 25000);
-    const applicableTariffL = getApplicableTierRate(rateTiers, 'LEBARAN', yearNum, monthNum) || (targets.lebaran || 50000);
+    const rateResolver = buildSavingsRateResolver(rateTiers, [
+      { code: 'WAJIB', default_amount: targets.wajib },
+      { code: 'BELANJA', default_amount: targets.belanja },
+      { code: 'LEBARAN', default_amount: targets.lebaran }
+    ]);
+    const applicableTariffW = rateResolver.getRateForPeriod('WAJIB', yearNum, monthNum);
+    const applicableTariffB = rateResolver.getRateForPeriod('BELANJA', yearNum, monthNum);
+    const applicableTariffL = rateResolver.getRateForPeriod('LEBARAN', yearNum, monthNum);
 
     const targetW = monthData.wajib?.targetAmount || applicableTariffW;
     const targetB = monthData.belanja?.targetAmount || applicableTariffB;

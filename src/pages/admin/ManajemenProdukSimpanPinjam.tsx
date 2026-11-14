@@ -11,6 +11,7 @@ import {
   DepositType,
   LoanType
 } from '../../services/koperasiService';
+import { clearTierCache } from '../../services/savingsRateService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -84,13 +85,22 @@ export default function ManajemenProdukSimpanPinjam({
   const handleSaveDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload: Omit<DepositType, 'id'> = {
+        code: String(depositForm.code || '').trim(),
+        name: String(depositForm.name || '').trim(),
+        frequency_type: depositForm.frequency_type || 'monthly',
+        default_amount: Number(depositForm.default_amount || 0),
+        can_be_withdrawn: Boolean(depositForm.can_be_withdrawn),
+        is_active: depositForm.is_active !== false,
+      };
       if (depositForm.id) {
-        await updateDepositType(depositForm.id, depositForm as Omit<DepositType, 'id'>);
+        await updateDepositType(depositForm.id, payload);
         showToast('Jenis simpanan berhasil diperbarui', 'success');
       } else {
-        await addDepositType(depositForm as Omit<DepositType, 'id'>);
+        await addDepositType(payload);
         showToast('Jenis simpanan berhasil ditambahkan', 'success');
       }
+      clearTierCache();
       setDepositModalOpen(false);
       fetchData();
     } catch (err: any) {
@@ -232,7 +242,10 @@ export default function ManajemenProdukSimpanPinjam({
               <tbody>
                 {depositTypes.map(type => {
                   const displayAmount = type.effective_amount ?? type.default_amount ?? 0;
-                  const isTierSynced = Boolean(type.effective_amount && type.effective_amount !== type.default_amount);
+                  const isTierSynced = Boolean(
+                    type.rate_source === 'tier' ||
+                    (type.effective_amount !== undefined && type.effective_amount !== type.default_amount)
+                  );
 
                   return (
                     <tr key={type.id} className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/10">
@@ -241,9 +254,13 @@ export default function ManajemenProdukSimpanPinjam({
                       <td className="p-4 text-body-md capitalize">{type.frequency_type}</td>
                       <td className="p-4 text-body-md">
                         <div>{formatCurrency(displayAmount)}</div>
-                        {isTierSynced && (
+                        {isTierSynced ? (
                           <span className="text-[10px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
-                            * Sinkron Tarif Bertingkat
+                            * Sinkron Tarif Bertingkat Aktif
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
+                            Default Master Produk
                           </span>
                         )}
                       </td>

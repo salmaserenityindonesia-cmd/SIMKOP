@@ -592,7 +592,7 @@ export const loanService = {
 
       const { data: memberDeposits, error: depError } = await supabase
         .from('member_deposits')
-        .select('id, deposit_type_id, is_terminated, deposit_types(code)')
+        .select('id, deposit_type_id, is_terminated, deposit_types(code, name, default_amount)')
         .eq('member_id', memberId)
         .eq('is_terminated', false);
 
@@ -600,14 +600,18 @@ export const loanService = {
         let total = 0;
         let hasWajib = false;
         for (const dep of memberDeposits) {
-          const rawCode = Array.isArray(dep.deposit_types)
-            ? dep.deposit_types[0]?.code
-            : (dep.deposit_types as any)?.code;
+          const dtObj = Array.isArray(dep.deposit_types)
+            ? dep.deposit_types[0]
+            : (dep.deposit_types as any);
+          const rawCode = dtObj?.code;
           const code = (rawCode || '').toUpperCase();
           if (code === 'WAJIB' || code === 'SW') {
             hasWajib = true;
           }
-          const rate = activeRates[code] || (code === 'WAJIB' || code === 'SW' ? defaultWajibRate : 0);
+          const rate =
+            activeRates[code] ||
+            Number(dtObj?.default_amount || 0) ||
+            (code === 'WAJIB' || code === 'SW' ? defaultWajibRate : 0);
           total += rate;
         }
         if (!hasWajib && defaultWajibRate > 0) {

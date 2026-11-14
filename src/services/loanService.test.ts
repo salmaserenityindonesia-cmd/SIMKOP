@@ -256,9 +256,9 @@ describe('loanService', () => {
           eq: () => ({
             eq: vi.fn().mockResolvedValue({
               data: [
-                { deposit_types: { code: 'WAJIB' } },
-                { deposit_types: { code: 'BELANJA' } },
-                { deposit_types: { code: 'LEBARAN' } }
+                { deposit_types: { code: 'WAJIB', default_amount: 200000 } },
+                { deposit_types: { code: 'BELANJA', default_amount: 25000 } },
+                { deposit_types: { code: 'LEBARAN', default_amount: 50000 } }
               ],
               error: null
             })

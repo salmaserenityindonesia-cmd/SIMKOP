@@ -2,7 +2,13 @@
 // Domain service untuk konfigurasi jenis simpanan, tagihan komitmen bulanan, dan mutasi setoran simpanan
 
 import { supabase } from '../lib/supabaseClient';
-import { getActiveSavingsRateTiers } from './savingsRateService';
+import {
+  getRateTiers,
+  buildSavingsRateResolver,
+  loadSavingsRateConfig,
+  clearTierCache,
+  normalizeDepositTypeCode
+} from './savingsRateService';
 
 function shouldFallback(e: any): boolean {
   if (!e) return false;
@@ -27,6 +33,7 @@ export interface DepositType {
   can_be_withdrawn: boolean;
   is_active: boolean;
   effective_amount?: number;
+  rate_source?: 'tier' | 'master';
 }
 
 export interface MemberDeposit {
@@ -79,51 +86,50 @@ export async function getDepositTypes(): Promise<DepositType[]> {
   const depositTypes = (data || []) as DepositType[];
 
   try {
-    const activeRates = await getActiveSavingsRateTiers();
-    return depositTypes.map((dt) => {
-      const codeUpper = (dt.code || '').toUpperCase();
-      const nameLower = (dt.name || '').toLowerCase();
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
+    const tiers = await getRateTiers(undefined, true);
+    const { getRateForPeriod, hasActiveTier } = buildSavingsRateResolver(tiers, depositTypes);
 
-      let effectiveRate = activeRates[codeUpper];
-      if (effectiveRate === undefined || effectiveRate <= 0) {
-        if (codeUpper === 'SW' || nameLower.includes('wajib')) {
-          effectiveRate = activeRates['WAJIB'] || activeRates['SW'];
-        } else if (codeUpper === 'SB' || nameLower.includes('belanja')) {
-          effectiveRate = activeRates['BELANJA'] || activeRates['SB'];
-        } else if (codeUpper === 'SL' || nameLower.includes('lebaran') || nameLower.includes('hari raya')) {
-          effectiveRate = activeRates['LEBARAN'] || activeRates['SL'];
-        } else if (codeUpper === 'SP' || codeUpper === 'POKOK' || nameLower.includes('pokok')) {
-          effectiveRate = activeRates['POKOK'] || activeRates['SP'];
-        }
-      }
+    return depositTypes.map((dt) => {
+      const codeOrName = dt.code || dt.name || '';
+      const resolvedRate = getRateForPeriod(codeOrName, currentYear, currentMonth);
+      const isTierActive = hasActiveTier(codeOrName, currentYear, currentMonth);
 
       return {
         ...dt,
-        effective_amount: (effectiveRate !== undefined && effectiveRate > 0) ? effectiveRate : dt.default_amount
+        effective_amount: resolvedRate > 0 ? resolvedRate : dt.default_amount,
+        rate_source: isTierActive ? 'tier' : 'master',
       };
     });
   } catch (err) {
     console.warn('Gagal menyinkronkan tarif bertingkat ke deposit_types:', err);
     return depositTypes.map((dt) => ({
       ...dt,
-      effective_amount: dt.default_amount
+      effective_amount: dt.default_amount,
+      rate_source: 'master',
     }));
   }
 }
 
 export async function addDepositType(depositType: Omit<DepositType, 'id'>): Promise<DepositType> {
-  const { data, error } = await supabase.from('deposit_types').insert([depositType]).select().single();
+  const { effective_amount: _ea, rate_source: _rs, ...dbPayload } = depositType as any;
+  const { data, error } = await supabase.from('deposit_types').insert([dbPayload]).select().single();
   if (error) {
     throw new Error(`Failed to add deposit type: ${error.message}`);
   }
+  clearTierCache();
   return data as DepositType;
 }
 
 export async function updateDepositType(id: string, updates: Partial<Omit<DepositType, 'id'>>): Promise<DepositType> {
-  const { data, error } = await supabase.from('deposit_types').update(updates).eq('id', id).select().single();
+  const { effective_amount: _ea, rate_source: _rs, ...dbUpdates } = updates as any;
+  const { data, error } = await supabase.from('deposit_types').update(dbUpdates).eq('id', id).select().single();
   if (error) {
     throw new Error(`Failed to update deposit type: ${error.message}`);
   }
+  clearTierCache();
   return data as DepositType;
 }
 
@@ -190,6 +196,8 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
 export async function getMemberDepositBills(memberId: string, month: number, year: number) {
   await ensureMandatoryDepositsAndEnroll(memberId);
   const dTypes = await getDepositTypes();
+  const tiers = await getRateTiers(undefined, true).catch(() => []);
+  const { getRateForPeriod } = buildSavingsRateResolver(tiers, dTypes);
   const mDeposits = await getMemberDeposits(memberId);
 
   const mdIds = mDeposits.map(md => md.id);
@@ -209,9 +217,12 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
       member_id: memberId
     };
 
+    const resolvedRate = getRateForPeriod(dt.code || dt.name || '', year, month);
+    const targetAmount = resolvedRate > 0 ? resolvedRate : dt.default_amount;
+
     if (dt.frequency_type === 'one_time' || dt.frequency_type === 'once') {
       const totalPaid = txs.filter(tx => tx.member_deposit_id === md.id).reduce((sum, tx) => sum + tx.amount, 0);
-      const remaining = dt.default_amount - totalPaid;
+      const remaining = targetAmount - totalPaid;
       if (remaining > 0) {
         bills.push({
           member_deposit_id: md.id,
@@ -223,7 +234,7 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
       const totalPaid = txs
         .filter(tx => tx.member_deposit_id === md.id && tx.for_month === month && tx.for_year === year)
         .reduce((sum, tx) => sum + tx.amount, 0);
-      const remaining = dt.default_amount - totalPaid;
+      const remaining = targetAmount - totalPaid;
       if (remaining > 0) {
         bills.push({
           member_deposit_id: md.id,
@@ -301,5 +312,58 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
     return true;
   });
   
-  return filteredData as MonthlyDepositCommitment[];
+  try {
+    const resolver = await loadSavingsRateConfig(true);
+    const fallbackToday = new Date();
+    return filteredData.map((row: any) => {
+      const targetYear = Number(row.for_year ?? year ?? fallbackToday.getFullYear());
+      const targetMonth = Number(row.for_month ?? month ?? fallbackToday.getMonth() + 1);
+      const matchedType = resolver.depositTypes.find(
+        (dt) =>
+          (row.deposit_type_id && dt.id === row.deposit_type_id) ||
+          (row.deposit_type_code &&
+            dt.code &&
+            normalizeDepositTypeCode(dt.code) === normalizeDepositTypeCode(row.deposit_type_code)) ||
+          (row.deposit_name &&
+            dt.name &&
+            dt.name.toLowerCase() === String(row.deposit_name).toLowerCase())
+      );
+      const lookupCode = normalizeDepositTypeCode(
+        matchedType?.code ||
+          row.deposit_type_code ||
+          matchedType?.name ||
+          row.deposit_name ||
+          ''
+      );
+      if (!lookupCode || !targetYear || !targetMonth) {
+        return row;
+      }
+      const dynamicRate = resolver.getRateForPeriod(lookupCode, targetYear, targetMonth);
+      if (!dynamicRate || dynamicRate <= 0) {
+        return row;
+      }
+      const totalPaid = Number(row.total_paid ?? row.paid_amount ?? 0);
+      const remaining = Math.max(0, dynamicRate - totalPaid);
+      const existingStatus = String(row.status || '');
+      const usesCapitalized =
+        existingStatus === 'Lunas' || existingStatus === 'Belum Lunas';
+      const nextStatus =
+        remaining <= 0
+          ? usesCapitalized
+            ? 'Lunas'
+            : 'lunas'
+          : usesCapitalized
+          ? 'Belum Lunas'
+          : 'belum_lunas';
+      return {
+        ...row,
+        commitment_amount: dynamicRate,
+        remaining_balance: remaining,
+        status: nextStatus,
+      };
+    }) as MonthlyDepositCommitment[];
+  } catch (err) {
+    console.warn('Gagal menyinkronkan komitmen simpanan dengan resolver tarif:', err);
+    return filteredData as MonthlyDepositCommitment[];
+  }
 }

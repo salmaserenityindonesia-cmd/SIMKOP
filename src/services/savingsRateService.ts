@@ -33,12 +33,56 @@ export interface AddRateTierPayload {
   notes?: string | null;
 }
 
+export interface DepositTypeRateRef {
+  id?: string;
+  code?: string | null;
+  name?: string | null;
+  default_amount?: number | null;
+  is_active?: boolean | null;
+}
+
+export interface SavingsRateResolver {
+  tiers: SavingsRateTier[];
+  depositTypes: DepositTypeRateRef[];
+  getRateForPeriod: (depositTypeCode: string, year: number, month: number) => number;
+  hasActiveTier: (depositTypeCode: string, year: number, month: number) => boolean;
+}
+
 export const DEFAULT_RATE_TIERS: SavingsRateTier[] = [];
 export const DEFAULT_TIERS: SavingsRateTier[] = DEFAULT_RATE_TIERS;
 
 export const SAVINGS_RATE_TIERS_STORAGE_KEY = 'simkop_savings_rate_tiers';
 
 let cachedRateTiers: SavingsRateTier[] | null = null;
+let cachedDepositTypes: DepositTypeRateRef[] | null = null;
+
+/**
+ * Normalisasi kode atau nama jenis simpanan ke kode kanonik ('POKOK', 'WAJIB', 'BELANJA', 'LEBARAN', atau uppercase kode kustom).
+ */
+export function normalizeDepositTypeCode(codeOrName?: string | null): string {
+  const raw = String(codeOrName || '').trim().toUpperCase();
+  if (!raw) return '';
+
+  if (raw === 'SP' || raw === 'POKOK') return 'POKOK';
+  if (raw === 'SW' || raw === 'WAJIB') return 'WAJIB';
+  if (raw === 'SB' || raw === 'BELANJA') return 'BELANJA';
+  if (
+    raw === 'SL' ||
+    raw === 'SHR' ||
+    raw === 'HARI_RAYA' ||
+    raw === 'THR' ||
+    raw === 'LEBARAN'
+  ) {
+    return 'LEBARAN';
+  }
+
+  if (raw.includes('POKOK')) return 'POKOK';
+  if (raw.includes('WAJIB')) return 'WAJIB';
+  if (raw.includes('BELANJA')) return 'BELANJA';
+  if (raw.includes('LEBARAN') || raw.includes('HARI RAYA')) return 'LEBARAN';
+
+  return raw;
+}
 
 function getStorage(): Storage | null {
   try {
@@ -83,12 +127,17 @@ export function saveStoredLocalRateTiers(tiers: SavingsRateTier[]): void {
 
 export function clearTierCache(): void {
   cachedRateTiers = null;
+  cachedDepositTypes = null;
   const storage = getStorage();
   if (storage) {
     try {
       storage.removeItem(SAVINGS_RATE_TIERS_STORAGE_KEY);
     } catch {}
   }
+}
+
+export function setCachedDepositTypes(depositTypes: DepositTypeRateRef[] | null): void {
+  cachedDepositTypes = depositTypes ? [...depositTypes] : null;
 }
 
 /**
@@ -139,16 +188,21 @@ export async function getRateTiers(depositTypeCode?: string, forceRefresh = fals
       return [];
     }
 
-    let query = tableObj
-      .select('*')
-      .order('start_year', { ascending: true })
-      .order('start_month', { ascending: true });
+    let query: any = tableObj.select('*');
+    if (query && typeof query.order === 'function') {
+      query = query.order('start_year', { ascending: true });
+      if (query && typeof query.order === 'function') {
+        query = query.order('start_month', { ascending: true });
+      }
+    }
 
-    if (normalizedCode) {
+    if (normalizedCode && query && typeof query.eq === 'function') {
       query = query.eq('deposit_type_code', normalizedCode);
     }
 
-    const { data, error } = await query;
+    const resp = await query;
+    const data = Array.isArray(resp?.data) ? resp.data : null;
+    const error = resp?.error ?? null;
     if (error) {
       console.error('Gagal mengambil data tarif dari database:', error);
       // Fallback ke penyimpanan lokal jika kueri database gagal/offline
@@ -162,7 +216,17 @@ export async function getRateTiers(depositTypeCode?: string, forceRefresh = fals
       return [];
     }
 
-    const result = data || [];
+    const rawResult = (data || []).filter(
+      (row: any) =>
+        row &&
+        typeof row === 'object' &&
+        'deposit_type_code' in row &&
+        'start_year' in row &&
+        'monthly_rate' in row
+    );
+    const result = normalizedCode
+      ? rawResult.filter(t => String(t.deposit_type_code || '').toUpperCase() === normalizedCode)
+      : rawResult;
     if (!normalizedCode) {
       cachedRateTiers = result;
       saveStoredLocalRateTiers(result);
@@ -291,100 +355,188 @@ export async function deleteRateTier(id: string): Promise<boolean> {
 }
 
 /**
+ * Mencari seluruh tier tarif yang rentangnya mencakup periode (year, month) tertentu.
+ */
+export function findMatchingTiersForPeriod(
+  depositTypeCode: string,
+  year: number,
+  month: number,
+  tiers: SavingsRateTier[]
+): SavingsRateTier[] {
+  const canonicalCode = normalizeDepositTypeCode(depositTypeCode);
+  const rawCode = String(depositTypeCode || '').trim().toUpperCase();
+  if (!canonicalCode && !rawCode) return [];
+
+  const targetIdx = Number(year) * 12 + Number(month);
+
+  return sortRateTiers(
+    tiers.filter((t) => {
+      const tRaw = String(t.deposit_type_code || '').trim().toUpperCase();
+      const tCanonical = normalizeDepositTypeCode(t.deposit_type_code);
+      const codeMatches =
+        tRaw === rawCode || (canonicalCode !== '' && tCanonical === canonicalCode);
+      if (!codeMatches) return false;
+
+      const startIdx = Number(t.start_year) * 12 + Number(t.start_month);
+      const endIdx =
+        t.end_year !== null &&
+        t.end_year !== undefined &&
+        t.end_month !== null &&
+        t.end_month !== undefined
+          ? Number(t.end_year) * 12 + Number(t.end_month)
+          : 999999;
+      return targetIdx >= startIdx && targetIdx <= endIdx;
+    })
+  );
+}
+
+/**
+ * Mengecek apakah terdapat rentang aktif di savings_rate_tiers untuk (depositTypeCode, year, month).
+ */
+export function hasActiveTierForPeriod(
+  depositTypeCode: string,
+  year: number,
+  month: number,
+  tiers?: SavingsRateTier[]
+): boolean {
+  const tierList = tiers !== undefined ? tiers : (cachedRateTiers ?? getStoredLocalRateTiers() ?? []);
+  return findMatchingTiersForPeriod(depositTypeCode, year, month, tierList).length > 0;
+}
+
+/**
+ * Resolver tarif tunggal terpadu tanpa angka hardcoded:
+ * 1. Prioritaskan rentang aktif di savings_rate_tiers (/admin/pengaturan).
+ * 2. Fallback resmi ke default_amount pada deposit_types (/admin/master-simpan-pinjam).
+ */
+export function resolveSavingsMonthlyRate(
+  depositTypeCode: string,
+  year: number,
+  month: number,
+  tiers?: SavingsRateTier[],
+  depositTypes?: DepositTypeRateRef[]
+): number {
+  const rawCode = String(depositTypeCode || '').trim().toUpperCase();
+  const canonicalCode = normalizeDepositTypeCode(depositTypeCode);
+  if (!rawCode && !canonicalCode) return 0;
+
+  const tierList = tiers !== undefined ? tiers : (cachedRateTiers ?? getStoredLocalRateTiers() ?? []);
+  const typeList = depositTypes !== undefined ? depositTypes : (cachedDepositTypes ?? []);
+
+  // 1. Cek apakah ada rentang aktif pada savings_rate_tiers (/admin/pengaturan)
+  const matchingTiers = findMatchingTiersForPeriod(depositTypeCode, year, month, tierList);
+  if (matchingTiers.length > 0) {
+    const activeTier = matchingTiers[matchingTiers.length - 1];
+    return Number(activeTier.monthly_rate || 0);
+  }
+
+  // 2. Fallback resmi ke default_amount pada deposit_types (/admin/master-simpan-pinjam)
+  const exactMasterType = typeList.find(
+    (dt) => String(dt.code || '').trim().toUpperCase() === rawCode && rawCode !== ''
+  );
+  if (exactMasterType) {
+    return Number(exactMasterType.default_amount || 0);
+  }
+
+  const canonicalMasterType = typeList.find(
+    (dt) =>
+      canonicalCode !== '' &&
+      (normalizeDepositTypeCode(dt.code) === canonicalCode ||
+        normalizeDepositTypeCode(dt.name) === canonicalCode)
+  );
+  return Number(canonicalMasterType?.default_amount || 0);
+}
+
+/**
+ * Membangun helper sinkron resolver tarif dari koleksi tiers dan deposit_types.
+ */
+export function buildSavingsRateResolver(
+  tiers?: SavingsRateTier[],
+  depositTypes?: DepositTypeRateRef[]
+): SavingsRateResolver {
+  const resolvedTiers = tiers !== undefined ? tiers : (cachedRateTiers ?? getStoredLocalRateTiers() ?? []);
+  const resolvedDepositTypes = depositTypes !== undefined ? depositTypes : (cachedDepositTypes ?? []);
+
+  return {
+    tiers: resolvedTiers,
+    depositTypes: resolvedDepositTypes,
+    getRateForPeriod: (depositTypeCode: string, year: number, month: number): number =>
+      resolveSavingsMonthlyRate(depositTypeCode, year, month, resolvedTiers, resolvedDepositTypes),
+    hasActiveTier: (depositTypeCode: string, year: number, month: number): boolean =>
+      hasActiveTierForPeriod(depositTypeCode, year, month, resolvedTiers),
+  };
+}
+
+/**
+ * Memuat konfigurasi tarif gabungan dari public.savings_rate_tiers dan public.deposit_types,
+ * lalu mengembalikan resolver sinkron getRateForPeriod & hasActiveTier.
+ */
+export async function loadSavingsRateConfig(
+  forceRefresh = false
+): Promise<SavingsRateResolver> {
+  const tiers = await getRateTiers(undefined, forceRefresh).catch(() => [] as SavingsRateTier[]);
+
+  let depositTypes: DepositTypeRateRef[] = [];
+  if (!forceRefresh && cachedDepositTypes !== null) {
+    depositTypes = cachedDepositTypes;
+  } else {
+    try {
+      const dtTable: any = supabase.from('deposit_types');
+      if (dtTable && typeof dtTable.select === 'function') {
+        const resp = await dtTable.select('id, code, name, default_amount, is_active');
+        if (!resp?.error && Array.isArray(resp?.data)) {
+          depositTypes = resp.data.filter(
+            (row: any) =>
+              row &&
+              typeof row === 'object' &&
+              ('code' in row || 'name' in row) &&
+              !('commitment_amount' in row)
+          );
+          cachedDepositTypes = depositTypes;
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal memuat deposit_types di loadSavingsRateConfig:', err);
+    }
+    if (cachedDepositTypes === null) {
+      cachedDepositTypes = depositTypes;
+    }
+  }
+
+  return buildSavingsRateResolver(tiers, depositTypes);
+}
+
+/**
  * Menghitung nominal tarif yang berlaku untuk jenis simpanan pada periode (tahun, bulan) tertentu.
- * Menggunakan fallback cerdas:
- * - Jika ada tier dalam database/cache, cari rentang yang sesuai.
- * - Jika sebelum rentang tier terlama, gunakan tarif terlama.
- * - Jika setelah rentang tier terbaru, gunakan tarif terbaru.
- * - Fallback default jika tidak ada tier:
- *   - WAJIB: 150.000 jika <= Okt 2025, 200.000 jika >= Nov 2025.
- *   - BELANJA: 25.000
- *   - LEBARAN: 50.000
+ * Mendelegasikan langsung ke resolveSavingsMonthlyRate tanpa konstanta fallback hardcoded.
  */
 export function getApplicableRate(
   depositTypeCode: string,
   year: number,
   month: number,
-  cachedTiers?: SavingsRateTier[]
+  cachedTiers?: SavingsRateTier[],
+  depositTypes?: DepositTypeRateRef[]
 ): number {
-  const code = (depositTypeCode || '').toUpperCase();
-  const targetPeriodIndex = year * 12 + month;
-
-  // Sediakan fallback acuan awal
-  const getHardcodedFallback = () => {
-    if (code === 'POKOK' || code === 'SP') {
-      return 100000;
-    }
-    if (code === 'WAJIB') {
-      return (year < 2025 || (year === 2025 && month <= 10)) ? 150000 : 200000;
-    }
-    if (code === 'BELANJA') {
-      return 25000;
-    }
-    if (code === 'LEBARAN') {
-      return 50000;
-    }
-    return 0;
-  };
-
-  const pool = cachedTiers || (cachedRateTiers !== null ? cachedRateTiers : getStoredLocalRateTiers()) || [];
-  const matchingTiers = sortRateTiers(pool.filter(t => {
-    const tCode = t.deposit_type_code.toUpperCase();
-    return tCode === code ||
-      (code === 'SP' && tCode === 'POKOK') ||
-      (code === 'POKOK' && tCode === 'SP') ||
-      (code === 'SW' && tCode === 'WAJIB') ||
-      (code === 'WAJIB' && tCode === 'SW') ||
-      (code === 'SB' && tCode === 'BELANJA') ||
-      (code === 'BELANJA' && tCode === 'SB') ||
-      (code === 'SL' && tCode === 'LEBARAN') ||
-      (code === 'LEBARAN' && tCode === 'SL');
-  }));
-
-  if (matchingTiers.length === 0) {
-    return getHardcodedFallback();
-  }
-
-  // 1. Cek kecocokan tepat di dalam rentang
-  for (const tier of matchingTiers) {
-    const startIdx = tier.start_year * 12 + tier.start_month;
-    const endIdx = tier.end_year !== null && tier.end_year !== undefined && tier.end_month !== null && tier.end_month !== undefined
-      ? tier.end_year * 12 + tier.end_month
-      : Infinity;
-
-    if (targetPeriodIndex >= startIdx && targetPeriodIndex <= endIdx) {
-      return tier.monthly_rate;
-    }
-  }
-
-  // 2. Jika di bawah rentang tier terlama, gunakan tarif tier terlama
-  const lowestTier = matchingTiers[0];
-  const lowestIdx = lowestTier.start_year * 12 + lowestTier.start_month;
-  if (targetPeriodIndex < lowestIdx) {
-    return lowestTier.monthly_rate;
-  }
-
-  // 3. Jika di atas rentang tier terbaru, gunakan tarif tier terbaru
-  const highestTier = matchingTiers[matchingTiers.length - 1];
-  return highestTier.monthly_rate;
+  return resolveSavingsMonthlyRate(depositTypeCode, year, month, cachedTiers, depositTypes);
 }
 
 /**
  * Helper pembaca tarif dinamis berdasarkan data master tiers, jenis simpanan, tahun, dan bulan.
- * Kompatibel dengan getApplicableRate.
+ * Kompatibel dengan getApplicableRate & resolveSavingsMonthlyRate.
  */
 export function getApplicableTierRate(
   tiers: SavingsRateTier[] | undefined,
   depositTypeCode: string,
   year: number,
-  month: number
+  month: number,
+  depositTypes?: DepositTypeRateRef[]
 ): number {
-  return getApplicableRate(depositTypeCode, year, month, tiers);
+  return resolveSavingsMonthlyRate(depositTypeCode, year, month, tiers, depositTypes);
 }
 
 /**
  * Mengambil seluruh tier tarif aktif untuk tahun dan bulan tertentu (default: bulan dan tahun berjalan).
- * Mengembalikan mapping objek dictionary Record<string, number> (contoh: { WAJIB: 200000, BELANJA: 25000, LEBARAN: 50000, SW: 200000, ... })
+ * Prioritas 1: savings_rate_tiers aktif (/admin/pengaturan).
+ * Prioritas 2: deposit_types.default_amount (/admin/master-simpan-pinjam).
  */
 export async function getActiveSavingsRateTiers(
   year?: number,
@@ -397,16 +549,21 @@ export async function getActiveSavingsRateTiers(
   const result: Record<string, number> = {};
 
   try {
-    const tiers = await getRateTiers();
+    const { tiers, depositTypes, getRateForPeriod } = await loadSavingsRateConfig();
     const codes = new Set<string>(['POKOK', 'WAJIB', 'BELANJA', 'LEBARAN']);
     for (const t of tiers) {
       if (t.deposit_type_code) {
-        codes.add(t.deposit_type_code.toUpperCase());
+        codes.add(String(t.deposit_type_code).trim().toUpperCase());
+      }
+    }
+    for (const dt of depositTypes) {
+      if (dt.code) {
+        codes.add(String(dt.code).trim().toUpperCase());
       }
     }
 
     for (const code of codes) {
-      const rate = getApplicableRate(code, targetYear, targetMonth, tiers);
+      const rate = getRateForPeriod(code, targetYear, targetMonth);
       if (rate > 0) {
         result[code] = rate;
       }
@@ -416,30 +573,29 @@ export async function getActiveSavingsRateTiers(
     if (result['POKOK'] !== undefined && result['SP'] === undefined) {
       result['SP'] = result['POKOK'];
     }
+    if (result['SP'] !== undefined && result['POKOK'] === undefined) {
+      result['POKOK'] = result['SP'];
+    }
     if (result['WAJIB'] !== undefined && result['SW'] === undefined) {
       result['SW'] = result['WAJIB'];
+    }
+    if (result['SW'] !== undefined && result['WAJIB'] === undefined) {
+      result['WAJIB'] = result['SW'];
     }
     if (result['BELANJA'] !== undefined && result['SB'] === undefined) {
       result['SB'] = result['BELANJA'];
     }
+    if (result['SB'] !== undefined && result['BELANJA'] === undefined) {
+      result['BELANJA'] = result['SB'];
+    }
     if (result['LEBARAN'] !== undefined && result['SL'] === undefined) {
       result['SL'] = result['LEBARAN'];
     }
+    if (result['SL'] !== undefined && result['LEBARAN'] === undefined) {
+      result['LEBARAN'] = result['SL'];
+    }
   } catch (err) {
     console.warn('Gagal memuat active savings rate tiers:', err);
-    // Fallback default aman jika offline atau ada error
-    const pRate = getApplicableRate('POKOK', targetYear, targetMonth);
-    const wRate = getApplicableRate('WAJIB', targetYear, targetMonth);
-    const bRate = getApplicableRate('BELANJA', targetYear, targetMonth);
-    const lRate = getApplicableRate('LEBARAN', targetYear, targetMonth);
-    result['POKOK'] = pRate;
-    result['SP'] = pRate;
-    result['WAJIB'] = wRate;
-    result['SW'] = wRate;
-    result['BELANJA'] = bRate;
-    result['SB'] = bRate;
-    result['LEBARAN'] = lRate;
-    result['SL'] = lRate;
   }
 
   return result;

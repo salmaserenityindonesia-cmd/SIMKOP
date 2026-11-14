@@ -8,7 +8,8 @@ import {
   SavingsRateTier,
   getRateTiers,
   getApplicableTierRate,
-  getActivePokokTariff
+  getActivePokokTariff,
+  buildSavingsRateResolver
 } from './savingsRateService';
 
 export { getApplicableTierRate, getActivePokokTariff } from './savingsRateService';
@@ -1122,9 +1123,14 @@ export async function getComplianceMatrixData(
     });
   }
 
-  const targetWajib = typeList.find((dt: any) => dt.id === wajibId)?.default_amount || 25000;
-  const targetBelanja = typeList.find((dt: any) => dt.id === belanjaId)?.default_amount || 50000;
-  const targetLebaran = typeList.find((dt: any) => dt.id === lebaranId)?.default_amount || 50000;
+  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, typeList);
+  const currentPeriod = periods[periods.length - 1] || {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth() + 1
+  };
+  const targetWajib = getRateForPeriod('WAJIB', currentPeriod.year, currentPeriod.month);
+  const targetBelanja = getRateForPeriod('BELANJA', currentPeriod.year, currentPeriod.month);
+  const targetLebaran = getRateForPeriod('LEBARAN', currentPeriod.year, currentPeriod.month);
 
   // 4. Susun baris untuk setiap anggota yang eligible
   // PENTING: Jangan buang anggota yang belum memiliki transaksi di tahun tersebut!
@@ -1167,30 +1173,24 @@ export async function getComplianceMatrixData(
       if (pk) {
         if (pk.w > 0) {
           lastPaidColW = k;
-          const rateW = rateTiers.length > 0
-            ? getApplicableTierRate(rateTiers, 'WAJIB', pPeriod.year, pPeriod.month)
-            : targetWajib;
-          if (pk.w < rateW) {
+          const rateW = getRateForPeriod('WAJIB', pPeriod.year, pPeriod.month);
+          if (rateW > 0 && pk.w < rateW) {
             hasPartialW = true;
             partialColW = k;
           }
         }
         if (pk.b > 0) {
           lastPaidColB = k;
-          const rateB = rateTiers.length > 0
-            ? getApplicableTierRate(rateTiers, 'BELANJA', pPeriod.year, pPeriod.month)
-            : targetBelanja;
-          if (pk.b < rateB) {
+          const rateB = getRateForPeriod('BELANJA', pPeriod.year, pPeriod.month);
+          if (rateB > 0 && pk.b < rateB) {
             hasPartialB = true;
             partialColB = k;
           }
         }
         if (pk.l > 0) {
           lastPaidColL = k;
-          const rateL = rateTiers.length > 0
-            ? getApplicableTierRate(rateTiers, 'LEBARAN', pPeriod.year, pPeriod.month)
-            : targetLebaran;
-          if (pk.l < rateL) {
+          const rateL = getRateForPeriod('LEBARAN', pPeriod.year, pPeriod.month);
+          if (rateL > 0 && pk.l < rateL) {
             hasPartialL = true;
             partialColL = k;
           }
@@ -1246,15 +1246,9 @@ export async function getComplianceMatrixData(
         monthsData.push(null);
       } else {
         // Resolusi tarif dinamis berjenjang untuk periode kolom i
-        const applicableTariffW = rateTiers.length > 0
-          ? getApplicableTierRate(rateTiers, 'WAJIB', colPeriod.year, colPeriod.month)
-          : targetWajib;
-        const applicableTariffB = rateTiers.length > 0
-          ? getApplicableTierRate(rateTiers, 'BELANJA', colPeriod.year, colPeriod.month)
-          : targetBelanja;
-        const applicableTariffL = rateTiers.length > 0
-          ? getApplicableTierRate(rateTiers, 'LEBARAN', colPeriod.year, colPeriod.month)
-          : targetLebaran;
+        const applicableTariffW = getRateForPeriod('WAJIB', colPeriod.year, colPeriod.month);
+        const applicableTariffB = getRateForPeriod('BELANJA', colPeriod.year, colPeriod.month);
+        const applicableTariffL = getRateForPeriod('LEBARAN', colPeriod.year, colPeriod.month);
 
         // Evaluasi status bulan untuk WAJIB
         const isPostAllocationW = hasPartialW && i > partialColW;
@@ -1266,7 +1260,7 @@ export async function getComplianceMatrixData(
         let statusW: SavingsSubItem['status'];
         let amtW = p.w;
 
-        if (p.w >= applicableTariffW) {
+        if (p.w >= applicableTariffW && applicableTariffW > 0) {
           statusW = 'paid';
           amtW = p.w;
         } else if (p.w > 0) {
@@ -1301,7 +1295,7 @@ export async function getComplianceMatrixData(
         let statusB: SavingsSubItem['status'];
         let amtB = p.b;
 
-        if (p.b >= applicableTariffB) {
+        if (p.b >= applicableTariffB && applicableTariffB > 0) {
           statusB = 'paid';
           amtB = p.b;
         } else if (p.b > 0) {
@@ -1336,7 +1330,7 @@ export async function getComplianceMatrixData(
         let statusL: SavingsSubItem['status'];
         let amtL = p.l;
 
-        if (p.l >= applicableTariffL) {
+        if (p.l >= applicableTariffL && applicableTariffL > 0) {
           statusL = 'paid';
           amtL = p.l;
         } else if (p.l > 0) {
