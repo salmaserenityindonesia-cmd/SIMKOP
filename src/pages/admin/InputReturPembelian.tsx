@@ -22,7 +22,7 @@ import ProductSearchAutocomplete, {
 import { getProduk, Produk } from '../../services/koperasiService';
 import {
   createPurchaseReturn,
-  generateReturnNumber,
+  generateNextReturnNumber,
   getSuppliers,
   Supplier,
   PurchaseReturnType,
@@ -72,18 +72,41 @@ export default function InputReturPembelian() {
   const [itemQtyError, setItemQtyError] = useState<string>('');
 
   const qtyInputRef = useRef<HTMLInputElement>(null);
+  const numberRequestIdRef = useRef<number>(0);
+  const hasInitializedNumberRef = useRef<boolean>(false);
+  const [isRefreshingNumber, setIsRefreshingNumber] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const refreshReturnNumber = async (targetDate: string) => {
+    const requestId = ++numberRequestIdRef.current;
+    try {
+      setIsRefreshingNumber(true);
+      const nextNo = await generateNextReturnNumber(targetDate);
+      if (numberRequestIdRef.current === requestId) {
+        setReturnNumber(nextNo);
+      }
+    } catch (err) {
+      console.warn('Gagal menghasilkan nomor retur terbaru:', err);
+    } finally {
+      if (numberRequestIdRef.current === requestId) {
+        setIsRefreshingNumber(false);
+      }
+    }
+  };
 
   useEffect(() => {
     fetchInitialData();
     fetchCurrentUser();
   }, []);
 
-  // Update return number when return date changes if not manually modified
+  // Update return number when return date changes
   useEffect(() => {
-    if (returnDate) {
-      setReturnNumber(generateReturnNumber(returnDate));
+    if (!returnDate) return;
+    if (!hasInitializedNumberRef.current) {
+      hasInitializedNumberRef.current = true;
+      return;
     }
+    refreshReturnNumber(returnDate);
   }, [returnDate]);
 
   const fetchCurrentUser = async () => {
@@ -123,6 +146,7 @@ export default function InputReturPembelian() {
       const [prodData, supData] = await Promise.all([
         getProduk(),
         getSuppliers(),
+        refreshReturnNumber(returnDate),
       ]);
       setProducts(prodData || []);
       setSuppliers(supData || []);
@@ -131,7 +155,6 @@ export default function InputReturPembelian() {
         setSelectedSupplierId(supData[0].id);
         setCustomSupplierName(supData[0].name);
       }
-      setReturnNumber(generateReturnNumber(new Date().toISOString().split('T')[0]));
     } catch (err: any) {
       console.error('Gagal mengambil data produk/supplier:', err);
       showToast('Gagal memuat data awal produk & supplier', 'error');
@@ -304,7 +327,7 @@ export default function InputReturPembelian() {
 
     try {
       setIsSubmitting(true);
-      await createPurchaseReturn(
+      const createdReturn = await createPurchaseReturn(
         {
           return_number: returnNumber.trim(),
           return_date: returnDate,
@@ -326,7 +349,10 @@ export default function InputReturPembelian() {
         currentUser?.name
       );
 
-      showToast('Faktur retur pembelian berhasil dicatat dan stok inventori telah dipotong.', 'success');
+      showToast(
+        `Faktur retur pembelian ${createdReturn.return_number} berhasil dicatat dan stok inventori telah dipotong.`,
+        'success'
+      );
       navigate('/admin/retur-pembelian');
     } catch (err: any) {
       console.error('Gagal mencatat retur pembelian:', err);
@@ -395,11 +421,12 @@ export default function InputReturPembelian() {
                   />
                   <button
                     type="button"
-                    onClick={() => setReturnNumber(generateReturnNumber(returnDate))}
+                    onClick={() => refreshReturnNumber(returnDate)}
+                    disabled={isRefreshingNumber}
                     title="Generate Ulang Nomor Retur"
-                    className="p-2 border border-outline rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container"
+                    className="p-2 border border-outline rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container disabled:opacity-50"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <RotateCcw className={`w-3.5 h-3.5 ${isRefreshingNumber ? 'animate-spin' : ''}`} />
                   </button>
                 </div>
               </div>

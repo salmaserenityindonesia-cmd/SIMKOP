@@ -158,20 +158,84 @@ export function resetPurchaseReturnMockState() {
   mockAuditLogs = [];
 }
 
-export function generateReturnNumber(dateStr?: string): string {
-  const targetDate = dateStr ? new Date(dateStr) : new Date();
+function getReturnNumberPrefix(dateStr?: string): string {
+  const parsed = dateStr ? new Date(dateStr) : new Date();
+  const targetDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
   const year = targetDate.getFullYear();
   const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-  const ym = `${year}${month}`;
+  return `RET/${year}${month}/`;
+}
 
-  // Hitung jumlah faktur retur dalam bulan yang sama untuk sequence nomor
-  const countInMonth = mockReturns.filter(r => {
-    if (!r.return_number) return false;
-    return r.return_number.includes(`RET/${ym}/`);
-  }).length;
+function extractMaxSequence(
+  rows: Array<{ return_number?: string | null }>,
+  prefix: string,
+  initialMax = 0
+): number {
+  let maxSeq = initialMax;
+  const upperPrefix = prefix.toUpperCase();
+  for (const row of rows) {
+    const raw = String(row.return_number || '');
+    if (!raw.toUpperCase().startsWith(upperPrefix)) continue;
+    const suffix = raw.slice(prefix.length);
+    const parsed = parseInt(suffix, 10);
+    if (!Number.isNaN(parsed) && parsed > maxSeq) {
+      maxSeq = parsed;
+    }
+  }
+  return maxSeq;
+}
 
-  const sequence = String(countInMonth + 1).padStart(4, '0');
-  return `RET/${ym}/${sequence}`;
+function incrementReturnNumberSuffix(returnNumber: string, fallbackPrefix: string): string {
+  const match = returnNumber.match(/^(.*?)(\d+)$/);
+  if (match) {
+    const [, base, digits] = match;
+    const nextNum = parseInt(digits, 10) + 1;
+    return `${base}${String(nextNum).padStart(digits.length, '0')}`;
+  }
+  return `${fallbackPrefix}${String(Math.floor(1000 + Math.random() * 9000))}`;
+}
+
+export function generateReturnNumber(dateStr?: string): string {
+  const prefix = getReturnNumberPrefix(dateStr);
+  const maxSeq = extractMaxSequence(mockReturns, prefix, 0);
+  const sequence = String(maxSeq + 1).padStart(4, '0');
+  return `${prefix}${sequence}`;
+}
+
+export async function generateNextReturnNumber(dateStr?: string): Promise<string> {
+  const prefix = getReturnNumberPrefix(dateStr);
+  let maxSeq = extractMaxSequence(mockReturns, prefix, 0);
+
+  try {
+    const tableReturns = supabase.from?.('purchase_returns');
+    if (!tableReturns || typeof tableReturns.select !== 'function') {
+      return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    }
+
+    const selectQuery = tableReturns.select('return_number');
+    if (!selectQuery || typeof selectQuery.ilike !== 'function') {
+      return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    }
+
+    const { data, error } = await selectQuery.ilike('return_number', `${prefix}%`);
+
+    if (error) {
+      if (shouldFallback(error)) {
+        return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+      }
+      console.warn('Gagal membaca nomor retur terakhir:', error);
+      return `${prefix}${String(Math.floor(1000 + Math.random() * 9000))}`;
+    }
+
+    maxSeq = extractMaxSequence(data || [], prefix, maxSeq);
+    return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+  } catch (err: any) {
+    if (shouldFallback(err)) {
+      return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+    }
+    console.warn('Gagal membaca nomor retur terakhir:', err);
+    return `${prefix}${String(Math.floor(1000 + Math.random() * 9000))}`;
+  }
 }
 
 export function shouldFallback(e: any): boolean {
@@ -416,7 +480,7 @@ export async function createPurchaseReturn(
   }
 
   const claimStatus: ClaimStatus = payload.return_type === 'BARANG_RUSAK' ? 'HAPUS_BUKU' : 'MENUNGGU_PENGGANTIAN';
-  const returnNumber = payload.return_number?.trim() || generateReturnNumber(payload.return_date);
+  let currentReturnNumber = payload.return_number?.trim() || (await generateNextReturnNumber(payload.return_date));
   const totalAmount = payload.items.reduce((sum, item) => sum + (item.qty * item.cost_per_unit), 0);
   const nowIso = new Date().toISOString();
 
@@ -427,7 +491,7 @@ export async function createPurchaseReturn(
     const tableReturnItems = supabase.from?.('purchase_return_items');
 
     if (!tableReturns || !tableProducts || !tableReturnItems) {
-      return executeInMemoryCreateReturn(payload, returnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+      return executeInMemoryCreateReturn(payload, currentReturnNumber, claimStatus, totalAmount, userId, userName, nowIso);
     }
 
     // Periksa ketersediaan stok produk di database
@@ -439,60 +503,83 @@ export async function createPurchaseReturn(
 
       if (prodErr) {
         if (shouldFallback(prodErr)) {
-          return executeInMemoryCreateReturn(payload, returnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+          return executeInMemoryCreateReturn(payload, currentReturnNumber, claimStatus, totalAmount, userId, userName, nowIso);
         }
         throw prodErr;
       }
 
-      if (prodData) {
-        if (prodData.stock < item.qty) {
-          throw new Error(
-            `Stok produk "${prodData.name || item.product_id}" tidak mencukupi untuk diretur. Stok saat ini: ${prodData.stock}, kuantitas retur: ${item.qty}`
-          );
-        }
+      if (prodData && prodData.stock < item.qty) {
+        throw new Error(
+          `Stok produk "${prodData.name || item.product_id}" tidak mencukupi untuk diretur. Stok saat ini: ${prodData.stock}, kuantitas retur: ${item.qty}`
+        );
       }
     }
 
-    // Kurangi stok di database
-    for (const item of payload.items) {
-      const { data: currentProd } = await tableProducts.select('stock').eq('id', item.product_id).single();
-      const currentStock = currentProd?.stock ?? 0;
-      await tableProducts.update({
-        stock: currentStock - item.qty,
+    // Insert purchase_returns header dengan auto-increment retry saat bentrok unique constraint (23505)
+    const maxAttempts = 5;
+    const triedNumbers = new Set<string>([currentReturnNumber]);
+    let createdReturn: any = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const insertReturnData: any = {
+        return_number: currentReturnNumber,
+        return_date: payload.return_date,
+        supplier_name: payload.supplier_name.trim(),
+        original_invoice_number: payload.original_invoice_number?.trim() || null,
+        return_type: payload.return_type,
+        claim_status: claimStatus,
+        total_amount: totalAmount,
+        notes: payload.notes?.trim() || null,
+        created_at: nowIso,
         updated_at: nowIso
-      }).eq('id', item.product_id);
-    }
-
-    // Insert purchase_returns header
-    const insertReturnData: any = {
-      return_number: returnNumber,
-      return_date: payload.return_date,
-      supplier_name: payload.supplier_name.trim(),
-      original_invoice_number: payload.original_invoice_number?.trim() || null,
-      return_type: payload.return_type,
-      claim_status: claimStatus,
-      total_amount: totalAmount,
-      notes: payload.notes?.trim() || null,
-      created_at: nowIso,
-      updated_at: nowIso
-    };
-    if (isValidUUID(payload.supplier_id)) {
-      insertReturnData.supplier_id = payload.supplier_id;
-    }
-    if (isValidUUID(userId)) {
-      insertReturnData.created_by = userId;
-    }
-
-    const { data: createdReturn, error: returnInsertErr } = await tableReturns
-      .insert(insertReturnData)
-      .select()
-      .single();
-
-    if (returnInsertErr) {
-      if (shouldFallback(returnInsertErr)) {
-        return executeInMemoryCreateReturn(payload, returnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+      };
+      if (isValidUUID(payload.supplier_id)) {
+        insertReturnData.supplier_id = payload.supplier_id;
       }
-      throw returnInsertErr;
+      if (isValidUUID(userId)) {
+        insertReturnData.created_by = userId;
+      }
+
+      const { data: insertedData, error: returnInsertErr } = await tableReturns
+        .insert(insertReturnData)
+        .select()
+        .single();
+
+      if (!returnInsertErr && insertedData) {
+        createdReturn = insertedData;
+        break;
+      }
+
+      const errMsg = String(returnInsertErr?.message || '').toLowerCase();
+      const isDuplicateKey =
+        returnInsertErr?.code === '23505' ||
+        errMsg.includes('duplicate key') ||
+        errMsg.includes('purchase_returns_return_number_key');
+
+      if (isDuplicateKey && attempt < maxAttempts) {
+        let nextCandidate = await generateNextReturnNumber(payload.return_date);
+        let guard = 0;
+        while ((nextCandidate === currentReturnNumber || triedNumbers.has(nextCandidate)) && guard < 20) {
+          nextCandidate = incrementReturnNumberSuffix(
+            nextCandidate,
+            getReturnNumberPrefix(payload.return_date)
+          );
+          guard++;
+        }
+        currentReturnNumber = nextCandidate;
+        triedNumbers.add(currentReturnNumber);
+        continue;
+      }
+
+      if (returnInsertErr && shouldFallback(returnInsertErr)) {
+        return executeInMemoryCreateReturn(payload, currentReturnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+      }
+
+      throw returnInsertErr || new Error('Gagal menyimpan data retur pembelian.');
+    }
+
+    if (!createdReturn) {
+      throw new Error('Gagal menyimpan data retur pembelian setelah beberapa percobaan.');
     }
 
     // Insert purchase_return_items
@@ -512,12 +599,23 @@ export async function createPurchaseReturn(
 
     if (itemsInsertErr) {
       if (shouldFallback(itemsInsertErr)) {
-        return executeInMemoryCreateReturn(payload, returnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+        return executeInMemoryCreateReturn(payload, currentReturnNumber, claimStatus, totalAmount, userId, userName, nowIso);
       }
       throw itemsInsertErr;
     }
 
+    // Kurangi stok di database setelah header & detail retur berhasil tersimpan
+    for (const item of payload.items) {
+      const { data: currentProd } = await tableProducts.select('stock').eq('id', item.product_id).single();
+      const currentStock = currentProd?.stock ?? 0;
+      await tableProducts.update({
+        stock: Math.max(0, currentStock - item.qty),
+        updated_at: nowIso
+      }).eq('id', item.product_id);
+    }
+
     // Catat jejak audit
+    const finalReturnNumber = createdReturn.return_number || currentReturnNumber;
     try {
       await insertAuditLog({
         table_name: 'purchase_returns',
@@ -528,7 +626,7 @@ export async function createPurchaseReturn(
         new_data: { return: createdReturn, items: createdItems },
         performed_by: isValidUUID(userId) ? userId : null,
         performer_name: userName || 'Pengelola',
-        notes: `Pembuatan retur pembelian nomor ${returnNumber}`
+        notes: `Pembuatan retur pembelian nomor ${finalReturnNumber}`
       });
     } catch (auditErr) {
       console.warn('Gagal mencatat audit log retur pembelian:', auditErr);
@@ -556,7 +654,7 @@ export async function createPurchaseReturn(
     }
 
     if (shouldFallback(err)) {
-      return executeInMemoryCreateReturn(payload, returnNumber, claimStatus, totalAmount, userId, userName, nowIso);
+      return executeInMemoryCreateReturn(payload, currentReturnNumber, claimStatus, totalAmount, userId, userName, nowIso);
     }
 
     throw err;
@@ -1027,6 +1125,7 @@ export const purchaseReturnService = {
   getMockReturnAuditLogs,
   resetPurchaseReturnMockState,
   generateReturnNumber,
+  generateNextReturnNumber,
   shouldFallback,
   getSuppliers,
   getPurchaseReturns,

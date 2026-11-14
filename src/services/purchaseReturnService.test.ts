@@ -8,6 +8,7 @@ import {
   completeReturnClaim,
   updatePurchaseReturn,
   generateReturnNumber,
+  generateNextReturnNumber,
   isValidUUID,
   resetPurchaseReturnMockState,
   setMockSuppliers,
@@ -51,6 +52,47 @@ describe('purchaseReturnService', () => {
     it('should generate standardized return number format RET/YYYYMM/XXXX', () => {
       const returnNumber = generateReturnNumber('2026-10-30');
       expect(returnNumber).toMatch(/^RET\/202610\/\d{4}$/);
+    });
+
+    it('should return RET/202611/0002 from generateNextReturnNumber when RET/202611/0001 exists', async () => {
+      const ilikeMock = vi.fn().mockResolvedValue({
+        data: [{ return_number: 'RET/202611/0001' }],
+        error: null
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'purchase_returns') {
+          return {
+            select: vi.fn().mockReturnValue({
+              ilike: ilikeMock
+            })
+          };
+        }
+        return undefined;
+      });
+
+      const nextNumber = await generateNextReturnNumber('2026-11-14');
+      expect(nextNumber).toBe('RET/202611/0002');
+      expect(ilikeMock).toHaveBeenCalledWith('return_number', 'RET/202611/%');
+    });
+
+    it('should use highest sequence number when gaps exist in generateNextReturnNumber', async () => {
+      const ilikeMock = vi.fn().mockResolvedValue({
+        data: [
+          { return_number: 'RET/202611/0001' },
+          { return_number: 'RET/202611/0004' }
+        ],
+        error: null
+      });
+
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          ilike: ilikeMock
+        })
+      });
+
+      const nextNumber = await generateNextReturnNumber('2026-11-14');
+      expect(nextNumber).toBe('RET/202611/0005');
     });
   });
 
@@ -230,6 +272,118 @@ describe('purchaseReturnService', () => {
 
       const products = getMockReturnProducts();
       expect(products.find(p => p.id === 'prod-2')?.stock).toBe(3);
+    });
+  });
+
+  describe('createPurchaseReturn - Duplicate Key (23505) Auto-Retry', () => {
+    it('should automatically retry with RET/202611/0002 and succeed when first insert returns 23505', async () => {
+      const insertedPayloads: any[] = [];
+      let insertAttempt = 0;
+
+      const returnInsertSingleMock = vi.fn().mockImplementation(async () => {
+        insertAttempt++;
+        if (insertAttempt === 1) {
+          return {
+            data: null,
+            error: {
+              code: '23505',
+              message: 'duplicate key value violates unique constraint "purchase_returns_return_number_key"'
+            }
+          };
+        }
+        return {
+          data: {
+            id: 'ret-uuid-2',
+            return_number: insertedPayloads[insertAttempt - 1].return_number,
+            return_date: '2026-11-14',
+            supplier_name: 'PT Indofood Sukses Makmur',
+            return_type: 'PIUTANG_PENGGANTIAN',
+            claim_status: 'MENUNGGU_PENGGANTIAN',
+            total_amount: 140000
+          },
+          error: null
+        };
+      });
+
+      const returnSelectIlikeMock = vi.fn().mockResolvedValue({
+        data: [{ return_number: 'RET/202611/0001' }],
+        error: null
+      });
+
+      const productUpdateEqMock = vi.fn().mockResolvedValue({ data: null, error: null });
+      const productUpdateMock = vi.fn().mockReturnValue({ eq: productUpdateEqMock });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'purchase_returns') {
+          return {
+            select: vi.fn().mockReturnValue({
+              ilike: returnSelectIlikeMock
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              insertedPayloads.push(payload);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: returnInsertSingleMock
+                })
+              };
+            })
+          };
+        }
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'prod-1', name: 'Beras Premium 5kg', stock: 10 },
+                  error: null
+                })
+              })
+            }),
+            update: productUpdateMock
+          };
+        }
+        if (table === 'purchase_return_items') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'item-uuid-1',
+                    return_id: 'ret-uuid-2',
+                    product_id: 'prod-1',
+                    qty: 2,
+                    cost_per_unit: 70000,
+                    subtotal: 140000
+                  }
+                ],
+                error: null
+              })
+            })
+          };
+        }
+        return undefined;
+      });
+
+      const result = await createPurchaseReturn(
+        {
+          return_number: 'RET/202611/0001',
+          return_date: '2026-11-14',
+          supplier_name: 'PT Indofood Sukses Makmur',
+          return_type: 'PIUTANG_PENGGANTIAN',
+          items: [{ product_id: 'prod-1', qty: 2, cost_per_unit: 70000 }]
+        },
+        'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+        'Admin SIMKOP'
+      );
+
+      expect(insertAttempt).toBe(2);
+      expect(insertedPayloads[0].return_number).toBe('RET/202611/0001');
+      expect(insertedPayloads[1].return_number).toBe('RET/202611/0002');
+      expect(result.return_number).toBe('RET/202611/0002');
+      expect(productUpdateMock).toHaveBeenCalledTimes(1);
+      expect(productUpdateMock).toHaveBeenCalledWith(
+        expect.objectContaining({ stock: 8 })
+      );
     });
   });
 
