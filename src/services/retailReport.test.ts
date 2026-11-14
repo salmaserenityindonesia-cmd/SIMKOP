@@ -534,6 +534,51 @@ describe('Retail Report Service', () => {
       expect(stock.potensiPenjualan).toBe(1000000000);
       expect(stock.items[0].valuasiAset).toBe(1000000000);
     });
+
+    it('should request range(0, 9999), exclude inactive products, and fallback when is_active column is absent', async () => {
+      const rangeMock = vi.fn().mockReturnThis();
+      let callCount = 0;
+
+      const mockFrom = supabase.from as any;
+      mockFrom.mockImplementation((table: string) => {
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            range: rangeMock,
+            then: (resolve: any) => {
+              callCount += 1;
+              if (callCount === 1) {
+                return resolve({ data: null, error: { message: 'column products.is_active does not exist' } });
+              }
+              return resolve({
+                data: [
+                  { id: 'p-active-zero', sku: 'SKU-0', name: 'Barang Habis', stock: 0, min_stock_alert: 5, buy_price: 5000, sell_price: 7000, unit: 'pcs', category_id: null, is_active: true },
+                  { id: 'p-inactive', sku: 'SKU-INACT', name: 'Barang Nonaktif', stock: 0, min_stock_alert: 5, buy_price: 5000, sell_price: 7000, unit: 'pcs', category_id: null, is_active: false },
+                ],
+                error: null,
+              });
+            },
+          };
+        }
+        if (table === 'product_categories') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const stock = await getStockValuation();
+
+      expect(rangeMock).toHaveBeenCalledWith(0, 9999);
+      expect(callCount).toBe(2);
+      expect(stock.items).toHaveLength(1);
+      expect(stock.items[0].id).toBe('p-active-zero');
+    });
   });
 });
 

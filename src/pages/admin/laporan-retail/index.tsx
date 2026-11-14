@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import {
   FileSpreadsheet,
@@ -165,6 +165,27 @@ export default function LaporanRetail() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination for out-of-stock products table
+  const [outOfStockPage, setOutOfStockPage] = useState<number>(1);
+  const [outOfStockPageSize, setOutOfStockPageSize] = useState<number>(10);
+
+  const inventoryProducts = stockData?.items ?? [];
+
+  const outOfStockProducts = useMemo(() => {
+    return (inventoryProducts || [])
+      .filter((item: any) => Number(item.stock ?? 0) <= 0)
+      .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [inventoryProducts]);
+
+  const totalOutOfStock = outOfStockProducts.length;
+  const totalOutOfStockPages = Math.max(1, Math.ceil(totalOutOfStock / outOfStockPageSize));
+  const outOfStockStartIndex = (outOfStockPage - 1) * outOfStockPageSize;
+  const outOfStockEndIndex = Math.min(outOfStockStartIndex + outOfStockPageSize, totalOutOfStock);
+  const paginatedOutOfStockProducts = useMemo(
+    () => outOfStockProducts.slice(outOfStockStartIndex, outOfStockEndIndex),
+    [outOfStockProducts, outOfStockStartIndex, outOfStockEndIndex]
+  );
+
   // Fetch Koperasi Profile on mount for Z-Report branding
   useEffect(() => {
     getKoperasiProfile()
@@ -189,6 +210,7 @@ export default function LaporanRetail() {
       setFastMoving(fast);
       setStockData(stock);
       setShiftHistory(resolvedShifts);
+      setOutOfStockPage(1);
 
       if (isManualSync) {
         const txCount = eod?.transactions?.length ?? 0;
@@ -754,7 +776,7 @@ export default function LaporanRetail() {
                   <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
                     <h3 className="font-semibold text-[#0F2942]">Inventori Produk &amp; Peringatan Stok Buffer</h3>
                     <span className="text-xs text-slate-500">
-                      {stockData?.items.length ?? 0} produk
+                      {totalOutOfStock} produk habis
                     </span>
                   </div>
                   <div className="overflow-x-auto">
@@ -771,44 +793,80 @@ export default function LaporanRetail() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E2E8F0]">
-                        {(stockData?.items ?? []).map((item: any) => (
+                        {paginatedOutOfStockProducts.map((item: any) => (
                           <tr
                             key={item.id}
-                            className={`hover:bg-slate-50 ${item.status === 'kritis' || item.status === 'habis' ? 'bg-[#FEF2F2]/40' : ''}`}
+                            className="hover:bg-slate-50 bg-[#FEF2F2]/40"
                           >
                             <td className="px-4 py-3 font-mono text-xs text-slate-500">{item.sku || '-'}</td>
                             <td className="px-4 py-3 font-medium">{item.name}</td>
-                            <td className={`px-4 py-3 text-right font-bold ${
-                              item.status === 'kritis' || item.status === 'habis'
-                                ? 'text-[#991B1B]'
-                                : 'text-[#0F2942]'
-                            }`}>
-                              {item.stock} {item.unit || 'pcs'}
+                            <td className="px-4 py-3 text-right text-rose-600 font-bold">
+                              0 {item.unit || 'pcs'}
                             </td>
-                            <td className="px-4 py-3"><StockBadge status={item.status} /></td>
+                            <td className="px-4 py-3">
+                              <span className="bg-rose-100 text-rose-700 border border-rose-200 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                                Habis
+                              </span>
+                            </td>
                             <td className="px-4 py-3 text-right text-slate-600">{formatRp(item.buy_price)}</td>
                             <td className="px-4 py-3 text-right">{formatRp(item.sell_price)}</td>
-                            <td className="px-4 py-3 text-right font-medium">{formatRp(item.valuasiAset)}</td>
+                            <td className="px-4 py-3 text-right font-medium">{formatRp(0)}</td>
                           </tr>
                         ))}
-                        {(stockData?.items ?? []).length === 0 && (
+                        {totalOutOfStock === 0 && (
                           <tr>
                             <td colSpan={7} className="px-4 py-16 text-center text-slate-400">
-                              Tidak ada data produk.
+                              Tidak ada produk yang habis saat ini. Seluruh stok barang tersedia di gudang.
                             </td>
                           </tr>
                         )}
                       </tbody>
-                      {stockData && stockData.items.length > 0 && (
-                        <tfoot className="bg-[#F8FAFC] border-t-2 border-[#CBD5E1] font-semibold text-sm">
-                          <tr>
-                            <td colSpan={6} className="px-4 py-3 text-right text-slate-500">TOTAL VALUASI ASET</td>
-                            <td className="px-4 py-3 text-right">{formatRp(stockData.totalValuasiAset)}</td>
-                          </tr>
-                        </tfoot>
-                      )}
                     </table>
                   </div>
+                  {totalOutOfStock > 0 && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-white rounded-b-xl text-xs sm:text-sm text-slate-600">
+                      <div className="flex items-center gap-3">
+                        <span>
+                          Menampilkan <strong className="font-semibold text-slate-800">{outOfStockStartIndex + 1}-{outOfStockEndIndex}</strong> dari <strong className="font-semibold text-slate-800">{totalOutOfStock}</strong> produk habis
+                        </span>
+                        <select
+                          value={outOfStockPageSize}
+                          onChange={(e) => {
+                            setOutOfStockPageSize(Number(e.target.value));
+                            setOutOfStockPage(1);
+                          }}
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                        >
+                          <option value={10}>10 / halaman</option>
+                          <option value={25}>25 / halaman</option>
+                          <option value={50}>50 / halaman</option>
+                          <option value={100}>100 / halaman</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setOutOfStockPage((prev) => Math.max(prev - 1, 1))}
+                          disabled={outOfStockPage === 1}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Prev
+                        </button>
+                        <span className="px-3 py-1.5 text-xs font-semibold text-slate-800">
+                          {outOfStockPage} / {totalOutOfStockPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setOutOfStockPage((prev) => Math.min(prev + 1, totalOutOfStockPages))}
+                          disabled={outOfStockPage >= totalOutOfStockPages}
+                          className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -364,18 +364,32 @@ export const getStockValuation = async (
   categoryId?: string,
   stockStatus?: 'all' | 'low' | 'out'
 ): Promise<StockValuation> => {
-  // Fetch products (without is_active filter to be safe — not all schemas have it)
-  let query = supabase
-    .from('products')
-    .select('id, sku, name, stock, min_stock_alert, buy_price, sell_price, unit, category_id')
-    .order('name');
+  const buildProductsQuery = (selectColumns: string) => {
+    let q: any = supabase
+      .from('products')
+      .select(selectColumns)
+      .order('name');
 
-  if (categoryId && categoryId !== 'all') {
-    query = query.eq('category_id', categoryId);
+    if (categoryId && categoryId !== 'all') {
+      q = q.eq('category_id', categoryId);
+    }
+    if (typeof q.range === 'function') {
+      q = q.range(0, 9999);
+    }
+    return q;
+  };
+
+  let { data: products, error }: { data: any[] | null; error: any } = await buildProductsQuery(
+    'id, sku, name, stock, min_stock_alert, buy_price, sell_price, unit, category_id, is_active'
+  );
+  if (error) {
+    // Fallback if schema does not include is_active
+    const fallbackRes = await buildProductsQuery(
+      'id, sku, name, stock, min_stock_alert, buy_price, sell_price, unit, category_id'
+    );
+    if (fallbackRes.error) throw fallbackRes.error;
+    products = fallbackRes.data;
   }
-
-  const { data: products, error } = await query;
-  if (error) throw error;
 
   // Fetch categories
   const categoryIds = [...new Set((products || []).map(p => p.category_id).filter(Boolean))];
@@ -394,6 +408,8 @@ export const getStockValuation = async (
   const items: any[] = [];
 
   (products || []).forEach(product => {
+    if (product.is_active === false) return;
+
     // 1. Sanitasi stok fisik (cegah NaN, negatif, atau angka ekstrim)
     const rawStock = sanitizeNumber(product.stock, 0);
     const stock = Math.max(0, Math.min(rawStock, MAX_REASONABLE_STOCK));
