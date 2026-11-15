@@ -135,13 +135,16 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       // Basic structure
       expect(html).toContain('Manajemen Anggota');
       expect(html).toContain('Kelola data induk anggota koperasi');
+      expect(html).toContain('No. Referensi');
       expect(html).toContain('NRP');
+      expect(html.indexOf('No. Referensi')).toBeLessThan(html.indexOf('>NRP<'));
       expect(html).toContain('Nama');
       expect(html).toContain('Pangkat');
       expect(html).toContain('Nomor Rekening');
       expect(html).toContain('Status');
       expect(html).toContain('Terdaftar');
       expect(html).toContain('Aksi');
+      expect(html).toContain('Cari anggota (No. Ref / Nama / NRP)...');
 
       // Verification: Hapus button is completely removed
       expect(html).not.toContain('title="Hapus"');
@@ -200,6 +203,8 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('type="date"');
 
       // Existing required fields remain intact
+      expect(html).toContain('Nomor Referensi (Opsional)');
+      expect(html).toContain('placeholder="Contoh: REF-001"');
       expect(html).toContain('NRP');
       expect(html).toContain('Nama Lengkap');
       expect(html).toContain('Pangkat');
@@ -398,11 +403,14 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
   });
 
   describe('Import Data Induk Anggota Modal UI Structure', () => {
-    it('renders Import Data Induk Anggota modal with Indigo palette, 6-column description, template button, and disabled submit button', () => {
+    it('renders Import Data Induk Anggota modal with Indigo palette, 7-column description, template button, and disabled submit button', () => {
       const html = renderToStaticMarkup(<ManajemenAnggota initialMemberImportModalOpen={true} />);
 
       expect(html).toContain('Import Data Induk Anggota');
       expect(html).toContain('Unduh Template Data Anggota (.xlsx)');
+      expect(html).toContain('7 kolom:');
+      expect(html).toContain('Data Induk Anggota (7 kolom)');
+      expect(html).toContain('nomor_referensi');
       expect(html).toContain('nrp');
       expect(html).toContain('bank_account_number');
       expect(html).toContain('membership_status');

@@ -518,6 +518,7 @@ describe('memberService - createMember', () => {
     // Verify anggota insert payload
     expect(insertAnggotaSpy).toHaveBeenCalledWith([
       {
+        nomor_referensi: null,
         nrp: '12345678',
         nama: 'Serma Joni',
         pangkat: 'Serma',

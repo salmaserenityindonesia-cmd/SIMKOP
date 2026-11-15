@@ -121,6 +121,7 @@ export default function ManajemenAnggota({
   const [showModal, setShowModal] = useState(initialShowModal);
   const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(null);
   const [formData, setFormData] = useState({
+    nomor_referensi: '',
     nrp: '',
     nama: '',
     pangkat: '',
@@ -204,6 +205,7 @@ export default function ManajemenAnggota({
   const handleOpenAddModal = () => {
     setEditingAnggota(null);
     setFormData({
+      nomor_referensi: '',
       nrp: '',
       nama: '',
       pangkat: '',
@@ -218,6 +220,7 @@ export default function ManajemenAnggota({
   const handleOpenEditModal = (anggota: Anggota) => {
     setEditingAnggota(anggota);
     setFormData({
+      nomor_referensi: anggota.nomor_referensi || '',
       nrp: anggota.nrp || '',
       nama: anggota.nama,
       pangkat: anggota.pangkat || '',
@@ -244,6 +247,7 @@ export default function ManajemenAnggota({
       setIsSubmitting(true);
       if (editingAnggota) {
         await updateAnggota(editingAnggota.id, {
+          nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
           pangkat: formData.pangkat,
@@ -254,6 +258,7 @@ export default function ManajemenAnggota({
         showToast('Data anggota berhasil diperbarui.', 'success');
       } else {
         await createMember({
+          nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
           pangkat: formData.pangkat,
@@ -274,7 +279,8 @@ export default function ManajemenAnggota({
 
   const filteredList = anggotaList.filter(a => 
     a.nama.toLowerCase().includes(search.toLowerCase()) || 
-    (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase()))
+    (a.nrp && a.nrp.toLowerCase().includes(search.toLowerCase())) ||
+    (a.nomor_referensi && a.nomor_referensi.toLowerCase().includes(search.toLowerCase()))
   );
 
   const totalPages = Math.ceil(filteredList.length / itemsPerPage);
@@ -428,6 +434,7 @@ export default function ManajemenAnggota({
     try {
       const result: MemberParseResult = {
         rows: memberImportRows.map((row) => ({
+          nomor_referensi: row.nomor_referensi || null,
           nrp: row.nrp,
           nama: row.nama,
           pangkat: row.pangkat,
@@ -702,7 +709,7 @@ export default function ManajemenAnggota({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
               type="text"
-              placeholder="Cari anggota (Nama / NRP)..."
+              placeholder="Cari anggota (No. Ref / Nama / NRP)..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] w-64"
@@ -780,6 +787,7 @@ export default function ManajemenAnggota({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-100 text-gray-600 text-sm">
+                <th className="py-3 px-4 font-medium border-b border-gray-200">No. Referensi</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
@@ -792,26 +800,29 @@ export default function ManajemenAnggota({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-gray-500">
+                  <td colSpan={8} className="py-12 text-center text-gray-500">
                     <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-[var(--color-primary)]" />
                     <p>Memuat data...</p>
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-red-500">
+                  <td colSpan={8} className="py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : filteredList.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-gray-500">
+                  <td colSpan={8} className="py-8 text-center text-gray-500">
                     Tidak ada data anggota.
                   </td>
                 </tr>
               ) : (
                 paginatedList.map((anggota) => (
                   <tr key={anggota.id} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-3 px-4 font-mono text-xs text-slate-700">
+                      {anggota.nomor_referensi || '-'}
+                    </td>
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
@@ -927,6 +938,19 @@ export default function ManajemenAnggota({
                     </div>
                   </div>
                 )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nomor Referensi (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.nomor_referensi}
+                    onChange={(e) => setFormData({...formData, nomor_referensi: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] font-mono text-sm"
+                    placeholder="Contoh: REF-001"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     NRP <span className="text-red-500">*</span>
@@ -1110,7 +1134,8 @@ export default function ManajemenAnggota({
                   </span>
                   <h4 className="text-sm font-bold text-slate-800">Unduh Template Data Anggota</h4>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Khusus untuk data profil master anggota (6 kolom:{' '}
+                    Khusus untuk data profil master anggota (7 kolom:{' '}
+                    <code className="bg-slate-100 px-1 rounded">nomor_referensi</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">nrp</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">nama</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">pangkat</code>,{' '}
@@ -1167,7 +1192,7 @@ export default function ManajemenAnggota({
                         {memberImportFileName} ({memberImportRows.length} baris anggota terbaca)
                       </span>
                     ) : (
-                      <span>Belum ada file dipilih. Silakan pilih file Excel Data Induk Anggota (6 kolom).</span>
+                      <span>Belum ada file dipilih. Silakan pilih file Excel Data Induk Anggota (7 kolom).</span>
                     )}
                   </div>
                 </div>
@@ -1208,6 +1233,7 @@ export default function ManajemenAnggota({
                     <table className="w-full text-xs text-left border-collapse">
                       <thead className="bg-slate-100 text-slate-700 sticky top-0">
                         <tr>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200">No. Referensi</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">NRP</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Nama</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Pangkat</th>
@@ -1220,6 +1246,7 @@ export default function ManajemenAnggota({
                       <tbody className="divide-y divide-slate-100 bg-white">
                         {memberImportRows.slice(0, 100).map((row, idx) => (
                           <tr key={`${row.nrp}-${idx}`} className="hover:bg-indigo-50/40">
+                            <td className="px-3 py-2 font-mono text-slate-700">{row.nomor_referensi || '-'}</td>
                             <td className="px-3 py-2 font-mono text-slate-800">{row.nrp}</td>
                             <td className="px-3 py-2 font-medium text-slate-800">{row.nama}</td>
                             <td className="px-3 py-2 text-slate-700">{row.pangkat || '-'}</td>
@@ -1235,7 +1262,7 @@ export default function ManajemenAnggota({
                         ))}
                         {memberImportRows.length > 100 && (
                           <tr>
-                            <td colSpan={7} className="px-3 py-2 text-center text-slate-500 bg-slate-50">
+                            <td colSpan={8} className="px-3 py-2 text-center text-slate-500 bg-slate-50">
                               ... dan {memberImportRows.length - 100} baris lainnya
                             </td>
                           </tr>

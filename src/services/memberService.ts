@@ -13,6 +13,7 @@ function shouldFallback(e: any): boolean {
 
 export interface Anggota {
   id: string;
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   pangkat?: string | null;
@@ -38,6 +39,7 @@ export interface ImportMembersChunkedResult {
 }
 
 export interface MemberImportInput {
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   pangkat?: string | null;
@@ -55,6 +57,7 @@ export interface MemberImportInput {
 }
 
 export interface CreateMemberInput {
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   pangkat?: string;
@@ -75,6 +78,7 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
   }
 
   const anggotaPayload = {
+    nomor_referensi: input.nomor_referensi?.trim() || null,
     nrp: input.nrp.trim(),
     nama: input.nama.trim(),
     pangkat: input.pangkat?.trim() || null,
@@ -370,6 +374,7 @@ export async function importMembersChunked(
           }
 
           return {
+            nomor_referensi: m.nomor_referensi ? String(m.nomor_referensi).trim() : null,
             nrp: String(m.nrp || '').trim(),
             nama: String(m.nama || '').trim(),
             pangkat: m.pangkat ? String(m.pangkat).trim() : null,
@@ -745,7 +750,7 @@ export async function getMembersComprehensiveReport(
   // Query 1: Anggota
   let memberQuery = supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status');
+    .select('id, nomor_referensi, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status');
 
   if (memberIds && memberIds.length > 0) {
     memberQuery = memberQuery.in('id', memberIds);

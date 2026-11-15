@@ -378,8 +378,9 @@ describe('memberMigrationParser - computeReverseWajibBreakdown', () => {
 });
 
 describe('memberMigrationParser - Strict Header Validation & parseMemberImportExcel', () => {
-  it('accepts valid 6-column member headers (case-insensitive & trimmed)', () => {
+  it('accepts valid 7-column member headers (case-insensitive & trimmed)', () => {
     const result = validateMemberImportHeaders([
+      ' nomor_referensi ',
       ' NRP ',
       'Nama',
       'PANGKAT',
@@ -438,17 +439,33 @@ describe('memberMigrationParser - Strict Header Validation & parseMemberImportEx
     const buffer = await workbook.xlsx.writeBuffer();
 
     await expect(parseMemberImportExcel(buffer as ArrayBuffer)).rejects.toThrow(
-      /Header kolom tidak sesuai template Data Anggota\. Kolom yang kurang: bank_account_number, membership_status, tgl_awal_anggota/
+      /Header kolom tidak sesuai template Data Anggota\. Kolom yang kurang: nomor_referensi, bank_account_number, membership_status, tgl_awal_anggota/
     );
   });
 
-  it('builds and parses the 6-column member import template with zeroed savings/loan balances', async () => {
+  it('builds and parses the 7-column member import template with nomor_referensi leftmost and zeroed savings/loan balances', async () => {
     const wb = await buildMemberImportTemplateWorkbook();
+    const ws = wb.worksheets[0];
+    const headerRow: unknown[] = [];
+    ws.getRow(1).eachCell((cell) => {
+      headerRow.push(cell.value);
+    });
+    expect(headerRow).toEqual([
+      'nomor_referensi',
+      'nrp',
+      'nama',
+      'pangkat',
+      'bank_account_number',
+      'membership_status',
+      'tgl_awal_anggota',
+    ]);
+
     const buffer = await wb.xlsx.writeBuffer();
     const rows = await parseMemberImportExcel(buffer as ArrayBuffer);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
+      nomor_referensi: 'REF-001',
       nrp: '95168420',
       nama: 'Budi Santoso',
       pangkat: 'Aipda',

@@ -8,6 +8,7 @@ import {
 } from '../utils/memberMigrationParser';
 
 export interface MigrationRowData {
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   pangkat: string | null;
@@ -264,6 +265,7 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     }
 
     rows.push({
+      nomor_referensi: getVal('nomor_referensi')?.toString().trim() || null,
       nrp,
       nama,
       pangkat: getVal('pangkat')?.toString().trim() || null,
@@ -320,6 +322,7 @@ export const executeMigration = async (
     try {
       // A. Upsert Anggota
       const anggotaPayload = {
+        nomor_referensi: row.nomor_referensi ? String(row.nomor_referensi).trim() : null,
         nrp: row.nrp,
         nama: row.nama,
         pangkat: row.pangkat,

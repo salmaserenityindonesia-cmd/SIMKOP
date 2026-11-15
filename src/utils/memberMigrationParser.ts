@@ -168,6 +168,7 @@ export const sanitizeBankAccountNumber = (val: unknown): string | null => {
 };
 
 export const REQUIRED_MEMBER_HEADERS = [
+  'nomor_referensi',
   'nrp',
   'nama',
   'pangkat',
@@ -182,6 +183,7 @@ export const MEMBER_IMPORT_TEMPLATE_FILENAME = 'template_import_anggota.xlsx';
 
 export const MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS = [
   {
+    nomor_referensi: 'REF-001',
     nrp: '95168420',
     nama: 'Budi Santoso',
     pangkat: 'Aipda',
@@ -223,13 +225,14 @@ export function validateMemberImportHeaders(rawHeaders: unknown[]): string[] {
 }
 
 /**
- * Membangun workbook Excel template 6 kolom Data Induk Anggota.
+ * Membangun workbook Excel template 7 kolom Data Induk Anggota.
  */
 export async function buildMemberImportTemplateWorkbook(): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Template Import Anggota');
 
   worksheet.columns = [
+    { header: 'nomor_referensi', key: 'nomor_referensi', width: 20 },
     { header: 'nrp', key: 'nrp', width: 15 },
     { header: 'nama', key: 'nama', width: 30 },
     { header: 'pangkat', key: 'pangkat', width: 20 },
@@ -238,7 +241,7 @@ export async function buildMemberImportTemplateWorkbook(): Promise<ExcelJS.Workb
     { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 20 },
   ];
 
-  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+  ['nomor_referensi', 'nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
     worksheet.getColumn(k).numFmt = '@';
   });
   worksheet.getColumn('tgl_awal_anggota').numFmt = 'yyyy-mm-dd';
@@ -278,7 +281,7 @@ function extractExcelCellValue(cell: ExcelJS.Cell): unknown {
 }
 
 /**
- * Mem-parsing file Excel Import Data Induk Anggota (6 kolom profil) dengan validasi header ketat.
+ * Mem-parsing file Excel Import Data Induk Anggota (7 kolom profil) dengan validasi header ketat.
  * Seluruh nilai simpanan & pinjaman di-nolkan sehingga hanya memproses profil induk anggota.
  */
 export async function parseMemberImportExcel(
@@ -338,6 +341,7 @@ export async function parseMemberImportExcel(
       return extractExcelCellValue(row.getCell(idx));
     };
 
+    const rawNomorReferensi = getVal('nomor_referensi');
     const rawNrp = getVal('nrp');
     const rawNama = getVal('nama');
     const rawPangkat = getVal('pangkat');
@@ -345,10 +349,14 @@ export async function parseMemberImportExcel(
     const rawStatus = getVal('membership_status');
     const rawTgl = getVal('tgl_awal_anggota');
 
+    const nomor_referensi =
+      rawNomorReferensi !== null && rawNomorReferensi !== undefined
+        ? String(rawNomorReferensi).trim()
+        : '';
     const nrp = rawNrp !== null && rawNrp !== undefined ? String(rawNrp).trim() : '';
     const nama = rawNama !== null && rawNama !== undefined ? String(rawNama).trim() : '';
 
-    if (!nrp && !nama && !rawPangkat && !rawBank && !rawStatus && !rawTgl) {
+    if (!nomor_referensi && !nrp && !nama && !rawPangkat && !rawBank && !rawStatus && !rawTgl) {
       return;
     }
 
@@ -369,6 +377,7 @@ export async function parseMemberImportExcel(
 
     rows.push(
       sanitizeMigrationMemberRow({
+        nomor_referensi,
         nrp,
         nama,
         pangkat: rawPangkat,
@@ -395,6 +404,7 @@ export async function parseMemberImportExcel(
 }
 
 export interface SanitizedMigrationMemberRow extends SanitizedMigrationLoan {
+  nomor_referensi: string;
   nrp: string;
   nama: string;
   pangkat: string | null;
@@ -407,12 +417,13 @@ export interface SanitizedMigrationMemberRow extends SanitizedMigrationLoan {
 }
 
 /**
- * Helper sanitasi lengkap baris impor/migrasi anggota (mendukung 6 kolom profil maupun 14 kolom migrasi).
+ * Helper sanitasi lengkap baris impor/migrasi anggota (mendukung 7 kolom profil maupun 14 kolom migrasi).
  * Kolom simpanan & pinjaman yang tidak ada atau kosong otomatis bernilai 0.
  */
 export const sanitizeMigrationMemberRow = (row: any): SanitizedMigrationMemberRow => {
   const loan = sanitizeMigrationLoanRow(row);
   return {
+    nomor_referensi: row?.nomor_referensi !== undefined && row?.nomor_referensi !== null ? String(row.nomor_referensi).trim() : '',
     nrp: row?.nrp !== undefined && row?.nrp !== null ? String(row.nrp).trim() : '',
     nama: row?.nama !== undefined && row?.nama !== null ? String(row.nama).trim() : '',
     pangkat: row?.pangkat ? String(row.pangkat).trim() : null,
