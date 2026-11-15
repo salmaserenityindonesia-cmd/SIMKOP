@@ -182,7 +182,7 @@ describe('syncInitialLoanBalances', () => {
     vi.clearAllMocks();
   });
 
-  it('throws an error if effectiveDate is missing or invalid', async () => {
+  it('throws an error if a non-empty effectiveDate has an invalid date format', async () => {
     await expect(
       syncInitialLoanBalances(
         [
@@ -201,12 +201,12 @@ describe('syncInitialLoanBalances', () => {
             isValid: true,
           },
         ],
-        ''
+        'bukan-tanggal'
       )
     ).rejects.toThrow(/Tanggal aktif saldo awal pinjaman wajib diisi/);
   });
 
-  it('performs clean overwrite, inserts loans, FIFO loan_schedules, SALDO_AWAL loan_repayments, and logs metadata', async () => {
+  it('performs clean overwrite, inserts loans, FIFO loan_schedules from disbursed_at + 1 month, SALDO_AWAL loan_repayments, and clears cut-off setting', async () => {
     const deletedRepayLoanIds: string[][] = [];
     const deletedSchedLoanIds: string[][] = [];
     const deletedLoanIds: string[][] = [];
@@ -214,6 +214,7 @@ describe('syncInitialLoanBalances', () => {
     const insertedSchedules: any[] = [];
     const insertedRepayments: any[] = [];
     const upsertedSettings: any[] = [];
+    const deletedSettings: Array<{ col: string; val: string }> = [];
     const insertedAuditLogs: any[] = [];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -293,6 +294,12 @@ describe('syncInitialLoanBalances', () => {
             upsertedSettings.push(payload);
             return Promise.resolve({ error: null });
           }),
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              deletedSettings.push({ col, val });
+              return Promise.resolve({ error: null });
+            }),
+          }),
         };
       }
       if (table === 'audit_logs') {
@@ -344,17 +351,18 @@ describe('syncInitialLoanBalances', () => {
       principal_amount: 4000000,
       agreed_tenor_months: 4,
       planned_installment_amount: 1000000,
+      sisa_pinjaman: 2500000,
       disbursed_at: '2026-01-10',
       status: 'active',
-      notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-03-01)',
+      notes: 'Saldo Awal Pinjaman',
     });
 
-    // FIFO allocation of 1,500,000 across 4 periods of 1,000,000
+    // FIFO allocation of 1,500,000 across 4 periods of 1,000,000 starting disbursed_at + 1 month
     expect(insertedSchedules[0]).toHaveLength(4);
-    expect(insertedSchedules[0][0]).toMatchObject({ period_number: 1, status: 'paid', paid_amount: 1000000 });
-    expect(insertedSchedules[0][1]).toMatchObject({ period_number: 2, status: 'partial', paid_amount: 500000 });
-    expect(insertedSchedules[0][2]).toMatchObject({ period_number: 3, status: 'unpaid', paid_amount: 0 });
-    expect(insertedSchedules[0][3]).toMatchObject({ period_number: 4, status: 'unpaid', paid_amount: 0 });
+    expect(insertedSchedules[0][0]).toMatchObject({ period_number: 1, due_date: '2026-02-10', status: 'paid', paid_amount: 1000000 });
+    expect(insertedSchedules[0][1]).toMatchObject({ period_number: 2, due_date: '2026-03-10', status: 'partial', paid_amount: 500000 });
+    expect(insertedSchedules[0][2]).toMatchObject({ period_number: 3, due_date: '2026-04-10', status: 'unpaid', paid_amount: 0 });
+    expect(insertedSchedules[0][3]).toMatchObject({ period_number: 4, due_date: '2026-05-10', status: 'unpaid', paid_amount: 0 });
 
     expect(insertedRepayments[0]).toMatchObject({
       loan_id: 'new-loan-1',
@@ -362,16 +370,113 @@ describe('syncInitialLoanBalances', () => {
       amount_paid: 1500000,
     });
 
-    expect(upsertedSettings[0]).toMatchObject({
-      key: 'initial_loans_effective_date',
-      value: '2026-03-01',
-    });
+    expect(upsertedSettings).toHaveLength(0);
+    expect(deletedSettings).toContainEqual({ col: 'key', val: 'initial_loans_effective_date' });
 
     expect(insertedAuditLogs[0]).toMatchObject({
       table_name: 'loans',
       action: 'UPLOAD_INITIAL_LOANS',
       record_id: '2026-03-01',
     });
+  });
+
+  it('generates schedules from tgl_awal_pinjaman + 1 month through tenor with end-of-month clamping when effectiveDate is omitted', async () => {
+    const insertedLoans: any[] = [];
+    const insertedSchedules: any[] = [];
+    const deletedSettings: Array<{ col: string; val: string }> = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+          insert: vi.fn().mockImplementation((payload: any) => {
+            insertedLoans.push(payload);
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'new-loan-eom' },
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          insert: vi.fn().mockImplementation((payload: any) => {
+            insertedSchedules.push(payload);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+      if (table === 'loan_repayments' || table === 'audit_logs') {
+        return {
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              deletedSettings.push({ col, val });
+              return Promise.resolve({ error: null });
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await syncInitialLoanBalances([
+      {
+        nrp: '12345678',
+        nama: 'Budi Santoso',
+        jenis_pinjaman: 'REG',
+        loan_type_id: 'lt-1',
+        loan_type_name: 'Pinjaman Reguler',
+        jumlah_pinjaman: 12000000,
+        tgl_awal_pinjaman: '2025-01-31',
+        nilai_angsuran: 1000000,
+        tenor: 12,
+        total_terangsur: 4000000,
+        sisa_pinjaman: 8000000,
+        isValid: true,
+      },
+    ]);
+
+    expect(result.insertedCount).toBe(1);
+    expect(result.effectiveDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(deletedSettings).toContainEqual({ col: 'key', val: 'initial_loans_effective_date' });
+    expect(insertedLoans[0]).toMatchObject({
+      sisa_pinjaman: 8000000,
+      notes: 'Saldo Awal Pinjaman',
+    });
+
+    const schedules = insertedSchedules[0];
+    expect(schedules).toHaveLength(12);
+    expect(schedules[0]).toMatchObject({ period_number: 1, due_date: '2025-02-28', status: 'paid', paid_amount: 1000000 });
+    expect(schedules[1]).toMatchObject({ period_number: 2, due_date: '2025-03-31', status: 'paid', paid_amount: 1000000 });
+    expect(schedules[2]).toMatchObject({ period_number: 3, due_date: '2025-04-30', status: 'paid', paid_amount: 1000000 });
+    expect(schedules[3]).toMatchObject({ period_number: 4, due_date: '2025-05-31', status: 'paid', paid_amount: 1000000 });
+    for (let i = 4; i < 12; i++) {
+      expect(schedules[i]).toMatchObject({
+        period_number: i + 1,
+        status: 'unpaid',
+        paid_amount: 0,
+      });
+    }
+    expect(schedules[11].due_date).toBe('2026-01-31');
   });
 
   it('throws an error when a row with jumlah_pinjaman > 0 has an unregistered NRP or mismatched Name', async () => {

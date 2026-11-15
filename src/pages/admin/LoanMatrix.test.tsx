@@ -1022,8 +1022,8 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
     });
   });
 
-  describe('Cut-Off Saldo Awal Utuh & Angsuran Maju (Cut-Off Forward Mode)', () => {
-    it('hides pre-cut-off month columns (Jan-Okt) and displays opening balance Sah per 1 Nov 2026', () => {
+  describe('Pelacakan Jadwal Angsuran Penuh 12 Bulan (Full Schedule Tracking)', () => {
+    it('renders all 12 month columns (Jan-Des) and annual Sah per Jan-26 summary even if legacy cutoffDate metadata exists', () => {
       const cutoffData: LoanMatrixSummary = {
         year: 2026,
         cutoffDate: '2026-11-01',
@@ -1071,15 +1071,14 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       );
 
       expect(html).toContain('Saldo Awal Pinjaman');
-      expect(html).toContain('Sah per 1 Nov 2026');
+      expect(html).toContain('Sah per Jan-26');
       expect(html).toContain('Rp 52.000.000');
       expect(html).toContain('Rp 8.000.000');
 
       const theadSlice = html.slice(html.indexOf('<thead'), html.indexOf('</thead>'));
-      expect(theadSlice).toContain('>Nov<');
-      expect(theadSlice).toContain('>Des<');
-      expect(theadSlice).not.toContain('>Jan<');
-      expect(theadSlice).not.toContain('>Okt<');
+      for (const monthName of ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des']) {
+        expect(theadSlice).toContain(`>${monthName}<`);
+      }
       expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
   });

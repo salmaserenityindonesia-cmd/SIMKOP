@@ -787,5 +787,64 @@ describe('LoanScheduleModal Component Tests', () => {
       expect(html).toContain('Bulan 53 [Nov-26]');
       expect(html).toContain('Bulan 54 [Des-26]');
     });
+
+    it('renders full 1..tenor schedule grid without opening-balance column when cutoffDate is null and openingPaidBalance is 0', () => {
+      const fullTenorPeriods = Array.from({ length: 24 }, (_, idx) => {
+        const periodNumber = idx + 1;
+        // tgl_awal_pinjaman = 2025-01-15 -> Periode 1 = Feb-25 .. Periode 24 = Jan-27
+        const dueDateObj = new Date(2025, 0 + periodNumber, 15);
+        const yyyy = dueDateObj.getFullYear();
+        const mm = String(dueDateObj.getMonth() + 1).padStart(2, '0');
+        const monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'][dueDateObj.getMonth()];
+        const yy = String(yyyy).slice(-2);
+        const isPaid = periodNumber <= 10;
+
+        return {
+          id: `sched-full-${periodNumber}`,
+          loanId: 'loan-full-24',
+          periodNumber,
+          dueDate: `${yyyy}-${mm}-15`,
+          targetAmount: 1000000,
+          paidAmount: isPaid ? 1000000 : 0,
+          status: (isPaid ? 'PAID' : 'UNPAID') as 'PAID' | 'UNPAID',
+          label: `Bulan ${periodNumber} [${monthShort}-${yy}]`,
+          isCurrentMonth: false,
+          repayments: [],
+        };
+      });
+
+      const fullScheduleData: LoanInteractiveGridSummary = {
+        ...mockLoanGridData,
+        loanId: 'loan-full-24',
+        principalAmount: 24000000,
+        tenor: 24,
+        monthlyTarget: 1000000,
+        totalPaid: 10000000,
+        sisaPinjaman: 14000000,
+        cutoffDate: null,
+        formattedCutoffDate: null,
+        openingPaidBalance: 0,
+        openingRemainingBalance: 24000000,
+        openingPaidPeriodsCount: 0,
+        forwardPaidTotal: 10000000,
+        periods: fullTenorPeriods,
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanScheduleModal
+          loanId="loan-full-24"
+          memberNrp="92040123"
+          memberName="Sertu Jadwal Penuh"
+          onClose={vi.fn()}
+          initialData={fullScheduleData}
+        />
+      );
+
+      expect(html).not.toContain('data-testid="opening-balance-col-header"');
+      expect(html).toContain('Grid Jadwal Angsuran (Periode 1 s/d 24)');
+      expect(html).toContain('Bulan 1 [Feb-25]');
+      expect(html).toContain('Bulan 10 [Nov-25]');
+      expect(html).toContain('Bulan 24 [Jan-27]');
+    });
   });
 });

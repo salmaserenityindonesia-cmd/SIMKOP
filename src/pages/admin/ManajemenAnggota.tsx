@@ -168,7 +168,6 @@ export default function ManajemenAnggota({
   const [initialLoansRows, setInitialLoansRows] = useState<InitialLoanRow[]>([]);
   const [initialLoansFileName, setInitialLoansFileName] = useState<string>('');
   const [initialLoansError, setInitialLoansError] = useState<string | null>(null);
-  const [initialLoansDate, setInitialLoansDate] = useState<string>('');
   const [isInitialLoansConfirmed, setIsInitialLoansConfirmed] = useState<boolean>(false);
   const [isSavingInitialLoans, setIsSavingInitialLoans] = useState<boolean>(false);
   const [isDownloadingLoansTemplate, setIsDownloadingLoansTemplate] = useState<boolean>(false);
@@ -593,7 +592,6 @@ export default function ManajemenAnggota({
     setInitialLoansRows([]);
     setInitialLoansFileName('');
     setInitialLoansError(null);
-    setInitialLoansDate('');
     setIsInitialLoansConfirmed(false);
     if (initialLoansInputRef.current) {
       initialLoansInputRef.current.value = '';
@@ -661,7 +659,6 @@ export default function ManajemenAnggota({
     if (
       initialLoansRows.length === 0 ||
       initialLoansRows.some((r) => !r.isValid) ||
-      !initialLoansDate ||
       !isInitialLoansConfirmed
     ) {
       return;
@@ -669,25 +666,19 @@ export default function ManajemenAnggota({
 
     setIsSavingInitialLoans(true);
     try {
-      const result = await syncInitialLoanBalances(initialLoansRows, initialLoansDate);
-      const formattedDate = new Date(`${result.effectiveDate}T00:00:00`).toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-      });
+      const result = await syncInitialLoanBalances(initialLoansRows);
       const skipNote =
         result.skippedCount > 0
           ? ` (${result.skippedCount} baris dilewati)`
           : '';
       showToast(
-        `Saldo awal pinjaman (${result.insertedCount} data) berhasil disimpan dan dinyatakan aktif sejak ${formattedDate}${skipNote}.`,
+        `Saldo awal pinjaman (${result.insertedCount} data) berhasil disimpan dan jadwal angsuran telah diaktifkan${skipNote}.`,
         'success'
       );
       setIsInitialLoansModalOpen(false);
       setInitialLoansRows([]);
       setInitialLoansFileName('');
       setInitialLoansError(null);
-      setInitialLoansDate('');
       setIsInitialLoansConfirmed(false);
       await fetchMembers();
     } catch (err: any) {
@@ -1647,7 +1638,7 @@ export default function ManajemenAnggota({
                 <div>
                   <h3 className="text-lg font-bold tracking-tight">Upload Saldo Awal Pinjaman</h3>
                   <p className="text-xs text-slate-300">
-                    Migrasi saldo pinjaman aktif sesuai jenis pinjaman Master Produk dengan tanggal cut-off &amp; verifikasi admin
+                    Migrasi saldo pinjaman aktif sesuai jenis pinjaman Master Produk beserta jadwal angsuran &amp; verifikasi admin
                   </p>
                 </div>
               </div>
@@ -1696,13 +1687,13 @@ export default function ManajemenAnggota({
                 </button>
               </div>
 
-              {/* Langkah 2 — Pilih File Excel & Tanggal Aktif Saldo Awal Pinjaman */}
+              {/* Langkah 2 — Pilih File Excel Saldo Awal Pinjaman */}
               <div className="bg-white rounded-xl border border-orange-200/80 p-4 space-y-4">
                 <div>
                   <span className="inline-block text-[11px] font-bold uppercase tracking-wider text-orange-800 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full mb-1">
                     Langkah 2
                   </span>
-                  <h4 className="text-sm font-bold text-slate-800">Pilih File Excel &amp; Tanggal Aktif Saldo Awal Pinjaman</h4>
+                  <h4 className="text-sm font-bold text-slate-800">Pilih File Excel Saldo Awal Pinjaman</h4>
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3.5 rounded-xl border border-dashed border-amber-300 bg-amber-50/40">
@@ -1743,22 +1734,6 @@ export default function ManajemenAnggota({
                     </div>
                   </div>
                 )}
-
-                <div className="bg-orange-50/80 border border-orange-200 rounded-xl p-4 space-y-2">
-                  <label className="block text-sm font-bold text-slate-800">
-                    Tanggal Saldo Awal Pinjaman Dinyatakan Aktif <span className="text-red-600">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={initialLoansDate}
-                    onChange={(e) => setInitialLoansDate(e.target.value)}
-                    className="w-full sm:w-64 px-3.5 py-2 rounded-lg border border-orange-300 bg-white text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  />
-                  <p className="text-xs text-slate-600">
-                    Saldo awal pinjaman dan sisa kewajiban angsuran akan dibukukan efektif mulai tanggal ini hingga dinyatakan lunas.
-                  </p>
-                </div>
               </div>
 
               {/* Langkah 3 — Tabel Pratinjau Data Pinjaman */}
@@ -1898,16 +1873,7 @@ export default function ManajemenAnggota({
                     className="mt-1 w-4 h-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
                   />
                   <span className="text-xs leading-relaxed text-slate-800">
-                    <strong>Pernyataan Konfirmasi Saldo Awal Pinjaman:</strong> Saya sepenuhnya mengerti dan menyatakan bahwa data pinjaman yang diunggah ini telah diperiksa dan dianggap <strong>sudah benar</strong>, akan ditetapkan menjadi <strong>saldo awal pinjaman mulai saat ini sampai dinyatakan lunas nanti</strong>, serta mulai aktif berlaku sebagai saldo awal pinjaman sejak tanggal{' '}
-                    <strong className="text-amber-900 underline">
-                      {initialLoansDate
-                        ? new Date(`${initialLoansDate}T00:00:00`).toLocaleDateString('id-ID', {
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric',
-                          })
-                        : '[Pilih Tanggal di Atas]'}
-                    </strong>.
+                    <strong>Pernyataan Konfirmasi Saldo Awal Pinjaman:</strong> Saya sepenuhnya mengerti dan menyatakan bahwa data pinjaman yang diunggah ini telah diperiksa dan dianggap <strong>sudah benar</strong>, akan ditetapkan menjadi <strong>saldo awal pinjaman serta jadwal angsuran berjalan</strong> mulai dari bulan berikutnya setelah tanggal awal pinjaman sampai dinyatakan lunas nanti.
                   </span>
                 </label>
               </div>
@@ -1930,7 +1896,6 @@ export default function ManajemenAnggota({
                   isSavingInitialLoans ||
                   initialLoansRows.length === 0 ||
                   initialLoansRows.some((r) => !r.isValid) ||
-                  !initialLoansDate ||
                   !isInitialLoansConfirmed
                 }
                 className="inline-flex items-center gap-2 px-5 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

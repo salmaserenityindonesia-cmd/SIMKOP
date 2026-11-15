@@ -938,19 +938,128 @@ export interface ResetMembersResult {
   message?: string;
 }
 
-export async function resetAllMembersData(): Promise<ResetMembersResult> {
-  const DUMMY_UUID = '00000000-0000-0000-0000-000000000000';
+const RESET_DUMMY_UUID = '00000000-0000-0000-0000-000000000000';
+const RESET_FETCH_BATCH_SIZE = 500;
+const RESET_DELETE_IN_CHUNK_SIZE = 200;
 
+async function deleteIdsInChunks(tableName: string, ids: string[]): Promise<void> {
+  if (ids.length <= RESET_DELETE_IN_CHUNK_SIZE) {
+    const { error: delErr } = await supabase
+      .from(tableName)
+      .delete()
+      .in('id', ids);
+
+    if (delErr) {
+      throw new Error(`Gagal menghapus data pada tabel ${tableName}: ${delErr.message}`);
+    }
+    return;
+  }
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += RESET_DELETE_IN_CHUNK_SIZE) {
+    chunks.push(ids.slice(i, i + RESET_DELETE_IN_CHUNK_SIZE));
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) => supabase.from(tableName).delete().in('id', chunk))
+  );
+
+  for (const res of results) {
+    if (res.error) {
+      throw new Error(`Gagal menghapus data pada tabel ${tableName}: ${res.error.message}`);
+    }
+  }
+}
+
+async function sweepDepositTransactionsByMemberDeposit(): Promise<void> {
+  const PAGE_SIZE = 1000;
+  const PARENT_CHUNK_SIZE = 50;
+  const CONCURRENCY = 4;
+  let offset = 0;
+
+  while (true) {
+    const query: any = supabase.from('member_deposits').select('id');
+    const res =
+      typeof query?.range === 'function'
+        ? await query.range(offset, offset + PAGE_SIZE - 1)
+        : await query;
+
+    if (res?.error || !Array.isArray(res?.data) || res.data.length === 0) {
+      break;
+    }
+
+    const depIds: string[] = res.data
+      .map((row: { id?: string }) => row?.id)
+      .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+
+    const parentChunks: string[][] = [];
+    for (let i = 0; i < depIds.length; i += PARENT_CHUNK_SIZE) {
+      parentChunks.push(depIds.slice(i, i + PARENT_CHUNK_SIZE));
+    }
+
+    for (let i = 0; i < parentChunks.length; i += CONCURRENCY) {
+      const group = parentChunks.slice(i, i + CONCURRENCY);
+      const delResults = await Promise.all(
+        group.map((chunk) =>
+          supabase.from('deposit_transactions').delete().in('member_deposit_id', chunk)
+        )
+      );
+
+      for (const delRes of delResults) {
+        if (delRes?.error) {
+          throw new Error(
+            `Gagal menghapus data pada tabel deposit_transactions: ${delRes.error.message}`
+          );
+        }
+      }
+    }
+
+    if (res.data.length < PAGE_SIZE || typeof query?.range !== 'function') {
+      break;
+    }
+    offset += PAGE_SIZE;
+  }
+}
+
+async function deleteAllRowsFromTable(tableName: string): Promise<void> {
+  let isFirstPass = true;
+
+  while (true) {
+    // Ambil maksimal 500 ID per batch agar aman dari timeout & batas max_rows PostgREST
+    const { data: batch, error: fetchErr } = await supabase
+      .from(tableName)
+      .select('id')
+      .neq('id', RESET_DUMMY_UUID)
+      .limit(RESET_FETCH_BATCH_SIZE);
+
+    if (fetchErr) {
+      throw new Error(`Gagal membaca tabel ${tableName}: ${fetchErr.message}`);
+    }
+    if (!batch || batch.length === 0) break;
+
+    const ids = batch.map((row: { id: string }) => row.id);
+    await deleteIdsInChunks(tableName, ids);
+
+    // Akselerasi pembersihan deposit_transactions berukuran besar per kelompok member_deposit_id
+    if (isFirstPass && tableName === 'deposit_transactions' && batch.length === RESET_FETCH_BATCH_SIZE) {
+      await sweepDepositTransactionsByMemberDeposit();
+    }
+
+    isFirstPass = false;
+  }
+}
+
+export async function resetAllMembersData(): Promise<ResetMembersResult> {
   // 1. Prioritas 1: Panggil fungsi PostgreSQL RPC reset_members_and_financial_records
   try {
-    const { data, error } = await supabase.rpc('reset_members_and_financial_records');
-    if (!error && data) {
+    const { data, error: rpcError } = await supabase.rpc('reset_members_and_financial_records');
+    if (!rpcError && data) {
       return data as ResetMembersResult;
     }
-    if (error) {
+    if (rpcError) {
       console.warn(
         'RPC reset_members_and_financial_records tidak tersedia atau gagal, beralih ke fallback client deletion:',
-        error.message
+        rpcError.message
       );
     }
   } catch (rpcErr: any) {
@@ -961,62 +1070,41 @@ export async function resetAllMembersData(): Promise<ResetMembersResult> {
   }
 
   // 2. Prioritas 2 (Fallback Client Deletion):
-  // Jika RPC belum tersedia di database atau terjadi error PostgREST function not found,
-  // lakukan pembersihan bertingkat menggunakan filter .neq('id', DUMMY_UUID) pada setiap tabel sesuai urutan relasi
+  // Hapus seluruh baris secara berurutan dari tabel cucu -> anak -> induk hingga 0 baris tersisa
   try {
-    // 1. Hapus pelunasan & angsuran pinjaman
-    try {
-      await supabase.from('loan_repayments').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
+    await deleteAllRowsFromTable('loan_repayments');
+    await deleteAllRowsFromTable('loan_installments');
+    await deleteAllRowsFromTable('loan_schedules');
+    await deleteAllRowsFromTable('loans');
 
-    try {
-      await supabase.from('loan_installments').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
+    await deleteAllRowsFromTable('deposit_transactions');
+    await deleteAllRowsFromTable('member_deposits');
 
-    // 2. Hapus jadwal angsuran pinjaman
-    try {
-      await supabase.from('loan_schedules').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
+    await deleteAllRowsFromTable('lebaran_disbursement_items');
+    await deleteAllRowsFromTable('rekening_audit_logs');
+    await deleteAllRowsFromTable('member_clearance_logs');
 
-    // 3. Hapus akun pinjaman
-    try {
-      await supabase.from('loans').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
-
-    // 4. Hapus mutasi simpanan
-    try {
-      await supabase.from('deposit_transactions').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
-
-    // 5. Hapus rekening simpanan anggota
-    try {
-      await supabase.from('member_deposits').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
-
-    // 6. Hapus log rekening & clearance anggota
-    try {
-      await supabase.from('rekening_audit_logs').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
-
-    try {
-      await supabase.from('member_clearance_logs').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
-
-    // 7. Lepaskan foreign key anggota pada transaksi kasir POS
-    try {
-      await supabase.from('sales').update({ member_id: null }).not('member_id', 'is', null);
-    } catch (_) {}
-
-    // 8. Hapus master anggota
-    const { error: memberErr } = await supabase.from('anggota').delete().neq('id', DUMMY_UUID);
-    if (memberErr) {
-      throw memberErr;
+    // Lepaskan referensi anggota di transaksi kasir POS agar omzet tetap utuh
+    const { error: salesErr } = await supabase
+      .from('sales')
+      .update({ member_id: null })
+      .not('member_id', 'is', null);
+    if (salesErr) {
+      throw new Error(`Gagal melepas relasi member pada sales: ${salesErr.message}`);
     }
 
-    // Bersihkan juga tabel backup members jika ada
-    try {
-      await supabase.from('members').delete().neq('id', DUMMY_UUID);
-    } catch (_) {}
+    await deleteAllRowsFromTable('anggota');
+    await deleteAllRowsFromTable('members');
+
+    const { error: auditErr } = await supabase.from('audit_logs').insert({
+      table_name: 'anggota',
+      action: 'RESET_ALL',
+      record_id: 'SYSTEM',
+      notes: 'Reset seluruh data anggota, simpanan, dan pinjaman.',
+    });
+    if (auditErr) {
+      console.warn('Gagal mencatat audit log reset anggota:', auditErr.message);
+    }
 
     return {
       success: true,

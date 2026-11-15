@@ -131,22 +131,24 @@ function buildMonthlyDueDate(baseDateStr: string, periodNumber: number): string 
 
 /**
  * Menyimpan saldo awal pinjaman anggota berdasarkan NRP dan jenis pinjaman Master Produk
- * dengan Clean Overwrite, pembuatan jadwal angsuran (alokasi FIFO total_terangsur),
- * ringkasan repayment historis, serta pencatatan ke system_settings & audit_logs.
+ * dengan Clean Overwrite, pembuatan jadwal angsuran penuh mulai (tgl_awal_pinjaman + 1 bulan)
+ * hingga tenor beserta alokasi FIFO total_terangsur, ringkasan repayment historis, dan audit_logs.
  */
 export async function syncInitialLoanBalances(
   rows: InitialLoanRow[],
-  effectiveDate: string
+  effectiveDate?: string
 ): Promise<InitialLoansSyncResult> {
-  const trimmedDate = typeof effectiveDate === 'string' ? effectiveDate.trim() : '';
-  if (!trimmedDate || !/^\d{4}-\d{2}-\d{2}$/.test(trimmedDate)) {
-    throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
+  const rawEffective = typeof effectiveDate === 'string' ? effectiveDate.trim() : '';
+  if (rawEffective) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rawEffective)) {
+      throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
+    }
+    const parsedEffectiveDate = new Date(`${rawEffective}T00:00:00`);
+    if (isNaN(parsedEffectiveDate.getTime())) {
+      throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
+    }
   }
-
-  const parsedEffectiveDate = new Date(`${trimmedDate}T00:00:00`);
-  if (isNaN(parsedEffectiveDate.getTime())) {
-    throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
-  }
+  const trimmedDate = rawEffective || formatDateYmd(new Date());
 
   if (!rows || rows.length === 0) {
     throw new Error('Tidak ada data baris saldo awal pinjaman untuk disimpan.');
@@ -328,15 +330,27 @@ export async function syncInitialLoanBalances(
       planned_installment_amount: monthlyInstallment,
       monthly_target: monthlyInstallment,
       disbursed_at: disbursedDateStr,
+      sisa_pinjaman: sisaPinjaman,
       status: loanStatus,
-      notes: `Saldo Awal Pinjaman (Aktif sejak ${trimmedDate})`,
+      notes: 'Saldo Awal Pinjaman',
     };
 
-    const { data: newLoan, error: insLoanErr } = await supabase
+    let { data: newLoan, error: insLoanErr } = await supabase
       .from('loans')
       .insert(loanPayload)
       .select('id')
       .single();
+
+    if (insLoanErr && insLoanErr.message?.includes('sisa_pinjaman')) {
+      const { sisa_pinjaman: _omitted, ...fallbackPayload } = loanPayload;
+      const retryRes = await supabase
+        .from('loans')
+        .insert(fallbackPayload)
+        .select('id')
+        .single();
+      newLoan = retryRes.data;
+      insLoanErr = retryRes.error;
+    }
 
     if (insLoanErr || !newLoan?.id) {
       throw new Error(
@@ -344,7 +358,8 @@ export async function syncInitialLoanBalances(
       );
     }
 
-    // Bangun jadwal angsuran sebanyak tenor dengan alokasi FIFO total_terangsur
+    // Bangun jadwal angsuran penuh sebanyak tenor (mulai tgl_awal_pinjaman + 1 bulan)
+    // dengan alokasi FIFO total_terangsur
     let remainingPaid = totalTerangsur;
     const schedulesToInsert = [];
 
@@ -356,7 +371,7 @@ export async function syncInitialLoanBalances(
       if (remainingPaid >= targetAmount) {
         status = 'paid';
         paidAmount = targetAmount;
-        remainingPaid -= targetAmount;
+        remainingPaid = Math.max(0, remainingPaid - targetAmount);
       } else if (remainingPaid > 0) {
         status = 'partial';
         paidAmount = remainingPaid;
@@ -392,7 +407,7 @@ export async function syncInitialLoanBalances(
         payment_method: 'SALDO_AWAL',
         amount_paid: totalTerangsur,
         payment_date: new Date(`${trimmedDate}T00:00:00`).toISOString(),
-        notes: `Total Terangsur s/d Pengesahan Saldo Awal (${trimmedDate})`,
+        notes: `Total Terangsur Saldo Awal (${trimmedDate})`,
       });
 
       if (insRepayErr) {
@@ -405,18 +420,14 @@ export async function syncInitialLoanBalances(
     insertedCount++;
   }
 
-  // 3. Catat metadata ke system_settings & audit_logs
+  // 3. Hapus pengaturan cut-off pinjaman lama (jika ada) agar pelacakan jadwal berjalan penuh & catat audit_logs
   try {
-    await supabase.from('system_settings').upsert(
-      {
-        key: 'initial_loans_effective_date',
-        value: trimmedDate,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'key' }
-    );
+    const settingsTable: any = supabase.from('system_settings');
+    if (typeof settingsTable?.delete === 'function') {
+      await settingsTable.delete().eq('key', 'initial_loans_effective_date');
+    }
   } catch (e) {
-    console.warn('Gagal menyimpan initial_loans_effective_date ke system_settings:', e);
+    console.warn('Gagal membersihkan initial_loans_effective_date dari system_settings:', e);
   }
 
   try {
@@ -430,7 +441,7 @@ export async function syncInitialLoanBalances(
         skipped_count: skippedCount,
         skipped_nrps: skippedNrps,
       },
-      notes: `Upload Saldo Awal Pinjaman aktif sejak ${trimmedDate} (${insertedCount} pinjaman disimpan)`,
+      notes: `Upload Saldo Awal Pinjaman dengan jadwal angsuran penuh (${insertedCount} pinjaman disimpan)`,
     });
   } catch (e) {
     console.warn('Gagal mencatat UPLOAD_INITIAL_LOANS ke audit_logs:', e);

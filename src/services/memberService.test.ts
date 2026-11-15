@@ -768,56 +768,287 @@ describe('memberService - resetAllMembersData', () => {
     expect(result).toEqual(mockResult);
   });
 
-  it('falls back to client-side cascading deletion using .neq and .not when RPC fails', async () => {
+  it('falls back to exhaustive loop-until-empty client deletion in child-to-parent order when RPC fails', async () => {
     (supabase.rpc as any) = vi.fn().mockResolvedValue({
       data: null,
       error: { message: 'Could not find the function public.reset_members_and_financial_records in the schema cache' },
     });
 
-    const mockNeq = vi.fn().mockResolvedValue({ error: null });
-    const mockNot = vi.fn().mockResolvedValue({ error: null });
-    const mockDelete = vi.fn().mockReturnValue({ neq: mockNeq });
-    const mockUpdate = vi.fn().mockReturnValue({ not: mockNot });
+    const tableRows: Record<string, Array<{ id: string; member_deposit_id?: string }>> = {
+      loan_repayments: [{ id: 'lr-1' }],
+      loan_installments: [],
+      loan_schedules: [{ id: 'ls-1' }],
+      loans: [{ id: 'l-1' }],
+      deposit_transactions: [{ id: 'dt-1', member_deposit_id: 'md-1' }, { id: 'dt-2', member_deposit_id: 'md-1' }],
+      member_deposits: [{ id: 'md-1' }],
+      lebaran_disbursement_items: [{ id: 'ldi-1' }],
+      rekening_audit_logs: [{ id: 'ral-1' }],
+      member_clearance_logs: [{ id: 'mcl-1' }],
+      anggota: [{ id: 'ang-1' }],
+      members: [{ id: 'mem-1' }],
+    };
+    const deleteOrder: string[] = [];
+    const mockUpdateNot = vi.fn().mockResolvedValue({ error: null });
+    const mockUpdate = vi.fn().mockReturnValue({ not: mockUpdateNot });
+    const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
 
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
       if (table === 'sales') {
         return { update: mockUpdate };
       }
-      return { delete: mockDelete };
+      if (table === 'audit_logs') {
+        return { insert: mockAuditInsert };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          neq: vi.fn().mockImplementation((_col: string, _val: string) => ({
+            limit: vi.fn().mockImplementation(async (lim: number) => ({
+              data: (tableRows[table] || []).slice(0, lim),
+              error: null,
+            })),
+          })),
+          range: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (col: string, ids: string[]) => {
+            deleteOrder.push(table);
+            if (col === 'id') {
+              tableRows[table] = (tableRows[table] || []).filter((r) => !ids.includes(r.id));
+            }
+            return { error: null };
+          }),
+        }),
+      };
     });
 
     const result = await resetAllMembersData();
 
     expect(supabase.rpc).toHaveBeenCalledWith('reset_members_and_financial_records');
-    expect(mockDelete).toHaveBeenCalled();
-    expect(mockNeq).toHaveBeenCalledWith('id', '00000000-0000-0000-0000-000000000000');
+    expect(deleteOrder.indexOf('deposit_transactions')).toBeLessThan(deleteOrder.indexOf('member_deposits'));
+    expect(deleteOrder.indexOf('lebaran_disbursement_items')).toBeLessThan(deleteOrder.indexOf('anggota'));
     expect(mockUpdate).toHaveBeenCalledWith({ member_id: null });
-    expect(mockNot).toHaveBeenCalledWith('member_id', 'is', null);
+    expect(mockUpdateNot).toHaveBeenCalledWith('member_id', 'is', null);
+    expect(mockAuditInsert).toHaveBeenCalledWith({
+      table_name: 'anggota',
+      action: 'RESET_ALL',
+      record_id: 'SYSTEM',
+      notes: 'Reset seluruh data anggota, simpanan, dan pinjaman.',
+    });
+    for (const rows of Object.values(tableRows)) {
+      expect(rows).toHaveLength(0);
+    }
     expect(result.success).toBe(true);
     expect(result.message).toBe('Seluruh data anggota, rekening simpanan, dan pinjaman berhasil dikosongkan.');
   });
 
-  it('throws descriptive error when both RPC and fallback deletion encounter an error', async () => {
+  it('loops across multiple batches (>500 rows) in safe <=200 ID chunks until deposit_transactions is completely empty', async () => {
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'RPC timeout' },
+    });
+
+    const tableRows: Record<string, Array<{ id: string }>> = {
+      loan_repayments: [],
+      loan_installments: [],
+      loan_schedules: [],
+      loans: [],
+      deposit_transactions: Array.from({ length: 650 }, (_, idx) => ({ id: `dt-${idx + 1}` })),
+      member_deposits: [{ id: 'md-1' }],
+      lebaran_disbursement_items: [],
+      rekening_audit_logs: [],
+      member_clearance_logs: [],
+      anggota: [{ id: 'ang-1' }],
+      members: [],
+    };
+    const chunkSizes: number[] = [];
+    let remainingAtMemberDepositsDelete = -1;
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return { update: vi.fn().mockReturnValue({ not: vi.fn().mockResolvedValue({ error: null }) }) };
+      }
+      if (table === 'audit_logs') {
+        return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          neq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockImplementation(async (lim: number) => ({
+              data: (tableRows[table] || []).slice(0, lim),
+              error: null,
+            })),
+          }),
+          range: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (_col: string, ids: string[]) => {
+            if (table === 'deposit_transactions') {
+              chunkSizes.push(ids.length);
+            }
+            if (table === 'member_deposits') {
+              remainingAtMemberDepositsDelete = tableRows.deposit_transactions.length;
+            }
+            tableRows[table] = (tableRows[table] || []).filter((r) => !ids.includes(r.id));
+            return { error: null };
+          }),
+        }),
+      };
+    });
+
+    const result = await resetAllMembersData();
+
+    expect(result.success).toBe(true);
+    expect(tableRows.deposit_transactions).toHaveLength(0);
+    expect(tableRows.member_deposits).toHaveLength(0);
+    expect(tableRows.anggota).toHaveLength(0);
+    expect(remainingAtMemberDepositsDelete).toBe(0);
+    expect(chunkSizes).toEqual([200, 200, 100, 150]);
+    expect(Math.max(...chunkSizes)).toBeLessThanOrEqual(200);
+  });
+
+  it('aborts immediately and throws descriptive error when child table deposit_transactions deletion fails', async () => {
     (supabase.rpc as any) = vi.fn().mockResolvedValue({
       data: null,
       error: { message: 'RPC not found' },
     });
 
-    const mockNeq = vi.fn().mockImplementation(() => Promise.resolve({ error: { message: 'permission denied for table anggota' } }));
-    const mockNot = vi.fn().mockResolvedValue({ error: null });
-    const mockDelete = vi.fn().mockReturnValue({ neq: mockNeq });
-    const mockUpdate = vi.fn().mockReturnValue({ not: mockNot });
+    let memberDepositsDeleted = false;
 
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
       if (table === 'sales') {
-        return { update: mockUpdate };
+        return { update: vi.fn().mockReturnValue({ not: vi.fn().mockResolvedValue({ error: null }) }) };
       }
-      return { delete: mockDelete };
+      return {
+        select: vi.fn().mockReturnValue({
+          neq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockImplementation(async () => ({
+              data: table === 'deposit_transactions' ? [{ id: 'dt-1' }] : [],
+              error: null,
+            })),
+          }),
+        }),
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async () => {
+            if (table === 'member_deposits') {
+              memberDepositsDeleted = true;
+            }
+            if (table === 'deposit_transactions') {
+              return { error: { message: 'RLS violation on deposit_transactions' } };
+            }
+            return { error: null };
+          }),
+        }),
+      };
     });
 
     await expect(resetAllMembersData()).rejects.toThrow(
-      'Gagal mereset data anggota dan pembukuan: permission denied for table anggota'
+      'Gagal mereset data anggota dan pembukuan: Gagal menghapus data pada tabel deposit_transactions: RLS violation on deposit_transactions'
     );
+    expect(memberDepositsDeleted).toBe(false);
+  });
+
+  it('throws descriptive error when both RPC and fallback deletion encounter an error on anggota', async () => {
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'RPC not found' },
+    });
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return { update: vi.fn().mockReturnValue({ not: vi.fn().mockResolvedValue({ error: null }) }) };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          neq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockImplementation(async () => ({
+              data: table === 'anggota' ? [{ id: 'ang-1' }] : [],
+              error: null,
+            })),
+          }),
+        }),
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({
+            error: { message: 'permission denied for table anggota' },
+          }),
+        }),
+      };
+    });
+
+    await expect(resetAllMembersData()).rejects.toThrow(
+      'Gagal mereset data anggota dan pembukuan: Gagal menghapus data pada tabel anggota: permission denied for table anggota'
+    );
+  });
+
+  it('accelerates large deposit_transactions cleanup by sweeping via member_deposit_id chunks of 50', async () => {
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'RPC timeout' },
+    });
+
+    const memberDeposits = Array.from({ length: 60 }, (_, idx) => ({ id: `md-${idx + 1}` }));
+    const depositTransactions = Array.from({ length: 1200 }, (_, idx) => ({
+      id: `dt-${idx + 1}`,
+      member_deposit_id: `md-${(idx % 60) + 1}`,
+    }));
+
+    const tableRows: Record<string, Array<{ id: string; member_deposit_id?: string }>> = {
+      loan_repayments: [],
+      loan_installments: [],
+      loan_schedules: [],
+      loans: [],
+      deposit_transactions: depositTransactions,
+      member_deposits: memberDeposits,
+      lebaran_disbursement_items: [],
+      rekening_audit_logs: [],
+      member_clearance_logs: [],
+      anggota: [{ id: 'ang-1' }],
+      members: [],
+    };
+    const parentSweepChunkSizes: number[] = [];
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return { update: vi.fn().mockReturnValue({ not: vi.fn().mockResolvedValue({ error: null }) }) };
+      }
+      if (table === 'audit_logs') {
+        return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          neq: vi.fn().mockReturnValue({
+            limit: vi.fn().mockImplementation(async (lim: number) => ({
+              data: (tableRows[table] || []).slice(0, lim),
+              error: null,
+            })),
+          }),
+          range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+            data: (tableRows[table] || []).slice(from, to + 1),
+            error: null,
+          })),
+        }),
+        delete: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (col: string, ids: string[]) => {
+            if (table === 'deposit_transactions' && col === 'member_deposit_id') {
+              parentSweepChunkSizes.push(ids.length);
+              tableRows.deposit_transactions = tableRows.deposit_transactions.filter(
+                (r) => !ids.includes(r.member_deposit_id || '')
+              );
+              return { error: null };
+            }
+            tableRows[table] = (tableRows[table] || []).filter((r) => !ids.includes(r.id));
+            return { error: null };
+          }),
+        }),
+      };
+    });
+
+    const result = await resetAllMembersData();
+
+    expect(result.success).toBe(true);
+    expect(parentSweepChunkSizes).toEqual([50, 10]);
+    expect(tableRows.deposit_transactions).toHaveLength(0);
+    expect(tableRows.member_deposits).toHaveLength(0);
+    expect(tableRows.anggota).toHaveLength(0);
   });
 });
 

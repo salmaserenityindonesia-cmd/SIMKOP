@@ -20,7 +20,6 @@ import {
   getLoanMatrixAvailableYears,
   getCumulativePaidUpToMonth,
   bulkCheckAllLoansUpToCurrentMonth,
-  parseLoanCutoffDateInfo,
   BulkLoanProgress,
   BulkLoanResult,
   LoanMatrixSummary,
@@ -158,28 +157,11 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   });
   const [bulkCheckSummary, setBulkCheckSummary] = useState<{ totalSuccess: number; totalFailed: number } | null>(null);
 
-  const effectiveCutoffDate = initialCutoffDate ?? data?.cutoffDate ?? null;
-  const cutoffInfo = useMemo(
-    () => parseLoanCutoffDateInfo(effectiveCutoffDate),
-    [effectiveCutoffDate]
-  );
-  const cutoffYear = data?.cutoffYear ?? cutoffInfo?.year ?? null;
-  const cutoffMonth = data?.cutoffMonth ?? cutoffInfo?.month ?? null;
-  const formattedCutoffDate =
-    data?.formattedCutoffDate ??
-    cutoffInfo?.formattedDate ??
-    `Jan-${String(year).slice(-2)}`;
+  const formattedCutoffDate = `Jan-${String(year).slice(-2)}`;
 
   const visibleMonths = useMemo(() => {
-    const allMonths = MONTHS.map((label, idx) => ({ label, monthNum: idx + 1 }));
-    if (cutoffYear !== null && cutoffMonth !== null) {
-      if (year < cutoffYear) return [];
-      if (year === cutoffYear) {
-        return allMonths.filter(m => m.monthNum >= cutoffMonth);
-      }
-    }
-    return allMonths;
-  }, [year, cutoffYear, cutoffMonth]);
+    return MONTHS.map((label, idx) => ({ label, monthNum: idx + 1 }));
+  }, []);
 
   const handleBulkCheckAll = async () => {
     setIsProcessingBulk(true);

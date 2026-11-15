@@ -2507,7 +2507,7 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
   });
 });
 
-describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju', () => {
+describe('loanMatrixService - Pelacakan Jadwal Penuh Pinjaman (Full Schedule Tracking)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
@@ -2518,7 +2518,7 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
     vi.useRealTimers();
   });
 
-  it('getLoanMatrixAvailableYears membatasi tahun dropdown minimal dari cutoffYear (2026) meski pinjaman cair 2023', async () => {
+  it('getLoanMatrixAvailableYears menampilkan seluruh rentang tahun pinjaman (2023-2028) tanpa pembatasan cut-off', async () => {
     (supabase.from as any).mockImplementation((table: string) => {
       if (table === 'loans') {
         return {
@@ -2566,12 +2566,10 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
     });
 
     const years = await getLoanMatrixAvailableYears();
-    expect(years).toEqual([2028, 2027, 2026]);
-    expect(years).not.toContain(2025);
-    expect(years).not.toContain(2023);
+    expect(years).toEqual([2028, 2027, 2026, 2025, 2024, 2023]);
   });
 
-  it('getLoanMatrix mengabaikan tunggakan pra-cut-off dan merangkum openingPaid/openingRemaining secara utuh', async () => {
+  it('getLoanMatrix melacak seluruh jadwal angsuran tahunan secara utuh tanpa pemotongan cut-off', async () => {
     const loans = [
       {
         id: 'loan-cut-1',
@@ -2583,20 +2581,16 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
         status: 'active',
         disbursed_at: '2025-11-01T00:00:00.000Z',
         created_at: '2025-11-01T00:00:00.000Z',
-        notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)',
+        notes: 'Saldo Awal Pinjaman',
         member: { id: 'mem-cut-1', nrp: '77001122', nama: 'Mayor CutOff' },
         loan_types: { name: 'Pinjaman Reguler' },
       },
     ];
 
     const schedules = [
-      // Pre-cut-off paid (Sep 2026) -> included in openingPaid
       { id: 'sc-9', loan_id: 'loan-cut-1', period_number: 9, due_date: '2026-09-15', target_amount: 1000000, paid_amount: 5000000, status: 'paid', loan: loans[0] },
-      // Pre-cut-off unpaid (Okt 2026) -> MUST NOT trigger UNPAID or affect YTD compliance!
       { id: 'sc-10', loan_id: 'loan-cut-1', period_number: 10, due_date: '2026-10-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid', loan: loans[0] },
-      // Post-cut-off paid (Nov 2026)
       { id: 'sc-11', loan_id: 'loan-cut-1', period_number: 11, due_date: '2026-11-15', target_amount: 1000000, paid_amount: 1000000, status: 'paid', loan: loans[0] },
-      // Post-cut-off projected (Des 2026)
       { id: 'sc-12', loan_id: 'loan-cut-1', period_number: 12, due_date: '2026-12-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid', loan: loans[0] },
     ];
 
@@ -2642,24 +2636,23 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
     });
 
     const matrix = await getLoanMatrix(2026);
-    expect(matrix.cutoffDate).toBe('2026-11-01');
-    expect(matrix.cutoffYear).toBe(2026);
-    expect(matrix.cutoffMonth).toBe(11);
-    expect(matrix.formattedCutoffDate).toBe('1 Nov 2026');
+    expect(matrix.cutoffDate).toBeNull();
+    expect(matrix.cutoffYear).toBeNull();
+    expect(matrix.cutoffMonth).toBeNull();
+    expect(matrix.formattedCutoffDate).toBeNull();
     expect(matrix.unpaidMembersCount).toBe(0);
-    expect(matrix.complianceYTD).toBe(100);
-    expect(matrix.totalCollectedYTD).toBe(1000000);
+    expect(matrix.totalCollectedYTD).toBe(6000000);
 
     const row = matrix.members[0];
-    expect(row.openingPaid).toBe(5000000);
-    expect(row.openingRemaining).toBe(7000000);
-    expect(row.months[10].status).toBe('NONE');
+    expect(row.openingPaid).toBe(0);
+    expect(row.openingRemaining).toBe(12000000);
+    expect(row.months[9].status).toBe('PAID');
+    expect(row.months[10].status).toBe('UNPAID');
     expect(row.months[11].status).toBe('PAID');
     expect(row.months[12].status).toBe('PROJECTED');
-    expect(row.complianceYTD).toBe(100);
   });
 
-  it('getLoanInteractiveGrid memisahkan jadwal pra-cut-off menjadi openingPaidBalance dan hanya mengembalikan periode maju', async () => {
+  it('getLoanInteractiveGrid mengembalikan seluruh periode 1..N secara utuh dengan cutoffDate null', async () => {
     const mockLoan = {
       id: 'loan-grid-cut',
       loan_number: 'PJ-GRID-01',
@@ -2669,7 +2662,7 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
       monthly_target: 1000000,
       disbursed_at: '2026-07-01T00:00:00.000Z',
       status: 'active',
-      notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)',
+      notes: 'Saldo Awal Pinjaman',
       member: { id: 'mem-grid-1', nama: 'Sertu Maju', nrp: '55443322' },
     };
 
@@ -2724,23 +2717,24 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
     });
 
     const grid = await getLoanInteractiveGrid('loan-grid-cut');
-    expect(grid.cutoffDate).toBe('2026-11-01');
-    expect(grid.formattedCutoffDate).toBe('1 Nov 2026');
-    expect(grid.openingPaidBalance).toBe(2000000);
-    expect(grid.openingPaidPeriodsCount).toBe(2);
-    expect(grid.openingRemainingBalance).toBe(4000000);
-    expect(grid.forwardPaidTotal).toBe(1000000);
+    expect(grid.cutoffDate).toBeNull();
+    expect(grid.formattedCutoffDate).toBeNull();
+    expect(grid.openingPaidBalance).toBe(0);
+    expect(grid.openingPaidPeriodsCount).toBe(0);
+    expect(grid.openingRemainingBalance).toBe(6000000);
+    expect(grid.forwardPaidTotal).toBe(3000000);
     expect(grid.totalPaid).toBe(3000000);
     expect(grid.sisaPinjaman).toBe(3000000);
-    expect(grid.periods.map(p => p.periodNumber)).toEqual([3, 4]);
+    expect(grid.periods.map(p => p.periodNumber)).toEqual([1, 2, 3, 4]);
   });
 
-  it('checkAllLoanUpToCurrentMonth & uncheckAllLoanSchedules hanya menyentuh periode pasca cut-off dan melindungi saldo awal', async () => {
+  it('checkAllLoanUpToCurrentMonth & uncheckAllLoanSchedules beroperasi penuh pada seluruh jadwal tenor tanpa pemotongan cut-off', async () => {
     const schedules = [
       { id: 'pre-1', loan_id: 'loan-protect', period_number: 1, due_date: '2026-10-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
       { id: 'post-1', loan_id: 'loan-protect', period_number: 2, due_date: '2026-11-15', target_amount: 1000000, paid_amount: 0, status: 'unpaid' },
     ];
     const updatedIds: string[] = [];
+    const updatedLoanIds: string[] = [];
     const deletedFilters: Array<{ method: string; value: any }> = [];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -2749,7 +2743,7 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'loan-protect', notes: 'Saldo Awal Pinjaman (Aktif sejak 2026-11-01)' },
+                data: { id: 'loan-protect', notes: 'Saldo Awal Pinjaman' },
                 error: null,
               }),
             }),
@@ -2788,12 +2782,15 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
                 updatedIds.push(val);
                 return Promise.resolve({ error: null });
               }
-              return {
-                in: vi.fn().mockImplementation((_inCol: string, vals: string[]) => {
-                  updatedIds.push(...vals);
-                  return Promise.resolve({ error: null });
-                }),
-              };
+              if (col === 'loan_id') {
+                updatedLoanIds.push(val);
+              }
+              const eqUpdateResult: any = Promise.resolve({ error: null });
+              eqUpdateResult.in = vi.fn().mockImplementation((_inCol: string, vals: string[]) => {
+                updatedIds.push(...vals);
+                return Promise.resolve({ error: null });
+              });
+              return eqUpdateResult;
             }),
           })),
         };
@@ -2806,12 +2803,17 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
               deletedFilters.push({ method: col2, value: vals });
               return Promise.resolve({ error: null });
             }),
-            eq: vi.fn().mockImplementation((_c: string, _v: string) => ({
-              in: vi.fn().mockImplementation((col2: string, vals: string[]) => {
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              const eqDeleteResult: any = Promise.resolve({ error: null }).then((res) => {
+                deletedFilters.push({ method: col, value: val });
+                return res;
+              });
+              eqDeleteResult.in = vi.fn().mockImplementation((col2: string, vals: string[]) => {
                 deletedFilters.push({ method: col2, value: vals });
                 return Promise.resolve({ error: null });
-              }),
-            })),
+              });
+              return eqDeleteResult;
+            }),
           }),
         };
       }
@@ -2819,12 +2821,14 @@ describe('loanMatrixService - Cut-Off Saldo Awal Pinjaman Utuh & Angsuran Maju',
     });
 
     await checkAllLoanUpToCurrentMonth('loan-protect');
-    expect(updatedIds).toEqual(['post-1']);
+    expect(updatedIds).toEqual(['pre-1', 'post-1']);
 
     updatedIds.length = 0;
+    updatedLoanIds.length = 0;
+    deletedFilters.length = 0;
     await uncheckAllLoanSchedules('loan-protect');
-    expect(updatedIds).toEqual(['post-1']);
-    expect(deletedFilters).toEqual([{ method: 'schedule_id', value: ['post-1'] }]);
+    expect(updatedLoanIds).toEqual(['loan-protect']);
+    expect(deletedFilters).toContainEqual({ method: 'loan_id', value: 'loan-protect' });
   });
 });
 

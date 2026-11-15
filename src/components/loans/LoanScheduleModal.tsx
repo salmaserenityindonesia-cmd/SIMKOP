@@ -23,7 +23,6 @@ import {
   uncheckAllLoanSchedules,
   calculateRemainingInstallmentDeficit,
   parseLoanCutoffDateInfo,
-  extractLoanCutoffDateFromNotes,
   isScheduleBeforeLoanCutOff,
   LoanInteractiveGridSummary,
   LoanGridPeriod,
@@ -359,7 +358,6 @@ export default function LoanScheduleModal({
   const effectiveCutoffDate =
     initialCutoffDate ??
     data?.cutoffDate ??
-    extractLoanCutoffDateFromNotes((data as any)?.notes) ??
     null;
   const cutoffInfo = useMemo(
     () => parseLoanCutoffDateInfo(effectiveCutoffDate),
@@ -409,6 +407,13 @@ export default function LoanScheduleModal({
       openingPaidPeriodsCount: computedCount,
     };
   }, [data, effectiveCutoffDate, initialOpeningPaidBalance]);
+
+  const showOpeningBalanceCol = Boolean(
+    initialCutoffDate ||
+      (initialOpeningPaidBalance !== undefined && initialOpeningPaidBalance > 0) ||
+      data?.cutoffDate ||
+      (data?.openingPaidBalance !== undefined && data.openingPaidBalance > 0)
+  );
 
   const openingRemainingBalance = useMemo(() => {
     if (data?.openingRemainingBalance !== undefined && initialOpeningPaidBalance === undefined) {
@@ -579,7 +584,7 @@ export default function LoanScheduleModal({
               {/* Header Grid Summary */}
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
                 <span className="font-medium">
-                  {(effectiveCutoffDate || openingPaidBalance > 0)
+                  {showOpeningBalanceCol
                     ? visiblePeriods.length > 0
                       ? `Grid Jadwal Angsuran (Saldo Awal + Periode ${visiblePeriods[0].periodNumber} s/d ${visiblePeriods[visiblePeriods.length - 1].periodNumber})`
                       : 'Grid Jadwal Angsuran (Saldo Awal Utuh)'
@@ -598,15 +603,17 @@ export default function LoanScheduleModal({
                       <th className="sticky left-0 bg-slate-100 z-10 py-2.5 px-3 text-left border-r border-slate-200 min-w-[140px]">
                         Periode &amp; Item
                       </th>
-                      <th
-                        data-testid="opening-balance-col-header"
-                        className="py-2.5 px-3 text-center border-r border-amber-200 bg-amber-50/70 min-w-[165px] whitespace-nowrap"
-                      >
-                        <div className="text-slate-800 font-bold">Saldo Awal Terangsur</div>
-                        <div className="text-[10px] font-medium text-amber-700">
-                          Sah per {formattedCutoffDate}
-                        </div>
-                      </th>
+                      {showOpeningBalanceCol && (
+                        <th
+                          data-testid="opening-balance-col-header"
+                          className="py-2.5 px-3 text-center border-r border-amber-200 bg-amber-50/70 min-w-[165px] whitespace-nowrap"
+                        >
+                          <div className="text-slate-800 font-bold">Saldo Awal Terangsur</div>
+                          <div className="text-[10px] font-medium text-amber-700">
+                            Sah per {formattedCutoffDate}
+                          </div>
+                        </th>
+                      )}
                       {visiblePeriods.map(period => (
                         <th
                           key={period.id}
@@ -639,24 +646,26 @@ export default function LoanScheduleModal({
                         </div>
                       </td>
 
-                      <td
-                        data-testid="opening-balance-col-cell"
-                        className="py-3 px-3 border-r border-b border-amber-200 bg-amber-50/40 align-middle"
-                      >
-                        <div className="flex flex-col items-center justify-center gap-1">
-                          <span className="font-mono font-bold text-xs text-emerald-700 whitespace-nowrap">
-                            {formatCurrency(openingPaidBalance)}
-                          </span>
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold whitespace-nowrap">
-                            {openingPaidPeriodsCount > 0
-                              ? `Akumulasi ${openingPaidPeriodsCount} Periode`
-                              : 'Saldo Awal Sah'}
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
-                            Sisa Awal: {formatCurrency(openingRemainingBalance)}
-                          </span>
-                        </div>
-                      </td>
+                      {showOpeningBalanceCol && (
+                        <td
+                          data-testid="opening-balance-col-cell"
+                          className="py-3 px-3 border-r border-b border-amber-200 bg-amber-50/40 align-middle"
+                        >
+                          <div className="flex flex-col items-center justify-center gap-1">
+                            <span className="font-mono font-bold text-xs text-emerald-700 whitespace-nowrap">
+                              {formatCurrency(openingPaidBalance)}
+                            </span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold whitespace-nowrap">
+                              {openingPaidPeriodsCount > 0
+                                ? `Akumulasi ${openingPaidPeriodsCount} Periode`
+                                : 'Saldo Awal Sah'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap">
+                              Sisa Awal: {formatCurrency(openingRemainingBalance)}
+                            </span>
+                          </div>
+                        </td>
+                      )}
 
                       {visiblePeriods.map(period => {
                         const isPaid = period.status === 'PAID';

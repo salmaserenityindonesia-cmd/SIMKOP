@@ -430,14 +430,16 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
   });
 
   describe('Upload Saldo Awal Pinjaman Modal UI Structure', () => {
-    it('renders Upload Saldo Awal Pinjaman modal with Amber palette, template button, cut-off date input, confirmation checkbox, and disabled submit button', () => {
+    it('renders Upload Saldo Awal Pinjaman modal without active cut-off date input, with template button, confirmation checkbox, and disabled submit button', () => {
       const html = renderToStaticMarkup(<ManajemenAnggota initialLoansModalOpen={true} />);
 
       expect(html).toContain('Upload Saldo Awal Pinjaman');
       expect(html).toContain('Unduh Template Saldo Awal Pinjaman (.xlsx)');
-      expect(html).toContain('Tanggal Saldo Awal Pinjaman Dinyatakan Aktif');
-      expect(html).toContain('type="date"');
+      expect(html).toContain('Pilih File Excel Saldo Awal Pinjaman');
+      expect(html).not.toContain('Tanggal Saldo Awal Pinjaman Dinyatakan Aktif');
+      expect(html).not.toContain('type="date"');
       expect(html).toContain('Pernyataan Konfirmasi Saldo Awal Pinjaman:');
+      expect(html).toContain('saldo awal pinjaman serta jadwal angsuran berjalan');
       expect(html).toContain('type="checkbox"');
       expect(html).toContain('Simpan &amp; Aktifkan Saldo Awal Pinjaman');
       expect(html).toContain('bg-amber-600');
