@@ -5,6 +5,8 @@ import {
   confirmSalaryReconciliation,
   applySalaryReconciliation,
   parseSalaryReconciliationFile,
+  buildSalaryReconciliationWorkbook,
+  downloadSalaryReconciliationTemplate,
   cleanNumber,
   MemberSalaryAccountItem,
 } from './salaryImportService';
@@ -432,6 +434,168 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         })
       );
     });
+
+    it('mencatat log pembaruan bulanan IMPORT_GAJI_BULANAN ke public.audit_logs setelah berhasil update anggota', async () => {
+      const mockEq = vi.fn().mockResolvedValue({ error: null });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.auth.getUser as any).mockResolvedValue({
+        data: { user: { id: 'admin-123' } },
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        if (table === 'audit_logs') {
+          return { insert: mockAuditInsert };
+        }
+        return {};
+      });
+
+      const success = await applySalaryReconciliation([
+        { nrp: '95168420', gaji_pokok: 6500000, angsuran_lain_lain: 750000 },
+        { nrp: '11223344', gaji_pokok: 5000000, angsuran_lain_lain: 0 },
+      ]);
+
+      expect(success).toBe(true);
+      expect(mockAuditInsert).toHaveBeenCalledTimes(1);
+      expect(mockAuditInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          table_name: 'anggota',
+          action: 'IMPORT_GAJI_BULANAN',
+          record_id: 'BATCH',
+          performed_by: 'admin-123',
+          new_data: expect.objectContaining({
+            updated_count: 2,
+            total_rows: 2,
+          }),
+        })
+      );
+    });
+  });
+
+  describe('buildSalaryReconciliationWorkbook & downloadSalaryReconciliationTemplate', () => {
+    it('menghasilkan workbook 5 kolom baku (NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain) dengan format sel yang benar', () => {
+      const workbook = buildSalaryReconciliationWorkbook([
+        {
+          id: 'm-1',
+          nrp: '0095168420',
+          nama: 'Agus Susanto',
+          bank_account_number: '0011223344',
+          master_thp: 6000000,
+          take_home_pay: 5500000,
+          angsuran_lain_lain: 1000000,
+        },
+        {
+          id: 'm-2',
+          nrp: '88776655',
+          nama: 'Budi Hartono',
+          bank_account_number: null,
+          master_thp: null,
+          take_home_pay: 4800000,
+          angsuran_lain_lain: null,
+        },
+      ]);
+
+      const ws = workbook.getWorksheet('Template Rekonsiliasi');
+      expect(ws).toBeDefined();
+      expect(ws!.getRow(1).values).toEqual([
+        undefined,
+        'NRP',
+        'Nama Lengkap',
+        'Nomor Rekening',
+        'Gaji Pokok',
+        'Angsuran Lain-lain',
+      ]);
+
+      const row2 = ws!.getRow(2);
+      expect(row2.getCell(1).value).toBe('0095168420');
+      expect(row2.getCell(2).value).toBe('Agus Susanto');
+      expect(row2.getCell(3).value).toBe('0011223344');
+      expect(row2.getCell(4).value).toBe(6000000);
+      expect(row2.getCell(5).value).toBe(1000000);
+      expect(row2.getCell(1).numFmt).toBe('@');
+      expect(row2.getCell(3).numFmt).toBe('@');
+      expect(row2.getCell(4).numFmt).toBe('#,##0');
+      expect(row2.getCell(5).numFmt).toBe('#,##0');
+
+      const row3 = ws!.getRow(3);
+      expect(row3.getCell(3).value).toBe('');
+      expect(row3.getCell(4).value).toBe(4800000);
+      expect(row3.getCell(5).value).toBe(0);
+    });
+
+    it('mengambil anggota aktif urut nama ASC dan mengunduh file Template_Rekonsiliasi_YYYY-MM-DD.xlsx', async () => {
+      const mockOrder = vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'm-1',
+            nrp: '95168420',
+            nama: 'Agus Susanto',
+            bank_account_number: '1122334455',
+            master_thp: 6000000,
+            take_home_pay: 6000000,
+            angsuran_lain_lain: 500000,
+          },
+        ],
+        error: null,
+      });
+      const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { select: mockSelect };
+        }
+        return {};
+      });
+
+      const originalWindow = (globalThis as any).window;
+      const originalDocument = (globalThis as any).document;
+
+      const setAttributeMock = vi.fn();
+      const clickMock = vi.fn();
+      const removeChildMock = vi.fn();
+      const appendChildMock = vi.fn();
+      const mockLink = {
+        href: '',
+        setAttribute: setAttributeMock,
+        click: clickMock,
+        parentNode: { removeChild: removeChildMock },
+      };
+
+      (globalThis as any).window = {
+        URL: {
+          createObjectURL: vi.fn().mockReturnValue('blob:mock-url'),
+          revokeObjectURL: vi.fn(),
+        },
+      };
+      (globalThis as any).document = {
+        createElement: vi.fn().mockReturnValue(mockLink),
+        body: { appendChild: appendChildMock },
+      };
+
+      try {
+        const result = await downloadSalaryReconciliationTemplate();
+        expect(result).toBe(true);
+        expect(mockSelect).toHaveBeenCalledWith(
+          'id, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
+        );
+        expect(mockEq).toHaveBeenCalledWith('status', 'aktif');
+        expect(mockOrder).toHaveBeenCalledWith('nama', { ascending: true });
+
+        const today = new Date().toISOString().split('T')[0];
+        expect(setAttributeMock).toHaveBeenCalledWith(
+          'download',
+          `Template_Rekonsiliasi_${today}.xlsx`
+        );
+        expect(clickMock).toHaveBeenCalledTimes(1);
+      } finally {
+        (globalThis as any).window = originalWindow;
+        (globalThis as any).document = originalDocument;
+      }
+    });
   });
 
   describe('parseSalaryReconciliationFile', () => {
@@ -484,6 +648,23 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         gaji_pokok: 5500000,
         take_home_pay: 5500000,
         angsuran_lain_lain: 0,
+        status: 'MATCH',
+      });
+
+      // 3. Variasi header Angsuran Lain
+      const wbAlias = new ExcelJS.Workbook();
+      const wsAlias = wbAlias.addWorksheet('Template Rekonsiliasi');
+      wsAlias.addRow(['nrp', 'nama', 'no rekening', 'gaji_pokok', 'Angsuran Lain']);
+      wsAlias.addRow(['95168420', 'Agus Susanto', '123456', '6.250.000', 'Rp 350.000']);
+      const bufAlias = await wbAlias.xlsx.writeBuffer();
+      const fileAlias = { arrayBuffer: async () => bufAlias } as unknown as File;
+
+      const resAlias = await parseSalaryReconciliationFile(fileAlias);
+      expect(resAlias).toHaveLength(1);
+      expect(resAlias[0]).toMatchObject({
+        nrp: '95168420',
+        gaji_pokok: 6250000,
+        angsuran_lain_lain: 350000,
         status: 'MATCH',
       });
     });

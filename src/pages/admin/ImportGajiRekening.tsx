@@ -237,7 +237,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
         <div>
           <h1 className="text-title-lg font-title-lg text-primary">Import Gaji &amp; Rekening</h1>
           <p className="text-body-md text-on-surface-variant">
-            Unduh template, isi Gaji Pokok dan Angsuran Lain-lain, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
+            Unduh template 5 kolom baku (<span className="font-medium text-on-surface">NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain</span>), isi nominal Gaji Pokok dan Angsuran Lain-lain setiap bulan, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
           </p>
         </div>
 
@@ -497,8 +497,8 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                     <th className="px-4 py-3 font-medium">Nama Anggota</th>
                     <th className="px-4 py-3 font-medium">Pangkat</th>
                     <th className="px-4 py-3 font-medium">No. Rekening Bank</th>
-                    <th className="px-4 py-3 font-medium text-right">Gaji Pokok</th>
-                    <th className="px-4 py-3 font-medium text-right">Angsuran Lain-lain</th>
+                    <th className="px-4 py-3 font-medium text-right">Gaji Pokok (Rp)</th>
+                    <th className="px-4 py-3 font-medium text-right">Angsuran Lain-lain (Rp)</th>
                     <th className="px-4 py-3 font-medium">Status Rekening</th>
                   </tr>
                 </thead>

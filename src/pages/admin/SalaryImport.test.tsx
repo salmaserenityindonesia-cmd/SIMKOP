@@ -69,9 +69,10 @@ describe('SalaryImport Page Integration', () => {
     expect(html).toContain('Unduh Template');
     expect(html).toContain('Unggah File Rekonsiliasi');
     expect(html).toContain('Daftar Data Gaji &amp; Rekening Anggota');
+    expect(html).toContain('NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain');
     expect(html).toContain('No. Rekening Bank');
-    expect(html).toContain('Gaji Pokok');
-    expect(html).toContain('Angsuran Lain-lain');
+    expect(html).toContain('Gaji Pokok (Rp)');
+    expect(html).toContain('Angsuran Lain-lain (Rp)');
     expect(html).toContain('Status Rekening');
     expect(html).not.toContain('Take Home Pay (THP)');
     expect(html).toContain('Budi Santoso');

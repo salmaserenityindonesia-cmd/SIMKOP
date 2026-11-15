@@ -58,17 +58,82 @@ const normalizeHeader = (raw: any): string =>
     .toLowerCase()
     .replace(/[\s_-]+/g, ' ');
 
+const queryActiveMembersForTemplate = async (fields: string) => {
+  const query: any = supabase
+    .from('anggota')
+    .select(fields)
+    .eq('status', 'aktif');
+  if (query && typeof query.order === 'function') {
+    return await query.order('nama', { ascending: true });
+  }
+  return await query;
+};
+
+/**
+ * Membangun workbook Excel template rekonsiliasi 5 kolom:
+ * NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
+ */
+export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workbook => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Template Rekonsiliasi');
+
+  worksheet.columns = [
+    { header: 'NRP', key: 'nrp', width: 20 },
+    { header: 'Nama Lengkap', key: 'nama', width: 30 },
+    { header: 'Nomor Rekening', key: 'nomor_rekening', width: 25 },
+    { header: 'Gaji Pokok', key: 'gaji_pokok', width: 25 },
+    { header: 'Angsuran Lain-lain', key: 'angsuran_lain_lain', width: 25 },
+  ];
+
+  worksheet.getRow(1).font = { bold: true };
+  worksheet.getRow(1).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFD3D3D3' },
+  };
+
+  const applyRowFormats = (row: ExcelJS.Row) => {
+    row.getCell(1).numFmt = '@';
+    row.getCell(3).numFmt = '@';
+    row.getCell(4).numFmt = '#,##0';
+    row.getCell(5).numFmt = '#,##0';
+  };
+
+  if (members && members.length > 0) {
+    members.forEach((anggota: any) => {
+      const row = worksheet.addRow({
+        nrp: String(anggota.nrp || ''),
+        nama: String(anggota.nama || ''),
+        nomor_rekening: String(anggota.bank_account_number || ''),
+        gaji_pokok: Number(anggota.master_thp ?? anggota.take_home_pay ?? 0) || 0,
+        angsuran_lain_lain: Number(anggota.angsuran_lain_lain ?? 0) || 0,
+      });
+      applyRowFormats(row);
+    });
+  } else {
+    const row = worksheet.addRow({
+      nrp: '12345678',
+      nama: 'Contoh Nama',
+      nomor_rekening: '0011223344',
+      gaji_pokok: 0,
+      angsuran_lain_lain: 0,
+    });
+    applyRowFormats(row);
+  }
+
+  return workbook;
+};
+
 /**
  * Menghasilkan dan mengunduh template Excel 5 kolom untuk rekonsiliasi gaji & rekening:
  * NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
  */
 export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> => {
   try {
-    // 1. Ambil data anggota aktif dari public.anggota dengan fallback kolom
-    let { data, error }: { data: any; error: any } = await supabase
-      .from('anggota')
-      .select('nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain')
-      .eq('status', 'aktif');
+    // 1. Ambil data anggota aktif dari public.anggota urut nama ASC dengan fallback kolom
+    let { data, error }: { data: any; error: any } = await queryActiveMembersForTemplate(
+      'id, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
+    );
 
     if (error && error.message) {
       const msg = error.message.toLowerCase();
@@ -79,16 +144,14 @@ export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> =
         msg.includes('schema cache') ||
         msg.includes('does not exist')
       ) {
-        const retry = await supabase
-          .from('anggota')
-          .select('nrp, nama, bank_account_number, master_thp, take_home_pay')
-          .eq('status', 'aktif');
+        const retry = await queryActiveMembersForTemplate(
+          'id, nrp, nama, bank_account_number, master_thp, take_home_pay'
+        );
 
         if (retry.error) {
-          const minimalRetry = await supabase
-            .from('anggota')
-            .select('nrp, nama, bank_account_number')
-            .eq('status', 'aktif');
+          const minimalRetry = await queryActiveMembersForTemplate(
+            'id, nrp, nama, bank_account_number'
+          );
           data = minimalRetry.data;
           error = minimalRetry.error;
         } else {
@@ -102,53 +165,10 @@ export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> =
       throw error;
     }
 
-    // 2. Inisialisasi workbook dan worksheet
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Template Rekonsiliasi');
+    // 2. Inisialisasi workbook dan worksheet 5 kolom baku
+    const workbook = buildSalaryReconciliationWorkbook(data || []);
 
-    // 3. Definisikan 5 kolom baku
-    worksheet.columns = [
-      { header: 'NRP', key: 'nrp', width: 20 },
-      { header: 'Nama Lengkap', key: 'nama', width: 30 },
-      { header: 'Nomor Rekening', key: 'nomor_rekening', width: 25 },
-      { header: 'Gaji Pokok', key: 'gaji_pokok', width: 25 },
-      { header: 'Angsuran Lain-lain', key: 'angsuran_lain_lain', width: 25 },
-    ];
-
-    // Format header
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFD3D3D3' },
-    };
-
-    // 4. Isi baris data anggota aktif
-    if (data && data.length > 0) {
-      data.forEach((anggota: any) => {
-        const row = worksheet.addRow({
-          nrp: anggota.nrp,
-          nama: anggota.nama,
-          nomor_rekening: anggota.bank_account_number || '',
-          gaji_pokok: anggota.master_thp || anggota.take_home_pay || 0,
-          angsuran_lain_lain: anggota.angsuran_lain_lain || 0,
-        });
-
-        // Pastikan NRP dibaca sebagai teks
-        row.getCell(1).numFmt = '@';
-      });
-    } else {
-      const row = worksheet.addRow({
-        nrp: '12345678',
-        nama: 'Contoh Nama',
-        nomor_rekening: '0011223344',
-        gaji_pokok: 0,
-        angsuran_lain_lain: 0,
-      });
-      row.getCell(1).numFmt = '@';
-    }
-
-    // 5. Generate dan trigger unduhan file
+    // 3. Generate dan trigger unduhan file
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -225,6 +245,7 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
             colIndex.gajiPokok = colNum;
           } else if (
             header === 'angsuran lain lain' ||
+            header === 'angsuran lain' ||
             header === 'angsuran luar'
           ) {
             colIndex.angsuranLainLain = colNum;
@@ -266,13 +287,17 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
     });
 
     // Fetch members from DB
-    const { data: anggotaData, error } = await supabase
-      .from('anggota')
-      .select('nrp, nama, bank_account_number')
-      .in('nrp', nrpList);
+    let anggotaData: any[] = [];
+    if (nrpList.length > 0) {
+      const { data, error } = await supabase
+        .from('anggota')
+        .select('nrp, nama, bank_account_number')
+        .in('nrp', nrpList);
 
-    if (error) {
-      throw error;
+      if (error) {
+        throw error;
+      }
+      anggotaData = data || [];
     }
 
     const dbDataMap = new Map<string, any>();
@@ -332,6 +357,7 @@ export const applySalaryReconciliation = async (
   previewRows: (ReconciliationItemPayload | ReconciliationResult | FinalReconciliationPayload)[]
 ): Promise<boolean> => {
   const errors: string[] = [];
+  let updatedCount = 0;
 
   for (const item of previewRows) {
     const rawGajiPokok = (item as any).gaji_pokok ?? (item as any).thp ?? item.take_home_pay;
@@ -410,11 +436,43 @@ export const applySalaryReconciliation = async (
     if (error) {
       console.error(`Gagal update anggota NRP ${item.nrp}:`, error);
       errors.push(`Gagal update NRP ${item.nrp}: ${error.message}`);
+    } else {
+      updatedCount += 1;
     }
   }
 
   if (errors.length > 0) {
     throw new Error(errors.join('; '));
+  }
+
+  if (updatedCount > 0) {
+    try {
+      const authRes =
+        supabase.auth && typeof supabase.auth.getUser === 'function'
+          ? await supabase.auth.getUser()
+          : null;
+      const user = authRes?.data?.user || null;
+      const auditTable: any = supabase.from('audit_logs');
+      if (auditTable && typeof auditTable.insert === 'function') {
+        const auditRes = await auditTable.insert({
+          table_name: 'anggota',
+          action: 'IMPORT_GAJI_BULANAN',
+          record_id: 'BATCH',
+          performed_by: user?.id || null,
+          new_data: {
+            updated_count: updatedCount,
+            total_rows: previewRows.length,
+            timestamp: new Date().toISOString(),
+          },
+          notes: `Import Gaji Bulanan berhasil memperbarui ${updatedCount} data anggota`,
+        });
+        if (auditRes?.error) {
+          console.warn('Gagal mencatat IMPORT_GAJI_BULANAN ke audit_logs:', auditRes.error);
+        }
+      }
+    } catch (auditErr) {
+      console.warn('Gagal mencatat IMPORT_GAJI_BULANAN ke audit_logs:', auditErr);
+    }
   }
 
   return true;
