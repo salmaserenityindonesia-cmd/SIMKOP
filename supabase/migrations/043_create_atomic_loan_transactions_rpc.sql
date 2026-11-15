@@ -3,6 +3,20 @@
 -- Membungkus approval pinjaman beserta auto-generation loan_schedules,
 -- serta mutasi pembayaran angsuran (paySchedule & makePayment FIFO) ke dalam transaksi ACID atomik.
 
+-- 0. Pastikan seluruh nilai status pinjaman terdaftar jika tabel loans menggunakan ENUM loan_status
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'loan_status') THEN
+        ALTER TYPE public.loan_status ADD VALUE IF NOT EXISTS 'approved';
+        ALTER TYPE public.loan_status ADD VALUE IF NOT EXISTS 'active';
+        ALTER TYPE public.loan_status ADD VALUE IF NOT EXISTS 'completed';
+        ALTER TYPE public.loan_status ADD VALUE IF NOT EXISTS 'paid_off';
+        ALTER TYPE public.loan_status ADD VALUE IF NOT EXISTS 'rejected';
+    END IF;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 -- 1. Fungsi RPC: approve_loan_atomic
 CREATE OR REPLACE FUNCTION public.approve_loan_atomic(
     p_loan_id UUID,
@@ -15,7 +29,6 @@ DECLARE
     v_target_amount NUMERIC;
     v_tenor INTEGER;
     v_principal NUMERIC;
-    v_existing_schedules_count INTEGER;
 BEGIN
     -- Validasi parameter
     IF p_loan_id IS NULL THEN
@@ -35,16 +48,20 @@ BEGIN
         RAISE EXCEPTION 'Pinjaman dengan ID % tidak ditemukan', p_loan_id;
     END IF;
 
-    v_tenor := COALESCE(v_loan.tenor, 1);
-    v_target_amount := COALESCE(v_loan.monthly_target, 0);
-    v_principal := COALESCE(v_loan.principal_amount, v_loan.amount, 0);
+    v_tenor := GREATEST(1, COALESCE(NULLIF(v_loan.tenor, 0), NULLIF(v_loan.agreed_tenor_months, 0), 1));
+    v_principal := COALESCE(NULLIF(v_loan.principal_amount, 0), v_loan.amount, 0);
+    v_target_amount := COALESCE(
+        NULLIF(v_loan.monthly_target, 0),
+        NULLIF(v_loan.planned_installment_amount, 0),
+        ROUND(v_principal / v_tenor)
+    );
 
-    -- 2. Update pinjaman ke status approved dan catat disbursed_at serta inisialisasi sisa_pinjaman
+    -- 2. Update pinjaman ke status active dan catat disbursed_at serta inisialisasi sisa_pinjaman
     UPDATE public.loans
-    SET status = 'approved',
-        disbursed_at = p_start_date::timestamptz,
-        start_date = p_start_date,
-        sisa_pinjaman = v_principal
+    SET status = 'active',
+        disbursed_at = p_start_date,
+        sisa_pinjaman = v_principal,
+        updated_at = NOW()
     WHERE id = p_loan_id;
 
     -- 3. Bersihkan jadwal yang mungkin sudah ada sebelumnya untuk menghindari duplikasi
@@ -71,12 +88,40 @@ BEGIN
         );
     END LOOP;
 
-    -- 5. Return payload JSON hasil approval
+    -- 5. Catat riwayat persetujuan ke public.audit_logs
+    INSERT INTO public.audit_logs (
+        table_name,
+        action,
+        record_id,
+        entity_name,
+        entity_id,
+        new_data,
+        notes,
+        created_at
+    ) VALUES (
+        'loans',
+        'APPROVE',
+        p_loan_id::TEXT,
+        'loans',
+        p_loan_id,
+        jsonb_build_object(
+            'id', v_loan.id,
+            'status', 'active',
+            'disbursed_at', p_start_date,
+            'sisa_pinjaman', v_principal,
+            'tenor', v_tenor,
+            'monthly_target', v_target_amount
+        ),
+        'Pengajuan pinjaman disetujui dan diaktifkan (' || p_start_date::TEXT || ')',
+        NOW()
+    );
+
+    -- 6. Return payload JSON hasil approval
     RETURN jsonb_build_object(
         'success', true,
         'id', v_loan.id,
         'member_id', v_loan.member_id,
-        'status', 'approved',
+        'status', 'active',
         'disbursed_at', p_start_date,
         'amount', v_principal,
         'tenor', v_tenor,

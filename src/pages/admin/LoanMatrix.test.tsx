@@ -1082,4 +1082,129 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
   });
+
+  describe('Kepatuhan YTD Badge Styling for New Loans Without Due Installments', () => {
+    it('renders 91% amber for existing loan and 0% neutral slate badge with tooltip for new loan without due schedules (Fajar Ramadhan)', () => {
+      const fajarSummary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 90.9,
+        totalCollectedYTD: 1000000,
+        projectedNextMonth: 225000,
+        unpaidMembersCount: 1,
+        members: [
+          {
+            id: 'loan-fajar-1',
+            loanId: 'loan-fajar-1',
+            loanNumber: 'SALDO-AWAL-92117229-GAJISIPA',
+            memberId: 'mem-fajar',
+            nrp: '92117229',
+            nama: 'Fajar Ramadhan',
+            agreedTenorMonths: 12,
+            tenor: 12,
+            isLoanActive: true,
+            totalLoans: 2,
+            complianceYTD: 91,
+            hasDueSchedulesYTD: true,
+            months: Array.from({ length: 12 }, (_, idx) => {
+              const m = idx + 1;
+              return {
+                month: m,
+                year: 2026,
+                status: m <= 10 ? ('PAID' as const) : m === 11 ? ('UNPAID' as const) : ('PROJECTED' as const),
+                targetAmount: 100000,
+                paidAmount: m <= 10 ? 100000 : 0,
+                loanId: 'loan-fajar-1',
+                loanNumber: 'SALDO-AWAL-92117229-GAJISIPA',
+                tenor: 12,
+              };
+            }).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+          },
+          {
+            id: 'loan-fajar-2',
+            loanId: 'loan-fajar-2',
+            loanNumber: 'LOAN-1794768578628',
+            memberId: 'mem-fajar',
+            nrp: '92117229',
+            nama: 'Fajar Ramadhan',
+            agreedTenorMonths: 12,
+            tenor: 12,
+            isLoanActive: true,
+            totalLoans: 2,
+            complianceYTD: 0,
+            hasDueSchedulesYTD: false,
+            firstInstallmentLabel: 'Des 2026',
+            months: Array.from({ length: 12 }, (_, idx) => {
+              const m = idx + 1;
+              return {
+                month: m,
+                year: 2026,
+                status: m === 12 ? ('PROJECTED' as const) : ('NONE' as const),
+                targetAmount: m === 12 ? 125000 : 0,
+                paidAmount: 0,
+                loanId: 'loan-fajar-2',
+                loanNumber: 'LOAN-1794768578628',
+                tenor: 12,
+              };
+            }).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(<LoanMatrix initialData={fajarSummary} initialYear={2026} />);
+
+      // Row 1 renders 91% amber
+      expect(html).toContain('bg-amber-100 text-amber-700');
+      expect(html).toContain('91%');
+
+      // Row 2 renders 0% neutral slate with tooltip, NOT green 100%
+      expect(html).toContain('bg-slate-100 text-slate-500 border border-slate-200');
+      expect(html).toContain('title="Belum ada angsuran jatuh tempo (Angsuran pertama mulai Des 2026)"');
+      expect(html).toContain('>0%<');
+      expect(html).not.toContain('>100%<');
+    });
+
+    it('renders rose styling for 0% compliance when loan actually has due unpaid schedules', () => {
+      const overdueSummary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 0,
+        totalCollectedYTD: 0,
+        projectedNextMonth: 100000,
+        unpaidMembersCount: 1,
+        members: [
+          {
+            id: 'loan-overdue-0',
+            loanId: 'loan-overdue-0',
+            loanNumber: 'LOAN-OVERDUE-001',
+            memberId: 'mem-overdue',
+            nrp: '11100099',
+            nama: 'Anggota Menunggak',
+            agreedTenorMonths: 12,
+            tenor: 12,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 0,
+            hasDueSchedulesYTD: true,
+            months: Array.from({ length: 12 }, (_, idx) => {
+              const m = idx + 1;
+              return {
+                month: m,
+                year: 2026,
+                status: m === 1 ? ('UNPAID' as const) : ('NONE' as const),
+                targetAmount: m === 1 ? 100000 : 0,
+                paidAmount: 0,
+                loanId: 'loan-overdue-0',
+                loanNumber: 'LOAN-OVERDUE-001',
+                tenor: 12,
+              };
+            }).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(<LoanMatrix initialData={overdueSummary} initialYear={2026} />);
+      expect(html).toContain('bg-rose-100 text-rose-700');
+      expect(html).toContain('>0%<');
+      expect(html).not.toContain('Belum ada angsuran jatuh tempo');
+    });
+  });
 });

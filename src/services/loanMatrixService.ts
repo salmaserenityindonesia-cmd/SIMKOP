@@ -226,6 +226,11 @@ export interface LoanMatrixMember {
   totalLoans: number;
   months: Record<number, LoanMatrixMonth>;
   complianceYTD: number;
+  ytdCompliance?: number;
+  hasDueSchedulesYTD?: boolean;
+  dueInstallmentsYTD?: number;
+  paidInstallmentsYTD?: number;
+  firstInstallmentLabel?: string | null;
   priorYearPaid?: number;
   priorYearRemaining?: number;
   openingPaid?: number;
@@ -409,6 +414,11 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         totalLoans: 1,
         months: {},
         complianceYTD: 0,
+        ytdCompliance: 0,
+        hasDueSchedulesYTD: false,
+        dueInstallmentsYTD: 0,
+        paidInstallmentsYTD: 0,
+        firstInstallmentLabel: null,
         priorYearPaid: 0,
         priorYearRemaining: 0,
         openingPaid: 0,
@@ -513,16 +523,24 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
 
   // Calculate compliance per loan and handle FINISHED logic
   Object.values(loansMap).forEach(row => {
-    let loanTarget = 0;
-    let loanPaid = 0;
+    let dueInstallmentsYTD = 0;
+    let paidInstallmentsYTD = 0;
+    let firstProjectedMonth = 0;
     let lastActiveMonth = 0;
 
     for (let i = 1; i <= 12; i++) {
       const m = row.months[i];
-      if (m.status === 'PAID' || m.status === 'PARTIAL' || m.status === 'UNPAID' || m.status === 'FINISHED') {
-        loanTarget += m.targetAmount;
-        loanPaid += m.paidAmount;
+      const normStatus = (m.status || '').toUpperCase();
+      if (normStatus === 'PAID' || normStatus === 'PARTIAL' || normStatus === 'UNPAID' || normStatus === 'FINISHED') {
+        dueInstallmentsYTD += 1;
+        if (m.targetAmount > 0) {
+          paidInstallmentsYTD += Math.min(1, m.paidAmount / m.targetAmount);
+        } else if (normStatus === 'PAID' || normStatus === 'FINISHED') {
+          paidInstallmentsYTD += 1;
+        }
         lastActiveMonth = i;
+      } else if ((normStatus === 'PROJECTED' || normStatus === 'PROJECTION') && firstProjectedMonth === 0) {
+        firstProjectedMonth = i;
       }
     }
 
@@ -530,6 +548,11 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
 
     if (isRowCompleted) {
       row.complianceYTD = 100;
+      row.ytdCompliance = 100;
+      row.hasDueSchedulesYTD = true;
+      row.dueInstallmentsYTD = dueInstallmentsYTD;
+      row.paidInstallmentsYTD = paidInstallmentsYTD;
+      row.firstInstallmentLabel = null;
       for (let i = 1; i <= 12; i++) {
         const normStatus = (row.months[i].status || '').toUpperCase();
         if (normStatus !== 'NONE' && normStatus !== 'NOT_APPLICABLE') {
@@ -540,7 +563,18 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         }
       }
     } else {
-      row.complianceYTD = loanTarget > 0 ? (loanPaid / loanTarget) * 100 : 100;
+      // Jika belum ada jadwal yang jatuh tempo dan belum ada pembayaran sama sekali -> 0% (bukan 100%)
+      const ytdCompliance =
+        dueInstallmentsYTD <= 0
+          ? 0
+          : Math.min(100, Math.round((paidInstallmentsYTD / dueInstallmentsYTD) * 100));
+
+      row.complianceYTD = ytdCompliance;
+      row.ytdCompliance = ytdCompliance;
+      row.hasDueSchedulesYTD = dueInstallmentsYTD > 0;
+      row.dueInstallmentsYTD = dueInstallmentsYTD;
+      row.paidInstallmentsYTD = paidInstallmentsYTD;
+      row.firstInstallmentLabel = firstProjectedMonth > 0 ? `${MONTH_NAMES[firstProjectedMonth - 1]} ${year}` : null;
 
       // Apply finished status for months after the last active month if loan is fully paid
       if (!row.isLoanActive && lastActiveMonth > 0) {
@@ -564,7 +598,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     row.cutoffDate = null;
   });
 
-  const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 100;
+  const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 0;
 
   return {
     year,

@@ -2832,5 +2832,194 @@ describe('loanMatrixService - Pelacakan Jadwal Penuh Pinjaman (Full Schedule Tra
   });
 });
 
+describe('loanMatrixService - YTD Compliance for New Loans Without Due Schedules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-16T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sets ytdCompliance / complianceYTD to 0 (not 100) for new loan with only future projected installments and prevents summary KPI inflation', async () => {
+    const fajarMember = { id: 'mem-fajar', nrp: '92117229', nama: 'Fajar Ramadhan' };
+    const existingLoan = {
+      id: 'loan-fajar-old',
+      loan_number: 'SALDO-AWAL-92117229-GAJISIPA',
+      principal_amount: 1200000,
+      tenor: 12,
+      monthly_target: 100000,
+      status: 'active',
+      member: fajarMember,
+    };
+    const newLoan = {
+      id: 'loan-fajar-new',
+      loan_number: 'LOAN-1794768578628',
+      principal_amount: 1500000,
+      tenor: 12,
+      monthly_target: 125000,
+      disbursed_at: '2026-11-10T00:00:00.000Z',
+      status: 'approved',
+      member: fajarMember,
+    };
+
+    const existingSchedules = Array.from({ length: 12 }, (_, idx) => {
+      const m = idx + 1;
+      const isPaid = m <= 10;
+      return {
+        id: `sched-old-${m}`,
+        period_number: m,
+        due_date: `2026-${String(m).padStart(2, '0')}-25`,
+        target_amount: 100000,
+        paid_amount: isPaid ? 100000 : 0,
+        status: isPaid ? 'paid' : 'unpaid',
+        loan: existingLoan,
+      };
+    });
+
+    const newLoanSchedules = [
+      {
+        id: 'sched-new-1',
+        period_number: 1,
+        due_date: '2026-12-25',
+        target_amount: 125000,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: newLoan,
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: existingLoan.id }, { id: newLoan.id }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: existingLoan.id }, { loan_id: newLoan.id }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [...existingSchedules, ...newLoanSchedules],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members).toHaveLength(2);
+
+    const oldRow = summary.members.find(m => m.loanNumber === 'SALDO-AWAL-92117229-GAJISIPA');
+    expect(oldRow).toBeDefined();
+    expect(oldRow?.complianceYTD).toBe(91);
+    expect(oldRow?.ytdCompliance).toBe(91);
+    expect(oldRow?.hasDueSchedulesYTD).toBe(true);
+    expect(oldRow?.dueInstallmentsYTD).toBe(11);
+    expect(oldRow?.paidInstallmentsYTD).toBe(10);
+
+    const newRow = summary.members.find(m => m.loanNumber === 'LOAN-1794768578628');
+    expect(newRow).toBeDefined();
+    expect(newRow?.complianceYTD).toBe(0);
+    expect(newRow?.ytdCompliance).toBe(0);
+    expect(newRow?.hasDueSchedulesYTD).toBe(false);
+    expect(newRow?.dueInstallmentsYTD).toBe(0);
+    expect(newRow?.paidInstallmentsYTD).toBe(0);
+    expect(newRow?.firstInstallmentLabel).toBe('Des 2026');
+    expect(newRow?.months[12].status).toBe('PROJECTED');
+
+    // Summary KPI only reflects the 10 paid out of 11 due (approx 90.9%), not pulled up to 100% by the new loan
+    expect(summary.complianceYTD).toBeCloseTo((1000000 / 1100000) * 100, 2);
+  });
+
+  it('returns summary complianceYTD of 0 when only new loans without due schedules exist', async () => {
+    const newLoan = {
+      id: 'loan-only-future',
+      loan_number: 'LOAN-FUTURE-001',
+      principal_amount: 1500000,
+      tenor: 12,
+      monthly_target: 125000,
+      status: 'approved',
+      member: { id: 'mem-future', nrp: '99900011', nama: 'Anggota Baru' },
+    };
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: newLoan.id }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: newLoan.id }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'sched-f-1',
+                      period_number: 1,
+                      due_date: '2026-12-25',
+                      target_amount: 125000,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      loan: newLoan,
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members).toHaveLength(1);
+    expect(summary.members[0].complianceYTD).toBe(0);
+    expect(summary.members[0].hasDueSchedulesYTD).toBe(false);
+    expect(summary.complianceYTD).toBe(0);
+  });
+});
+
 
 

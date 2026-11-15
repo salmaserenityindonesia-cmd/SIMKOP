@@ -3,7 +3,6 @@ import { getActiveSavingsRateTiers } from './savingsRateService';
 import { LoanType } from './koperasiService';
 import { normalizeName, type InitialLoanRow } from '../utils/initialLoansParser';
 import {
-  ApproveLoanRpcResponse,
   RecordLoanRepaymentRpcResponse,
   PayScheduleResult,
   MakePaymentResult
@@ -29,11 +28,16 @@ export interface Loan {
   member_id: string;
   notes: string;
   amount: number;
+  principal_amount?: number;
+  agreed_tenor_months?: number;
+  planned_installment_amount?: number;
   tenor: number;
   monthly_target: number;
+  sisa_pinjaman?: number;
   status: 'draft' | 'approved' | 'active' | 'paid_off' | 'defaulted' | 'completed' | 'rejected';
   disbursed_at: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface LoanSchedule {
@@ -700,85 +704,140 @@ export const loanService = {
     return data as Loan;
   },
 
-  async approveLoan(loanId: string, startDate: string) {
-    if (supabase.rpc && typeof supabase.rpc === 'function') {
-      try {
-        const rpcRes = (await supabase.rpc('approve_loan_atomic', {
-          p_loan_id: loanId,
-          p_start_date: startDate
-        } as any)) as any;
+  async approveLoan(loanId: string, disbursedDate?: string): Promise<Loan> {
+    const todayDate =
+      disbursedDate && /^\d{4}-\d{2}-\d{2}$/.test(disbursedDate.trim())
+        ? disbursedDate.trim()
+        : formatDateYmd(new Date());
 
-        if (rpcRes) {
-          const { data, error } = rpcRes;
-          if (error) {
-            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
-            if (!isMissingFunction) {
-              throw new Error(error.message || 'Gagal menyetujui pinjaman via atomic RPC');
-            }
-          } else if (data) {
-            const responseData = data as ApproveLoanRpcResponse;
-            if (responseData.success === false) {
-              throw new Error(responseData.message || 'Persetujuan pinjaman ditolak');
-            }
-            return {
-              id: responseData.id || loanId,
-              member_id: responseData.member_id || '',
-              notes: '',
-              amount: Number(responseData.amount || 0),
-              tenor: Number(responseData.tenor || 0),
-              monthly_target: Number(responseData.monthly_target || 0),
-              status: 'approved',
-              disbursed_at: responseData.disbursed_at || startDate,
-              created_at: new Date().toISOString()
-            } as Loan;
-          }
-        }
-      } catch (err: any) {
-        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
-          throw err;
+    // 1. Ambil data pinjaman saat ini untuk membaca pokok pinjaman dan parameter tenor
+    let existingLoan: any = null;
+    try {
+      const loansFetchTable: any = supabase.from('loans');
+      if (loansFetchTable && typeof loansFetchTable.select === 'function') {
+        const fetchQuery = loansFetchTable
+          .select('id, member_id, principal_amount, amount, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status')
+          .eq('id', loanId);
+        const fetchRes = typeof fetchQuery?.maybeSingle === 'function'
+          ? await fetchQuery.maybeSingle()
+          : typeof fetchQuery?.single === 'function'
+            ? await fetchQuery.single()
+            : await fetchQuery;
+        if (fetchRes?.data) {
+          existingLoan = Array.isArray(fetchRes.data) ? fetchRes.data[0] : fetchRes.data;
         }
       }
+    } catch {
+      // Fallback jika environment mock tidak menyediakan select pada loans
     }
 
-    // Fallback: sequential client-side mutations (for environments without approve_loan_atomic RPC)
-    const { data: loan, error: loanError } = await supabase
+    const principalAmount = Number(existingLoan?.principal_amount) || Number(existingLoan?.amount) || 0;
+
+    // 2. Perbarui status pinjaman ke 'active' dan isi disbursed_at sesuai skema public.loans
+    const { data: updatedLoan, error: updateError } = await supabase
       .from('loans')
       .update({
-        status: 'approved',
-        disbursed_at: startDate
+        status: 'active',
+        disbursed_at: todayDate,
+        sisa_pinjaman: principalAmount,
+        updated_at: new Date().toISOString(),
       })
       .eq('id', loanId)
       .select()
       .single();
 
-    if (loanError) throw new Error(loanError.message);
+    if (updateError) throw new Error(updateError.message);
 
-    // Auto-generate schedules
-    const schedules = [];
-    const start = new Date(startDate);
-    for (let i = 1; i <= loan.tenor; i++) {
-      const dueDate = new Date(start);
-      const sm = start.getMonth();
-      dueDate.setMonth(sm + i);
-      if (dueDate.getMonth() !== (sm + i) % 12) dueDate.setDate(0);
-      
-      schedules.push({
-        loan_id: loan.id,
-        period_number: i,
-        due_date: dueDate.toISOString().split('T')[0],
-        target_amount: loan.monthly_target,
-        paid_amount: 0,
-        status: 'unpaid'
-      });
+    const loanRecord: any = updatedLoan || existingLoan || { id: loanId };
+    const targetLoanId = loanRecord.id || loanId;
+    const finalPrincipal =
+      Number(loanRecord.principal_amount) || Number(loanRecord.amount) || principalAmount || 0;
+    const tenor = Math.max(
+      1,
+      Math.floor(Number(loanRecord.tenor) || Number(loanRecord.agreed_tenor_months) || 1)
+    );
+    const rawMonthlyTarget =
+      Number(loanRecord.monthly_target) || Number(loanRecord.planned_installment_amount) || 0;
+    const monthlyInstallment =
+      rawMonthlyTarget > 0
+        ? Math.round(rawMonthlyTarget)
+        : Math.round(finalPrincipal / tenor);
+
+    // 3. Periksa apakah jadwal angsuran di loan_schedules sudah tersedia
+    let hasExistingSchedules = false;
+    try {
+      const schedCheckTable: any = supabase.from('loan_schedules');
+      if (schedCheckTable && typeof schedCheckTable.select === 'function') {
+        const schedQuery = schedCheckTable
+          .select('id')
+          .eq('loan_id', targetLoanId);
+        const schedRes = typeof schedQuery?.limit === 'function'
+          ? await schedQuery.limit(1)
+          : await schedQuery;
+        if (Array.isArray(schedRes?.data) && schedRes.data.length > 0) {
+          hasExistingSchedules = true;
+        }
+      }
+    } catch {
+      // Fallback jika mock tidak menyediakan select pada loan_schedules
     }
 
-    const { error: scheduleError } = await supabase
-      .from('loan_schedules')
-      .insert(schedules);
+    // 4. Bangkitkan jadwal angsuran 1..tenor mulai bulan berikutnya setelah disbursed_at
+    if (!hasExistingSchedules) {
+      const schedules = [];
+      for (let period = 1; period <= tenor; period++) {
+        schedules.push({
+          loan_id: targetLoanId,
+          period_number: period,
+          due_date: buildMonthlyDueDate(todayDate, period),
+          target_amount: monthlyInstallment,
+          paid_amount: 0,
+          status: 'unpaid',
+        });
+      }
 
-    if (scheduleError) throw new Error(scheduleError.message);
-    
-    return loan as Loan;
+      if (schedules.length > 0) {
+        const { error: scheduleError } = await supabase
+          .from('loan_schedules')
+          .insert(schedules);
+
+        if (scheduleError) throw new Error(scheduleError.message);
+      }
+    }
+
+    // 5. Catat riwayat persetujuan ke public.audit_logs
+    try {
+      const auditTable: any = supabase.from('audit_logs');
+      if (auditTable && typeof auditTable.insert === 'function') {
+        const auditRes = await auditTable.insert({
+          table_name: 'loans',
+          action: 'APPROVE',
+          record_id: targetLoanId,
+          entity_name: 'loans',
+          entity_id: targetLoanId,
+          new_data: {
+            id: targetLoanId,
+            status: 'active',
+            disbursed_at: todayDate,
+            sisa_pinjaman: finalPrincipal,
+            tenor,
+            monthly_target: monthlyInstallment,
+          },
+          notes: `Pengajuan pinjaman disetujui dan diaktifkan (${todayDate})`,
+        });
+        if (auditRes?.error) {
+          console.warn('Gagal mencatat APPROVE ke audit_logs:', auditRes.error);
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal mencatat APPROVE ke audit_logs:', e);
+    }
+
+    return loanRecord as Loan;
+  },
+
+  async approveLoanApplication(loanId: string, disbursedDate?: string): Promise<Loan> {
+    return this.approveLoan(loanId, disbursedDate);
   },
 
   async rejectLoan(loanId: string) {

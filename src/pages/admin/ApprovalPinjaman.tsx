@@ -80,28 +80,34 @@ export default function ApprovalPinjaman({
     try {
       setActionLoading(id);
       if (action === 'approved') {
-        const startDate = new Date().toISOString().split('T')[0];
-        await loanService.approveLoan(id, startDate);
-        showToast('Pinjaman berhasil disetujui', 'success');
+        const now = new Date();
+        const todayDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        await loanService.approveLoan(id, todayDate);
+        showToast('Pengajuan pinjaman berhasil disetujui dan diaktifkan.', 'success');
       } else {
         await loanService.rejectLoan(id);
         showToast('Pinjaman berhasil ditolak', 'success');
       }
-      await loadData(activeTab);
-      // Refresh count in background
-      if (activeTab === 'APPROVED') {
-        loanService.getLoanApplications('PENDING')
-          .then(res => {
-            if (res) setCounts(prev => ({ ...prev, pending: res.length }));
-          })
-          .catch(() => {});
-      } else {
-        loanService.getLoanApplications('APPROVED')
-          .then(res => {
-            if (res) setCounts(prev => ({ ...prev, approved: res.length }));
-          })
-          .catch(() => {});
+      const refreshPromises: Promise<any>[] = [loadData(activeTab)];
+      if (activeTab !== 'PENDING') {
+        refreshPromises.push(
+          loanService.getLoanApplications('PENDING')
+            .then(res => {
+              if (res) setCounts(prev => ({ ...prev, pending: res.length }));
+            })
+            .catch(() => {})
+        );
       }
+      if (activeTab !== 'APPROVED') {
+        refreshPromises.push(
+          loanService.getLoanApplications('APPROVED')
+            .then(res => {
+              if (res) setCounts(prev => ({ ...prev, approved: res.length }));
+            })
+            .catch(() => {})
+        );
+      }
+      await Promise.all(refreshPromises);
     } catch (err: any) {
       showToast(err.message || 'Terjadi kesalahan', 'error');
     } finally {
@@ -120,7 +126,11 @@ export default function ApprovalPinjaman({
   const formatDate = (dateStr?: string | null) => {
     if (!dateStr) return '-';
     try {
-      return new Date(dateStr).toLocaleDateString('id-ID', {
+      const trimmed = dateStr.trim();
+      const normalized = /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00` : trimmed;
+      const parsed = new Date(normalized);
+      if (isNaN(parsed.getTime())) return dateStr;
+      return parsed.toLocaleDateString('id-ID', {
         day: '2-digit',
         month: 'short',
         year: 'numeric'

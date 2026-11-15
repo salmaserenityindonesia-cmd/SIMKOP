@@ -156,6 +156,31 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(html).not.toContain('Setujui');
       expect(html).not.toContain('Tolak');
     });
+
+    it('renders Tgl Disetujui column from disbursed_at formatted in id-ID (e.g. 16 Nov 2026)', () => {
+      const approvedFajar = [
+        {
+          id: 'loan-fajar',
+          principal_amount: 1500000,
+          agreed_tenor_months: 12,
+          status: 'active',
+          created_at: '2026-11-15T10:00:00Z',
+          disbursed_at: '2026-11-16',
+          anggota: { id: 'm-fajar', nrp: '92117229', nama: 'Fajar Ramadhan' }
+        }
+      ];
+
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={approvedFajar}
+        />
+      );
+
+      expect(html).toContain('Fajar Ramadhan');
+      expect(html).toContain('92117229');
+      expect(html).toContain('16 Nov 2026');
+    });
   });
 
   describe('Empty State Messages by Tab', () => {

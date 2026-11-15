@@ -22,6 +22,7 @@ import {
   bulkCheckAllLoansUpToCurrentMonth,
   BulkLoanProgress,
   BulkLoanResult,
+  LoanMatrixMember,
   LoanMatrixSummary,
   MonthLoanCell,
 } from '../../services/loanMatrixService';
@@ -80,6 +81,40 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
         statusLabel: 'Di Luar Masa Tenor',
       };
   }
+};
+
+const getRowComplianceInfo = (row: LoanMatrixMember, fallbackYear: number) => {
+  const isLoanCompleted =
+    !row.isLoanActive || (row as any).status === 'completed' || (row as any).status === 'paid_off';
+  const monthCells = Object.values(row.months || {});
+  const hasDueFromMonths = monthCells.some(cell => {
+    const st = (cell?.status || '').toUpperCase();
+    return st === 'PAID' || st === 'PARTIAL' || st === 'UNPAID' || st === 'FINISHED';
+  });
+  const hasDueSchedulesYTD = isLoanCompleted
+    ? true
+    : row.hasDueSchedulesYTD !== undefined
+      ? row.hasDueSchedulesYTD
+      : hasDueFromMonths;
+  const rowCompliance = isLoanCompleted ? 100 : (!hasDueSchedulesYTD ? 0 : (row.complianceYTD ?? 0));
+  const firstProjectedCell = monthCells
+    .filter(m => {
+      const st = (m?.status || '').toUpperCase();
+      return st === 'PROJECTED' || st === 'PROJECTION';
+    })
+    .sort((a, b) => (a.month || 0) - (b.month || 0))[0];
+  const firstInstallmentLabel =
+    row.firstInstallmentLabel ||
+    (firstProjectedCell
+      ? `${MONTHS[(firstProjectedCell.month || 1) - 1]} ${firstProjectedCell.year || fallbackYear}`
+      : `Des ${fallbackYear}`);
+
+  return {
+    isLoanCompleted,
+    hasDueSchedulesYTD,
+    rowCompliance,
+    firstInstallmentLabel,
+  };
 };
 
 export interface LoanMatrixProps {
@@ -285,8 +320,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
     ];
 
     filteredMembers.forEach(m => {
-      const isMemberCompleted = !m.isLoanActive || (m as any).status === 'completed' || (m as any).status === 'paid_off';
-      const memberCompliance = isMemberCompleted ? 100 : m.complianceYTD;
+      const { isLoanCompleted: isMemberCompleted, rowCompliance: memberCompliance } = getRowComplianceInfo(m, year);
       const row: any = {
         nrp: m.anggota?.nrp || m.nrp,
         nama: m.anggota?.nama || m.nama,
@@ -507,8 +541,12 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   const rowKey = row.id || row.loanId || `${row.memberId}-${row.loanNumber || row.loan_number || ''}`;
                   const targetLoanId = row.loanId || row.id || Object.values(row.months).find(m => m.loanId)?.loanId;
                   const tenorDisplay = row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || 0;
-                  const isLoanCompleted = !row.isLoanActive || (row as any).status === 'completed' || (row as any).status === 'paid_off';
-                  const rowCompliance = isLoanCompleted ? 100 : row.complianceYTD;
+                  const {
+                    isLoanCompleted,
+                    hasDueSchedulesYTD,
+                    rowCompliance,
+                    firstInstallmentLabel,
+                  } = getRowComplianceInfo(row, year);
 
                   return (
                     <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
@@ -642,11 +680,22 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                       })}
 
                       <td className="px-4 py-3 border-l border-slate-100 bg-white group-hover:bg-slate-50 text-center">
-                        <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
-                          rowCompliance >= 100 ? 'bg-emerald-100 text-emerald-700' :
-                          rowCompliance >= 50 ? 'bg-amber-100 text-amber-700' :
-                          'bg-rose-100 text-rose-700'
-                        }`}>
+                        <div
+                          title={
+                            !hasDueSchedulesYTD
+                              ? `Belum ada angsuran jatuh tempo (Angsuran pertama mulai ${firstInstallmentLabel})`
+                              : undefined
+                          }
+                          className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold ${
+                            !hasDueSchedulesYTD
+                              ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                              : rowCompliance >= 100
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : rowCompliance >= 50
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-rose-100 text-rose-700'
+                          }`}
+                        >
                           {rowCompliance.toFixed(0)}%
                         </div>
                       </td>

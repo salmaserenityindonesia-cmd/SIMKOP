@@ -3,7 +3,7 @@
 
 export interface ApproveLoanRpcPayload {
   p_loan_id: string;
-  p_start_date: string;
+  p_disbursed_at?: string;
 }
 
 export interface ApproveLoanRpcResponse {

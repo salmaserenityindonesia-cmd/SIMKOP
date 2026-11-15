@@ -959,75 +959,155 @@ describe('loanService', () => {
     });
   });
 
-  describe('approveLoan - Atomic RPC & Fallback', () => {
-    it('should call approve_loan_atomic RPC and return structured loan data when RPC succeeds', async () => {
-      const mockRpcResponse = {
-        success: true,
+  describe('approveLoan - Column Mapping, Schedule Generation & Audit Log', () => {
+    it('should update loans with status active, disbursed_at, sisa_pinjaman, updated_at (no start_date), generate loan_schedules starting +1 month, and write audit_logs', async () => {
+      const existingLoan = {
         id: 'loan-123',
         member_id: 'member-456',
-        status: 'approved',
-        disbursed_at: '2026-11-01',
-        amount: 5000000,
-        tenor: 10,
+        principal_amount: 1500000,
+        amount: 1500000,
+        tenor: 3,
+        agreed_tenor_months: 3,
         monthly_target: 500000,
-        schedules_count: 10
+        planned_installment_amount: 500000,
+        status: 'draft',
       };
 
-      (supabase.rpc as any).mockResolvedValueOnce({ data: mockRpcResponse, error: null });
-
-      const result = await loanService.approveLoan('loan-123', '2026-11-01');
-
-      expect(supabase.rpc).toHaveBeenCalledWith('approve_loan_atomic', {
-        p_loan_id: 'loan-123',
-        p_start_date: '2026-11-01'
-      });
-      expect(result.id).toBe('loan-123');
-      expect(result.member_id).toBe('member-456');
-      expect(result.status).toBe('approved');
-      expect(result.amount).toBe(5000000);
-      expect(result.monthly_target).toBe(500000);
-    });
-
-    it('should throw error when approve_loan_atomic RPC returns a business validation error', async () => {
-      (supabase.rpc as any).mockResolvedValueOnce({
-        data: null,
-        error: { message: 'Pinjaman tidak dapat disetujui karena berstatus active' }
-      });
-
-      await expect(loanService.approveLoan('loan-123', '2026-11-01'))
-        .rejects.toThrow('Pinjaman tidak dapat disetujui karena berstatus active');
-    });
-
-    it('should fall back to sequential table mutations when approve_loan_atomic RPC does not exist (PGRST202)', async () => {
-      (supabase.rpc as any).mockResolvedValueOnce({
-        data: null,
-        error: { code: 'PGRST202', message: 'Could not find the function approve_loan_atomic' }
-      });
-
-      const mockLoan = {
-        id: 'loan-fallback',
-        tenor: 2,
-        monthly_target: 1000000,
-        status: 'approved',
-        disbursed_at: '2026-11-01'
+      const updatedLoan = {
+        ...existingLoan,
+        status: 'active',
+        disbursed_at: '2026-11-16',
+        sisa_pinjaman: 1500000,
       };
 
-      const mockSingle = vi.fn().mockResolvedValue({ data: mockLoan, error: null });
-      const mockSelect = vi.fn().mockReturnValue({ single: mockSingle });
-      const mockEq = vi.fn().mockReturnValue({ select: mockSelect });
-      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
-      const mockInsert = vi.fn().mockResolvedValue({ error: null });
+      const mockFetchSingle = vi.fn().mockResolvedValue({ data: existingLoan, error: null });
+      const mockFetchEq = vi.fn().mockReturnValue({ single: mockFetchSingle, maybeSingle: mockFetchSingle });
+      const mockFetchSelect = vi.fn().mockReturnValue({ eq: mockFetchEq });
+
+      const mockUpdateSingle = vi.fn().mockResolvedValue({ data: updatedLoan, error: null });
+      const mockUpdateSelect = vi.fn().mockReturnValue({ single: mockUpdateSingle });
+      const mockUpdateEq = vi.fn().mockReturnValue({ select: mockUpdateSelect });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockUpdateEq });
+
+      const mockSchedLimit = vi.fn().mockResolvedValue({ data: [], error: null });
+      const mockSchedEq = vi.fn().mockReturnValue({ limit: mockSchedLimit });
+      const mockSchedSelect = vi.fn().mockReturnValue({ eq: mockSchedEq });
+      const mockSchedInsert = vi.fn().mockResolvedValue({ error: null });
+
+      const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
 
       (supabase.from as any).mockImplementation((table: string) => {
-        if (table === 'loans') return { update: mockUpdate };
-        if (table === 'loan_schedules') return { insert: mockInsert };
+        if (table === 'loans') {
+          return { select: mockFetchSelect, update: mockUpdate };
+        }
+        if (table === 'loan_schedules') {
+          return { select: mockSchedSelect, insert: mockSchedInsert };
+        }
+        if (table === 'audit_logs') {
+          return { insert: mockAuditInsert };
+        }
         return {};
       });
 
-      const result = await loanService.approveLoan('loan-fallback', '2026-11-01');
+      const result = await loanService.approveLoan('loan-123', '2026-11-16');
 
-      expect(result.id).toBe('loan-fallback');
-      expect(mockInsert).toHaveBeenCalled();
+      expect(supabase.rpc).not.toHaveBeenCalled();
+
+      const updatePayload = mockUpdate.mock.calls[0][0];
+      expect(updatePayload.status).toBe('active');
+      expect(updatePayload.disbursed_at).toBe('2026-11-16');
+      expect(updatePayload.sisa_pinjaman).toBe(1500000);
+      expect(typeof updatePayload.updated_at).toBe('string');
+      expect(updatePayload).not.toHaveProperty('start_date');
+
+      expect(mockSchedInsert).toHaveBeenCalledTimes(1);
+      const insertedSchedules = mockSchedInsert.mock.calls[0][0];
+      expect(insertedSchedules).toHaveLength(3);
+      expect(insertedSchedules[0]).toEqual({
+        loan_id: 'loan-123',
+        period_number: 1,
+        due_date: '2026-12-16',
+        target_amount: 500000,
+        paid_amount: 0,
+        status: 'unpaid',
+      });
+      expect(insertedSchedules[1].due_date).toBe('2027-01-16');
+      expect(insertedSchedules[2].due_date).toBe('2027-02-16');
+
+      expect(mockAuditInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          table_name: 'loans',
+          action: 'APPROVE',
+          record_id: 'loan-123',
+          entity_name: 'loans',
+          entity_id: 'loan-123',
+        })
+      );
+
+      expect(result.id).toBe('loan-123');
+      expect(result.status).toBe('active');
+      expect(result.disbursed_at).toBe('2026-11-16');
+    });
+
+    it('should skip generating duplicate schedules if loan_schedules already exist for the loan', async () => {
+      const existingLoan = {
+        id: 'loan-existing-sched',
+        principal_amount: 1000000,
+        tenor: 2,
+        monthly_target: 500000,
+        status: 'draft',
+      };
+
+      const mockFetchSingle = vi.fn().mockResolvedValue({ data: existingLoan, error: null });
+      const mockFetchEq = vi.fn().mockReturnValue({ maybeSingle: mockFetchSingle });
+      const mockFetchSelect = vi.fn().mockReturnValue({ eq: mockFetchEq });
+
+      const mockUpdateSingle = vi.fn().mockResolvedValue({
+        data: { ...existingLoan, status: 'active', disbursed_at: '2026-11-16' },
+        error: null,
+      });
+      const mockUpdateSelect = vi.fn().mockReturnValue({ single: mockUpdateSingle });
+      const mockUpdateEq = vi.fn().mockReturnValue({ select: mockUpdateSelect });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockUpdateEq });
+
+      const mockSchedLimit = vi.fn().mockResolvedValue({ data: [{ id: 'sch-already-1' }], error: null });
+      const mockSchedEq = vi.fn().mockReturnValue({ limit: mockSchedLimit });
+      const mockSchedSelect = vi.fn().mockReturnValue({ eq: mockSchedEq });
+      const mockSchedInsert = vi.fn().mockResolvedValue({ error: null });
+      const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') return { select: mockFetchSelect, update: mockUpdate };
+        if (table === 'loan_schedules') return { select: mockSchedSelect, insert: mockSchedInsert };
+        if (table === 'audit_logs') return { insert: mockAuditInsert };
+        return {};
+      });
+
+      const result = await loanService.approveLoan('loan-existing-sched', '2026-11-16');
+
+      expect(result.status).toBe('active');
+      expect(mockSchedInsert).not.toHaveBeenCalled();
+    });
+
+    it('should throw error when loans table update fails', async () => {
+      const mockFetchSingle = vi.fn().mockResolvedValue({ data: { id: 'loan-err', amount: 1500000 }, error: null });
+      const mockFetchEq = vi.fn().mockReturnValue({ maybeSingle: mockFetchSingle });
+      const mockFetchSelect = vi.fn().mockReturnValue({ eq: mockFetchEq });
+
+      const mockUpdateSingle = vi.fn().mockResolvedValue({
+        data: null,
+        error: { message: 'Update loans failed' },
+      });
+      const mockUpdateSelect = vi.fn().mockReturnValue({ single: mockUpdateSingle });
+      const mockUpdateEq = vi.fn().mockReturnValue({ select: mockUpdateSelect });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockUpdateEq });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') return { select: mockFetchSelect, update: mockUpdate };
+        return {};
+      });
+
+      await expect(loanService.approveLoan('loan-err', '2026-11-16')).rejects.toThrow('Update loans failed');
     });
   });
 
