@@ -135,7 +135,12 @@ export const SetoranPage: React.FC = () => {
         ]);
 
         if (!active) return;
-        setMembers(anggotaList || []);
+        const activeMembers = (anggotaList || []).filter((m) => {
+          const st = (m.status || 'aktif').toLowerCase();
+          const mst = (m.membership_status || 'ACTIVE').toUpperCase();
+          return st === 'aktif' && mst === 'ACTIVE';
+        });
+        setMembers(activeMembers);
 
         const user = authRes?.data?.user;
         if (user) {

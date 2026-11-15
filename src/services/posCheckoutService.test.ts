@@ -516,4 +516,98 @@ describe('posCheckoutService', () => {
       })
     );
   });
+
+  it('should persist exact 3-way split payment (deposit 2000 + credit 2000 + cash 2000) with payment_scheme split', async () => {
+    vi.spyOn(posCreditService, 'getMemberFinancials').mockResolvedValue({
+      belanjaBalance: 10000,
+      remainingCreditLimit: 50000,
+      thpSafetyThreshold: 1500000
+    });
+
+    (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+      if (funcName === 'process_pos_checkout') {
+        return Promise.resolve({
+          data: {
+            success: true,
+            sale_id: 'sale-uuid-3way-split',
+            sale_number: params.p_sale_number
+          },
+          error: null
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      shiftId: 'shift-99',
+      cart: [{ id: 'prod-1', name: 'Snack', qty: 1, price: 6000, subtotal: 6000 }],
+      subtotal: 6000,
+      discount: 0,
+      totalAmount: 6000,
+      paidCash: 2000,
+      paidDeposit: 2000,
+      paidCredit: 2000,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      'process_pos_checkout',
+      expect.objectContaining({
+        p_total_amount: 6000,
+        p_paid_deposit: 2000,
+        p_paid_credit: 2000,
+        p_paid_cash: 2000,
+        p_payment_scheme: 'split'
+      })
+    );
+  });
+
+  it('should deduct cash change before storing paid_cash in split payment (deposit 2000 + cash 50000 on 6000 bill)', async () => {
+    (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+      if (funcName === 'process_pos_checkout') {
+        return Promise.resolve({
+          data: {
+            success: true,
+            sale_id: 'sale-uuid-split-change',
+            sale_number: params.p_sale_number
+          },
+          error: null
+        });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
+    const payload = {
+      memberId: 'member-uuid-1',
+      cashierId: 'cashier-1',
+      shiftId: 'shift-99',
+      cart: [{ id: 'prod-1', name: 'Snack', qty: 1, price: 6000, subtotal: 6000 }],
+      subtotal: 6000,
+      discount: 0,
+      totalAmount: 6000,
+      paidCash: 50000,
+      paidDeposit: 2000,
+      paidCredit: 0,
+      paymentScheme: 'split'
+    };
+
+    const res = await processCheckout(payload);
+
+    expect(res.success).toBe(true);
+    expect(supabase.rpc).toHaveBeenCalledWith(
+      'process_pos_checkout',
+      expect.objectContaining({
+        p_total_amount: 6000,
+        p_paid_deposit: 2000,
+        p_paid_credit: 0,
+        p_paid_cash: 4000,
+        p_payment_scheme: 'split'
+      })
+    );
+  });
 });

@@ -73,6 +73,8 @@ export interface MonthlyDepositCommitment {
     nama: string;
     nrp: string;
     created_at?: string;
+    status?: string;
+    membership_status?: string;
   };
 }
 
@@ -277,7 +279,7 @@ export async function addDepositTransaction(
 export async function getMonthlyDepositCommitments(month?: number, year?: number): Promise<MonthlyDepositCommitment[]> {
   let query = supabase.from('monthly_deposit_commitments').select(`
     *,
-    anggota!member_id (nama, nrp, created_at)
+    anggota!member_id (nama, nrp, created_at, status, membership_status)
   `);
   
   if (month) query = query.eq('for_month', month);
@@ -293,8 +295,12 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
     throw new Error(`Failed to fetch monthly deposit commitments: ${error.message}`);
   }
   
-  // Filter out commitments that are prior to the member's join date
+  // Filter out suspended/inactive members and commitments that are prior to the member's join date
   const filteredData = (data || []).filter((c: any) => {
+    const rowStatus = (c.anggota?.status || 'aktif').toLowerCase();
+    const memStatus = (c.anggota?.membership_status || 'ACTIVE').toUpperCase();
+    if (rowStatus !== 'aktif' || memStatus !== 'ACTIVE') return false;
+
     if (!c.anggota?.created_at) return true; // If no created_at, assume valid
     
     const joinDate = new Date(c.anggota.created_at);

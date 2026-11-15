@@ -18,7 +18,9 @@ export interface Anggota {
   nama: string;
   pangkat?: string | null;
   status?: string;
-  membership_status?: 'ACTIVE' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
+  membership_status?: 'ACTIVE' | 'SUSPENDED' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
+  suspended_at?: string | null;
+  suspension_reason?: string | null;
   master_thp?: number;
   take_home_pay?: number;
   bank_account_number?: string;
@@ -65,7 +67,9 @@ export interface CreateMemberInput {
   bank_account_number?: string;
   tgl_awal_anggota?: string;
   status?: string;
-  membership_status?: 'ACTIVE' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
+  membership_status?: 'ACTIVE' | 'SUSPENDED' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
+  suspended_at?: string | null;
+  suspension_reason?: string | null;
 }
 
 export async function createMember(input: CreateMemberInput): Promise<Anggota> {
@@ -77,17 +81,27 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
     createdAt = new Date().toISOString();
   }
 
-  const anggotaPayload = {
+  const resolvedMembershipStatus = input.membership_status || 'ACTIVE';
+  const resolvedStatus = input.status || (resolvedMembershipStatus === 'ACTIVE' ? 'aktif' : 'nonaktif');
+
+  const anggotaPayload: Record<string, any> = {
     nomor_referensi: input.nomor_referensi?.trim() || null,
     nrp: input.nrp.trim(),
     nama: input.nama.trim(),
     pangkat: input.pangkat?.trim() || null,
     master_thp: Number(input.master_thp) || 0,
     bank_account_number: input.bank_account_number?.trim() || null,
-    status: input.status || 'aktif',
-    membership_status: input.membership_status || 'ACTIVE',
+    status: resolvedStatus,
+    membership_status: resolvedMembershipStatus,
     created_at: createdAt,
   };
+
+  if (resolvedMembershipStatus === 'SUSPENDED' || input.suspended_at !== undefined) {
+    anggotaPayload.suspended_at = input.suspended_at ?? new Date().toISOString();
+  }
+  if (resolvedMembershipStatus === 'SUSPENDED' || input.suspension_reason !== undefined) {
+    anggotaPayload.suspension_reason = input.suspension_reason ?? null;
+  }
 
   const { data: member, error: memberErr } = await supabase
     .from('anggota')
@@ -269,9 +283,22 @@ export async function addAnggota(data: Omit<Anggota, 'id' | 'created_at'>): Prom
 }
 
 export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id' | 'created_at'>>): Promise<Anggota> {
+  const payload: Partial<Omit<Anggota, 'id' | 'created_at'>> = { ...updates };
+
+  if (updates.membership_status) {
+    payload.status = updates.membership_status === 'ACTIVE' ? 'aktif' : 'nonaktif';
+    if (updates.membership_status === 'SUSPENDED') {
+      payload.suspended_at = updates.suspended_at ?? new Date().toISOString();
+      payload.suspension_reason = updates.suspension_reason ?? null;
+    } else if (updates.membership_status === 'ACTIVE') {
+      payload.suspended_at = null;
+      payload.suspension_reason = null;
+    }
+  }
+
   const { data, error } = await supabase
     .from('anggota')
-    .update(updates)
+    .update(payload)
     .eq('id', id)
     .select()
     .single();
@@ -281,7 +308,91 @@ export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, '
     throw new Error(`Gagal mengupdate anggota: ${error.message}`);
   }
 
+  if (updates.membership_status) {
+    try {
+      const auditTable: any = supabase.from('audit_logs');
+      if (auditTable && typeof auditTable.insert === 'function') {
+        await auditTable.insert([{
+          table_name: 'anggota',
+          action:
+            updates.membership_status === 'SUSPENDED'
+              ? 'SUSPEND_MEMBER'
+              : updates.membership_status === 'ACTIVE'
+              ? 'ACTIVATE_MEMBER'
+              : 'UPDATE_STATUS',
+          record_id: id,
+          entity_name: 'anggota',
+          entity_id: id,
+          new_data: payload,
+          notes:
+            updates.suspension_reason ||
+            (updates.membership_status === 'ACTIVE'
+              ? 'Aktivasi kembali anggota'
+              : `Perubahan status ke ${updates.membership_status}`),
+        }]);
+      }
+    } catch (auditErr) {
+      console.warn('Gagal mencatat audit log perubahan status anggota:', auditErr);
+    }
+  }
+
   return data as Anggota;
+}
+
+export interface UpdateMemberSuspensionPayload {
+  memberId: string;
+  memberName: string;
+  memberNrp: string;
+  oldStatus: string;
+  newStatus: 'ACTIVE' | 'SUSPENDED';
+  reason: string;
+  userId?: string;
+}
+
+export async function updateMemberSuspensionStatus(
+  payload: UpdateMemberSuspensionPayload
+): Promise<void> {
+  const trimmedReason = (payload.reason || '').trim();
+  if (!trimmedReason) {
+    throw new Error('Alasan perubahan status keanggotaan wajib diisi.');
+  }
+
+  const isSuspending = payload.newStatus === 'SUSPENDED';
+  const updateData: Record<string, any> = {
+    membership_status: payload.newStatus,
+    status: isSuspending ? 'nonaktif' : 'aktif',
+    suspended_at: isSuspending ? new Date().toISOString() : null,
+    suspension_reason: isSuspending ? trimmedReason : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await supabase
+    .from('anggota')
+    .update(updateData)
+    .eq('id', payload.memberId);
+
+  if (error) {
+    throw new Error(`Gagal memperbarui status keanggotaan: ${error.message}`);
+  }
+
+  try {
+    const auditTable: any = supabase.from('audit_logs');
+    if (auditTable && typeof auditTable.insert === 'function') {
+      await auditTable.insert({
+        table_name: 'anggota',
+        action: isSuspending ? 'SUSPEND_MEMBER' : 'REACTIVATE_MEMBER',
+        record_id: payload.memberId,
+        entity_name: 'anggota',
+        entity_id: payload.memberId,
+        old_data: { membership_status: payload.oldStatus },
+        new_data: { membership_status: payload.newStatus, reason: trimmedReason },
+        performed_by: payload.userId || null,
+        notes: `${isSuspending ? 'Pembekuan Sementara' : 'Aktivasi Kembali'} Anggota ${payload.memberName} (${payload.memberNrp}) - Alasan: ${trimmedReason}`,
+      });
+    }
+  } catch (auditErr) {
+    console.warn('Gagal mencatat audit log perubahan status anggota:', auditErr);
+  }
 }
 
 export async function deleteAnggota(id: string): Promise<void> {
@@ -685,7 +796,7 @@ export function extractMemberTHP(member: any): number {
 export async function getActiveMembersForLoan() {
   let { data, error } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
+    .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number, status, membership_status')
     .eq('status', 'aktif')
     .order('nama');
 
@@ -698,7 +809,11 @@ export async function getActiveMembersForLoan() {
     data = fallback.data;
   }
 
-  return data || [];
+  return (data || []).filter(
+    (m: any) =>
+      (!m.status || String(m.status).toLowerCase() === 'aktif') &&
+      (!m.membership_status || String(m.membership_status).toUpperCase() === 'ACTIVE')
+  );
 }
 
 export interface MemberComprehensiveExportRow {

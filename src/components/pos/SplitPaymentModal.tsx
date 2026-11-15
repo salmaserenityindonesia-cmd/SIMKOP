@@ -1,7 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { UserCheck, User } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import MemberCreditBadge from './MemberCreditBadge';
+
+export type PrimaryPaymentMode = 'cash' | 'deposit' | 'store_credit' | 'split';
+
+export interface SplitAmounts {
+  depositAmount: number;
+  bonAmount: number;
+  cashAmount: number;
+}
 
 export interface MemberInfo {
   id: string;
@@ -9,6 +17,170 @@ export interface MemberInfo {
   name?: string;
   nrp?: string;
   member_number?: string;
+}
+
+export function resolvePrimaryPaymentMode(
+  isNonMember: boolean,
+  primaryMode?: PrimaryPaymentMode,
+  initialMethod?: string
+): PrimaryPaymentMode {
+  if (isNonMember) return 'cash';
+  if (primaryMode) return primaryMode;
+  if (initialMethod === 'Potong Simpanan') return 'deposit';
+  if (initialMethod === 'Bon Toko') return 'store_credit';
+  if (initialMethod === 'Split' || initialMethod === 'split') return 'split';
+  return 'cash';
+}
+
+export function getInitialSplitAmounts({
+  totalTagihan,
+  isNonMember,
+  primaryMode,
+  financials,
+}: {
+  totalTagihan: number;
+  isNonMember: boolean;
+  primaryMode: PrimaryPaymentMode;
+  financials?: { belanjaBalance?: number | null; remainingCreditLimit?: number | null } | null;
+}): SplitAmounts {
+  const safeTotal = Math.max(0, totalTagihan || 0);
+
+  if (isNonMember || primaryMode === 'cash' || primaryMode === 'split') {
+    return {
+      depositAmount: 0,
+      bonAmount: 0,
+      cashAmount: safeTotal,
+    };
+  }
+
+  if (primaryMode === 'deposit') {
+    if (financials && financials.belanjaBalance !== undefined && financials.belanjaBalance !== null) {
+      const availableShoppingBalance = Math.max(0, Math.round(Number(financials.belanjaBalance) || 0));
+      const depositAmount = Math.min(availableShoppingBalance, safeTotal);
+      return {
+        depositAmount,
+        bonAmount: 0,
+        cashAmount: Math.max(0, safeTotal - depositAmount),
+      };
+    }
+    return {
+      depositAmount: safeTotal,
+      bonAmount: 0,
+      cashAmount: 0,
+    };
+  }
+
+  // primaryMode === 'store_credit'
+  if (financials && financials.remainingCreditLimit !== undefined && financials.remainingCreditLimit !== null) {
+    const maxSafeCreditLimit = Math.max(0, Math.round(Number(financials.remainingCreditLimit) || 0));
+    const bonAmount = Math.min(maxSafeCreditLimit, safeTotal);
+    return {
+      depositAmount: 0,
+      bonAmount,
+      cashAmount: Math.max(0, safeTotal - bonAmount),
+    };
+  }
+  return {
+    depositAmount: 0,
+    bonAmount: safeTotal,
+    cashAmount: 0,
+  };
+}
+
+export function applyDepositChange({
+  rawVal,
+  totalTagihan,
+  availableShoppingBalance,
+  maxSafeCreditLimit,
+  currentBon,
+  currentCash,
+  primaryMode,
+}: {
+  rawVal: number;
+  totalTagihan: number;
+  availableShoppingBalance: number;
+  maxSafeCreditLimit: number;
+  currentBon: number;
+  currentCash: number;
+  primaryMode: PrimaryPaymentMode;
+}): SplitAmounts {
+  const maxDepositAllowed = Math.max(0, Math.min(availableShoppingBalance, totalTagihan));
+  const nextDeposit = Math.max(0, Math.min(Math.round(rawVal || 0), maxDepositAllowed));
+  const remainingAfterDeposit = Math.max(0, totalTagihan - nextDeposit);
+
+  let nextBon = currentBon;
+  let nextCash = currentCash;
+
+  if (primaryMode === 'store_credit' || currentBon > 0) {
+    const effectiveCash = Math.min(nextCash, remainingAfterDeposit);
+    nextBon = Math.max(0, Math.min(maxSafeCreditLimit, remainingAfterDeposit - effectiveCash));
+  } else if (nextCash > 0 || primaryMode === 'deposit' || primaryMode === 'cash') {
+    nextCash = Math.max(0, remainingAfterDeposit);
+  }
+
+  return {
+    depositAmount: nextDeposit,
+    bonAmount: nextBon,
+    cashAmount: nextCash,
+  };
+}
+
+export function applyBonChange({
+  rawVal,
+  totalTagihan,
+  maxSafeCreditLimit,
+  currentDeposit,
+  currentCash,
+}: {
+  rawVal: number;
+  totalTagihan: number;
+  maxSafeCreditLimit: number;
+  currentDeposit: number;
+  currentCash: number;
+}): SplitAmounts {
+  const maxBonForTagihan = Math.max(0, totalTagihan - currentDeposit);
+  const maxBonAllowed = Math.min(maxSafeCreditLimit, maxBonForTagihan);
+  const nextBon = Math.max(0, Math.min(Math.round(rawVal || 0), maxBonAllowed));
+  const remainingAfterDepositAndBon = Math.max(0, totalTagihan - currentDeposit - nextBon);
+
+  const nextCash = currentCash > 0 ? remainingAfterDepositAndBon : 0;
+
+  return {
+    depositAmount: currentDeposit,
+    bonAmount: nextBon,
+    cashAmount: nextCash,
+  };
+}
+
+export function applyCashChange({
+  rawVal,
+  totalTagihan,
+  maxSafeCreditLimit,
+  currentDeposit,
+  currentBon,
+  primaryMode,
+}: {
+  rawVal: number;
+  totalTagihan: number;
+  maxSafeCreditLimit: number;
+  currentDeposit: number;
+  currentBon: number;
+  primaryMode: PrimaryPaymentMode;
+}): SplitAmounts {
+  const nextCash = Math.max(0, Math.round(rawVal || 0));
+  const remainingAfterDeposit = Math.max(0, totalTagihan - currentDeposit);
+  const effectiveCashForBill = Math.min(nextCash, remainingAfterDeposit);
+
+  let nextBon = currentBon;
+  if (primaryMode === 'store_credit' || currentBon > 0) {
+    nextBon = Math.max(0, Math.min(maxSafeCreditLimit, remainingAfterDeposit - effectiveCashForBill));
+  }
+
+  return {
+    depositAmount: currentDeposit,
+    bonAmount: nextBon,
+    cashAmount: nextCash,
+  };
 }
 
 export function clampDepositInput(
@@ -36,6 +208,7 @@ export interface SplitPaymentModalProps {
   selectedMember?: MemberInfo | null;
   isNonMember?: boolean;
   initialMethod?: string;
+  primaryMode?: PrimaryPaymentMode;
   initialFinancials?: any;
   onConfirm: (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => void;
 }
@@ -49,65 +222,119 @@ export default function SplitPaymentModal({
   selectedMember,
   isNonMember: propIsNonMember,
   initialMethod = 'Tunai',
+  primaryMode,
   initialFinancials = null,
   onConfirm
 }: SplitPaymentModalProps) {
   const effectiveMemberId = selectedMember?.id || memberId || null;
   const isNonMember = propIsNonMember ?? !effectiveMemberId;
-  const [paidCash, setPaidCash] = useState<string>('');
-  const [paidDeposit, setPaidDeposit] = useState<string>('');
-  const [paidCredit, setPaidCredit] = useState<string>('');
+  const effectivePrimaryMode = resolvePrimaryPaymentMode(isNonMember, primaryMode, initialMethod);
+
+  const initialAmounts = isOpen
+    ? getInitialSplitAmounts({
+        totalTagihan: total,
+        isNonMember,
+        primaryMode: effectivePrimaryMode,
+        financials: isNonMember ? null : initialFinancials,
+      })
+    : { depositAmount: 0, bonAmount: 0, cashAmount: 0 };
+
+  const [paidCash, setPaidCash] = useState<string>(
+    initialAmounts.cashAmount > 0 ? initialAmounts.cashAmount.toString() : ''
+  );
+  const [paidDeposit, setPaidDeposit] = useState<string>(
+    initialAmounts.depositAmount > 0 ? initialAmounts.depositAmount.toString() : ''
+  );
+  const [paidCredit, setPaidCredit] = useState<string>(
+    initialAmounts.bonAmount > 0 ? initialAmounts.bonAmount.toString() : ''
+  );
+  const [activeCreditMode, setActiveCreditMode] = useState<boolean>(
+    effectivePrimaryMode === 'store_credit'
+  );
   
-  const [financials, setFinancials] = useState<any>(initialFinancials);
+  const [financials, setFinancials] = useState<any>(isNonMember ? null : initialFinancials);
   const cashInputRef = useRef<HTMLInputElement>(null);
+  const hasUserEditedRef = useRef<boolean>(false);
+
+  const applyInitialAmounts = useCallback(
+    (loadedFinancials: any) => {
+      const initial = getInitialSplitAmounts({
+        totalTagihan: total,
+        isNonMember,
+        primaryMode: effectivePrimaryMode,
+        financials: isNonMember ? null : loadedFinancials,
+      });
+      setPaidDeposit(initial.depositAmount > 0 ? initial.depositAmount.toString() : '');
+      setPaidCredit(initial.bonAmount > 0 ? initial.bonAmount.toString() : '');
+      setPaidCash(initial.cashAmount > 0 ? initial.cashAmount.toString() : '');
+    },
+    [total, isNonMember, effectivePrimaryMode]
+  );
+
+  const handleFinancialsLoaded = useCallback(
+    (loadedFinancials: any) => {
+      setFinancials(loadedFinancials);
+      if (!hasUserEditedRef.current) {
+        applyInitialAmounts(loadedFinancials);
+      }
+    },
+    [applyInitialAmounts]
+  );
 
   useEffect(() => {
-    if (isOpen) {
-      if (isNonMember) {
-        setPaidCash(total.toString());
-        setPaidDeposit('');
-        setPaidCredit('');
-        setFinancials(null);
-      } else if (initialMethod === 'Potong Simpanan') {
-        setPaidDeposit(total.toString());
-        setPaidCash('');
-        setPaidCredit('');
-      } else if (initialMethod === 'Bon Toko') {
-        setPaidCredit(total.toString());
-        setPaidCash('');
-        setPaidDeposit('');
-      } else {
-        setPaidCash(total.toString());
-        setPaidDeposit('');
-        setPaidCredit('');
-      }
+    if (!isOpen) return;
+    let cancelled = false;
+    hasUserEditedRef.current = false;
+    setActiveCreditMode(effectivePrimaryMode === 'store_credit');
 
-      if (initialFinancials) {
-        setFinancials(initialFinancials);
-      } else if (effectiveMemberId) {
-        import('../../services/posCreditService').then(s => {
-          s.getMemberFinancials(effectiveMemberId).then(setFinancials);
+    const startingFinancials = isNonMember ? null : initialFinancials;
+    setFinancials(startingFinancials);
+    applyInitialAmounts(startingFinancials);
+
+    if (!isNonMember && !initialFinancials && effectiveMemberId) {
+      import('../../services/posCreditService').then(s => {
+        s.getMemberFinancials(effectiveMemberId).then(data => {
+          if (!cancelled) {
+            handleFinancialsLoaded(data);
+          }
         });
-      } else {
-        setFinancials(null);
-      }
-
-      // Auto-focus and select cash input
-      const timer = setTimeout(() => {
-        if (cashInputRef.current) {
-          cashInputRef.current.focus();
-          cashInputRef.current.select();
-        }
-      }, 50);
-      return () => clearTimeout(timer);
+      });
     }
-  }, [isOpen, effectiveMemberId, isNonMember, total, initialMethod, initialFinancials]);
+
+    // Auto-focus and select cash input
+    const timer = setTimeout(() => {
+      if (cashInputRef.current) {
+        cashInputRef.current.focus();
+        cashInputRef.current.select();
+      }
+    }, 50);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isOpen, effectiveMemberId, isNonMember, total, effectivePrimaryMode]);
+
+  useEffect(() => {
+    if (isOpen && !isNonMember && initialFinancials) {
+      handleFinancialsLoaded(initialFinancials);
+    }
+  }, [isOpen, isNonMember, initialFinancials, handleFinancialsLoaded]);
 
   if (!isOpen) return null;
 
   const cashAmount = Number(paidCash) || 0;
   const depositAmount = isNonMember ? 0 : (Number(paidDeposit) || 0);
   const creditAmount = isNonMember ? 0 : (Number(paidCredit) || 0);
+
+  const availableShoppingBalance = isNonMember
+    ? 0
+    : Math.max(0, Number(financials?.belanjaBalance || 0));
+  const maxSafeCreditLimit = isNonMember
+    ? 0
+    : financials && financials.remainingCreditLimit !== undefined && financials.remainingCreditLimit !== null
+      ? Math.max(0, Number(financials.remainingCreditLimit || 0))
+      : total;
 
   const totalPaid = cashAmount + depositAmount + creditAmount;
   const remaining = Math.max(0, total - totalPaid);
@@ -129,8 +356,60 @@ export default function SplitPaymentModal({
     error = 'Pilih anggota terlebih dahulu untuk menggunakan Simpanan / Bon.';
   }
 
+  const syncAmounts = (next: SplitAmounts) => {
+    setPaidDeposit(next.depositAmount > 0 ? next.depositAmount.toString() : '');
+    setPaidCredit(next.bonAmount > 0 ? next.bonAmount.toString() : '');
+    setPaidCash(next.cashAmount > 0 ? next.cashAmount.toString() : '');
+  };
+
+  const effectiveBalancingMode: PrimaryPaymentMode = activeCreditMode
+    ? 'store_credit'
+    : effectivePrimaryMode;
+
+  const handleDepositChange = (rawVal: number) => {
+    if (isNonMember) return;
+    hasUserEditedRef.current = true;
+    const next = applyDepositChange({
+      rawVal,
+      totalTagihan: total,
+      availableShoppingBalance,
+      maxSafeCreditLimit,
+      currentBon: creditAmount,
+      currentCash: cashAmount,
+      primaryMode: effectiveBalancingMode,
+    });
+    syncAmounts(next);
+  };
+
+  const handleBonChange = (rawVal: number) => {
+    if (isNonMember) return;
+    hasUserEditedRef.current = true;
+    const next = applyBonChange({
+      rawVal,
+      totalTagihan: total,
+      maxSafeCreditLimit,
+      currentDeposit: depositAmount,
+      currentCash: cashAmount,
+    });
+    setActiveCreditMode(next.bonAmount > 0);
+    syncAmounts(next);
+  };
+
+  const handleCashChange = (rawVal: number) => {
+    hasUserEditedRef.current = true;
+    const next = applyCashChange({
+      rawVal,
+      totalTagihan: total,
+      maxSafeCreditLimit,
+      currentDeposit: depositAmount,
+      currentBon: creditAmount,
+      primaryMode: isNonMember ? 'cash' : effectiveBalancingMode,
+    });
+    syncAmounts(next);
+  };
+
   const handleQuickCash = (amount: number) => {
-    setPaidCash(amount.toString());
+    handleCashChange(amount);
   };
 
   const handleConfirm = () => {
@@ -235,7 +514,7 @@ export default function SplitPaymentModal({
           ) : null}
 
           {effectiveMemberId ? (
-            <MemberCreditBadge memberId={effectiveMemberId} onFinancialsLoaded={setFinancials} />
+            <MemberCreditBadge memberId={effectiveMemberId} onFinancialsLoaded={handleFinancialsLoaded} />
           ) : (
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 flex items-start gap-3 mt-2">
               <span className="material-symbols-outlined text-amber-500 text-[22px] shrink-0 mt-0.5">info</span>
@@ -273,7 +552,7 @@ export default function SplitPaymentModal({
                 {!isNonMember && financials && financials.belanjaBalance > 0 && (
                   <button 
                     type="button"
-                    onClick={() => setPaidDeposit(Math.min(total, financials.belanjaBalance).toString())}
+                    onClick={() => handleDepositChange(Math.min(availableShoppingBalance, total))}
                     className="text-primary hover:underline text-xs"
                   >
                     Gunakan Maksimal
@@ -287,9 +566,7 @@ export default function SplitPaymentModal({
                 value={isNonMember ? 0 : paidDeposit}
                 onChange={e => {
                   if (isNonMember) return;
-                  const maxAllowed = financials ? Math.min(total, Math.max(0, financials.belanjaBalance)) : total;
-                  const val = Math.min(Number(e.target.value) || 0, maxAllowed);
-                  setPaidDeposit(val > 0 ? val.toString() : '');
+                  handleDepositChange(Number(e.target.value));
                 }}
                 placeholder="Rp 0"
                 className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
@@ -326,7 +603,7 @@ export default function SplitPaymentModal({
                 disabled={isNonMember}
                 readOnly={isNonMember}
                 value={isNonMember ? 0 : paidCredit}
-                onChange={e => !isNonMember && setPaidCredit(e.target.value)}
+                onChange={e => !isNonMember && handleBonChange(Number(e.target.value))}
                 placeholder="Rp 0"
                 className={`w-full border rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary ${
                   isNonMember 
@@ -357,7 +634,7 @@ export default function SplitPaymentModal({
                 ref={cashInputRef}
                 type="number" 
                 value={paidCash}
-                onChange={e => setPaidCash(e.target.value)}
+                onChange={e => handleCashChange(Number(e.target.value))}
                 placeholder="Rp 0"
                 className="w-full border border-outline-variant rounded-lg p-2.5 text-lg font-mono focus:ring-2 focus:ring-primary bg-surface"
               />

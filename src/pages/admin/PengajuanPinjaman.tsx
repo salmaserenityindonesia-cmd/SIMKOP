@@ -344,7 +344,7 @@ export default function PengajuanPinjaman({
   async function loadAnggota() {
     let { data, error } = await supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number')
+      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number, status, membership_status')
       .eq('status', 'aktif')
       .order('nama');
 
@@ -357,7 +357,14 @@ export default function PengajuanPinjaman({
       data = fallback.data;
     }
 
-    if (data) setAnggotaList(data);
+    if (data) {
+      const activeOnly = data.filter(
+        (m: any) =>
+          (!m.status || String(m.status).toLowerCase() === 'aktif') &&
+          (!m.membership_status || String(m.membership_status).toUpperCase() === 'ACTIVE')
+      );
+      setAnggotaList(activeOnly);
+    }
   }
 
   const handleSelectMember = (memberId: string) => {

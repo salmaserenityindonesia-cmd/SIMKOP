@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users } from 'lucide-react';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle } from 'lucide-react';
 import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
 import { getActiveLoanTypes, syncInitialLoanBalances } from '../../services/loanService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
+import MemberSuspensionModal from '../../components/members/MemberSuspensionModal';
 import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { downloadInitialSavingsTemplate, parseInitialSavingsExcel, InitialSavingsRow } from '../../utils/initialSavingsParser';
@@ -86,20 +87,24 @@ export async function triggerResetAllMembers(
 
 export interface ManajemenAnggotaProps {
   initialShowModal?: boolean;
+  initialEditingAnggota?: Anggota | null;
   initialResetModalOpen?: boolean;
   initialMemberImportModalOpen?: boolean;
   initialSavingsModalOpen?: boolean;
   initialLoansModalOpen?: boolean;
   initialActivePokokRate?: number;
+  initialSuspensionMember?: Anggota | null;
 }
 
 export default function ManajemenAnggota({
   initialShowModal = false,
+  initialEditingAnggota = null,
   initialResetModalOpen = false,
   initialMemberImportModalOpen = false,
   initialSavingsModalOpen = false,
   initialLoansModalOpen = false,
   initialActivePokokRate,
+  initialSuspensionMember = null,
 }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -119,13 +124,15 @@ export default function ManajemenAnggota({
 
   // Modal State
   const [showModal, setShowModal] = useState(initialShowModal);
-  const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(null);
+  const [editingAnggota, setEditingAnggota] = useState<Anggota | null>(initialEditingAnggota ?? null);
   const [formData, setFormData] = useState({
     nomor_referensi: '',
     nrp: '',
     nama: '',
     pangkat: '',
     status: 'aktif',
+    membership_status: 'ACTIVE' as NonNullable<Anggota['membership_status']>,
+    suspension_reason: '',
     master_thp: 0,
     bank_account_number: '',
     tgl_awal_anggota: new Date().toISOString().slice(0, 10),
@@ -210,6 +217,8 @@ export default function ManajemenAnggota({
       nama: '',
       pangkat: '',
       status: 'aktif',
+      membership_status: 'ACTIVE',
+      suspension_reason: '',
       master_thp: 0,
       bank_account_number: '',
       tgl_awal_anggota: new Date().toISOString().slice(0, 10),
@@ -225,11 +234,22 @@ export default function ManajemenAnggota({
       nama: anggota.nama,
       pangkat: anggota.pangkat || '',
       status: anggota.status || 'aktif',
+      membership_status: anggota.membership_status || (anggota.status === 'nonaktif' ? 'RESIGNED' : 'ACTIVE'),
+      suspension_reason: anggota.suspension_reason || '',
       master_thp: anggota.master_thp || 0,
       bank_account_number: anggota.bank_account_number || '',
       tgl_awal_anggota: anggota.created_at ? anggota.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
     });
     setShowModal(true);
+  };
+
+  // Status Keaktifan / Pembekuan Sementara Modal State
+  const [selectedMemberForStatus, setSelectedMemberForStatus] = useState<Anggota | null>(
+    initialSuspensionMember ?? null
+  );
+
+  const handleOpenSuspensionModal = (anggota: Anggota) => {
+    setSelectedMemberForStatus(anggota);
   };
 
   // Detail Migrasi Awal Modal State
@@ -246,15 +266,15 @@ export default function ManajemenAnggota({
     try {
       setIsSubmitting(true);
       if (editingAnggota) {
-        await updateAnggota(editingAnggota.id, {
+        const updatePayload: Partial<Omit<Anggota, 'id' | 'created_at'>> = {
           nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
           pangkat: formData.pangkat,
-          status: formData.status,
           master_thp: formData.master_thp,
           bank_account_number: formData.bank_account_number,
-        });
+        };
+        await updateAnggota(editingAnggota.id, updatePayload);
         showToast('Data anggota berhasil diperbarui.', 'success');
       } else {
         await createMember({
@@ -289,6 +309,7 @@ export default function ManajemenAnggota({
   const getStatusText = (status?: string) => {
     switch (status) {
       case 'ACTIVE': return 'Aktif';
+      case 'SUSPENDED': return 'Nonaktif Sementara';
       case 'PENDING_RESIGNED': return 'Menunggu Resign';
       case 'READY_TO_RESIGN': return 'Siap Resign';
       case 'RESIGNED': return 'Resign';
@@ -830,13 +851,18 @@ export default function ManajemenAnggota({
                       {anggota.bank_account_number || '-'}
                     </td>
                     <td className="py-3 px-4 text-sm">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                        anggota.membership_status === 'ACTIVE' || !anggota.membership_status ? 'bg-green-100 text-green-800' :
-                        anggota.membership_status === 'PENDING_RESIGNED' ? 'bg-orange-100 text-orange-800' :
-                        anggota.membership_status === 'READY_TO_RESIGN' ? 'bg-blue-100 text-blue-800' :
-                        anggota.membership_status === 'RESIGNED' ? 'bg-gray-100 text-gray-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
+                      <span
+                        title={anggota.membership_status === 'SUSPENDED' ? (anggota.suspension_reason || 'Tagihan dibekukan sementara') : undefined}
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+                          anggota.membership_status === 'ACTIVE' || !anggota.membership_status ? 'bg-green-100 text-green-800' :
+                          anggota.membership_status === 'SUSPENDED' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                          anggota.membership_status === 'PENDING_RESIGNED' ? 'bg-orange-100 text-orange-800' :
+                          anggota.membership_status === 'READY_TO_RESIGN' ? 'bg-blue-100 text-blue-800' :
+                          anggota.membership_status === 'RESIGNED' ? 'bg-gray-100 text-gray-800' :
+                          'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {anggota.membership_status === 'SUSPENDED' && <PauseCircle className="w-3.5 h-3.5" />}
                         {getStatusText(anggota.membership_status)}
                       </span>
                     </td>
@@ -850,6 +876,36 @@ export default function ManajemenAnggota({
                         >
                           <Eye className="w-4 h-4" />
                         </button>
+                        {!['RESIGNED', 'BLOCKED'].includes(
+                          String(anggota.membership_status || '').toUpperCase()
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenSuspensionModal(anggota)}
+                            disabled={isSubmitting}
+                            className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50 ${
+                              anggota.membership_status === 'SUSPENDED'
+                                ? 'text-emerald-600 hover:bg-emerald-50'
+                                : 'text-amber-600 hover:bg-amber-50'
+                            }`}
+                            title={
+                              anggota.membership_status === 'SUSPENDED'
+                                ? 'Aktifkan Kembali Anggota'
+                                : 'Bekukan Sementara (Nonaktif Sementara)'
+                            }
+                            aria-label={
+                              anggota.membership_status === 'SUSPENDED'
+                                ? 'Aktifkan Kembali Anggota'
+                                : 'Bekukan Sementara'
+                            }
+                          >
+                            {anggota.membership_status === 'SUSPENDED' ? (
+                              <PlayCircle className="w-4 h-4" />
+                            ) : (
+                              <PauseCircle className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleOpenEditModal(anggota)}
                           className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
@@ -912,8 +968,8 @@ export default function ManajemenAnggota({
 
       {showModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b border-gray-100">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center p-4 border-b border-gray-100 shrink-0">
               <h3 className="font-semibold text-lg text-gray-900">
                 {editingAnggota ? 'Edit Anggota' : 'Tambah Anggota Baru'}
               </h3>
@@ -925,7 +981,7 @@ export default function ManajemenAnggota({
               </button>
             </div>
             
-            <form onSubmit={handleSubmit} className="p-4">
+            <form onSubmit={handleSubmit} className="p-4 overflow-y-auto">
               <div className="space-y-4">
                 {!editingAnggota && (
                   <div className="p-3 bg-blue-50/80 rounded-lg border border-blue-100 text-xs text-blue-800 flex items-start gap-2">
@@ -1033,6 +1089,43 @@ export default function ManajemenAnggota({
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                   />
                 </div>
+
+                {editingAnggota && (
+                  <div className="space-y-1.5">
+                    <label className="block text-sm font-semibold text-slate-700">
+                      Status Keanggotaan
+                    </label>
+                    <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-slate-500">Status Saat Ini:</span>
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            editingAnggota?.membership_status === 'SUSPENDED'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : editingAnggota?.membership_status === 'RESIGNED'
+                              ? 'bg-slate-200 text-slate-700'
+                              : editingAnggota?.membership_status === 'BLOCKED'
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          }`}
+                        >
+                          {editingAnggota?.membership_status === 'SUSPENDED'
+                            ? 'Nonaktif Sementara (Beku)'
+                            : editingAnggota?.membership_status === 'RESIGNED'
+                            ? 'Keluar / Resigned'
+                            : editingAnggota?.membership_status === 'BLOCKED'
+                            ? 'Diblokir'
+                            : 'Aktif'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-slate-600">
+                        Status keanggotaan tidak dapat diubah dari form edit biodata ini. Gunakan tombol ikon{' '}
+                        <strong>Bekukan / Aktifkan Sementara</strong> di kolom Aksi untuk penangguhan sementara, atau menu{' '}
+                        <strong>Kliring &amp; Clearance Anggota</strong> untuk penghentian permanen.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="mt-6 flex justify-end space-x-3">
@@ -1081,6 +1174,21 @@ export default function ManajemenAnggota({
         isOpen={isMigrationDetailOpen}
         member={selectedMigrationMember}
         onClose={() => setIsMigrationDetailOpen(false)}
+      />
+
+      <MemberSuspensionModal
+        isOpen={Boolean(selectedMemberForStatus)}
+        member={selectedMemberForStatus}
+        onClose={() => setSelectedMemberForStatus(null)}
+        onSuccess={async (newStatus, updatedMember) => {
+          await fetchMembers();
+          showToast(
+            newStatus === 'SUSPENDED'
+              ? `Keanggotaan ${updatedMember.nama} berhasil dibekukan sementara.`
+              : `Keanggotaan ${updatedMember.nama} berhasil diaktifkan kembali.`,
+            'success'
+          );
+        }}
       />
 
       <DangerConfirmModal

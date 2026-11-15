@@ -3021,5 +3021,118 @@ describe('loanMatrixService - YTD Compliance for New Loans Without Due Schedules
   });
 });
 
+describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('getLoanMatrix tetap menampilkan pinjaman anggota SUSPENDED dengan sel FROZEN dan mengecualikan dari menunggak & proyeksi bulan depan', async () => {
+    const suspendedLoan = {
+      id: 'loan-susp-1',
+      loan_number: 'PJ-SUSP-01',
+      member_id: 'mem-susp-1',
+      principal_amount: 1500000,
+      tenor: 3,
+      monthly_target: 500000,
+      status: 'active',
+      member: {
+        id: 'mem-susp-1',
+        nrp: '88001122',
+        nama: 'Serda Beku',
+        status: 'nonaktif',
+        membership_status: 'SUSPENDED',
+        suspended_at: '2026-11-01T00:00:00.000Z',
+        suspension_reason: 'Tugas Khusus',
+      },
+    };
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: suspendedLoan.id }], error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((fields: string) => {
+            if (fields === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: suspendedLoan.id }], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'sc-10', period_number: 1, due_date: '2026-10-15', target_amount: 500000, paid_amount: 500000, status: 'paid', loan: suspendedLoan },
+                    { id: 'sc-11', period_number: 2, due_date: '2026-11-15', target_amount: 500000, paid_amount: 0, status: 'unpaid', loan: suspendedLoan },
+                    { id: 'sc-12', period_number: 3, due_date: '2026-12-15', target_amount: 500000, paid_amount: 0, status: 'unpaid', loan: suspendedLoan },
+                  ],
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members).toHaveLength(1);
+    const row = summary.members[0];
+    expect(row.membershipStatus).toBe('SUSPENDED');
+    expect(row.months[10].status).toBe('PAID');
+    expect(row.months[11].status).toBe('FROZEN');
+    expect(row.months[12].status).toBe('FROZEN');
+    expect(summary.unpaidMembersCount).toBe(0);
+    expect(summary.projectedNextMonth).toBe(0);
+    expect(row.complianceYTD).toBe(100);
+  });
+
+  it('bulkCheckAllLoansUpToCurrentMonth melewati pinjaman milik anggota SUSPENDED', async () => {
+    const schedEqSpy = vi.fn().mockReturnValue({
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'loan-act', loan_number: 'L-ACT', status: 'active', member: { id: 'm-act', nrp: '1', nama: 'Aktif', status: 'aktif', membership_status: 'ACTIVE' } },
+                { id: 'loan-susp', loan_number: 'L-SUSP', status: 'active', member: { id: 'm-susp', nrp: '2', nama: 'Beku', status: 'nonaktif', membership_status: 'SUSPENDED' } },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({ eq: schedEqSpy }),
+        };
+      }
+      return {};
+    });
+
+    const res = await bulkCheckAllLoansUpToCurrentMonth();
+    expect(schedEqSpy).toHaveBeenCalledWith('loan_id', 'loan-act');
+    expect(schedEqSpy).not.toHaveBeenCalledWith('loan_id', 'loan-susp');
+    expect(res.totalSuccess).toBe(1);
+  });
+});
+
 
 

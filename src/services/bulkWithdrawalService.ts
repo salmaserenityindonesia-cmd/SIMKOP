@@ -147,17 +147,19 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
     };
   }
 
-  // 3. Query seluruh anggota berstatus 'aktif'
+  // 3. Query seluruh anggota berstatus 'aktif' dan membership_status 'ACTIVE'
   const { data: membersData, error: memError } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, bank_account_number, status');
+    .select('id, nrp, nama, pangkat, bank_account_number, status, membership_status');
 
   if (memError) {
     throw new Error(`Gagal memuat profil anggota: ${memError.message}`);
   }
 
   const activeMembers = (membersData || []).filter(
-    m => (m.status || '').toLowerCase() === 'aktif'
+    (m: any) =>
+      (m.status || '').toLowerCase() === 'aktif' &&
+      (!m.membership_status || String(m.membership_status).toUpperCase() === 'ACTIVE')
   );
 
   const activeMembersMap = new Map<string, any>(

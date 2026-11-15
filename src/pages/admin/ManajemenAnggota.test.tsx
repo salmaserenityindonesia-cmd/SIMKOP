@@ -96,6 +96,7 @@ vi.mock('../../services/memberService', () => ({
     skippedNrps: [],
     effectiveDate: '2026-01-01',
   }),
+  updateMemberSuspensionStatus: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../services/loanService', () => ({
@@ -452,6 +453,130 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('Simpan &amp; Aktifkan Saldo Awal Pinjaman');
       expect(html).toContain('bg-amber-600');
       expect(html).toContain('disabled=""');
+    });
+  });
+
+  describe('MemberSuspensionModal UI Structure (Bekukan / Aktifkan Sementara)', () => {
+    it('renders focused suspension modal for ACTIVE member with read-only identity, 2 editable inputs, and BEKUKAN confirmation guardrail', () => {
+      const html = renderToStaticMarkup(
+        <ManajemenAnggota
+          initialSuspensionMember={{
+            id: 'm-agus',
+            nomor_referensi: 'REF-088',
+            nrp: '88010203',
+            nama: 'Agus Susanto',
+            pangkat: 'Bripka',
+            status: 'aktif',
+            membership_status: 'ACTIVE',
+            master_thp: 6000000,
+            bank_account_number: '9988776655',
+          }}
+        />
+      );
+
+      expect(html).toContain('Status Keaktifan Anggota');
+      expect(html).toContain('Identitas Anggota (Read-Only)');
+      expect(html).toContain('Agus Susanto');
+      expect(html).toContain('88010203');
+      expect(html).toContain('REF-088');
+      expect(html).toContain('Aktif');
+
+      // Only 2 editable inputs (Status Keanggotaan & Alasan) + confirmation input; NO edit-profile inputs
+      expect(html).toContain('id="member-suspension-status-select"');
+      expect(html).toContain('id="member-suspension-reason"');
+      expect(html).toContain('id="member-suspension-confirm-input"');
+      expect(html).not.toContain('Gaji Pokok (Master THP)');
+      expect(html).not.toContain('Nomor Rekening Bank (Opsional)');
+      expect(html).not.toContain('Tanggal Bergabung');
+
+      // Type-to-confirm phrase BEKUKAN & disabled submit button initially
+      expect(html).toContain('BEKUKAN');
+      expect(html).toContain('Ketik BEKUKAN di sini');
+      expect(html).toContain('Simpan Pembekuan Sementara');
+      expect(html).toContain('disabled=""');
+    });
+
+    it('renders focused reactivation modal for SUSPENDED member with AKTIFKAN confirmation guardrail', () => {
+      const html = renderToStaticMarkup(
+        <ManajemenAnggota
+          initialSuspensionMember={{
+            id: 'm-agus',
+            nomor_referensi: 'REF-088',
+            nrp: '88010203',
+            nama: 'Agus Susanto',
+            status: 'nonaktif',
+            membership_status: 'SUSPENDED',
+            suspension_reason: 'Surat Tugas Khusus No. 12',
+          }}
+        />
+      );
+
+      expect(html).toContain('Status Keaktifan Anggota');
+      expect(html).toContain('Nonaktif Sementara');
+      expect(html).toContain('Surat Tugas Khusus No. 12');
+      expect(html).toContain('AKTIFKAN');
+      expect(html).toContain('Ketik AKTIFKAN di sini');
+      expect(html).toContain('Simpan Aktivasi Anggota');
+      expect(html).toContain('disabled=""');
+    });
+  });
+
+  describe('Edit Member Modal Read-Only Status Notification', () => {
+    it('renders read-only Status Keanggotaan notification card for ACTIVE member without editable select or suspension textarea', () => {
+      const html = renderToStaticMarkup(
+        <ManajemenAnggota
+          initialShowModal={true}
+          initialEditingAnggota={{
+            id: 'm-edit-active',
+            nomor_referensi: 'REF-101',
+            nrp: '87010203',
+            nama: 'Bripka Dani',
+            pangkat: 'Bripka',
+            status: 'aktif',
+            membership_status: 'ACTIVE',
+            master_thp: 5500000,
+            bank_account_number: '1122334455',
+          }}
+        />
+      );
+
+      expect(html).toContain('Edit Anggota');
+      expect(html).toContain('Status Keanggotaan');
+      expect(html).toContain('Status Saat Ini:');
+      expect(html).toContain('Aktif');
+      expect(html).toContain('Bekukan / Aktifkan Sementara');
+      expect(html).toContain('Kliring &amp; Clearance Anggota');
+      expect(html).not.toContain('id="edit-membership-status"');
+      expect(html).not.toContain('id="edit-suspension-reason"');
+    });
+
+    it('renders read-only Status Keanggotaan notification card for SUSPENDED member without editable select or suspension textarea', () => {
+      const html = renderToStaticMarkup(
+        <ManajemenAnggota
+          initialShowModal={true}
+          initialEditingAnggota={{
+            id: 'm-edit-suspended',
+            nomor_referensi: 'REF-102',
+            nrp: '87010204',
+            nama: 'Sertu Eko',
+            pangkat: 'Sertu',
+            status: 'nonaktif',
+            membership_status: 'SUSPENDED',
+            suspension_reason: 'Tugas Khusus',
+            master_thp: 5500000,
+            bank_account_number: '5544332211',
+          }}
+        />
+      );
+
+      expect(html).toContain('Edit Anggota');
+      expect(html).toContain('Status Keanggotaan');
+      expect(html).toContain('Status Saat Ini:');
+      expect(html).toContain('Nonaktif Sementara (Beku)');
+      expect(html).toContain('Bekukan / Aktifkan Sementara');
+      expect(html).toContain('Kliring &amp; Clearance Anggota');
+      expect(html).not.toContain('id="edit-membership-status"');
+      expect(html).not.toContain('id="edit-suspension-reason"');
     });
   });
 });

@@ -7,12 +7,13 @@ import SummaryPanel from '../../components/pos/SummaryPanel';
 import QuantityModal from '../../components/pos/QuantityModal';
 import CameraScannerModal from '../../components/pos/CameraScannerModal';
 import ReceiptModal from '../../components/pos/ReceiptModal';
-import SplitPaymentModal from '../../components/pos/SplitPaymentModal';
+import SplitPaymentModal, { PrimaryPaymentMode } from '../../components/pos/SplitPaymentModal';
 import ParkedTransactionsModal from '../../components/pos/ParkedTransactionsModal';
 import BukaKasirModal from '../../components/pos/BukaKasirModal';
 import TutupKasirModal from '../../components/pos/TutupKasirModal';
 import EditItemPriceModal from '../../components/pos/EditItemPriceModal';
 import { processCheckout } from '../../services/posCheckoutService';
+import { getMemberFinancials, MemberFinancials } from '../../services/posCreditService';
 import { holdTransaction, getParkedSales } from '../../services/posParkedService';
 import { cleanupExpiredParkedSales, getPosSettings } from '../../services/posSettingsService';
 import { getActiveShift, CashierShift } from '../../services/cashierShiftService';
@@ -64,6 +65,7 @@ export default function POSPage() {
     tutupKasir: false,
   });
   const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
+  const [memberFinancials, setMemberFinancials] = useState<MemberFinancials | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -147,12 +149,19 @@ export default function POSPage() {
       }
     });
 
-    supabase.from('anggota').select('id, nrp, nama, take_home_pay').eq('status', 'aktif').then(({ data }) => {
-      if (data && data.length > 0) {
-        setMembers(data);
-        setSelectedMember(data[0]); // default to first member
-      }
-    });
+    supabase
+      .from('anggota')
+      .select('id, nrp, nama, take_home_pay, status, membership_status')
+      .eq('status', 'aktif')
+      .then(({ data }) => {
+        const activeMembers = (data || []).filter((m: any) => {
+          const st = (m.status || 'aktif').toLowerCase();
+          const mst = (m.membership_status || 'ACTIVE').toUpperCase();
+          return st === 'aktif' && mst === 'ACTIVE';
+        });
+        setMembers(activeMembers);
+        setSelectedMember(activeMembers.length > 0 ? activeMembers[0] : null);
+      });
   }, [loadProductCatalog, refreshParkedCount, showToast]);
 
   useEffect(() => {
@@ -160,6 +169,36 @@ export default function POSPage() {
       setModals(m => ({ ...m, parked: true }));
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedMember?.id) {
+      setMemberFinancials(null);
+      return;
+    }
+    setMemberFinancials(null);
+    getMemberFinancials(selectedMember.id)
+      .then((data) => {
+        if (active) setMemberFinancials(data);
+      })
+      .catch((err) => {
+        console.warn('Gagal memuat data finansial anggota:', err);
+        if (active) setMemberFinancials(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedMember?.id]);
+
+  const resolvedPrimaryMode: PrimaryPaymentMode = !selectedMember
+    ? 'cash'
+    : initialPaymentMethod === 'Potong Simpanan'
+      ? 'deposit'
+      : initialPaymentMethod === 'Bon Toko'
+        ? 'store_credit'
+        : initialPaymentMethod === 'Split' || initialPaymentMethod === 'split'
+          ? 'split'
+          : 'cash';
 
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
   const discount = selectedMember ? subtotal * (memberDiscountPercentage / 100) : 0; 
@@ -327,6 +366,9 @@ export default function POSPage() {
        setLastSaleNumber(res.saleNumber || null);
        setModals(m => ({ ...m, splitPayment: false, receipt: true }));
        loadProductCatalog();
+       if (selectedMember?.id) {
+         getMemberFinancials(selectedMember.id).then(setMemberFinancials).catch(() => {});
+       }
     } else {
        showToast(res.error || 'Checkout gagal', 'error');
     }
@@ -449,6 +491,8 @@ export default function POSPage() {
             members={members}
             selectedMember={selectedMember}
             memberDiscountPercentage={memberDiscountPercentage}
+            selectedPaymentType={initialPaymentMethod}
+            onPaymentTypeChange={setInitialPaymentMethod}
             onSelectMember={(member: any) => {
               setSelectedMember(member);
               if (!member) {
@@ -521,6 +565,8 @@ export default function POSPage() {
         memberId={selectedMember?.id || null}
         selectedMember={selectedMember}
         initialMethod={!selectedMember ? 'Tunai' : initialPaymentMethod}
+        primaryMode={resolvedPrimaryMode}
+        initialFinancials={!selectedMember ? null : memberFinancials}
         onConfirm={handleCheckoutConfirm}
       />
       

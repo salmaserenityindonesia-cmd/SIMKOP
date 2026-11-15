@@ -68,13 +68,20 @@ export default function PenarikanSimpanan() {
     try {
       const { data, error } = await supabase
         .from('anggota')
-        .select('id, nama, nrp, pangkat, bank_account_number')
+        .select('id, nama, nrp, pangkat, bank_account_number, status, membership_status')
         .eq('status', 'aktif')
         .or(`nama.ilike.%${searchQuery}%,nrp.ilike.%${searchQuery}%`)
-        .limit(5);
+        .limit(10);
 
       if (error) throw error;
-      setSearchResults(data || []);
+      const activeOnly = (data || [])
+        .filter(
+          (m: any) =>
+            (!m.status || String(m.status).toLowerCase() === 'aktif') &&
+            (!m.membership_status || String(m.membership_status).toUpperCase() === 'ACTIVE')
+        )
+        .slice(0, 5);
+      setSearchResults(activeOnly);
     } catch (err) {
       console.error('Error searching anggota:', err);
     } finally {

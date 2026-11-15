@@ -393,6 +393,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
 
   const currentMonthColIdx = rollingMonths.length - 1;
   const membersInArrears = data.filter(row => {
+    if ((row.membership_status || '').toUpperCase() === 'SUSPENDED') return false;
     const currentMonthData = row.months[currentMonthColIdx] ?? row.months[CURRENT_MONTH];
     if (currentMonthData) {
       const isWajibArrears = currentMonthData.wajib ? currentMonthData.wajib.status === 'unpaid' : currentMonthData.w <= 0;
@@ -444,11 +445,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       ? Math.min(100, Math.round((totalKumulatif / totalReferenceAmount) * 100))
       : 100;
 
+    const isMemberSuspended = (row.membership_status || '').toUpperCase() === 'SUSPENDED';
+
     // Evaluasi fallback jika baris bulan belum memiliki sub-item eksplisit
-    let fallbackStatusW: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' = 'unpaid';
+    let fallbackStatusW: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'frozen' = isMemberSuspended ? 'frozen' : 'unpaid';
     if (monthData.w >= targetW) fallbackStatusW = 'paid';
     else if (monthData.w > 0) fallbackStatusW = 'partial';
-    else {
+    else if (!isMemberSuspended) {
       let lastPosIdxW = -1;
       let hasPartialInRowW = false;
       row.months.forEach((m, idx) => {
@@ -468,13 +471,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       targetAmount: targetW,
     };
     const belanjaItem = monthData.belanja || {
-      status: (monthData.b > 0 ? (monthData.b < targetB ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled',
-      amount: monthData.b > 0 ? monthData.b : targetB,
+      status: (monthData.b > 0 ? (monthData.b < targetB ? 'partial' : 'paid') : (isMemberSuspended ? 'frozen' : 'unpaid')) as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'frozen',
+      amount: monthData.b > 0 ? monthData.b : (isMemberSuspended ? 0 : targetB),
       targetAmount: targetB,
     };
     const lebaranItem = monthData.lebaran || {
-      status: (monthData.l > 0 ? (monthData.l < targetL ? 'partial' : 'paid') : 'unpaid') as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled',
-      amount: monthData.l > 0 ? monthData.l : targetL,
+      status: (monthData.l > 0 ? (monthData.l < targetL ? 'partial' : 'paid') : (isMemberSuspended ? 'frozen' : 'unpaid')) as 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'frozen',
+      amount: monthData.l > 0 ? monthData.l : (isMemberSuspended ? 0 : targetL),
       targetAmount: targetL,
     };
 
@@ -482,14 +485,18 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     const isBelanjaCovered = belanjaItem.status === 'covered_by_opening';
     const isLebaranCovered = lebaranItem.status === 'covered_by_opening';
 
+    const isWajibFrozen = wajibItem.status === 'frozen';
+    const isBelanjaFrozen = belanjaItem.status === 'frozen';
+    const isLebaranFrozen = lebaranItem.status === 'frozen';
+
     const isWajibUnbilled = wajibItem.status === 'unbilled' || wajibItem.status === 'not_applicable' || isWajibCovered;
     const isBelanjaUnbilled = belanjaItem.status === 'unbilled' || belanjaItem.status === 'not_applicable' || isBelanjaCovered;
     const isLebaranUnbilled = lebaranItem.status === 'unbilled' || lebaranItem.status === 'not_applicable' || isLebaranCovered;
     const isMonthAllCovered = isWajibCovered && isBelanjaCovered && isLebaranCovered;
 
-    const isWajibPartial = !isWajibUnbilled && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
-    const isBelanjaPartial = !isBelanjaUnbilled && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
-    const isLebaranPartial = !isLebaranUnbilled && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
+    const isWajibPartial = !isWajibUnbilled && !isWajibFrozen && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
+    const isBelanjaPartial = !isBelanjaUnbilled && !isBelanjaFrozen && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
+    const isLebaranPartial = !isLebaranUnbilled && !isLebaranFrozen && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
 
     return (
       <div 
@@ -519,7 +526,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">wajib</span>
           <span className={
-            isWajibUnbilled
+            isWajibFrozen
+              ? 'text-slate-500 bg-slate-100 border border-slate-200 px-1 rounded text-[10px] font-semibold'
+              : isWajibUnbilled
               ? 'text-slate-300 font-normal'
               : isWajibPartial
               ? 'text-amber-600 font-bold'
@@ -529,7 +538,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {isWajibUnbilled
+            {isWajibFrozen
+              ? 'BEKU'
+              : isWajibUnbilled
               ? '-'
               : Number(wajibItem.amount || targetW).toLocaleString('id-ID')}
           </span>
@@ -539,7 +550,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">belanja</span>
           <span className={
-            isBelanjaUnbilled
+            isBelanjaFrozen
+              ? 'text-slate-500 bg-slate-100 border border-slate-200 px-1 rounded text-[10px] font-semibold'
+              : isBelanjaUnbilled
               ? 'text-slate-300 font-normal'
               : isBelanjaPartial
               ? 'text-amber-600 font-bold'
@@ -549,7 +562,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {isBelanjaUnbilled
+            {isBelanjaFrozen
+              ? 'BEKU'
+              : isBelanjaUnbilled
               ? '-'
               : Number(belanjaItem.amount || targetB).toLocaleString('id-ID')}
           </span>
@@ -559,7 +574,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
         <div className="flex items-center justify-between gap-1.5">
           <span className="text-[10px] uppercase font-bold text-slate-500">lebaran</span>
           <span className={
-            isLebaranUnbilled
+            isLebaranFrozen
+              ? 'text-slate-500 bg-slate-100 border border-slate-200 px-1 rounded text-[10px] font-semibold'
+              : isLebaranUnbilled
               ? 'text-slate-300 font-normal'
               : isLebaranPartial
               ? 'text-amber-600 font-bold'
@@ -569,7 +586,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               ? 'text-rose-600 font-bold'
               : 'text-slate-400'
           }>
-            {isLebaranUnbilled
+            {isLebaranFrozen
+              ? 'BEKU'
+              : isLebaranUnbilled
               ? '-'
               : Number(lebaranItem.amount || targetL).toLocaleString('id-ID')}
           </span>
@@ -583,7 +602,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Wajib:</span>
               <div className="text-right">
                 <div>
-                  {isWajibUnbilled ? (
+                  {isWajibFrozen ? (
+                    <span className="text-slate-300 font-medium">BEKU (Nonaktif Sementara)</span>
+                  ) : isWajibUnbilled ? (
                     <span className="text-slate-400">
                       {isWajibCovered
                         ? 'Sudah tercakup dalam Saldo Awal'
@@ -614,7 +635,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Belanja:</span>
               <div className="text-right">
                 <div>
-                  {isBelanjaUnbilled ? (
+                  {isBelanjaFrozen ? (
+                    <span className="text-slate-300 font-medium">BEKU (Nonaktif Sementara)</span>
+                  ) : isBelanjaUnbilled ? (
                     <span className="text-slate-400">
                       {isBelanjaCovered
                         ? 'Sudah tercakup dalam Saldo Awal'
@@ -645,7 +668,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               <span>Lebaran:</span>
               <div className="text-right">
                 <div>
-                  {isLebaranUnbilled ? (
+                  {isLebaranFrozen ? (
+                    <span className="text-slate-300 font-medium">BEKU (Nonaktif Sementara)</span>
+                  ) : isLebaranUnbilled ? (
                     <span className="text-slate-400">
                       {isLebaranCovered
                         ? 'Sudah tercakup dalam Saldo Awal'
@@ -986,8 +1011,16 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                       >
                         {row.nama}
                       </button>
-                      <div className="flex items-center gap-2 mt-1">
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
                         <span className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-mono">{row.nrp}</span>
+                        {(row.membership_status || '').toUpperCase() === 'SUSPENDED' && (
+                          <span
+                            title={row.suspension_reason || 'Tagihan dibekukan sementara'}
+                            className="inline-flex items-center gap-1 text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full"
+                          >
+                            Nonaktif Sementara
+                          </span>
+                        )}
                         {row.pokokLunas ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>

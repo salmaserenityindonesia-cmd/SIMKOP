@@ -158,7 +158,8 @@ export async function getSavingsComplianceAvailableYears(
     const activeMembers = members.filter((m: any) => {
       const st = (m.status || '').toLowerCase();
       const mst = (m.membership_status || '').toUpperCase();
-      return st !== 'nonaktif' && mst !== 'RESIGNED';
+      if (mst === 'SUSPENDED') return true;
+      return st !== 'nonaktif' && mst !== 'RESIGNED' && mst !== 'BLOCKED';
     });
 
     const membersToUse = activeMembers.length > 0 ? activeMembers : members;
@@ -358,7 +359,7 @@ export const getComplianceAvailableYears = getSavingsComplianceAvailableYears;
 
 
 export interface SavingsSubItem {
-  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'covered_by_opening';
+  status: 'paid' | 'unpaid' | 'not_applicable' | 'partial' | 'unbilled' | 'covered_by_opening' | 'frozen';
   amount: number;
   targetAmount?: number;
   reference_no?: string;
@@ -535,6 +536,10 @@ export interface ComplianceMatrixRow {
   member_id: string;
   nrp: string;
   nama: string;
+  status?: string;
+  membership_status?: string;
+  suspended_at?: string | null;
+  suspension_reason?: string | null;
   pokokLunas: boolean;
   pokokBalance?: number;
   compliance: number;
@@ -728,11 +733,41 @@ export async function getComplianceMatrixData(
   try {
     const memberSelectBuilder: any = supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status');
+      .select('id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status, suspended_at, suspension_reason');
 
     let executed = false;
-    // Chaining kueri Supabase PostgREST: .eq('status', 'aktif').lte('created_at', windowEndIso).order('nama', { ascending: true })
-    if (typeof memberSelectBuilder.eq === 'function') {
+    // Gunakan .or(...) di PostgREST agar anggota SUSPENDED (status='nonaktif') tetap termuat bersama anggota aktif,
+    // lalu fallback ke .eq('status', 'aktif') untuk kompatibilitas mock unit test.
+    if (typeof memberSelectBuilder.or === 'function') {
+      const orBuilder = memberSelectBuilder.or('status.eq.aktif,membership_status.in.(ACTIVE,SUSPENDED)');
+      if (orBuilder && typeof orBuilder.lte === 'function') {
+        const lteBuilder = orBuilder.lte('created_at', windowEndIso);
+        if (lteBuilder && typeof lteBuilder.order === 'function') {
+          const resp = await lteBuilder.order('nama', { ascending: true });
+          rawMembers = resp.data || [];
+          memberErr = resp.error;
+          executed = true;
+        } else {
+          const resp = await (lteBuilder || orBuilder);
+          rawMembers = resp.data || [];
+          memberErr = resp.error;
+          executed = true;
+        }
+      } else if (orBuilder && typeof orBuilder.order === 'function') {
+        const resp = await orBuilder.order('nama', { ascending: true });
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+        executed = true;
+      } else if (orBuilder && typeof orBuilder.then === 'function') {
+        const resp = await orBuilder;
+        rawMembers = resp.data || [];
+        memberErr = resp.error;
+        executed = true;
+      }
+    }
+
+    // Chaining kueri Supabase PostgREST fallback: .eq('status', 'aktif').lte('created_at', windowEndIso).order('nama', { ascending: true })
+    if (!executed && typeof memberSelectBuilder.eq === 'function') {
       const eqBuilder = memberSelectBuilder.eq('status', 'aktif');
       if (eqBuilder && typeof eqBuilder.lte === 'function') {
         const lteBuilder = eqBuilder.lte('created_at', windowEndIso);
@@ -792,11 +827,12 @@ export async function getComplianceMatrixData(
 
   const allMembers = rawMembers || [];
 
-  // Filter anggota aktif: bukan berstatus nonaktif atau RESIGNED
+  // Filter anggota aktif & nonaktif sementara (SUSPENDED tetap dimuat agar saldo tersimpan tetap terlihat di neraca)
   const activeMembers = allMembers.filter((m: any) => {
     const st = (m.status || '').toLowerCase();
     const mst = (m.membership_status || '').toUpperCase();
-    return st !== 'nonaktif' && mst !== 'RESIGNED';
+    if (mst === 'SUSPENDED') return true;
+    return st !== 'nonaktif' && mst !== 'RESIGNED' && mst !== 'BLOCKED';
   });
 
   const membersToFilter = activeMembers.length > 0 ? activeMembers : allMembers;
@@ -1203,11 +1239,24 @@ export async function getComplianceMatrixData(
     let runningCumB = priorSummary.belanja;
     let runningCumL = priorSummary.lebaran;
 
+    const isMemberSuspended = (m.membership_status || '').toUpperCase() === 'SUSPENDED';
+    let suspendedStartPeriodIndex = 0;
+    if (isMemberSuspended && m.suspended_at) {
+      const suspDate = new Date(m.suspended_at);
+      if (!isNaN(suspDate.getTime())) {
+        suspendedStartPeriodIndex = suspDate.getFullYear() * 12 + (suspDate.getMonth() + 1);
+      }
+    }
+
     for (let i = 0; i < 12; i++) {
       const colPeriod = periods[i];
       const isBeforeJoin = colPeriod.periodIndex < joinPeriodIndex;
       const isBeforeCutoff = cutoffInfo !== null && colPeriod.periodIndex < cutoffInfo.periodIndex;
       const isFuture = !isRolling && colPeriod.periodIndex > (currentYear * 12 + currentMonth1Based);
+      const isFrozenPeriod =
+        isMemberSuspended &&
+        colPeriod.periodIndex >= suspendedStartPeriodIndex &&
+        colPeriod.periodIndex <= (currentYear * 12 + currentMonth1Based);
 
       const p = paymentsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
       const wDraw = withdrawalsByMember[m.id]?.[i] || { w: 0, b: 0, l: 0 };
@@ -1269,6 +1318,9 @@ export async function getComplianceMatrixData(
         } else if (isBeforeJoin) {
           statusW = 'not_applicable';
           amtW = 0;
+        } else if (isFrozenPeriod) {
+          statusW = 'frozen';
+          amtW = 0;
         } else if (isUnbilledW) {
           statusW = 'unbilled';
           amtW = 0;
@@ -1303,6 +1355,9 @@ export async function getComplianceMatrixData(
           amtB = p.b;
         } else if (isBeforeJoin) {
           statusB = 'not_applicable';
+          amtB = 0;
+        } else if (isFrozenPeriod) {
+          statusB = 'frozen';
           amtB = 0;
         } else if (isUnbilledB) {
           statusB = 'unbilled';
@@ -1339,6 +1394,9 @@ export async function getComplianceMatrixData(
         } else if (isBeforeJoin) {
           statusL = 'not_applicable';
           amtL = 0;
+        } else if (isFrozenPeriod) {
+          statusL = 'frozen';
+          amtL = 0;
         } else if (isUnbilledL) {
           statusL = 'unbilled';
           amtL = 0;
@@ -1369,15 +1427,15 @@ export async function getComplianceMatrixData(
           lebaran: lebaranItem,
         });
 
-        if (wajibItem.status !== 'not_applicable' && wajibItem.status !== 'unbilled' && wajibItem.status !== 'covered_by_opening') {
+        if (wajibItem.status !== 'not_applicable' && wajibItem.status !== 'unbilled' && wajibItem.status !== 'covered_by_opening' && wajibItem.status !== 'frozen') {
           expectedCount += 1;
           if (wajibItem.status === 'paid') paidCount += 1;
         }
-        if (belanjaItem.status !== 'not_applicable' && belanjaItem.status !== 'unbilled' && belanjaItem.status !== 'covered_by_opening') {
+        if (belanjaItem.status !== 'not_applicable' && belanjaItem.status !== 'unbilled' && belanjaItem.status !== 'covered_by_opening' && belanjaItem.status !== 'frozen') {
           expectedCount += 1;
           if (belanjaItem.status === 'paid') paidCount += 1;
         }
-        if (lebaranItem.status !== 'not_applicable' && lebaranItem.status !== 'unbilled' && lebaranItem.status !== 'covered_by_opening') {
+        if (lebaranItem.status !== 'not_applicable' && lebaranItem.status !== 'unbilled' && lebaranItem.status !== 'covered_by_opening' && lebaranItem.status !== 'frozen') {
           expectedCount += 1;
           if (lebaranItem.status === 'paid') paidCount += 1;
         }
@@ -1423,6 +1481,10 @@ export async function getComplianceMatrixData(
       member_id: m.id,
       nrp: m.nrp,
       nama: m.nama,
+      status: m.status,
+      membership_status: m.membership_status,
+      suspended_at: m.suspended_at ?? null,
+      suspension_reason: m.suspension_reason ?? null,
       pokokLunas: pokokPaidByMember.has(m.id),
       pokokBalance: openingPokokByMember[m.id] || 0,
       compliance,

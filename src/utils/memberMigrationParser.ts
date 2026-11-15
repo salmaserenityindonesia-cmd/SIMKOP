@@ -329,7 +329,7 @@ export async function parseMemberImportExcel(
 
   validateMemberImportHeaders(rawHeaders);
 
-  const allowedStatus = ['ACTIVE', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
+  const allowedStatus = ['ACTIVE', 'SUSPENDED', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
   const rows: SanitizedMigrationMemberRow[] = [];
 
   worksheet.eachRow((row, rowNumber) => {

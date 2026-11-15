@@ -72,6 +72,12 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
         className: 'text-slate-400 bg-slate-50 border border-dashed border-slate-200 font-normal',
         statusLabel: 'Proyeksi',
       };
+    case 'FROZEN':
+      return {
+        text: 'BEKU',
+        className: 'text-slate-600 bg-slate-100 border border-dashed border-slate-300 font-semibold',
+        statusLabel: 'Dibekukan',
+      };
     case 'NONE':
     case 'NOT_APPLICABLE':
     default:
@@ -502,6 +508,10 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           <span className="text-slate-600">Proyeksi</span>
         </div>
         <div className="flex items-center gap-2">
+          <span className="inline-block px-2 py-0.5 rounded text-slate-600 bg-slate-100 border border-dashed border-slate-300 font-mono font-semibold">BEKU</span>
+          <span className="text-slate-600">Dibekukan</span>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="inline-block px-2 py-0.5 rounded text-slate-300 font-mono font-normal">-</span>
           <span className="text-slate-600">Di Luar Masa Tenor</span>
         </div>
@@ -564,6 +574,14 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                             <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-medium">Aktif</span>
                           ) : (
                             <span className="px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded-full text-[10px] font-medium">Selesai</span>
+                          )}
+                          {(row.anggota?.membership_status || row.membershipStatus || '').toUpperCase() === 'SUSPENDED' && (
+                            <span
+                              title={row.anggota?.suspension_reason || row.suspensionReason || 'Angsuran dibekukan sementara'}
+                              className="px-1.5 py-0.2 bg-amber-100 text-amber-800 border border-amber-300 rounded-full text-[10px] font-semibold"
+                            >
+                              Angsuran Dibekukan
+                            </span>
                           )}
                         </div>
                         {(row.loan_number || row.loanNumber) && (

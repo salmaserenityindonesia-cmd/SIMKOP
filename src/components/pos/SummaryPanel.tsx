@@ -12,9 +12,11 @@ export default function SummaryPanel({
   onOpenParked,
   isShiftActive = true,
   memberDiscountPercentage = 5,
+  selectedPaymentType,
+  onPaymentTypeChange,
 }: any) {
   const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null);
-  const [paymentType, setPaymentType] = useState('Tunai');
+  const [paymentType, setPaymentType] = useState(selectedPaymentType || 'Tunai');
 
   // Synchronize isMemberMode when selectedMember changes from parent
   useEffect(() => {
@@ -23,14 +25,21 @@ export default function SummaryPanel({
     }
   }, [selectedMember]);
 
+  useEffect(() => {
+    if (selectedPaymentType && selectedPaymentType !== paymentType) {
+      setPaymentType(selectedPaymentType);
+    }
+  }, [selectedPaymentType]);
+
   const isNonMember = !isMemberMode || !selectedMember;
 
   // Auto-reset paymentType to Tunai if non-member
   useEffect(() => {
     if (isNonMember && paymentType !== 'Tunai') {
       setPaymentType('Tunai');
+      onPaymentTypeChange?.('Tunai');
     }
-  }, [isNonMember, paymentType]);
+  }, [isNonMember, paymentType, onPaymentTypeChange]);
 
   const subtotal = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
   const discount = (isMemberMode && selectedMember) ? subtotal * (memberDiscountPercentage / 100) : 0;
@@ -44,6 +53,7 @@ export default function SummaryPanel({
     } else if (!mode) {
       onSelectMember(null);
       setPaymentType('Tunai');
+      onPaymentTypeChange?.('Tunai');
     }
   };
 
@@ -137,6 +147,7 @@ export default function SummaryPanel({
                 onClick={() => {
                   if (!isDisabled) {
                     setPaymentType(type);
+                    onPaymentTypeChange?.(type);
                   }
                 }}
               >

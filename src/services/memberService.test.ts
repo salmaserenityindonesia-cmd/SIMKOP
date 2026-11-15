@@ -11,6 +11,7 @@ import {
   getAnggota,
   addAnggota,
   updateAnggota,
+  updateMemberSuspensionStatus,
   deleteAnggota,
   getAnggotaWithSimpanan,
 } from './memberService';
@@ -1341,6 +1342,191 @@ describe('memberService - CRUD and Aggregation', () => {
       expect(res[1].simpanan_pokok).toBe(100000);
       expect(res[1].simpanan_wajib).toBe(0);
       expect(res[1].total_saldo).toBe(100000);
+    });
+  });
+
+  describe('SUSPENDED (Nonaktif Sementara)', () => {
+    it('updateAnggota menyinkronkan status=nonaktif & mencatat audit_logs saat SUSPENDED, dan membersihkan saat ACTIVE', async () => {
+      const updateSpy = vi.fn().mockImplementation((payload) => ({
+        eq: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({ data: { id: 'm-susp-1', nrp: '111', nama: 'Budi', ...payload }, error: null }),
+          }),
+        }),
+      }));
+      const auditInsertSpy = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') return { update: updateSpy };
+        if (table === 'audit_logs') return { insert: auditInsertSpy };
+        return {};
+      });
+
+      const suspendedRes = await updateAnggota('m-susp-1', {
+        membership_status: 'SUSPENDED',
+        suspension_reason: 'Instruksi Pimpinan',
+      });
+
+      expect(updateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          membership_status: 'SUSPENDED',
+          status: 'nonaktif',
+          suspension_reason: 'Instruksi Pimpinan',
+          suspended_at: expect.any(String),
+        })
+      );
+      expect(suspendedRes.status).toBe('nonaktif');
+      expect(auditInsertSpy).toHaveBeenCalledWith([
+        expect.objectContaining({
+          table_name: 'anggota',
+          action: 'SUSPEND_MEMBER',
+          record_id: 'm-susp-1',
+          notes: 'Instruksi Pimpinan',
+        }),
+      ]);
+
+      const activatedRes = await updateAnggota('m-susp-1', {
+        membership_status: 'ACTIVE',
+      });
+
+      expect(updateSpy).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          membership_status: 'ACTIVE',
+          status: 'aktif',
+          suspended_at: null,
+          suspension_reason: null,
+        })
+      );
+      expect(activatedRes.status).toBe('aktif');
+      expect(auditInsertSpy).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          action: 'ACTIVATE_MEMBER',
+          record_id: 'm-susp-1',
+        }),
+      ]);
+    });
+
+    it('getActiveMembersForLoan hanya mengembalikan anggota ACTIVE dan mengecualikan SUSPENDED', async () => {
+      const rawMembers = [
+        { id: 'm-1', nama: 'Aktif', status: 'aktif', membership_status: 'ACTIVE', take_home_pay: 5000000 },
+        { id: 'm-2', nama: 'Beku', status: 'aktif', membership_status: 'SUSPENDED', take_home_pay: 5000000 },
+      ];
+      const mockOrder = vi.fn().mockResolvedValue({ data: rawMembers, error: null });
+      const mockEq = vi.fn().mockReturnValue({ order: mockOrder });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any) = vi.fn().mockReturnValue({ select: mockSelect });
+
+      const res = await getActiveMembersForLoan();
+      expect(res).toHaveLength(1);
+      expect(res[0].id).toBe('m-1');
+    });
+
+    it('updateMemberSuspensionStatus menolak alasan kosong atau spasi', async () => {
+      (supabase.from as any) = vi.fn();
+
+      await expect(
+        updateMemberSuspensionStatus({
+          memberId: 'm-1',
+          memberName: 'Agus Susanto',
+          memberNrp: '88010203',
+          oldStatus: 'ACTIVE',
+          newStatus: 'SUSPENDED',
+          reason: '   ',
+        })
+      ).rejects.toThrow('Alasan perubahan status keanggotaan wajib diisi.');
+
+      expect(supabase.from).not.toHaveBeenCalled();
+    });
+
+    it('updateMemberSuspensionStatus membekukan anggota dan mencatat audit_logs SUSPEND_MEMBER', async () => {
+      const eqSpy = vi.fn().mockResolvedValue({ error: null });
+      const updateSpy = vi.fn().mockReturnValue({ eq: eqSpy });
+      const auditInsertSpy = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') return { update: updateSpy };
+        if (table === 'audit_logs') return { insert: auditInsertSpy };
+        return {};
+      });
+
+      await updateMemberSuspensionStatus({
+        memberId: 'm-agus',
+        memberName: 'Agus Susanto',
+        memberNrp: '88010203',
+        oldStatus: 'ACTIVE',
+        newStatus: 'SUSPENDED',
+        reason: 'Nota Dinas No. ND-10/XI/2026',
+        userId: 'admin-1',
+      });
+
+      expect(updateSpy).toHaveBeenCalledWith({
+        membership_status: 'SUSPENDED',
+        status: 'nonaktif',
+        suspended_at: expect.any(String),
+        suspension_reason: 'Nota Dinas No. ND-10/XI/2026',
+        updated_at: expect.any(String),
+      });
+      // Pastikan hanya kolom pembekuan yang diperbarui (tidak menyentuh nrp, nama, master_thp, rekening)
+      const updateArg = updateSpy.mock.calls[0][0];
+      expect(updateArg).not.toHaveProperty('nrp');
+      expect(updateArg).not.toHaveProperty('nama');
+      expect(updateArg).not.toHaveProperty('master_thp');
+      expect(updateArg).not.toHaveProperty('bank_account_number');
+      expect(eqSpy).toHaveBeenCalledWith('id', 'm-agus');
+
+      expect(auditInsertSpy).toHaveBeenCalledWith({
+        table_name: 'anggota',
+        action: 'SUSPEND_MEMBER',
+        record_id: 'm-agus',
+        entity_name: 'anggota',
+        entity_id: 'm-agus',
+        old_data: { membership_status: 'ACTIVE' },
+        new_data: { membership_status: 'SUSPENDED', reason: 'Nota Dinas No. ND-10/XI/2026' },
+        performed_by: 'admin-1',
+        notes: 'Pembekuan Sementara Anggota Agus Susanto (88010203) - Alasan: Nota Dinas No. ND-10/XI/2026',
+      });
+    });
+
+    it('updateMemberSuspensionStatus mengaktifkan kembali anggota dan mencatat audit_logs REACTIVATE_MEMBER', async () => {
+      const eqSpy = vi.fn().mockResolvedValue({ error: null });
+      const updateSpy = vi.fn().mockReturnValue({ eq: eqSpy });
+      const auditInsertSpy = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') return { update: updateSpy };
+        if (table === 'audit_logs') return { insert: auditInsertSpy };
+        return {};
+      });
+
+      await updateMemberSuspensionStatus({
+        memberId: 'm-agus',
+        memberName: 'Agus Susanto',
+        memberNrp: '88010203',
+        oldStatus: 'SUSPENDED',
+        newStatus: 'ACTIVE',
+        reason: 'Tugas Khusus Selesai',
+      });
+
+      expect(updateSpy).toHaveBeenCalledWith({
+        membership_status: 'ACTIVE',
+        status: 'aktif',
+        suspended_at: null,
+        suspension_reason: null,
+        updated_at: expect.any(String),
+      });
+      expect(eqSpy).toHaveBeenCalledWith('id', 'm-agus');
+
+      expect(auditInsertSpy).toHaveBeenCalledWith({
+        table_name: 'anggota',
+        action: 'REACTIVATE_MEMBER',
+        record_id: 'm-agus',
+        entity_name: 'anggota',
+        entity_id: 'm-agus',
+        old_data: { membership_status: 'SUSPENDED' },
+        new_data: { membership_status: 'ACTIVE', reason: 'Tugas Khusus Selesai' },
+        performed_by: null,
+        notes: 'Aktivasi Kembali Anggota Agus Susanto (88010203) - Alasan: Tugas Khusus Selesai',
+      });
     });
   });
 });

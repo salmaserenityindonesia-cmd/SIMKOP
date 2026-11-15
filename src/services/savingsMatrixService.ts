@@ -1309,7 +1309,7 @@ export async function bulkCheckAllUpToCurrentMonth(
   const activeMembers = (membersData || []).filter((m: any) => {
     const st = (m.status || 'aktif').toLowerCase();
     const mst = (m.membership_status || 'ACTIVE').toUpperCase();
-    return st !== 'nonaktif' && mst !== 'RESIGNED';
+    return st === 'aktif' && mst === 'ACTIVE';
   });
 
   if (activeMembers.length === 0) {

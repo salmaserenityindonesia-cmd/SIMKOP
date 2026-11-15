@@ -192,7 +192,7 @@ export interface LoanMatrixMonth {
   month: number;
   year?: number;
   dueDate?: string;
-  status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'NONE' | 'paid' | 'partial' | 'unpaid' | 'projection' | 'not_applicable';
+  status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FINISHED' | 'FROZEN' | 'NONE' | 'paid' | 'partial' | 'unpaid' | 'projection' | 'frozen' | 'not_applicable';
   targetAmount: number;
   paidAmount: number;
   cumulativePaidAmount?: number;
@@ -236,7 +236,19 @@ export interface LoanMatrixMember {
   openingPaid?: number;
   openingRemaining?: number;
   cutoffDate?: string | null;
-  anggota?: { id: string; nrp: string; nama: string; pangkat?: string };
+  membershipStatus?: string;
+  suspendedAt?: string | null;
+  suspensionReason?: string | null;
+  anggota?: {
+    id: string;
+    nrp: string;
+    nama: string;
+    pangkat?: string;
+    status?: string;
+    membership_status?: string;
+    suspended_at?: string | null;
+    suspension_reason?: string | null;
+  };
   loan_types?: { id: string; code: string; name: string };
 }
 
@@ -329,7 +341,11 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
           id,
           nrp,
           nama,
-          pangkat
+          pangkat,
+          status,
+          membership_status,
+          suspended_at,
+          suspension_reason
         )
       )
     `)
@@ -424,6 +440,9 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         openingPaid: 0,
         openingRemaining: 0,
         cutoffDate: null,
+        membershipStatus: member.membership_status,
+        suspendedAt: member.suspended_at ?? null,
+        suspensionReason: member.suspension_reason ?? null,
         anggota: member,
         loan_types: loanType,
       };
@@ -451,6 +470,7 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     }
 
     const isLoanCompleted = loan.status === 'completed' || loan.status === 'paid_off';
+    const isMemberSuspended = (member.membership_status || '').toUpperCase() === 'SUSPENDED';
 
     // Populate matrix cell and YTD stats whenever the schedule falls in the requested year
     if (scheduleYear === year) {
@@ -467,6 +487,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
           totalTargetYTD += Number(sched.target_amount);
           totalCollectedYTD += Number(sched.paid_amount);
+        } else if (!isLoanCompleted && isMemberSuspended) {
+          cellStatus = 'FROZEN';
         } else {
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PROJECTED';
           if (!isLoanCompleted && month === currentMonth + 1 && scheduleYear === currentYear) {
@@ -475,17 +497,22 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         }
       } else {
         // Past or current month
-        totalTargetYTD += Number(sched.target_amount);
-        totalCollectedYTD += Number(sched.paid_amount);
-        
         if (Number(sched.paid_amount) >= Number(sched.target_amount)) {
+          totalTargetYTD += Number(sched.target_amount);
+          totalCollectedYTD += Number(sched.paid_amount);
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PAID';
         } else if (Number(sched.paid_amount) > 0) {
+          totalTargetYTD += Number(sched.target_amount);
+          totalCollectedYTD += Number(sched.paid_amount);
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
+        } else if (!isLoanCompleted && isMemberSuspended) {
+          cellStatus = 'FROZEN';
         } else {
+          totalTargetYTD += Number(sched.target_amount);
+          totalCollectedYTD += Number(sched.paid_amount);
           cellStatus = isLoanCompleted ? 'FINISHED' : 'UNPAID';
           if (!isLoanCompleted && month === currentMonth && scheduleYear === currentYear) {
-             unpaidMembersSet.add(member.id);
+            unpaidMembersSet.add(member.id);
           }
         }
       }
@@ -1292,7 +1319,9 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
       member:anggota (
         id,
         nrp,
-        nama
+        nama,
+        status,
+        membership_status
       )
     `);
 
@@ -1318,8 +1347,14 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
     console.warn('Could not retrieve current user for bulk loan check:', authErr);
   }
 
-  // 4. Eksekusi pemrosesan secara bertahap (batch loop per pinjaman)
-  const loanList = activeLoans || [];
+  // 4. Eksekusi pemrosesan secara bertahap (batch loop per pinjaman), kecualikan anggota SUSPENDED/nonaktif
+  const loanList = (activeLoans || []).filter((loan: any) => {
+    const m = loan.member as any;
+    if (!m) return true;
+    const st = m.status ? String(m.status).toLowerCase() : 'aktif';
+    const mst = m.membership_status ? String(m.membership_status).toUpperCase() : 'ACTIVE';
+    return st === 'aktif' && mst === 'ACTIVE';
+  });
   const total = loanList.length;
   let successCount = 0;
   let failCount = 0;
@@ -1482,7 +1517,9 @@ export async function bulkAutoReconcileLoans(
       member:anggota (
         id,
         nrp,
-        nama
+        nama,
+        status,
+        membership_status
       )
     `);
 

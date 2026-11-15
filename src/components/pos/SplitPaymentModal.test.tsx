@@ -1,7 +1,12 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
-import SplitPaymentModal from './SplitPaymentModal';
+import SplitPaymentModal, {
+  applyDepositChange,
+  applyBonChange,
+  applyCashChange,
+  getInitialSplitAmounts,
+} from './SplitPaymentModal';
 
 describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
   const dummyMember = {
@@ -175,6 +180,174 @@ describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
       // Returns empty string for 0 or negative values
       expect(clampDepositInput(0, 50000, 100000)).toBe('');
       expect(clampDepositInput(-5000, 50000, 100000)).toBe('');
+    });
+  });
+
+  describe('Interactive Split Payment Auto-Balancing', () => {
+    it('executes 4-step interactive auto-balancing scenario on total Rp 6.000 in Bon Toko mode', () => {
+      const totalTagihan = 6000;
+      const availableShoppingBalance = 10000;
+      const maxSafeCreditLimit = 50000;
+
+      // Step 1: Awal dibuka dalam mode Bon Toko
+      const step1 = getInitialSplitAmounts({
+        totalTagihan,
+        isNonMember: false,
+        primaryMode: 'store_credit',
+        financials: {
+          belanjaBalance: availableShoppingBalance,
+          remainingCreditLimit: maxSafeCreditLimit,
+        },
+      });
+      expect(step1).toEqual({
+        depositAmount: 0,
+        bonAmount: 6000,
+        cashAmount: 0,
+      });
+
+      // Step 2: Isi Potong Simpanan Belanja = 2000 -> Catat Bon Toko otomatis menjadi 4000
+      const step2 = applyDepositChange({
+        rawVal: 2000,
+        totalTagihan,
+        availableShoppingBalance,
+        maxSafeCreditLimit,
+        currentBon: step1.bonAmount,
+        currentCash: step1.cashAmount,
+        primaryMode: 'store_credit',
+      });
+      expect(step2).toEqual({
+        depositAmount: 2000,
+        bonAmount: 4000,
+        cashAmount: 0,
+      });
+
+      // Step 3: Isi Tunai Diterima = 2000 -> Catat Bon Toko otomatis menjadi 2000
+      const step3 = applyCashChange({
+        rawVal: 2000,
+        totalTagihan,
+        maxSafeCreditLimit,
+        currentDeposit: step2.depositAmount,
+        currentBon: step2.bonAmount,
+        primaryMode: 'store_credit',
+      });
+      expect(step3).toEqual({
+        depositAmount: 2000,
+        bonAmount: 2000,
+        cashAmount: 2000,
+      });
+      const totalPaidStep3 = step3.depositAmount + step3.bonAmount + step3.cashAmount;
+      expect(totalPaidStep3).toBe(6000);
+      expect(Math.max(0, totalPaidStep3 - totalTagihan)).toBe(0);
+
+      // Step 4: Klik tombol cepat Rp 50.000 -> Bon Toko otomatis 0, Simpanan tetap 2000, Kembalian Rp 46.000
+      const step4 = applyCashChange({
+        rawVal: 50000,
+        totalTagihan,
+        maxSafeCreditLimit,
+        currentDeposit: step3.depositAmount,
+        currentBon: step3.bonAmount,
+        primaryMode: 'store_credit',
+      });
+      expect(step4).toEqual({
+        depositAmount: 2000,
+        bonAmount: 0,
+        cashAmount: 50000,
+      });
+      expect(step4.depositAmount + step4.bonAmount).toBeLessThanOrEqual(totalTagihan);
+      const totalPaidStep4 = step4.depositAmount + step4.bonAmount + step4.cashAmount;
+      expect(Math.max(0, totalPaidStep4 - totalTagihan)).toBe(46000);
+    });
+
+    it('clamps initial deposit/bon to available balance/limit and spills remainder to cashAmount', () => {
+      const depositShortage = getInitialSplitAmounts({
+        totalTagihan: 6000,
+        isNonMember: false,
+        primaryMode: 'deposit',
+        financials: { belanjaBalance: 2500, remainingCreditLimit: 50000 },
+      });
+      expect(depositShortage).toEqual({
+        depositAmount: 2500,
+        bonAmount: 0,
+        cashAmount: 3500,
+      });
+
+      const creditShortage = getInitialSplitAmounts({
+        totalTagihan: 6000,
+        isNonMember: false,
+        primaryMode: 'store_credit',
+        financials: { belanjaBalance: 10000, remainingCreditLimit: 4000 },
+      });
+      expect(creditShortage).toEqual({
+        depositAmount: 0,
+        bonAmount: 4000,
+        cashAmount: 2000,
+      });
+    });
+
+    it('rebalances cash and bon safely via applyBonChange and Gunakan Maksimal without exceeding tagihan', () => {
+      // Gunakan Maksimal when in store_credit mode with balance < total
+      const useMaxStoreCredit = applyDepositChange({
+        rawVal: 2000,
+        totalTagihan: 6000,
+        availableShoppingBalance: 2000,
+        maxSafeCreditLimit: 50000,
+        currentBon: 6000,
+        currentCash: 0,
+        primaryMode: 'store_credit',
+      });
+      expect(useMaxStoreCredit).toEqual({
+        depositAmount: 2000,
+        bonAmount: 4000,
+        cashAmount: 0,
+      });
+
+      // Gunakan Maksimal when in deposit mode with balance < total
+      const useMaxDepositMode = applyDepositChange({
+        rawVal: 2000,
+        totalTagihan: 6000,
+        availableShoppingBalance: 2000,
+        maxSafeCreditLimit: 50000,
+        currentBon: 0,
+        currentCash: 6000,
+        primaryMode: 'deposit',
+      });
+      expect(useMaxDepositMode).toEqual({
+        depositAmount: 2000,
+        bonAmount: 0,
+        cashAmount: 4000,
+      });
+
+      // Adjusting Bon manually rebalances cash and clamps non-cash total to tagihan
+      const bonAdjusted = applyBonChange({
+        rawVal: 10000,
+        totalTagihan: 6000,
+        maxSafeCreditLimit: 50000,
+        currentDeposit: 2000,
+        currentCash: 4000,
+      });
+      expect(bonAdjusted).toEqual({
+        depositAmount: 2000,
+        bonAmount: 4000,
+        cashAmount: 0,
+      });
+    });
+
+    it('renders initial store_credit and deposit amounts cleanly in modal markup', () => {
+      const bonMarkup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 6000,
+          selectedMember: dummyMember,
+          memberId: dummyMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 10000, remainingCreditLimit: 50000 },
+          onConfirm: () => {},
+        })
+      );
+      expect(bonMarkup).toContain('value="6000"');
     });
   });
 });

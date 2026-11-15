@@ -186,7 +186,7 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
     throw new Error('Format kolom tidak valid. Pastikan kolom minimal (nrp, nama) ada.');
   }
 
-  const allowedStatus = ['ACTIVE', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
+  const allowedStatus = ['ACTIVE', 'SUSPENDED', 'PENDING_RESIGNED', 'READY_TO_RESIGN', 'RESIGNED', 'BLOCKED'];
   const currentDate = new Date();
 
   worksheet.eachRow((row, rowNumber) => {
@@ -328,7 +328,7 @@ export const executeMigration = async (
         pangkat: row.pangkat,
         bank_account_number: row.bank_account_number,
         membership_status: row.membership_status,
-        status: 'aktif',
+        status: (row.membership_status || 'ACTIVE') === 'ACTIVE' ? 'aktif' : 'nonaktif',
         created_at: row.tgl_awal_anggota ? new Date(row.tgl_awal_anggota).toISOString() : new Date().toISOString()
       };
 

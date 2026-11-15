@@ -268,6 +268,8 @@ export async function calculateMemberCumulativeBills(
         pangkat?: string | null;
         created_at?: string;
         tgl_awal_anggota?: string;
+        status?: string;
+        membership_status?: string;
       },
   selectedYear: number,
   selectedMonth: number
@@ -282,12 +284,14 @@ export async function calculateMemberCumulativeBills(
     pangkat?: string | null;
     created_at?: string;
     tgl_awal_anggota?: string;
+    status?: string;
+    membership_status?: string;
   };
 
   if (typeof memberOrId === 'string') {
     const { data, error } = await supabase
       .from('anggota')
-      .select('id, nama, nrp, pangkat, created_at')
+      .select('id, nama, nrp, pangkat, created_at, status, membership_status')
       .eq('id', memberOrId)
       .single();
     if (error || !data) {
@@ -296,6 +300,30 @@ export async function calculateMemberCumulativeBills(
     memberRecord = data;
   } else {
     memberRecord = { ...memberOrId };
+  }
+
+  if (
+    (memberRecord.membership_status || '').toUpperCase() === 'SUSPENDED' ||
+    (memberRecord.status && memberRecord.status.toLowerCase() === 'nonaktif')
+  ) {
+    return {
+      member: {
+        id: memberRecord.id,
+        nama: memberRecord.nama,
+        nrp: memberRecord.nrp,
+        pangkat: memberRecord.pangkat ?? null,
+        created_at: memberRecord.created_at,
+      },
+      selectedYear,
+      selectedMonth,
+      savingsCutoffDate: null,
+      loansCutoffDate: null,
+      items: [],
+      settledItems: [],
+      totalTagihan: 0,
+      totalTunggakan: 0,
+      totalBulanIni: 0,
+    };
   }
 
   // Ensure mandatory deposit accounts exist for this member

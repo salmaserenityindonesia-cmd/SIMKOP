@@ -58,12 +58,8 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
 
     // Calculate precision cash amount applied to transaction (handling change / kembalian)
     const nonCash = (payload.paidDeposit || 0) + (payload.paidCredit || 0);
-    const cashPortion = Math.max(0, payload.totalAmount - nonCash);
-    let effectivePaidCash = payload.paidCash;
-
-    if (payload.paymentScheme === 'cash' || (payload.paidCash >= cashPortion && cashPortion > 0)) {
-      effectivePaidCash = cashPortion;
-    }
+    const change = Math.max(0, (payload.paidCash || 0) + nonCash - payload.totalAmount);
+    const effectivePaidCash = Math.max(0, (payload.paidCash || 0) - change);
 
     const effectivePaidAmount = payload.totalAmount;
 

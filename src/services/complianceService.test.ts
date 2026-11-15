@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getSavingsComplianceAvailableYears,
   getComplianceMatrixData,
@@ -2735,6 +2735,85 @@ describe('Phase 74: Cross-Year Rolling Window & Prior Balance Summary Engine', (
     expect(row.months[10]?.wajib?.status).toBe('paid');
     expect(row.months[10]?.bal_w).toBe(10400000);
     expect(row.netSavings?.wajib).toBe(10400000);
+  });
+});
+
+describe('complianceService - SUSPENDED (Nonaktif Sementara)', () => {
+  const mockDTypes = [
+    { id: 'dt-pokok', name: 'Simpanan Pokok', code: 'POKOK', default_amount: 100000 },
+    { id: 'dt-wajib', name: 'Simpanan Wajib', code: 'WAJIB', default_amount: 25000 },
+    { id: 'dt-belanja', name: 'Simpanan Belanja', code: 'BELANJA', default_amount: 50000 },
+    { id: 'dt-lebaran', name: 'Simpanan Lebaran', code: 'LEBARAN', default_amount: 50000 },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-15T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('tetap memuat anggota SUSPENDED ke matriks dengan status sel frozen (BEKU) sejak suspended_at hingga bulan berjalan tanpa menurunkan compliance', async () => {
+    const mockMembers = [
+      {
+        id: 'm-susp-1',
+        nrp: 'NRP-SUSP-01',
+        nama: 'Serka Beku',
+        membership_status: 'SUSPENDED',
+        status: 'nonaktif',
+        suspended_at: '2026-09-10T00:00:00.000Z',
+        suspension_reason: 'Instruksi Kedinasan',
+        created_at: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+
+    const txList: any[] = [];
+    for (let mo = 1; mo <= 8; mo++) {
+      txList.push(
+        { id: `w-${mo}`, amount: 25000, transaction_type: 'deposit', for_year: 2026, for_month: mo, member_deposits: { member_id: 'm-susp-1', deposit_type_id: 'dt-wajib' } },
+        { id: `b-${mo}`, amount: 50000, transaction_type: 'deposit', for_year: 2026, for_month: mo, member_deposits: { member_id: 'm-susp-1', deposit_type_id: 'dt-belanja' } },
+        { id: `l-${mo}`, amount: 50000, transaction_type: 'deposit', for_year: 2026, for_month: mo, member_deposits: { member_id: 'm-susp-1', deposit_type_id: 'dt-lebaran' } }
+      );
+    }
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        const chainObj: any = {
+          or: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          lte: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(chainObj) };
+      }
+      if (table === 'deposit_transactions') {
+        return { select: vi.fn().mockReturnValue(Promise.resolve({ data: txList, error: null })) };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await getComplianceMatrixData(2026);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row.membership_status).toBe('SUSPENDED');
+    expect(row.months[7]?.wajib?.status).toBe('paid');
+
+    // Sep, Okt, dan Nov (bulan berjalan) harus berstatus 'frozen' dan nominal kewajiban 0
+    for (const idx of [8, 9, 10]) {
+      expect(row.months[idx]?.wajib?.status).toBe('frozen');
+      expect(row.months[idx]?.belanja?.status).toBe('frozen');
+      expect(row.months[idx]?.lebaran?.status).toBe('frozen');
+      expect(row.months[idx]?.wajib?.amount).toBe(0);
+    }
+
+    // Bulan beku dikecualikan dari pembagi kepatuhan sehingga kepatuhan tetap 100%
+    expect(row.compliance).toBe(100);
   });
 });
 
