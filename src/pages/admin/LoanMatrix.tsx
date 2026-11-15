@@ -421,6 +421,16 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             Export Excel
           </button>
 
+          <a
+            href="/admin/laporan-pinjaman-lunas"
+            className="flex items-center gap-2 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-semibold text-sm transition-colors shadow-xs"
+            data-testid="paid-off-loans-shortcut"
+            title="Lihat daftar anggota yang telah melunasi pinjaman"
+          >
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span>Daftar Pinjaman Lunas</span>
+          </a>
+
           <div className="h-6 w-px bg-slate-200 hidden sm:block mx-1" />
 
           <div className="flex items-center gap-2">

@@ -80,6 +80,7 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
       'Approval Pinjaman',
       'Matriks Simpanan',
       'Matriks Pinjaman',
+      'Laporan Pinjaman Lunas',
       'Buku Besar Belanja',
     ]);
   });
