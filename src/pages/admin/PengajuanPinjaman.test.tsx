@@ -736,4 +736,83 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(result.id).toBe('loan-dynamic-1');
     });
   });
+
+  describe('Angsuran Lain-lain Integration in Simulasi & Kelayakan', () => {
+    it('deducts Angsuran Lain-lain and renders red deduction row for Agus Susanto scenario', () => {
+      const thpData = {
+        master_thp: 6000000,
+        active_installments: 0,
+        angsuran_lain_lain: 1000000,
+        savings_deduction: 460000,
+        remaining_thp: 4540000
+      };
+
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={0}
+          minRemainingThp={1500000}
+        />
+      );
+
+      expect(html).toContain('Gaji Pokok (Master THP)');
+      expect(html).toContain('6.000.000');
+      expect(html).toContain('Cicilan Berjalan');
+      expect(html).toContain('Angsuran Lain-lain');
+      expect(html).toContain('- Rp 1.000.000');
+      expect(html).toContain('text-rose-600');
+      expect(html).toContain('Iuran Simpanan Rutin');
+      expect(html).toContain('460.000');
+      expect(html).toContain('Sisa THP Saat Ini');
+      expect(html).toContain('4.540.000');
+      expect(html).toContain('Memenuhi Syarat');
+    });
+
+    it('recalculates Sisa THP Saat Ini and marks ineligible when Angsuran Lain-lain reduces remaining THP below minimum threshold', () => {
+      const thpData = {
+        master_thp: 6000000,
+        active_installments: 0,
+        angsuran_lain_lain: 1000000,
+        savings_deduction: 460000,
+        remaining_thp: 5540000 // Even if remaining_thp wasn't pre-deducted, SimulationPanel recalculates 6M - 0 - 1M - 460k = 4.54M
+      };
+
+      // Cicilan baru 3.500.000 -> Sisa THP Akhir = 4.540.000 - 3.500.000 = 1.040.000 (< 1.500.000, shortfall 460.000)
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          newInstallment={3500000}
+          minRemainingThp={1500000}
+        />
+      );
+
+      expect(html).toContain('4.540.000');
+      expect(html).toContain('1.040.000');
+      expect(html).toContain('Tidak Memenuhi Syarat Batas Minimum THP');
+    });
+
+    it('initializes PengajuanPinjaman with member angsuran_lain_lain from dropdown list', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-agus"
+          initialAnggotaList={[
+            {
+              id: 'm-agus',
+              nrp: '95168420',
+              nama: 'Agus Susanto',
+              master_thp: 6000000,
+              take_home_pay: 6000000,
+              angsuran_lain_lain: 1000000,
+            }
+          ]}
+        />
+      );
+
+      expect(html).toContain('95168420 - Agus Susanto');
+      expect(html).toContain('Angsuran Lain-lain');
+      expect(html).toContain('- Rp 1.000.000');
+      // 6.000.000 - 1.000.000 - 200.000 (default savings) = 4.800.000
+      expect(html).toContain('4.800.000');
+    });
+  });
 });

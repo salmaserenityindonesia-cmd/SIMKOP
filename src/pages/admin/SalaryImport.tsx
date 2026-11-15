@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { downloadSalaryTemplate } from '../../services/salaryTemplateService';
-import { 
-  parseSalaryReconciliationFile, 
-  ReconciliationResult, 
+import {
+  parseSalaryReconciliationFile,
+  ReconciliationResult,
   confirmSalaryReconciliation,
   applySalaryReconciliation,
   fetchMembersSalaryAndAccounts,
@@ -41,7 +41,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  
+
   const [editingRowIdx, setEditingRowIdx] = useState<number | null>(null);
   const [tempAccountNumber, setTempAccountNumber] = useState<string>('');
 
@@ -63,20 +63,38 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const fetchMemberSalaryData = async () => {
     setIsLoadingMembers(true);
     try {
-      // Query langsung ke Supabase dengan fallback field salary bila perlu
+      // Query langsung ke Supabase dengan fallback field opsional bila perlu
       let data: MemberSalaryAccountItem[] | null = null;
       try {
+        let selectFields = [
+          'id',
+          'nrp',
+          'nama',
+          'pangkat',
+          'bank_account_number',
+          'take_home_pay',
+          'master_thp',
+          'salary',
+          'angsuran_lain_lain',
+        ];
         let res: any = await supabase
           .from('anggota')
-          .select('id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp, salary')
+          .select(selectFields.join(', '))
           .order('nama', { ascending: true });
 
-        if (res.error && res.error.message && res.error.message.toLowerCase().includes('salary')) {
-          const retry = await supabase
-            .from('anggota')
-            .select('id, nrp, nama, pangkat, bank_account_number, take_home_pay, master_thp')
-            .order('nama', { ascending: true });
-          res = retry;
+        if (res.error && res.error.message) {
+          const errMsg = res.error.message.toLowerCase();
+          const missingSalary = errMsg.includes('salary');
+          const missingAngsuran = errMsg.includes('angsuran_lain_lain');
+          if (missingSalary || missingAngsuran) {
+            if (missingSalary) selectFields = selectFields.filter((f) => f !== 'salary');
+            if (missingAngsuran) selectFields = selectFields.filter((f) => f !== 'angsuran_lain_lain');
+            const retry = await supabase
+              .from('anggota')
+              .select(selectFields.join(', '))
+              .order('nama', { ascending: true });
+            res = retry;
+          }
         }
 
         if (!res.error && res.data) {
@@ -114,21 +132,21 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const handleSaveInlineEdit = (idx: number) => {
     const newData = [...results];
     const row = newData[idx];
-    
+
     // Update account number
     row.excel_account_number = tempAccountNumber;
     row.rekening_baru = tempAccountNumber;
-    
+
     // Evaluate status
     const normExcel = normalizeAccount(row.excel_account_number);
     const normDb = normalizeAccount(row.db_account_number);
-    
+
     if (normDb && normExcel === normDb) {
       row.status = 'MATCH';
     } else if (row.status !== 'NOT_FOUND') {
       row.status = 'CONFLICT';
     }
-    
+
     setResults(newData);
     setEditingRowIdx(null);
   };
@@ -166,7 +184,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   };
 
   /**
-   * Eksekusi simpan konfirmasi pembaruan gaji dan nomor rekening anggota
+   * Eksekusi simpan konfirmasi pembaruan gaji, angsuran lain-lain, dan nomor rekening anggota
    */
   const handleSaveConfirm = async () => {
     if (previewRows.length === 0) return;
@@ -217,9 +235,9 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
     <AdminLayout>
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
-          <h1 className="text-title-lg font-title-lg text-primary">Import Gaji & Rekening</h1>
+          <h1 className="text-title-lg font-title-lg text-primary">Import Gaji &amp; Rekening</h1>
           <p className="text-body-md text-on-surface-variant">
-            Unduh template, isi Take Home Pay, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
+            Unduh template, isi Gaji Pokok dan Angsuran Lain-lain, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
           </p>
         </div>
 
@@ -312,7 +330,8 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                   <tr>
                     <th className="px-4 py-3 font-medium">NRP</th>
                     <th className="px-4 py-3 font-medium">Nama</th>
-                    <th className="px-4 py-3 font-medium">THP</th>
+                    <th className="px-4 py-3 font-medium text-right">Gaji Pokok</th>
+                    <th className="px-4 py-3 font-medium text-right">Angsuran Lain-lain</th>
                     <th className="px-4 py-3 font-medium">Rekening Lama</th>
                     <th className="px-4 py-3 font-medium">Rekening Baru</th>
                   </tr>
@@ -320,21 +339,25 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                 <tbody className="divide-y divide-outline-variant/20">
                   {paginatedResults.map((r, idx) => {
                     const actualIdx = (reconCurrentPage - 1) * reconItemsPerPage + idx;
-                    const previewSalary = r.take_home_pay ?? r.thp;
+                    const previewSalary = r.gaji_pokok ?? r.take_home_pay ?? r.thp;
+                    const previewExternalInstallment = Number(r.angsuran_lain_lain ?? 0);
                     return (
                       <tr key={actualIdx} className="hover:bg-surface-container-lowest/50">
                         <td className="px-4 py-3">{r.nrp}</td>
                         <td className="px-4 py-3">{r.nama}</td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 text-right tabular-nums">
                           {previewSalary !== null && previewSalary !== undefined
                             ? `Rp ${previewSalary.toLocaleString('id-ID')}`
                             : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {`Rp ${previewExternalInstallment.toLocaleString('id-ID')}`}
                         </td>
                         <td className="px-4 py-3">{r.db_account_number || '-'}</td>
                         <td className="px-4 py-3 font-medium text-primary">
                           {editingRowIdx === actualIdx ? (
                             <div className="flex items-center gap-2">
-                              <input 
+                              <input
                                 type="text"
                                 value={tempAccountNumber}
                                 onChange={(e) => setTempAccountNumber(e.target.value.replace(/[^0-9-\s]/g, ''))}
@@ -352,8 +375,8 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                             <div className="flex items-center gap-2">
                               <span>{r.excel_account_number || r.rekening_baru || '-'}</span>
                               {r.status === 'CONFLICT' && (
-                                <button 
-                                  onClick={() => { setEditingRowIdx(actualIdx); setTempAccountNumber(r.excel_account_number || r.rekening_baru || ''); }} 
+                                <button
+                                  onClick={() => { setEditingRowIdx(actualIdx); setTempAccountNumber(r.excel_account_number || r.rekening_baru || ''); }}
                                   className="text-on-surface-variant hover:text-primary transition-colors flex items-center"
                                   title="Edit Rekening Baru"
                                 >
@@ -376,7 +399,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                   Menampilkan {totalReconItems === 0 ? 0 : (reconCurrentPage - 1) * reconItemsPerPage + 1}-
                   {Math.min(reconCurrentPage * reconItemsPerPage, totalReconItems)} dari {totalReconItems} data
                 </span>
-                <select 
+                <select
                   value={reconItemsPerPage}
                   onChange={(e) => {
                     setReconItemsPerPage(Number(e.target.value));
@@ -392,7 +415,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
               </div>
 
               <div className="flex items-center gap-1">
-                <button 
+                <button
                   onClick={() => setReconCurrentPage(p => Math.max(1, p - 1))}
                   disabled={reconCurrentPage === 1}
                   className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -402,7 +425,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                 <span className="font-medium px-2 text-on-surface">
                   {reconCurrentPage} / {totalReconPages || 1}
                 </span>
-                <button 
+                <button
                   onClick={() => setReconCurrentPage(p => Math.min(totalReconPages, p + 1))}
                   disabled={reconCurrentPage === totalReconPages || totalReconPages === 0}
                   className="px-3 py-1 bg-surface-container-lowest border border-outline-variant hover:bg-surface-container-low rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -422,7 +445,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                 Daftar Data Gaji &amp; Rekening Anggota
               </h2>
               <p className="text-body-sm text-on-surface-variant">
-                Master data nominal Take Home Pay (THP) dan nomor rekening bank aktif untuk seluruh anggota.
+                Master data nominal Gaji Pokok, Angsuran Lain-lain, dan nomor rekening bank aktif untuk seluruh anggota.
               </p>
             </div>
             <div className="w-full md:w-80">
@@ -474,7 +497,8 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                     <th className="px-4 py-3 font-medium">Nama Anggota</th>
                     <th className="px-4 py-3 font-medium">Pangkat</th>
                     <th className="px-4 py-3 font-medium">No. Rekening Bank</th>
-                    <th className="px-4 py-3 font-medium">Gaji / THP (Rp)</th>
+                    <th className="px-4 py-3 font-medium text-right">Gaji Pokok</th>
+                    <th className="px-4 py-3 font-medium text-right">Angsuran Lain-lain</th>
                     <th className="px-4 py-3 font-medium">Status Rekening</th>
                   </tr>
                 </thead>
@@ -483,6 +507,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                     const row = m;
                     const hasAccount = Boolean(row.bank_account_number && row.bank_account_number.trim() !== '');
                     const salaryVal = row.take_home_pay ?? row.master_thp ?? row.salary ?? 0;
+                    const externalInstallmentVal = Number(row.angsuran_lain_lain ?? 0);
 
                     return (
                       <tr key={row.id || row.nrp} className="hover:bg-surface-container-lowest/50 transition-colors">
@@ -492,10 +517,13 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                         <td className="px-4 py-3 font-mono text-xs text-on-surface">
                           {row.bank_account_number || '-'}
                         </td>
-                        <td className="px-4 py-3 font-medium text-on-surface">
+                        <td className="px-4 py-3 font-medium text-on-surface text-right tabular-nums">
                           {salaryVal > 0
                             ? `Rp ${salaryVal.toLocaleString('id-ID')}`
                             : '-'}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-on-surface text-right tabular-nums">
+                          {`Rp ${externalInstallmentVal.toLocaleString('id-ID')}`}
                         </td>
                         <td className="px-4 py-3">
                           {hasAccount ? (

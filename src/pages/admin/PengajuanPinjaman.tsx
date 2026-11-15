@@ -21,7 +21,13 @@ export const calculateAvailableTenors = (maxTenor?: number): number[] => {
 };
 
 export interface SimulationPanelProps {
-  thpData: { master_thp: number; active_installments: number; savings_deduction?: number; remaining_thp: number } | null;
+  thpData: {
+    master_thp: number;
+    active_installments: number;
+    angsuran_lain_lain?: number;
+    savings_deduction?: number;
+    remaining_thp: number;
+  } | null;
   newInstallment: number;
   amount?: number | '';
   tenor?: number | '';
@@ -39,8 +45,15 @@ export function SimulationPanel({
   maxTenor,
   minRemainingThp = MIN_REMAINING_THP
 }: SimulationPanelProps) {
+  const externalInstallments = Number(thpData?.angsuran_lain_lain ?? 0);
+  const currentRemainingThp = thpData
+    ? (thpData.angsuran_lain_lain !== undefined
+        ? thpData.master_thp - thpData.active_installments - externalInstallments - (thpData.savings_deduction || 0)
+        : thpData.remaining_thp)
+    : 0;
+
   const eligibility = thpData 
-    ? calculateTHPEligibility(thpData.remaining_thp, newInstallment, minRemainingThp)
+    ? calculateTHPEligibility(currentRemainingThp, newInstallment, minRemainingThp)
     : { finalRemainingThp: 0, isEligible: false, shortfall: minRemainingThp };
 
   // Helper mencari tenor yang memenuhi syarat kelayakan (THP >= minRemainingThp)
@@ -57,7 +70,7 @@ export function SimulationPanel({
     const currentTenorNum = typeof tenor === 'number' ? tenor : 0;
     const viable = availableTenors.filter(t => {
       const monthly = principal / t;
-      return (thpData.remaining_thp - monthly) >= minRemainingThp;
+      return (currentRemainingThp - monthly) >= minRemainingThp;
     });
 
     const higherViable = viable.find(t => t > currentTenorNum);
@@ -85,13 +98,19 @@ export function SimulationPanel({
             <span>Cicilan Berjalan</span>
             <span>- {formatCurrency(thpData.active_installments)}</span>
           </div>
+          <div className="flex items-center justify-between text-sm py-2 border-b border-slate-100">
+            <span className="text-rose-600 font-medium">Angsuran Lain-lain</span>
+            <span className="font-semibold text-rose-600 tabular-nums">
+              - Rp {externalInstallments.toLocaleString('id-ID')}
+            </span>
+          </div>
           <div className="flex justify-between pb-2 border-b border-gray-200">
             <span className="text-gray-600">Iuran Simpanan Rutin</span>
             <span className="font-medium text-rose-600">- {formatCurrency(thpData.savings_deduction || 0)}</span>
           </div>
           <div className="flex justify-between pb-2 border-b border-gray-200">
             <span className="font-medium text-gray-700">Sisa THP Saat Ini</span>
-            <span className="font-bold text-gray-900">{formatCurrency(thpData.remaining_thp)}</span>
+            <span className="font-bold text-gray-900">{formatCurrency(currentRemainingThp)}</span>
           </div>
 
           <div className="pt-4">
@@ -191,7 +210,13 @@ export async function submitLoanApplication(
 export interface PengajuanPinjamanProps {
   initialAnggotaList?: any[];
   initialSelectedAnggota?: string;
-  initialThpData?: { master_thp: number; active_installments: number; savings_deduction?: number; remaining_thp: number } | null;
+  initialThpData?: {
+    master_thp: number;
+    active_installments: number;
+    angsuran_lain_lain?: number;
+    savings_deduction?: number;
+    remaining_thp: number;
+  } | null;
   initialAmount?: number | '';
   initialTenor?: number | '';
   initialPurpose?: string;
@@ -247,18 +272,26 @@ export default function PengajuanPinjaman({
     return 0;
   });
 
-  const [thpData, setThpData] = useState<{ master_thp: number, active_installments: number, savings_deduction?: number, remaining_thp: number } | null>(() => {
+  const [thpData, setThpData] = useState<{
+    master_thp: number;
+    active_installments: number;
+    angsuran_lain_lain?: number;
+    savings_deduction?: number;
+    remaining_thp: number;
+  } | null>(() => {
     if (initialThpData) return initialThpData;
     if (initialSelectedAnggota && initialAnggotaList) {
       const sel = initialAnggotaList.find(a => String(a.id) === String(initialSelectedAnggota));
       if (sel) {
         const num = extractMemberTHP(sel);
+        const externalInstallments = Number(sel.angsuran_lain_lain ?? 0);
         const defaultSavings = 200000;
         return {
           master_thp: num,
           active_installments: 0,
+          angsuran_lain_lain: externalInstallments,
           savings_deduction: defaultSavings,
-          remaining_thp: num - defaultSavings
+          remaining_thp: num - externalInstallments - defaultSavings
         };
       }
     }
@@ -311,7 +344,7 @@ export default function PengajuanPinjaman({
   async function loadAnggota() {
     let { data, error } = await supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
+      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number')
       .eq('status', 'aktif')
       .order('nama');
 
@@ -341,12 +374,14 @@ export default function PengajuanPinjaman({
       setMasterThp(numericThp);
 
       // Langsung render di panel Simulasi & Kelayakan
+      const externalInstallments = Number(selectedMember.angsuran_lain_lain ?? 0);
       const defaultSavings = 200000;
       setThpData({
         master_thp: numericThp,
         active_installments: 0,
+        angsuran_lain_lain: externalInstallments,
         savings_deduction: defaultSavings,
-        remaining_thp: numericThp - defaultSavings
+        remaining_thp: numericThp - externalInstallments - defaultSavings
       });
     }
   };
@@ -362,12 +397,20 @@ export default function PengajuanPinjaman({
       }
 
       setMasterThp(numericThp);
-      const savingsDeduction = data.savings_deduction || 200000;
+      const currentInstallments = Number(data.active_installments || 0);
+      const externalInstallments = Number(
+        (data as any)?.angsuran_lain_lain ?? selectedMember?.angsuran_lain_lain ?? 0
+      );
+      const routineSavingsDeduction = data.savings_deduction || 200000;
+      const currentRemainingThp =
+        numericThp - currentInstallments - externalInstallments - routineSavingsDeduction;
+
       setThpData({
         master_thp: numericThp,
-        active_installments: data.active_installments,
-        savings_deduction: savingsDeduction,
-        remaining_thp: numericThp - data.active_installments - savingsDeduction
+        active_installments: currentInstallments,
+        angsuran_lain_lain: externalInstallments,
+        savings_deduction: routineSavingsDeduction,
+        remaining_thp: currentRemainingThp
       });
     } catch (err: any) {
       console.error(err);
@@ -379,8 +422,14 @@ export default function PengajuanPinjaman({
     return Number(amount) / Number(tenor);
   };
 
+  const thpRemainingForEligibility = thpData
+    ? (thpData.angsuran_lain_lain !== undefined
+        ? thpData.master_thp - thpData.active_installments - Number(thpData.angsuran_lain_lain ?? 0) - (thpData.savings_deduction || 0)
+        : thpData.remaining_thp)
+    : 0;
+
   const eligibility = thpData 
-    ? calculateTHPEligibility(thpData.remaining_thp, calculateCicilan(), minRemainingThp)
+    ? calculateTHPEligibility(thpRemainingForEligibility, calculateCicilan(), minRemainingThp)
     : { finalRemainingThp: 0, isEligible: false, shortfall: minRemainingThp };
 
   const isTHPEligible = () => eligibility.isEligible;

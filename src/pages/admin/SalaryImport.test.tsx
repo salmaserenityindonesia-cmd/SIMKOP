@@ -70,7 +70,10 @@ describe('SalaryImport Page Integration', () => {
     expect(html).toContain('Unggah File Rekonsiliasi');
     expect(html).toContain('Daftar Data Gaji &amp; Rekening Anggota');
     expect(html).toContain('No. Rekening Bank');
+    expect(html).toContain('Gaji Pokok');
+    expect(html).toContain('Angsuran Lain-lain');
     expect(html).toContain('Status Rekening');
+    expect(html).not.toContain('Take Home Pay (THP)');
     expect(html).toContain('Budi Santoso');
     expect(html).toContain('987654321');
     expect(html).toContain('Lengkap');
@@ -151,5 +154,25 @@ describe('SalaryImport Page Integration', () => {
     const html = renderToStaticMarkup(<SalaryImport initialMembers={fallbackMembers} />);
     expect(html).toContain('Agus Pramono');
     expect(html).toContain('Rp 5.000.000');
+  });
+
+  it('renders Gaji Pokok and Angsuran Lain-lain values in master table', () => {
+    const membersWithExternalInstallments = [
+      {
+        id: 'm-agus',
+        nrp: '95168420',
+        nama: 'Agus Susanto',
+        pangkat: 'Serka',
+        bank_account_number: '1122334455',
+        take_home_pay: 6000000,
+        master_thp: 6000000,
+        angsuran_lain_lain: 1000000,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<SalaryImport initialMembers={membersWithExternalInstallments} />);
+    expect(html).toContain('Agus Susanto');
+    expect(html).toContain('Rp 6.000.000');
+    expect(html).toContain('Rp 1.000.000');
   });
 });

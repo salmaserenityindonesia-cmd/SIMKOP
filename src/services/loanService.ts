@@ -536,6 +536,7 @@ export const loanService = {
   async getMemberTHP(memberId: string): Promise<{
     master_thp: number;
     active_installments: number;
+    angsuran_lain_lain: number;
     savings_deduction: number;
     remaining_thp: number;
   }> {
@@ -543,7 +544,7 @@ export const loanService = {
     let memberData: any = null;
     const { data: member, error: memberError } = await supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number')
+      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number')
       .eq('id', memberId)
       .single();
 
@@ -637,11 +638,13 @@ export const loanService = {
       savingsDeduction = 200000;
     }
 
-    const remainingThp = masterThp - activeInstallments - savingsDeduction;
+    const angsuranLainLain = cleanNumber(memberData?.angsuran_lain_lain);
+    const remainingThp = masterThp - activeInstallments - angsuranLainLain - savingsDeduction;
 
     return {
       master_thp: masterThp,
       active_installments: activeInstallments,
+      angsuran_lain_lain: angsuranLainLain,
       savings_deduction: savingsDeduction,
       remaining_thp: remainingThp
     };

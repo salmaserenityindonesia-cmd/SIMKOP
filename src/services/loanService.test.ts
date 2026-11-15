@@ -274,6 +274,47 @@ describe('loanService', () => {
       // 5,000,000 - 500,000 - 275,000 = 4,225,000
       expect(res.remaining_thp).toBe(4225000);
     });
+
+    it('should deduct angsuran_lain_lain when computing remaining_thp', async () => {
+      const mockSupabase = supabase.from as any;
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: { master_thp: 6000000, take_home_pay: 6000000, angsuran_lain_lain: 1000000 },
+              error: null
+            })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null })
+          })
+        })
+      }));
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                { deposit_types: { code: 'WAJIB', default_amount: 200000 } },
+                { deposit_types: { code: 'LEBARAN', default_amount: 260000 } }
+              ],
+              error: null
+            })
+          })
+        })
+      }));
+
+      const res = await loanService.getMemberTHP('m-agus');
+      expect(res.master_thp).toBe(6000000);
+      expect(res.active_installments).toBe(0);
+      expect(res.angsuran_lain_lain).toBe(1000000);
+      expect(res.savings_deduction).toBe(460000);
+      expect(res.remaining_thp).toBe(4540000);
+    });
   });
 
   describe('applyLoan - THP Validation', () => {

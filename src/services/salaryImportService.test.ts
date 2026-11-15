@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import ExcelJS from 'exceljs';
 import {
   fetchMembersSalaryAndAccounts,
   confirmSalaryReconciliation,
   applySalaryReconciliation,
+  parseSalaryReconciliationFile,
   cleanNumber,
   MemberSalaryAccountItem,
 } from './salaryImportService';
@@ -365,6 +367,125 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
       await expect(applySalaryReconciliation(previewRows)).rejects.toThrow(
         /Gagal update NRP 11111: Network connection lost/
       );
+    });
+
+    it('mengupdate gaji_pokok dan angsuran_lain_lain ke tabel anggota serta mendukung fallback jika kolom angsuran_lain_lain belum ada', async () => {
+      const mockEq = vi.fn().mockResolvedValue({ error: null });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const previewRows = [
+        {
+          nrp: '95168420',
+          gaji_pokok: 6000000,
+          angsuran_lain_lain: 'Rp 1.000.000',
+          rekening_baru: '1122334455',
+        },
+      ];
+
+      const success = await applySalaryReconciliation(previewRows);
+      expect(success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          master_thp: 6000000,
+          take_home_pay: 6000000,
+          salary: 6000000,
+          angsuran_lain_lain: 1000000,
+          bank_account_number: '1122334455',
+        })
+      );
+      expect(mockEq).toHaveBeenCalledWith('nrp', '95168420');
+    });
+
+    it('melakukan retry tanpa angsuran_lain_lain jika kolom belum ada di database', async () => {
+      let callCount = 0;
+      const mockEq = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            error: { message: 'column "angsuran_lain_lain" of relation "anggota" does not exist' },
+          });
+        }
+        return Promise.resolve({ error: null });
+      });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const success = await applySalaryReconciliation([
+        { nrp: '95168420', gaji_pokok: 6000000, angsuran_lain_lain: 1000000 },
+      ]);
+      expect(success).toBe(true);
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(mockUpdate).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({
+          angsuran_lain_lain: expect.anything(),
+        })
+      );
+    });
+  });
+
+  describe('parseSalaryReconciliationFile', () => {
+    it('memparsing template 5 kolom (Gaji Pokok & Angsuran Lain-lain) dan mendukung fallback header lama Take Home Pay (THP)', async () => {
+      const mockIn = vi.fn().mockResolvedValue({
+        data: [
+          { nrp: '95168420', nama: 'Agus Susanto', bank_account_number: '123456' },
+        ],
+        error: null,
+      });
+      const mockSelect = vi.fn().mockReturnValue({ in: mockIn });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { select: mockSelect };
+        }
+        return {};
+      });
+
+      // 1. File format 5 kolom baru
+      const wbNew = new ExcelJS.Workbook();
+      const wsNew = wbNew.addWorksheet('Template Rekonsiliasi');
+      wsNew.addRow(['NRP', 'Nama Lengkap', 'Nomor Rekening', 'Gaji Pokok', 'Angsuran Lain-lain']);
+      wsNew.addRow(['95168420', 'Agus Susanto', '123456', 6000000, 1000000]);
+      const bufNew = await wbNew.xlsx.writeBuffer();
+      const fileNew = { arrayBuffer: async () => bufNew } as unknown as File;
+
+      const resNew = await parseSalaryReconciliationFile(fileNew);
+      expect(resNew).toHaveLength(1);
+      expect(resNew[0]).toMatchObject({
+        nrp: '95168420',
+        nama: 'Agus Susanto',
+        gaji_pokok: 6000000,
+        take_home_pay: 6000000,
+        angsuran_lain_lain: 1000000,
+        status: 'MATCH',
+      });
+
+      // 2. File format 4 kolom lama (kompatibilitas mundur)
+      const wbOld = new ExcelJS.Workbook();
+      const wsOld = wbOld.addWorksheet('Template Rekonsiliasi');
+      wsOld.addRow(['NRP', 'Nama Lengkap', 'Nomor Rekening', 'Take Home Pay (THP)']);
+      wsOld.addRow(['95168420', 'Agus Susanto', '123456', 'Rp 5.500.000']);
+      const bufOld = await wbOld.xlsx.writeBuffer();
+      const fileOld = { arrayBuffer: async () => bufOld } as unknown as File;
+
+      const resOld = await parseSalaryReconciliationFile(fileOld);
+      expect(resOld).toHaveLength(1);
+      expect(resOld[0]).toMatchObject({
+        nrp: '95168420',
+        gaji_pokok: 5500000,
+        take_home_pay: 5500000,
+        angsuran_lain_lain: 0,
+        status: 'MATCH',
+      });
     });
   });
 });
