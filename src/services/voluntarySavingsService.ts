@@ -20,9 +20,15 @@ export interface MemberAdditionalSavingsSummary {
   nrp: string;
   nama: string;
   status: string;
+  bank_account_number?: string | null;
   totalAdditionalBalance: number;
   productBalances: Record<string, number>;
   products: ProductBalanceSummary[];
+}
+
+export interface MemberActiveLoanSummary {
+  activeLoanCount: number;
+  totalRemainingDebt: number;
 }
 
 export interface StatementEntry {
@@ -54,6 +60,20 @@ export interface RecordVoluntaryDepositPayload {
   paymentMethod: string;
   referenceNo?: string;
   notes?: string;
+  userId?: string;
+}
+
+export interface RecordVoluntaryWithdrawalPayload {
+  memberId: string;
+  memberName: string;
+  memberNrp: string;
+  depositTypeId: string;
+  depositTypeName: string;
+  amount: number;
+  paymentMethod: 'tunai' | 'transfer';
+  bankAccountNumber?: string;
+  referenceNo?: string;
+  notes: string;
   userId?: string;
 }
 
@@ -136,7 +156,7 @@ export async function getMembersWithAdditionalSavingsSummary(): Promise<{
   const products = await getAdditionalDepositProducts();
   const productIds = products.map((p) => p.id);
 
-  const membersRaw = await fetchAllPaged<any>('anggota', 'id, nrp, nama, status', (q) =>
+  const membersRaw = await fetchAllPaged<any>('anggota', 'id, nrp, nama, status, bank_account_number', (q) =>
     q.eq('status', 'aktif').order('nama', { ascending: true })
   );
 
@@ -203,6 +223,7 @@ export async function getMembersWithAdditionalSavingsSummary(): Promise<{
       nrp: m.nrp || '-',
       nama: m.nama || 'Tanpa Nama',
       status: m.status || 'aktif',
+      bank_account_number: m.bank_account_number || null,
       totalAdditionalBalance,
       productBalances,
       products: productSummaries,
@@ -410,6 +431,205 @@ export async function recordVoluntaryDeposit(
   return {
     transactionId: txId,
     referenceNo,
+    memberDepositId,
+  };
+}
+
+/**
+ * Mengambil ringkasan pinjaman aktif anggota sebagai pengawasan silang sebelum pencairan simpanan.
+ */
+export async function getMemberActiveLoanSummary(
+  memberId: string
+): Promise<MemberActiveLoanSummary> {
+  if (!memberId) {
+    return { activeLoanCount: 0, totalRemainingDebt: 0 };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('loans')
+      .select('id, sisa_pinjaman, principal_amount, amount, status')
+      .eq('member_id', memberId)
+      .in('status', ['active', 'approved'])
+      .gt('sisa_pinjaman', 0);
+
+    if (error) {
+      return { activeLoanCount: 0, totalRemainingDebt: 0 };
+    }
+
+    const rows = data || [];
+    const totalRemainingDebt = rows.reduce((sum: number, row: any) => {
+      const sisa = Number(row.sisa_pinjaman ?? row.principal_amount ?? row.amount ?? 0);
+      return sum + Math.max(0, sisa);
+    }, 0);
+
+    return {
+      activeLoanCount: rows.length,
+      totalRemainingDebt,
+    };
+  } catch {
+    return { activeLoanCount: 0, totalRemainingDebt: 0 };
+  }
+}
+
+/**
+ * Mencatat pencairan / penarikan simpanan tambahan ke deposit_transactions, cash_flow, dan audit_logs.
+ */
+export async function recordVoluntaryWithdrawal(
+  payload: RecordVoluntaryWithdrawalPayload
+): Promise<{ transactionId: string; referenceNo: string; memberDepositId: string }> {
+  const amount = Math.round(Number(payload.amount || 0));
+  if (!payload.memberId || !payload.depositTypeId) {
+    throw new Error('Anggota dan produk simpanan wajib dipilih.');
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Nominal pencairan harus lebih besar dari 0.');
+  }
+  if (!payload.notes || payload.notes.trim().length === 0) {
+    throw new Error('Alasan / keperluan pencairan wajib diisi.');
+  }
+
+  // 1. Cek akun member_deposits dan verifikasi saldo bersih terkini
+  const { data: accounts, error: accErr } = await supabase
+    .from('member_deposits')
+    .select('id')
+    .eq('member_id', payload.memberId)
+    .eq('deposit_type_id', payload.depositTypeId);
+
+  if (accErr) {
+    throw new Error(`Gagal memeriksa rekening simpanan: ${accErr.message}`);
+  }
+
+  const accountIds = (accounts || []).map((a: any) => a.id).filter(Boolean);
+  if (accountIds.length === 0) {
+    throw new Error('Saldo tidak mencukupi untuk pencairan ini.');
+  }
+
+  const txs = await fetchAllPaged<any>(
+    'deposit_transactions',
+    'id, amount, transaction_type',
+    (q) => q.in('member_deposit_id', accountIds)
+  );
+
+  const currentBalance = txs.reduce((bal: number, tx: any) => {
+    const amt = Number(tx.amount || 0);
+    return tx.transaction_type === 'withdrawal' ? bal - amt : bal + amt;
+  }, 0);
+
+  if (amount > currentBalance) {
+    throw new Error('Saldo tidak mencukupi untuk pencairan ini.');
+  }
+
+  const memberDepositId = accountIds[0];
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const finalRef = payload.referenceNo?.trim() || `KW-TARIK-MANDIRI-${Date.now()}`;
+  const methodLabel =
+    payload.paymentMethod === 'transfer'
+      ? `Transfer Bank${payload.bankAccountNumber ? ` (${payload.bankAccountNumber})` : ''}`
+      : 'Tunai';
+  const fullDescription = `Pencairan ${payload.depositTypeName} (${methodLabel}) - ${payload.notes.trim()}`;
+
+  // Langkah A — Catat Debet Penarikan ke public.deposit_transactions
+  const fullInsert: Record<string, any> = {
+    member_deposit_id: memberDepositId,
+    transaction_type: 'withdrawal',
+    amount,
+    for_month: now.getMonth() + 1,
+    for_year: now.getFullYear(),
+    description: fullDescription,
+    reference_no: finalRef,
+    payment_method: payload.paymentMethod,
+    notes: payload.notes.trim(),
+    transaction_date: nowIso,
+    created_by: payload.userId || null,
+    created_at: nowIso,
+  };
+
+  let txData: any = null;
+  const { data: d1, error: e1 } = await supabase
+    .from('deposit_transactions')
+    .insert(fullInsert)
+    .select()
+    .single();
+
+  if (!e1) {
+    txData = d1;
+  } else if (isPostgrestColumnError(e1)) {
+    const fallbackInsert: Record<string, any> = {
+      member_deposit_id: memberDepositId,
+      transaction_type: 'withdrawal',
+      amount,
+      for_month: now.getMonth() + 1,
+      for_year: now.getFullYear(),
+      description: `${fullDescription} [${finalRef}]`,
+      reference_no: finalRef,
+      payment_method: payload.paymentMethod,
+    };
+    const { data: d2, error: e2 } = await supabase
+      .from('deposit_transactions')
+      .insert(fallbackInsert)
+      .select()
+      .single();
+    if (e2) {
+      throw new Error(`Gagal menyimpan pencairan simpanan: ${e2.message}`);
+    }
+    txData = d2;
+  } else {
+    throw new Error(`Gagal menyimpan pencairan simpanan: ${e1.message}`);
+  }
+
+  const txId = String(txData?.id || finalRef);
+
+  // Langkah B — Catat Pengeluaran Kas ke public.cash_flow
+  try {
+    const { error: cfErr } = await supabase.from('cash_flow').insert({
+      direction: 'out',
+      category: 'PENARIKAN_SIMPANAN',
+      amount,
+      description: `${fullDescription} [${payload.memberName} - ${payload.memberNrp}]`,
+      reference_id: txId,
+      created_by: payload.userId || null,
+      created_at: nowIso,
+    });
+    if (cfErr && isPostgrestColumnError(cfErr)) {
+      await supabase.from('cash_flow').insert({
+        direction: 'out',
+        category: 'PENARIKAN_SIMPANAN',
+        amount,
+        reference_id: txId,
+      });
+    }
+  } catch {
+    // Non-blocking cash_flow fallback
+  }
+
+  // Langkah C — Catat Rekam Jejak ke public.audit_logs
+  try {
+    await insertAuditLog({
+      table_name: 'deposit_transactions',
+      action: 'VOLUNTARY_WITHDRAWAL',
+      record_id: txId,
+      entity_name: 'deposit_transactions',
+      entity_id: txId,
+      new_data: {
+        member_id: payload.memberId,
+        deposit_type: payload.depositTypeName,
+        amount,
+        payment_method: payload.paymentMethod,
+        reference_no: finalRef,
+        notes: payload.notes.trim(),
+      },
+      performed_by: payload.userId || null,
+      notes: `${fullDescription} (${finalRef})`,
+    });
+  } catch {
+    // Non-blocking audit log
+  }
+
+  return {
+    transactionId: txId,
+    referenceNo: finalRef,
     memberDepositId,
   };
 }

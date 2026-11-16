@@ -4,16 +4,19 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
+  ArrowUpRight,
   BookOpen,
   Download,
   FileText,
   Plus,
+  Printer,
   Search,
   User,
   Wallet,
   X,
 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
+import VoluntaryWithdrawalModal from '../../components/members/VoluntaryWithdrawalModal';
 import { useFeedback } from '../../context/FeedbackContext';
 import { formatCurrency } from '../../utils/formatCurrency';
 import {
@@ -23,6 +26,7 @@ import {
   MemberAdditionalSavingsSummary,
   MemberProductStatement,
   recordVoluntaryDeposit,
+  StatementEntry,
 } from '../../services/voluntarySavingsService';
 import { supabase } from '../../lib/supabaseClient';
 
@@ -58,6 +62,7 @@ export default function RekeningKoranSimpanan() {
 
   // Modal state for recording voluntary deposit
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [depositAmount, setDepositAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Tunai');
   const [referenceNo, setReferenceNo] = useState('');
@@ -137,6 +142,14 @@ export default function RekeningKoranSimpanan() {
     () => products.find((p) => p.id === selectedProductId) || null,
     [products, selectedProductId]
   );
+
+  const currentProductBalance = useMemo(() => {
+    if (statement) return statement.currentBalance;
+    if (selectedMember && selectedProduct) {
+      return selectedMember.productBalances[selectedProduct.id] || 0;
+    }
+    return 0;
+  }, [statement, selectedMember, selectedProduct]);
 
   const fetchStatement = async (memberId: string, productId: string) => {
     setStatementLoading(true);
@@ -260,6 +273,104 @@ export default function RekeningKoranSimpanan() {
     });
 
     doc.save(`Rekening_Koran_${selectedMember.nrp}_${selectedProduct.code}.pdf`);
+  };
+
+  const handlePrintRowReceipt = (entry: StatementEntry) => {
+    if (!selectedMember || !selectedProduct) return;
+
+    const isWithdrawal = entry.debit > 0 || entry.transactionType === 'withdrawal';
+    const nominal = isWithdrawal ? entry.debit : entry.credit;
+    const txTitle = isWithdrawal
+      ? 'KWITANSI PENCAIRAN SIMPANAN'
+      : 'KWITANSI SETORAN SIMPANAN';
+    const formattedDate = new Date(entry.date).toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const escapeHtml = (val: string) =>
+      String(val || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const printWindow = window.open('', '', 'height=650,width=820');
+    if (printWindow) {
+      printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>${txTitle} - ${escapeHtml(entry.referenceNo)}</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 24px; color: #0f172a; }
+    .box { max-width: 640px; margin: 0 auto; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 24px; }
+    .header { text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 14px; margin-bottom: 16px; }
+    .header h1 { margin: 0; font-size: 16px; letter-spacing: 0.5px; }
+    .header p { margin: 4px 0 0; font-size: 12px; color: #475569; }
+    .title { text-align: center; font-size: 14px; font-weight: 700; margin-bottom: 16px; color: ${isWithdrawal ? '#be123c' : '#047857'}; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td { padding: 6px 4px; vertical-align: top; }
+    td.label { width: 170px; color: #475569; font-weight: 600; }
+    .amount-box { margin-top: 16px; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .amount-val { font-size: 18px; font-weight: 800; color: ${isWithdrawal ? '#be123c' : '#047857'}; }
+    .footer { margin-top: 24px; padding-top: 12px; border-top: 1px dashed #cbd5e1; display: flex; justify-content: space-between; font-size: 11px; color: #64748b; }
+    @media print { body { margin: 0; } .box { border: none; } }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="header">
+      <h1>KOPERASI SIMKOP</h1>
+      <p>Bukti Transaksi Simpanan Tambahan Anggota</p>
+    </div>
+    <div class="title">${txTitle}</div>
+    <table>
+      <tr><td class="label">No. Bukti / Referensi</td><td>: <strong>${escapeHtml(entry.referenceNo)}</strong></td></tr>
+      <tr><td class="label">Tanggal Transaksi</td><td>: ${escapeHtml(formattedDate)}</td></tr>
+      <tr><td class="label">Nama Anggota</td><td>: ${escapeHtml(selectedMember.nama)}</td></tr>
+      <tr><td class="label">NRP</td><td>: ${escapeHtml(selectedMember.nrp)}</td></tr>
+      <tr><td class="label">Produk Simpanan</td><td>: ${escapeHtml(selectedProduct.name)} (${escapeHtml(selectedProduct.code)})</td></tr>
+      <tr><td class="label">Metode</td><td>: ${escapeHtml(entry.paymentMethod || '-')}</td></tr>
+      <tr><td class="label">Keterangan</td><td>: ${escapeHtml(entry.description || '-')}</td></tr>
+      <tr><td class="label">Saldo Setelah Transaksi</td><td>: <strong>${escapeHtml(formatCurrency(entry.runningBalance))}</strong></td></tr>
+    </table>
+    <div class="amount-box">
+      <span>${isWithdrawal ? 'TOTAL PENCAIRAN' : 'TOTAL SETORAN'}</span>
+      <span class="amount-val">${escapeHtml(formatCurrency(nominal))}</span>
+    </div>
+    <div class="footer">
+      <span>Dicetak pada: ${escapeHtml(new Date().toLocaleString('id-ID'))}</span>
+      <span>Petugas / Admin Koperasi</span>
+    </div>
+  </div>
+</body>
+</html>`);
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 250);
+      return;
+    }
+
+    // Fallback PDF download if popup blocked
+    const doc = new jsPDF();
+    doc.setFontSize(13);
+    doc.text(txTitle, 14, 18);
+    doc.setFontSize(10);
+    doc.text(`No. Bukti   : ${entry.referenceNo}`, 14, 28);
+    doc.text(`Tanggal     : ${formattedDate}`, 14, 35);
+    doc.text(`Anggota     : ${selectedMember.nama} (${selectedMember.nrp})`, 14, 42);
+    doc.text(`Produk      : ${selectedProduct.name} (${selectedProduct.code})`, 14, 49);
+    doc.text(`Metode      : ${entry.paymentMethod || '-'}`, 14, 56);
+    doc.text(`Keterangan  : ${entry.description || '-'}`, 14, 63);
+    doc.text(`Nominal     : ${formatCurrency(nominal)}`, 14, 72);
+    doc.text(`Saldo Akhir : ${formatCurrency(entry.runningBalance)}`, 14, 79);
+    doc.save(`Kwitansi_${entry.referenceNo}.pdf`);
   };
 
   return (
@@ -491,8 +602,27 @@ export default function RekeningKoranSimpanan() {
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
+                          onClick={() => setIsWithdrawModalOpen(true)}
+                          disabled={
+                            currentProductBalance <= 0 ||
+                            selectedProduct.can_be_withdrawn === false
+                          }
+                          title={
+                            selectedProduct.can_be_withdrawn === false
+                              ? 'Produk simpanan ini tidak dapat ditarik'
+                              : currentProductBalance <= 0
+                              ? 'Saldo produk Rp 0'
+                              : 'Cairkan atau tarik saldo simpanan ini'
+                          }
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          <ArrowUpRight className="w-4 h-4" />
+                          <span>Cairkan / Tarik Dana</span>
+                        </button>
+                        <button
+                          type="button"
                           onClick={handleOpenDepositModal}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer"
                         >
                           <Plus className="w-4 h-4" />
                           Tambah Setoran Mandiri
@@ -528,18 +658,19 @@ export default function RekeningKoranSimpanan() {
                             <th className="py-3 px-4 text-right">Kredit (Setor)</th>
                             <th className="py-3 px-4 text-right">Debet (Tarik)</th>
                             <th className="py-3 px-4 text-right">Saldo Berjalan</th>
+                            <th className="py-3 px-4 text-center">Kwitansi</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-sm">
                           {statementLoading ? (
                             <tr>
-                              <td colSpan={6} className="py-10 text-center text-slate-500">
+                              <td colSpan={7} className="py-10 text-center text-slate-500">
                                 Memuat mutasi rekening koran...
                               </td>
                             </tr>
                           ) : !statement || statement.entries.length === 0 ? (
                             <tr>
-                              <td colSpan={6} className="py-10 text-center text-slate-500">
+                              <td colSpan={7} className="py-10 text-center text-slate-500">
                                 Belum ada mutasi transaksi untuk produk simpanan ini.
                               </td>
                             </tr>
@@ -559,10 +690,20 @@ export default function RekeningKoranSimpanan() {
                                   {entry.credit > 0 ? formatCurrency(entry.credit) : '-'}
                                 </td>
                                 <td className="py-3 px-4 text-right font-mono text-xs text-rose-600 font-semibold tabular-nums whitespace-nowrap">
-                                  {entry.debit > 0 ? formatCurrency(entry.debit) : '-'}
+                                  {entry.debit > 0 ? `- ${formatCurrency(entry.debit)}` : '-'}
                                 </td>
                                 <td className="py-3 px-4 text-right font-mono text-xs text-slate-900 font-bold tabular-nums whitespace-nowrap">
                                   {formatCurrency(entry.runningBalance)}
+                                </td>
+                                <td className="py-3 px-4 text-center whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePrintRowReceipt(entry)}
+                                    title="Cetak Kwitansi Transaksi"
+                                    className="inline-flex items-center justify-center p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                  </button>
                                 </td>
                               </tr>
                             ))
@@ -674,6 +815,20 @@ export default function RekeningKoranSimpanan() {
             </form>
           </div>
         </div>
+      )}
+      {/* MODAL: Cairkan / Tarik Simpanan Tambahan */}
+      {selectedMember && selectedProduct && (
+        <VoluntaryWithdrawalModal
+          isOpen={isWithdrawModalOpen}
+          onClose={() => setIsWithdrawModalOpen(false)}
+          onSuccess={async () => {
+            await loadSummary(true);
+            await fetchStatement(selectedMember.memberId, selectedProduct.id);
+          }}
+          member={selectedMember}
+          product={selectedProduct}
+          availableBalance={currentProductBalance}
+        />
       )}
     </AdminLayout>
   );
