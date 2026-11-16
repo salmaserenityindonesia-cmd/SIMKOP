@@ -7,7 +7,10 @@ import {
   getApplicableTierRate,
   getRateTiers,
   buildSavingsRateResolver,
-  SavingsRateTier
+  getMemberLebaranRates,
+  resolveMemberSavingsRate,
+  SavingsRateTier,
+  MemberLebaranRate
 } from './savingsRateService';
 import { getInitialSavingsCutOffDate } from './savingsMatrixService';
 import { getKoperasiProfile, KoperasiProfile } from './settingsService';
@@ -334,11 +337,12 @@ export async function calculateMemberCumulativeBills(
   }
 
   // 2. Fetch deposit types, member deposit accounts, and rate tiers in parallel
-  const [depositTypesRes, memberDepositsRes, directTiersRes, activePokokRate] = await Promise.all([
+  const [depositTypesRes, memberDepositsRes, directTiersRes, activePokokRate, memberLebaranRates] = await Promise.all([
     supabase.from('deposit_types').select('*'),
     supabase.from('member_deposits').select('*').eq('member_id', memberRecord.id),
     supabase.from('savings_rate_tiers').select('*'),
     getActivePokokTariff().catch(() => 0),
+    getMemberLebaranRates(memberRecord.id, true).catch(() => [] as MemberLebaranRate[]),
   ]);
 
   if (depositTypesRes.error) {
@@ -496,16 +500,29 @@ export async function calculateMemberCumulativeBills(
     });
 
   for (const dt of nonPokokTypes) {
+    const freq = String(dt.frequency_type || '').toLowerCase();
+    if (freq === 'voluntary' || freq === 'one_time' || freq === 'once') {
+      continue;
+    }
     const canonicalCode = getCanonicalDepositCode(dt);
     // Skip purely voluntary savings with no tariff configured
     const account = accountByTypeId.get(dt.id);
     const txs = account ? txsByAccountId.get(account.id) || [] : [];
 
     const paidByPeriod = new Map<string, number>();
+    const matrixSettledPeriods = new Set<string>();
     for (const tx of txs) {
       if (!isRoutineMonthlyDepositTx(tx)) continue;
       const key = `${Number(tx.for_year)}-${Number(tx.for_month)}`;
       paidByPeriod.set(key, (paidByPeriod.get(key) || 0) + Number(tx.amount || 0));
+      const desc = String(tx.description || '').toLowerCase();
+      if (
+        desc.includes('buku besar') ||
+        desc.includes('setoran rutin') ||
+        desc.includes('matriks')
+      ) {
+        matrixSettledPeriods.add(key);
+      }
     }
 
     const unpaidMonths: UnpaidMonthBreakdown[] = [];
@@ -515,13 +532,25 @@ export async function calculateMemberCumulativeBills(
       const year = Math.floor((p - 1) / 12);
       const month = ((p - 1) % 12) + 1;
 
-      const rate = getRateForPeriod(canonicalCode || dt.code || dt.name || '', year, month);
+      const rate = resolveMemberSavingsRate(
+        memberRecord.id,
+        canonicalCode || dt.code || dt.name || '',
+        year,
+        month,
+        {
+          globalTiers: rateTiers,
+          depositTypes: normalizedDepositTypesForResolver,
+          memberLebaranRates,
+        }
+      );
 
       if (rate <= 0) continue;
       hasPositiveTariff = true;
 
-      const paid = paidByPeriod.get(`${year}-${month}`) || 0;
-      const remaining = Math.max(0, rate - paid);
+      const periodKey = `${year}-${month}`;
+      const paid = paidByPeriod.get(periodKey) || 0;
+      const isMatrixSettled = paid > 0 && matrixSettledPeriods.has(periodKey);
+      const remaining = isMatrixSettled ? 0 : Math.max(0, rate - paid);
       if (remaining > 0) {
         const isArrears = p < selectedPeriodIndex;
         unpaidMonths.push({

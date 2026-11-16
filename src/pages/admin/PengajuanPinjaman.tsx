@@ -3,6 +3,11 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService, MIN_REMAINING_THP, calculateTHPEligibility, getActiveLoanTypes, getLoanSettings } from '../../services/loanService';
 import { LoanType } from '../../services/koperasiService';
 import { extractMemberTHP } from '../../services/memberService';
+import {
+  getMemberLebaranRates,
+  loadSavingsRateConfig,
+  resolveMemberSavingsRate
+} from '../../services/savingsRateService';
 import { supabase } from '../../lib/supabaseClient';
 import { Loader2, Plus, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
 
@@ -417,6 +422,14 @@ export default function PengajuanPinjaman({
 
   async function checkTHP(memberId: string) {
     try {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
+      // Refresh ketentuan Simpanan Lebaran personal sebelum menghitung potongan rutin THP
+      const [rateConfig, personalLebaranRates] = await Promise.all([
+        loadSavingsRateConfig().catch(() => null),
+        getMemberLebaranRates(undefined, true).catch(() => []),
+      ]);
       const data = await loanService.getMemberTHP(memberId);
       const selectedMember = anggotaList.find(a => String(a.id) === String(memberId));
       let numericThp = data.master_thp;
@@ -430,7 +443,19 @@ export default function PengajuanPinjaman({
       const externalInstallments = Number(
         (data as any)?.angsuran_lain_lain ?? selectedMember?.angsuran_lain_lain ?? 0
       );
-      const routineSavingsDeduction = data.savings_deduction || 200000;
+      const memberLebaranRate = resolveMemberSavingsRate(
+        selectedMember?.id || memberId,
+        'LEBARAN',
+        currentYear,
+        currentMonth,
+        {
+          globalTiers: rateConfig?.tiers,
+          depositTypes: rateConfig?.depositTypes,
+          memberLebaranRates: personalLebaranRates,
+        }
+      );
+      const routineSavingsDeduction =
+        data.savings_deduction || (200000 + (memberLebaranRate > 0 ? memberLebaranRate : 0));
       const currentRemainingThp =
         numericThp - currentInstallments - externalInstallments - routineSavingsDeduction;
 

@@ -34,7 +34,8 @@ import {
   Calendar,
   ShieldCheck,
   ShieldAlert,
-  ArrowRight
+  ArrowRight,
+  FileSpreadsheet
 } from 'lucide-react';
 import {
   getRateTiers,
@@ -42,6 +43,7 @@ import {
   deleteRateTier,
   SavingsRateTier
 } from '../../services/savingsRateService';
+import BulkLebaranRateImportModal from '../../components/members/BulkLebaranRateImportModal';
 
 export const MONTH_NAMES = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -156,6 +158,7 @@ export default function PengaturanKoperasi({
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || []);
   const [isLoadingTiers, setIsLoadingTiers] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(initialAddModalOpen);
+  const [isBulkLebaranModalOpen, setIsBulkLebaranModalOpen] = useState(false);
   const [isSubmittingTier, setIsSubmittingTier] = useState(false);
   const [newTierForm, setNewTierForm] = useState({
     deposit_type_code: initialTierCode || 'WAJIB',
@@ -810,14 +813,24 @@ export default function PengaturanKoperasi({
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsAddModalOpen(true)}
-                className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Tambah Kenaikan Tarif</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkLebaranModalOpen(true)}
+                  className="px-3.5 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Import Tarif Lebaran per Anggota (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ Tambah Kenaikan Tarif</span>
+                </button>
+              </div>
             </div>
 
             <div className="p-6">
@@ -1349,6 +1362,14 @@ export default function PengaturanKoperasi({
           </div>
         </div>
       )}
+
+      <BulkLebaranRateImportModal
+        isOpen={isBulkLebaranModalOpen}
+        onClose={() => setIsBulkLebaranModalOpen(false)}
+        onSuccess={() => {
+          loadRateTiers();
+        }}
+      />
     </div>
   </AdminLayout>
   );

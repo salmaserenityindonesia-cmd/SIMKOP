@@ -14,15 +14,20 @@ import {
   Calendar,
   User,
   ShieldCheck,
-  Loader2
+  Loader2,
+  Sparkles
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import {
   getRateTiers,
   getApplicableRate,
   buildSavingsRateResolver,
+  getMemberLebaranRates,
+  resolveMemberSavingsRate,
+  resolveMemberLebaranRateInfo,
   SavingsRateTier,
   DepositTypeRateRef,
+  MemberLebaranRate,
   DEFAULT_RATE_TIERS
 } from '../../services/savingsRateService';
 import {
@@ -42,6 +47,7 @@ import {
 import { parseCutoffDateInfo } from '../../services/complianceService';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { SavingsDifferenceAuditModal } from './SavingsDifferenceAuditModal';
+import MemberLebaranRateModal, { getIndonesianMonthLabel } from '../members/MemberLebaranRateModal';
 
 export type DepositTabType = 'WAJIB' | 'BELANJA' | 'LEBARAN';
 export type { MonthAuditHistoryItem, CheckMonthPayload };
@@ -70,6 +76,7 @@ export interface SavingsLedgerMatrixModalProps {
   initialDiffModalOpen?: boolean;
   initialCutoffDate?: string | null;
   initialOpeningBalances?: Partial<Record<DepositTabType, number>>;
+  initialMemberLebaranRates?: MemberLebaranRate[];
 }
 
 export const MONTH_NAMES = [
@@ -226,14 +233,19 @@ export default function SavingsLedgerMatrixModal({
   initialAuditHistory,
   initialDiffModalOpen,
   initialCutoffDate,
-  initialOpeningBalances
+  initialOpeningBalances,
+  initialMemberLebaranRates
 }: SavingsLedgerMatrixModalProps) {
   const [activeTab, setActiveTab] = useState<DepositTabType>(initialActiveTab);
   const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(initialDiffModalOpen ?? false);
+  const [isLebaranRateModalOpen, setIsLebaranRateModalOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState(initialLoading ?? true);
   const [syncing, setSyncing] = useState(false);
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || DEFAULT_RATE_TIERS);
   const [depositTypes, setDepositTypes] = useState<DepositTypeRateRef[]>(initialDepositTypes || []);
+  const [memberLebaranRates, setMemberLebaranRates] = useState<MemberLebaranRate[]>(
+    initialMemberLebaranRates || []
+  );
 
   useEffect(() => {
     if (initialDepositTypes && initialDepositTypes.length > 0) {
@@ -241,10 +253,23 @@ export default function SavingsLedgerMatrixModal({
     }
   }, [initialDepositTypes]);
 
+  useEffect(() => {
+    if (initialMemberLebaranRates) {
+      setMemberLebaranRates(initialMemberLebaranRates);
+    }
+  }, [initialMemberLebaranRates]);
+
   const rateResolver = useMemo(
-    () => buildSavingsRateResolver(rateTiers, depositTypes),
-    [rateTiers, depositTypes]
+    () => buildSavingsRateResolver(rateTiers, depositTypes, memberLebaranRates),
+    [rateTiers, depositTypes, memberLebaranRates]
   );
+
+  const getEffectiveCellRate = (tab: DepositTabType, year: number, month: number): number =>
+    resolveMemberSavingsRate(memberId, tab, year, month, {
+      globalTiers: rateTiers,
+      depositTypes,
+      memberLebaranRates
+    });
 
   useEffect(() => {
     if (initialRateTiers && initialRateTiers.length > 0) {
@@ -427,6 +452,16 @@ export default function SavingsLedgerMatrixModal({
   const currentCalYear = today.getFullYear();
   const currentCalMonth = today.getMonth() + 1; // 1 - 12
 
+  const activeLebaranRateInfo = useMemo(
+    () =>
+      resolveMemberLebaranRateInfo(memberId, currentCalYear, currentCalMonth, {
+        globalTiers: rateTiers,
+        depositTypes,
+        memberLebaranRates
+      }),
+    [memberId, currentCalYear, currentCalMonth, rateTiers, depositTypes, memberLebaranRates]
+  );
+
   // Reference React untuk kontainer scroll tabel dan kolom bulan berjalan
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const currentMonthColRef = useRef<HTMLTableHeaderCellElement | null>(null);
@@ -454,10 +489,14 @@ export default function SavingsLedgerMatrixModal({
     async function loadData() {
       setLoading(true);
       try {
-        // 1. Ambil rate tiers
-        const tiers = await getRateTiers(undefined, false);
+        // 1. Ambil rate tiers & ketentuan Simpanan Lebaran personal anggota
+        const [tiers, personalRates] = await Promise.all([
+          getRateTiers(undefined, false),
+          memberId ? getMemberLebaranRates(memberId, false).catch(() => [] as MemberLebaranRate[]) : Promise.resolve([] as MemberLebaranRate[])
+        ]);
         if (isMounted) {
           setRateTiers(tiers && tiers.length > 0 ? tiers : DEFAULT_RATE_TIERS);
+          setMemberLebaranRates(personalRates);
         }
 
         // 2. Jika joinDate belum ada, ambil dari tabel anggota
@@ -701,8 +740,16 @@ export default function SavingsLedgerMatrixModal({
   const currentCheckedSet = checkedMonths[activeTab] || new Set();
   const currentMonthAmounts = monthAmounts[activeTab] || new Map<string, number>();
   const totalChecked = useMemo(() => {
-    return calculateTotalChecked(currentCheckedSet, activeTab, rateTiers, currentMonthAmounts, depositTypes);
-  }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts, depositTypes]);
+    return calculateTotalChecked(
+      currentCheckedSet,
+      activeTab,
+      rateTiers,
+      currentMonthAmounts,
+      depositTypes,
+      memberId,
+      memberLebaranRates
+    );
+  }, [currentCheckedSet, activeTab, rateTiers, currentMonthAmounts, depositTypes, memberId, memberLebaranRates]);
 
   const currentOpeningBalance = openingBalances[activeTab] || 0;
   const hasCutoffMode = Boolean(cutoffDate) || currentOpeningBalance > 0;
@@ -714,7 +761,7 @@ export default function SavingsLedgerMatrixModal({
 
   // Handler buka form bukti setoran
   const handleOpenEvidenceModal = (year: number, month: number, label: string) => {
-    const rate = rateResolver.getRateForPeriod(activeTab, year, month);
+    const rate = getEffectiveCellRate(activeTab, year, month);
     setSelectedCellForEvidence({ year, month, label, rate });
     setEvidenceAmount(rate);
     setEvidenceReferenceNo(`KW-${year}/${String(month).padStart(2, '0')}/${memberNrp || '01'}`);
@@ -926,7 +973,7 @@ export default function SavingsLedgerMatrixModal({
         const [yStr, mStr] = key.split('-');
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
-        const rate = rateResolver.getRateForPeriod(activeTab, y, m);
+        const rate = getEffectiveCellRate(activeTab, y, m);
         const amt = customAmounts ? (customAmounts.get(key) ?? rate) : rate;
         const isPartial = amt < rate && amt > 0;
         return {
@@ -970,7 +1017,7 @@ export default function SavingsLedgerMatrixModal({
       }
       if (m.year < nowYear || (m.year === nowYear && m.month <= nowMonth)) {
         matchedKeys.push(m.key);
-        const rate = rateResolver.getRateForPeriod(activeTab, m.year, m.month);
+        const rate = getEffectiveCellRate(activeTab, m.year, m.month);
         updatedAmounts.set(m.key, rate);
       }
     }
@@ -1266,11 +1313,40 @@ export default function SavingsLedgerMatrixModal({
               
               {/* Petunjuk Tarif */}
               <div className="p-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
-                <span className="font-medium">
-                  {cutoffDate
-                    ? `Grid Buku Besar Simpanan (Mulai Cut-Off ${formattedCutoffDate})`
-                    : `Grid Buku Besar Simpanan (${startYear} – ${endYear})`}
-                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">
+                    {cutoffDate
+                      ? `Grid Buku Besar Simpanan (Mulai Cut-Off ${formattedCutoffDate})`
+                      : `Grid Buku Besar Simpanan (${startYear} – ${endYear})`}
+                  </span>
+                  {activeTab === 'LEBARAN' && (
+                    <div className="flex flex-wrap items-center gap-2" data-testid="member-lebaran-rate-bar">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                          activeLebaranRateInfo.isPersonal
+                            ? 'bg-purple-100 text-purple-800 border-purple-300'
+                            : 'bg-slate-100 text-slate-700 border-slate-300'
+                        }`}
+                      >
+                        <Sparkles className="w-3 h-3 shrink-0" />
+                        {activeLebaranRateInfo.isPersonal && activeLebaranRateInfo.matchedPersonal
+                          ? `${formatCurrency(activeLebaranRateInfo.rate)}/bln • Ketentuan Pribadi Anggota (Berlaku sejak ${getIndonesianMonthLabel(
+                              activeLebaranRateInfo.matchedPersonal.effective_month
+                            )} ${activeLebaranRateInfo.matchedPersonal.effective_year})`
+                          : `${formatCurrency(activeLebaranRateInfo.rate)}/bln • Mengikuti Tarif Global Pengaturan`}
+                      </span>
+                      <button
+                        type="button"
+                        data-testid="btn-edit-personal-lebaran-rate"
+                        onClick={() => setIsLebaranRateModalOpen(true)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        Ubah Tarif Lebaran Pribadi
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 flex-wrap" data-testid="legend-rate-tiers">
                   <span className="text-[11px] text-slate-400">Keterangan Badge Tarif Aktif:</span>
                   {activeTabRateTiers && activeTabRateTiers.length > 0 ? (
@@ -1377,11 +1453,20 @@ export default function SavingsLedgerMatrixModal({
                       {timelineMonths.map(m => {
                         const beforeJoin = !cutoffDate && isMonthBeforeJoin(m.year, m.month, resolvedJoinDate);
                         const isChecked = currentCheckedSet.has(m.key);
-                        const rate = rateResolver.getRateForPeriod(activeTab, m.year, m.month);
+                        const rate = getEffectiveCellRate(activeTab, m.year, m.month);
                         const txAmount = currentMonthAmounts.get(m.key);
                         const isPartial = isChecked && typeof txAmount === 'number' && txAmount > 0 && txAmount < rate;
+                        const isPersonalLebaran =
+                          activeTab === 'LEBARAN' &&
+                          resolveMemberLebaranRateInfo(memberId, m.year, m.month, {
+                            globalTiers: rateTiers,
+                            depositTypes,
+                            memberLebaranRates
+                          }).isPersonal;
                         const badgeClass = isPartial
                           ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
+                          : isPersonalLebaran
+                          ? 'bg-purple-100 text-purple-800 border-purple-300'
                           : getBadgeColorClass(activeTab, m.year, m.month, rate, rateTiers);
                         const badgeLabel = isPartial
                           ? `Parsial: Rp ${Number(txAmount).toLocaleString('id-ID')} / ${Number(rate).toLocaleString('id-ID')}`
@@ -1837,6 +1922,24 @@ export default function SavingsLedgerMatrixModal({
           totalChecked={totalChecked}
           dbBalance={targetDbBalance}
           difference={balanceDifference}
+        />
+      )}
+
+      {/* Modal Pengaturan Simpanan Lebaran Pribadi */}
+      {isLebaranRateModalOpen && (
+        <MemberLebaranRateModal
+          isOpen={isLebaranRateModalOpen}
+          onClose={() => setIsLebaranRateModalOpen(false)}
+          member={{
+            id: memberId,
+            nrp: memberNrp,
+            nama: memberName
+          }}
+          onSuccess={async () => {
+            const refreshedRates = await getMemberLebaranRates(memberId, true).catch(() => [] as MemberLebaranRate[]);
+            setMemberLebaranRates(refreshedRates);
+            onSuccess?.();
+          }}
         />
       )}
 

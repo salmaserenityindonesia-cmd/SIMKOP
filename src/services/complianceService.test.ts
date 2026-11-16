@@ -2815,5 +2815,72 @@ describe('complianceService - SUSPENDED (Nonaktif Sementara)', () => {
     // Bulan beku dikecualikan dari pembagi kepatuhan sehingga kepatuhan tetap 100%
     expect(row.compliance).toBe(100);
   });
+
+  it('menampilkan pembayaran simpanan lunas bulan mendatang (Des-26) jika transaksi sudah tercatat di deposit_transactions', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-16T09:00:00Z'));
+
+    try {
+      const mockDTypes = [
+        { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 100000 },
+        { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja', default_amount: 50000 },
+        { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Hari Raya', default_amount: 200000 },
+      ];
+
+      const mockMembers = [
+        {
+          id: 'm-agus',
+          nama: 'Agus Susanto',
+          nrp: '95168420',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ];
+
+      const txList = [
+        {
+          id: 'tx-des-lebaran',
+          amount: 200000,
+          transaction_type: 'deposit',
+          for_year: 2026,
+          for_month: 12,
+          description: 'Setoran Matriks LEBARAN Des 2026',
+          created_at: '2026-11-16T08:00:00Z',
+          member_deposits: { member_id: 'm-agus', deposit_type_id: 'dt-lebaran' },
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          const chainObj: any = {
+            or: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+          };
+          return { select: vi.fn().mockReturnValue(chainObj) };
+        }
+        if (table === 'deposit_transactions') {
+          return { select: vi.fn().mockReturnValue(Promise.resolve({ data: txList, error: null })) };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const result = await getComplianceMatrixData(2026);
+      expect(result.rows).toHaveLength(1);
+      const desCell = result.rows[0].months[11];
+      expect(desCell).not.toBeNull();
+      expect(desCell?.lebaran?.status).toBe('paid');
+      expect(desCell?.lebaran?.amount).toBe(200000);
+      expect(desCell?.wajib?.status).toBe('unbilled');
+      expect(desCell?.belanja?.status).toBe('unbilled');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 

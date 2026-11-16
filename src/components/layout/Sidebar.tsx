@@ -28,6 +28,7 @@ import {
   ShoppingBag,
   CreditCard,
   CheckCircle2,
+  BookOpen,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -132,6 +133,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Pengajuan Pinjaman', icon: FileText, href: '/admin/pengajuan-pinjaman' },
       { label: 'Approval Pinjaman', icon: CheckSquare, href: '/admin/approval', adminOnly: true },
       { label: 'Matriks Simpanan', icon: Grid, href: '/admin/compliance-matrix' },
+      { label: 'Rekening Koran Simpanan', icon: BookOpen, href: '/admin/rekening-koran-simpanan' },
       { label: 'Matriks Pinjaman', icon: BarChart, href: '/admin/loan-matrix' },
       { label: 'Laporan Pinjaman Lunas', icon: CheckCircle2, href: '/admin/laporan-pinjaman-lunas' },
       { label: 'Buku Besar Belanja', icon: ShoppingBag, href: '/admin/buku-besar-belanja' },

@@ -22,6 +22,15 @@ export interface ManajemenProdukSimpanPinjamProps {
   initialLoading?: boolean;
 }
 
+const getFrequencyLabel = (freq?: string): string => {
+  const normalized = String(freq || '').toLowerCase();
+  if (normalized === 'voluntary') return 'Ditambah Mandiri';
+  if (normalized === 'monthly') return 'Bulanan';
+  if (normalized === 'yearly') return 'Tahunan';
+  if (normalized === 'one_time' || normalized === 'once') return 'Sekali di Awal';
+  return freq || '-';
+};
+
 export default function ManajemenProdukSimpanPinjam({
   initialDepositTypes,
   initialLoanTypes,
@@ -251,7 +260,15 @@ export default function ManajemenProdukSimpanPinjam({
                     <tr key={type.id} className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/10">
                       <td className="p-4 text-body-md font-medium">{type.code}</td>
                       <td className="p-4 text-body-md">{type.name}</td>
-                      <td className="p-4 text-body-md capitalize">{type.frequency_type}</td>
+                      <td className="p-4 text-body-md">
+                        {String(type.frequency_type || '').toLowerCase() === 'voluntary' ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            Ditambah Mandiri
+                          </span>
+                        ) : (
+                          <span>{getFrequencyLabel(type.frequency_type)}</span>
+                        )}
+                      </td>
                       <td className="p-4 text-body-md">
                         <div>{formatCurrency(displayAmount)}</div>
                         {isTierSynced ? (
@@ -369,14 +386,29 @@ export default function ManajemenProdukSimpanPinjam({
               <div className="space-y-1.5">
                 <label className="text-label-md font-label-md text-on-surface">Frekuensi</label>
                 <select value={depositForm.frequency_type || 'monthly'} onChange={e => setDepositForm({...depositForm, frequency_type: e.target.value as any})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all">
-                  <option value="one_time">Sekali (Di awal)</option>
-                  <option value="monthly">Bulanan</option>
-                  <option value="yearly">Tahunan</option>
+                  <option value="monthly">Bulanan (Monthly)</option>
+                  <option value="yearly">Tahunan (Yearly)</option>
+                  <option value="one_time">Sekali di Awal (One_time)</option>
+                  <option value="voluntary">Ditambah Mandiri (Tanpa Ditagih)</option>
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-label-md font-label-md text-on-surface">Default Jumlah (Rp)</label>
-                <input required type="number" min="0" value={depositForm.default_amount || 0} onChange={e => setDepositForm({...depositForm, default_amount: Number(e.target.value)})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" />
+                <label className="text-label-md font-label-md text-on-surface">
+                  Default Jumlah (Rp) {String(depositForm.frequency_type || '').toLowerCase() === 'voluntary' && <span className="text-xs text-slate-500 font-normal">(Opsional)</span>}
+                </label>
+                <input
+                  required={String(depositForm.frequency_type || '').toLowerCase() !== 'voluntary'}
+                  type="number"
+                  min="0"
+                  value={depositForm.default_amount ?? 0}
+                  onChange={e => setDepositForm({...depositForm, default_amount: Number(e.target.value)})}
+                  className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                />
+                {String(depositForm.frequency_type || '').toLowerCase() === 'voluntary' && (
+                  <p className="text-xs text-indigo-600 font-medium">
+                    Produk Ditambah Mandiri tidak ditagihkan berkala; default jumlah dapat diisi 0.
+                  </p>
+                )}
                 {depositForm.effective_amount !== undefined && depositForm.effective_amount !== depositForm.default_amount && (
                   <p className="text-xs text-emerald-600 font-medium">
                     * Tarif efektif aktif: {formatCurrency(depositForm.effective_amount)} (Sinkron Tarif Bertingkat)

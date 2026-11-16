@@ -8,12 +8,23 @@ import {
   resolveSavingsMonthlyRate,
   buildSavingsRateResolver,
   loadSavingsRateConfig,
+  getMemberLebaranRates,
+  upsertMemberLebaranRate,
+  deleteMemberLebaranRate,
+  resolveMemberSavingsRate,
+  resolveMemberLebaranRateInfo,
   getPreviousMonth,
   clearTierCache,
+  fetchAllMemberLebaranRatesPaged,
+  fetchAllActiveMembersPaged,
+  buildMemberLebaranRateTemplateWorkbook,
+  parseMemberLebaranRateExcel,
+  bulkUpsertMemberLebaranRatesChunked,
   DEFAULT_RATE_TIERS,
   SAVINGS_RATE_TIERS_STORAGE_KEY,
   SavingsRateTier,
-  DepositTypeRateRef
+  DepositTypeRateRef,
+  MemberLebaranRate
 } from './savingsRateService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -723,6 +734,428 @@ describe('savingsRateService', () => {
       const resolver = await loadSavingsRateConfig(true);
       expect(resolver.getRateForPeriod('WAJIB', 2026, 11)).toBe(250000);
       expect(resolver.getRateForPeriod('LEBARAN', 2026, 11)).toBe(300000);
+    });
+  });
+
+  describe('resolveMemberSavingsRate & Member Lebaran Rate CRUD', () => {
+    const GLOBAL_TIERS: SavingsRateTier[] = [
+      {
+        id: 'global-wajib',
+        deposit_type_code: 'WAJIB',
+        start_year: 2025,
+        start_month: 1,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 200000
+      },
+      {
+        id: 'global-lebaran',
+        deposit_type_code: 'LEBARAN',
+        start_year: 2025,
+        start_month: 1,
+        end_year: null,
+        end_month: null,
+        monthly_rate: 200000
+      }
+    ];
+
+    const MASTER_TYPES: DepositTypeRateRef[] = [
+      { code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 150000 },
+      { code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 100000 }
+    ];
+
+    const PERSONAL_RATES: MemberLebaranRate[] = [
+      {
+        id: 'mlr-b-2026',
+        member_id: 'mem-b',
+        effective_year: 2026,
+        effective_month: 4,
+        monthly_rate: 350000,
+        cycle_label: 'Awal Siklus Lebaran 2026'
+      },
+      {
+        id: 'mlr-b-2027',
+        member_id: 'mem-b',
+        effective_year: 2027,
+        effective_month: 4,
+        monthly_rate: 500000,
+        cycle_label: 'Awal Siklus Lebaran 2027'
+      }
+    ];
+
+    it('falls back to global tier rate when member has never set a personal Lebaran rate', () => {
+      const rate = resolveMemberSavingsRate('mem-a', 'LEBARAN', 2026, 11, {
+        globalTiers: GLOBAL_TIERS,
+        depositTypes: MASTER_TYPES,
+        memberLebaranRates: PERSONAL_RATES
+      });
+      expect(rate).toBe(200000);
+
+      const info = resolveMemberLebaranRateInfo('mem-a', 2026, 11, {
+        globalTiers: GLOBAL_TIERS,
+        depositTypes: MASTER_TYPES,
+        memberLebaranRates: PERSONAL_RATES
+      });
+      expect(info.isPersonal).toBe(false);
+      expect(info.rate).toBe(200000);
+      expect(info.matchedPersonal).toBeNull();
+    });
+
+    it('uses global tier before effective period, carries forward personal rate across cycles, and updates on new cycle rate', () => {
+      // Before April 2026 -> falls back to global Rp 200.000
+      expect(
+        resolveMemberSavingsRate('mem-b', 'LEBARAN', 2026, 3, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(200000);
+
+      // April 2026 -> Rp 350.000
+      expect(
+        resolveMemberSavingsRate('mem-b', 'LEBARAN', 2026, 4, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(350000);
+
+      // Carried forward across 2026 -> March 2027
+      expect(
+        resolveMemberSavingsRate('mem-b', 'SL', 2026, 11, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(350000);
+      expect(
+        resolveMemberSavingsRate('mem-b', 'LEBARAN', 2027, 3, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(350000);
+
+      // April 2027 -> updated to Rp 500.000 and carried forward into 2028
+      expect(
+        resolveMemberSavingsRate('mem-b', 'LEBARAN', 2027, 4, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(500000);
+      expect(
+        resolveMemberSavingsRate('mem-b', 'LEBARAN', 2028, 2, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(500000);
+
+      // Non-Lebaran savings types are unaffected by personal Lebaran rates
+      expect(
+        resolveMemberSavingsRate('mem-b', 'WAJIB', 2026, 11, {
+          globalTiers: GLOBAL_TIERS,
+          depositTypes: MASTER_TYPES,
+          memberLebaranRates: PERSONAL_RATES
+        })
+      ).toBe(200000);
+    });
+
+    it('upserts, lists, and deletes member_lebaran_rates with audit log recording', async () => {
+      const savedRow: MemberLebaranRate = {
+        id: 'mlr-new-1',
+        member_id: 'mem-agus',
+        effective_year: 2026,
+        effective_month: 4,
+        monthly_rate: 400000,
+        cycle_label: 'Awal Siklus Lebaran 2026',
+        notes: 'Untuk mudik'
+      };
+      const auditInsertMock = vi.fn().mockResolvedValue({ data: null, error: null });
+      const deleteEqMock = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_lebaran_rates') {
+          return {
+            upsert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: savedRow, error: null })
+              })
+            }),
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [savedRow], error: null })
+                })
+              })
+            }),
+            delete: vi.fn().mockReturnValue({
+              eq: deleteEqMock
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return { insert: auditInsertMock };
+        }
+        return {};
+      });
+
+      const created = await upsertMemberLebaranRate({
+        memberId: 'mem-agus',
+        effectiveYear: 2026,
+        effectiveMonth: 4,
+        monthlyRate: 400000,
+        cycleLabel: 'Awal Siklus Lebaran 2026',
+        notes: 'Untuk mudik',
+        userId: 'admin-1'
+      });
+
+      expect(created.monthly_rate).toBe(400000);
+      expect(auditInsertMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          table_name: 'member_lebaran_rates',
+          action: 'SET_MEMBER_LEBARAN_RATE',
+          record_id: 'mem-agus'
+        })
+      );
+
+      const list = await getMemberLebaranRates('mem-agus', true);
+      expect(list).toHaveLength(1);
+      expect(list[0].monthly_rate).toBe(400000);
+
+      const deleted = await deleteMemberLebaranRate('mlr-new-1');
+      expect(deleted).toBe(true);
+      expect(deleteEqMock).toHaveBeenCalledWith('id', 'mlr-new-1');
+    });
+  });
+
+  describe('bulk Lebaran rate export/import (1,000+ members anti-truncation & chunking)', () => {
+    it('fetchAllActiveMembersPaged and fetchAllMemberLebaranRatesPaged should paginate > 1,000 rows without truncation', async () => {
+      const totalMembers = 1250;
+      const allMembers = Array.from({ length: totalMembers }, (_, i) => ({
+        id: `mem-${i + 1}`,
+        nrp: String(100001 + i),
+        nama: `Anggota ${i + 1}`,
+        pangkat: 'Serda',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+      }));
+
+      const allRates: MemberLebaranRate[] = Array.from({ length: 1120 }, (_, i) => ({
+        id: `mlr-${i + 1}`,
+        member_id: `mem-${i + 1}`,
+        effective_year: 2026,
+        effective_month: 4,
+        monthly_rate: 250000,
+      }));
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          const q: any = {
+            select: () => q,
+            eq: () => q,
+            order: () => q,
+            range: async (from: number, to: number) => ({
+              data: allMembers.slice(from, to + 1),
+              error: null,
+            }),
+          };
+          return q;
+        }
+        if (table === 'member_lebaran_rates') {
+          const q: any = {
+            select: () => q,
+            order: () => q,
+            range: async (from: number, to: number) => ({
+              data: allRates.slice(from, to + 1),
+              error: null,
+            }),
+          };
+          return q;
+        }
+        return { select: async () => ({ data: [], error: null }) };
+      });
+
+      const fetchedMembers = await fetchAllActiveMembersPaged();
+      expect(fetchedMembers).toHaveLength(1250);
+      expect(fetchedMembers[1249].nrp).toBe('101250');
+
+      const fetchedRates = await fetchAllMemberLebaranRatesPaged();
+      expect(fetchedRates).toHaveLength(1120);
+      expect(fetchedRates[1119].id).toBe('mlr-1120');
+    });
+
+    it('buildMemberLebaranRateTemplateWorkbook & parseMemberLebaranRateExcel should round-trip and skip empty/zero rows', async () => {
+      const mockMembers = [
+        { id: 'm-1', nrp: '001122', nama: 'Budi', pangkat: 'Kopda', status: 'aktif' },
+        { id: 'm-2', nrp: '001133', nama: 'Siti', pangkat: 'Serka', status: 'aktif' },
+        { id: 'm-3', nrp: '001144', nama: 'Andi', pangkat: 'Peltu', status: 'aktif' },
+      ];
+      const mockRates: MemberLebaranRate[] = [
+        { id: 'r-1', member_id: 'm-1', effective_year: 2025, effective_month: 5, monthly_rate: 300000 },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          const q: any = {
+            select: () => q,
+            eq: () => q,
+            order: () => q,
+            range: async (from: number, to: number) => ({
+              data: mockMembers.slice(from, to + 1),
+              error: null,
+            }),
+          };
+          return q;
+        }
+        if (table === 'member_lebaran_rates') {
+          const q: any = {
+            select: () => q,
+            order: () => q,
+            range: async (from: number, to: number) => ({
+              data: mockRates.slice(from, to + 1),
+              error: null,
+            }),
+          };
+          return q;
+        }
+        if (table === 'lebaran_disbursement_cycles') {
+          const q: any = {
+            select: () => q,
+            eq: () => q,
+            order: () => q,
+            limit: () => q,
+            maybeSingle: async () => ({
+              data: { id: 'cyc-1', status: 'COMPLETED', disbursement_date: '2026-03-15' },
+              error: null,
+            }),
+          };
+          return q;
+        }
+        if (table === 'savings_rate_tiers') {
+          const q: any = {
+            select: () => q,
+            order: () => Promise.resolve({
+              data: [{ id: 't1', deposit_type_code: 'LEBARAN', start_year: 2025, start_month: 1, end_year: null, end_month: null, monthly_rate: 150000 }],
+              error: null,
+            }),
+          };
+          return q;
+        }
+        return { select: async () => ({ data: [], error: null }) };
+      });
+
+      const { workbook, meta } = await buildMemberLebaranRateTemplateWorkbook();
+      expect(meta.defaultYear).toBe(2026);
+      expect(meta.defaultMonth).toBe(4);
+      expect(meta.filename).toBe('Template_Tarif_Simpanan_Lebaran_2026-04.xlsx');
+      expect(meta.totalMembers).toBe(3);
+
+      const sheet = workbook.getWorksheet('Tarif Lebaran Anggota')!;
+      // Row 2 = Budi (personal rate 300000), Row 3 = Siti (global rate 150000)
+      expect(sheet.getRow(2).getCell(1).value).toBe('001122');
+      expect(sheet.getRow(2).getCell(4).value).toBe(300000);
+      expect(sheet.getRow(3).getCell(4).value).toBe(150000);
+
+      // Admin edits row 2 (Budi -> 500000) and row 4 (Andi -> 0 -> skipped), row 3 remains empty -> skipped
+      sheet.getRow(2).getCell(5).value = 500000;
+      sheet.getRow(4).getCell(5).value = 0;
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const parsed = await parseMemberLebaranRateExcel(buffer as ArrayBuffer);
+
+      expect(parsed.totalRows).toBe(3);
+      expect(parsed.skippedCount).toBe(2);
+      expect(parsed.invalidRows).toHaveLength(0);
+      expect(parsed.validRows).toHaveLength(1);
+      expect(parsed.validRows[0]).toMatchObject({
+        nrp: '001122',
+        tarif_lebaran_baru: 500000,
+        mulai_bulan: 4,
+        mulai_tahun: 2026,
+      });
+    });
+
+    it('bulkUpsertMemberLebaranRatesChunked should split 250 rows into 100-row chunks and log 1 audit entry', async () => {
+      const mockMembers = Array.from({ length: 250 }, (_, i) => ({
+        id: `mem-${i + 1}`,
+        nrp: `NRP-${i + 1}`,
+        nama: `Member ${i + 1}`,
+        status: 'aktif',
+      }));
+
+      const upsertMock = vi.fn().mockResolvedValue({ error: null });
+      const auditInsertMock = vi.fn().mockResolvedValue({ error: null });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          const q: any = {
+            select: () => q,
+            eq: () => q,
+            order: () => q,
+            range: async (from: number, to: number) => ({
+              data: mockMembers.slice(from, to + 1),
+              error: null,
+            }),
+          };
+          return q;
+        }
+        if (table === 'member_lebaran_rates') {
+          const q: any = {
+            upsert: upsertMock,
+            select: () => q,
+            order: () => q,
+            range: async () => ({ data: [], error: null }),
+          };
+          return q;
+        }
+        if (table === 'audit_logs') {
+          return { insert: auditInsertMock };
+        }
+        return { select: async () => ({ data: [], error: null }) };
+      });
+
+      const rowsToImport = mockMembers.map((m, i) => ({
+        rowNumber: i + 2,
+        nrp: m.nrp,
+        nama: m.nama,
+        tarif_saat_ini: 100000,
+        tarif_lebaran_baru: 200000 + i * 1000,
+        mulai_bulan: 4,
+        mulai_tahun: 2026,
+        keterangan_siklus: 'Awal Siklus Lebaran 2026',
+      }));
+
+      const progressCalls: Array<[number, number]> = [];
+      const result = await bulkUpsertMemberLebaranRatesChunked(
+        rowsToImport,
+        'admin-1',
+        (processed, total) => progressCalls.push([processed, total])
+      );
+
+      expect(result.updatedCount).toBe(250);
+      expect(result.notFoundNrps).toHaveLength(0);
+      expect(upsertMock).toHaveBeenCalledTimes(3);
+      expect(upsertMock.mock.calls[0][0]).toHaveLength(100);
+      expect(upsertMock.mock.calls[1][0]).toHaveLength(100);
+      expect(upsertMock.mock.calls[2][0]).toHaveLength(50);
+      expect(upsertMock.mock.calls[0][1]).toEqual({
+        onConflict: 'member_id,effective_year,effective_month',
+      });
+      expect(progressCalls).toEqual([
+        [100, 250],
+        [200, 250],
+        [250, 250],
+      ]);
+      expect(auditInsertMock).toHaveBeenCalledTimes(1);
+      expect(auditInsertMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          table_name: 'member_lebaran_rates',
+          action: 'BULK_IMPORT_LEBARAN_RATES',
+          record_id: 'BATCH',
+        })
+      );
     });
   });
 });

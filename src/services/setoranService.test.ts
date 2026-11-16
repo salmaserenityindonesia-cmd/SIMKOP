@@ -556,4 +556,22 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
       })
     ).rejects.toThrow(/nominal pembayaran lebih dari Rp 0/i);
   });
+
+  it('excludes matrix-settled pre-paid future month (12/2026) from billing queue even if rate changed', async () => {
+    tables.deposit_transactions.push({
+      id: 'tx-dec-matrix',
+      member_deposit_id: 'md-wajib',
+      amount: 100000, // less than 200000 tariff, but settled via matrix
+      transaction_type: 'deposit',
+      for_month: 12,
+      for_year: 2026,
+      description: 'Setoran Matriks WAJIB Des 2026',
+      created_at: '2026-11-16T08:00:00Z',
+    });
+
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 12);
+    const wajibItem = summary.items.find((i) => i.code === 'WAJIB');
+    expect(wajibItem).toBeDefined();
+    expect(wajibItem!.unpaidMonths.some((m) => m.year === 2026 && m.month === 12)).toBe(false);
+  });
 });

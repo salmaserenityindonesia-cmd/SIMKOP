@@ -1,5 +1,10 @@
 import { supabase } from '../lib/supabaseClient';
-import { getActiveSavingsRateTiers } from './savingsRateService';
+import {
+  getActiveSavingsRateTiers,
+  loadSavingsRateConfig,
+  resolveMemberSavingsRate,
+  normalizeDepositTypeCode
+} from './savingsRateService';
 import { LoanType } from './koperasiService';
 import { normalizeName, type InitialLoanRow } from '../utils/initialLoansParser';
 import {
@@ -617,8 +622,9 @@ export const loanService = {
     // 3. Get active savings rate tiers & member deposit commitments
     let savingsDeduction = 0;
     try {
-      const activeRates = await getActiveSavingsRateTiers();
-      const defaultWajibRate = activeRates['WAJIB'] || 200000;
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const currentMonth = now.getMonth() + 1;
 
       const { data: memberDeposits, error: depError } = await supabase
         .from('member_deposits')
@@ -626,17 +632,44 @@ export const loanService = {
         .eq('member_id', memberId)
         .eq('is_terminated', false);
 
+      const [activeRates, rateConfig] = await Promise.all([
+        getActiveSavingsRateTiers(currentYear, currentMonth).catch(() => ({} as Record<string, number>)),
+        loadSavingsRateConfig(false).catch(() => null),
+      ]);
+      const defaultWajibRate = activeRates['WAJIB'] || 200000;
+
       if (!depError && memberDeposits && memberDeposits.length > 0) {
         let total = 0;
         let hasWajib = false;
+        let hasLebaran = false;
         for (const dep of memberDeposits) {
           const dtObj = Array.isArray(dep.deposit_types)
             ? dep.deposit_types[0]
             : (dep.deposit_types as any);
           const rawCode = dtObj?.code;
           const code = (rawCode || '').toUpperCase();
-          if (code === 'WAJIB' || code === 'SW') {
+          const canonicalCode = normalizeDepositTypeCode(rawCode || dtObj?.name);
+          if (code === 'POKOK' || code === 'SP' || canonicalCode === 'POKOK') {
+            continue;
+          }
+          if (code === 'WAJIB' || code === 'SW' || canonicalCode === 'WAJIB') {
             hasWajib = true;
+          }
+          if (canonicalCode === 'LEBARAN') {
+            hasLebaran = true;
+            const resolvedLebaran = resolveMemberSavingsRate(memberId, 'LEBARAN', currentYear, currentMonth, {
+              globalTiers: rateConfig?.tiers,
+              depositTypes: rateConfig?.depositTypes?.length
+                ? rateConfig.depositTypes
+                : [{ code: 'LEBARAN', default_amount: dtObj?.default_amount || 0 }],
+              memberLebaranRates: rateConfig?.memberLebaranRates,
+            });
+            const rate =
+              resolvedLebaran > 0
+                ? resolvedLebaran
+                : activeRates[code] || activeRates['LEBARAN'] || Number(dtObj?.default_amount || 0);
+            total += rate;
+            continue;
           }
           const rate =
             activeRates[code] ||
@@ -647,9 +680,24 @@ export const loanService = {
         if (!hasWajib && defaultWajibRate > 0) {
           total += defaultWajibRate;
         }
+        if (!hasLebaran) {
+          const fallbackLebaran = resolveMemberSavingsRate(memberId, 'LEBARAN', currentYear, currentMonth, {
+            globalTiers: rateConfig?.tiers,
+            depositTypes: rateConfig?.depositTypes,
+            memberLebaranRates: rateConfig?.memberLebaranRates,
+          });
+          if (fallbackLebaran > 0) {
+            total += fallbackLebaran;
+          }
+        }
         savingsDeduction = total;
       } else {
-        savingsDeduction = defaultWajibRate;
+        const fallbackLebaran = resolveMemberSavingsRate(memberId, 'LEBARAN', currentYear, currentMonth, {
+          globalTiers: rateConfig?.tiers,
+          depositTypes: rateConfig?.depositTypes,
+          memberLebaranRates: rateConfig?.memberLebaranRates,
+        });
+        savingsDeduction = defaultWajibRate + (activeRates['BELANJA'] || 0) + fallbackLebaran;
       }
     } catch (err) {
       console.warn('Gagal memuat potongan simpanan aktif, fallback default:', err);

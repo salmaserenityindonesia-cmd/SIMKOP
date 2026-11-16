@@ -4,6 +4,7 @@
  * Menyediakan audit visual kepatuhan, ekspor Excel berformula, dan modal impor mutasi buku besar.
  */
 import { useState, useEffect, useContext, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
@@ -19,7 +20,8 @@ import {
   X,
   ChevronDown,
   Upload,
-  CheckSquare
+  CheckSquare,
+  BookOpen
 } from 'lucide-react';
 import {
   getComplianceMatrixData,
@@ -421,7 +423,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     ]);
     const applicableTariffW = rateResolver.getRateForPeriod('WAJIB', yearNum, monthNum);
     const applicableTariffB = rateResolver.getRateForPeriod('BELANJA', yearNum, monthNum);
-    const applicableTariffL = rateResolver.getRateForPeriod('LEBARAN', yearNum, monthNum);
+    const applicableTariffL = rateResolver.resolveMemberRate(row.member_id, 'LEBARAN', yearNum, monthNum);
 
     const targetW = monthData.wajib?.targetAmount || applicableTariffW;
     const targetB = monthData.belanja?.targetAmount || applicableTariffB;
@@ -494,9 +496,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     const isLebaranUnbilled = lebaranItem.status === 'unbilled' || lebaranItem.status === 'not_applicable' || isLebaranCovered;
     const isMonthAllCovered = isWajibCovered && isBelanjaCovered && isLebaranCovered;
 
-    const isWajibPartial = !isWajibUnbilled && !isWajibFrozen && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
-    const isBelanjaPartial = !isBelanjaUnbilled && !isBelanjaFrozen && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
-    const isLebaranPartial = !isLebaranUnbilled && !isLebaranFrozen && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
+    const isWajibPartial = !isWajibUnbilled && !isWajibFrozen && wajibItem.status !== 'paid' && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
+    const isBelanjaPartial = !isBelanjaUnbilled && !isBelanjaFrozen && belanjaItem.status !== 'paid' && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
+    const isLebaranPartial = !isLebaranUnbilled && !isLebaranFrozen && lebaranItem.status !== 'paid' && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
 
     return (
       <div 
@@ -1075,6 +1077,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                             Rp {Number(row.netSavings?.lebaran || 0).toLocaleString('id-ID')}
                           </span>
                         </div>
+                        <Link
+                          to={`/admin/rekening-koran-simpanan?memberId=${row.member_id}`}
+                          title="Buka Rekening Koran Simpanan Tambahan"
+                          className="mt-0.5 flex items-center justify-between px-1.5 py-0.5 rounded bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200/70 text-indigo-800 transition-colors"
+                        >
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold">
+                            <BookOpen className="w-3 h-3 text-indigo-600" />
+                            Tambahan:
+                          </span>
+                          <span className="font-semibold text-indigo-900 tabular-nums whitespace-nowrap">
+                            Rp {Number(row.additionalSavingsBalance || 0).toLocaleString('id-ID')}
+                          </span>
+                        </Link>
                       </div>
                     </div>
                   </td>

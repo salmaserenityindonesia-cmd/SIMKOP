@@ -6,7 +6,10 @@ import { supabase } from '../lib/supabaseClient';
 import type { ParsedMonthlyDeposit } from '../utils/savingsMatrixImporter';
 import {
   SavingsRateTier,
+  MemberLebaranRate,
   getRateTiers,
+  getMemberLebaranRates,
+  resolveMemberSavingsRate,
   getApplicableTierRate,
   getActivePokokTariff,
   buildSavingsRateResolver
@@ -555,6 +558,7 @@ export interface ComplianceMatrixRow {
   created_at?: string;
   tgl_awal_anggota?: string;
   netSavings?: MemberNetSavings;
+  additionalSavingsBalance?: number;
 }
 
 export interface ComplianceMatrixResult {
@@ -633,6 +637,16 @@ export async function getComplianceMatrixData(
   if (wajibId) wajibTypeIds.add(wajibId);
   if (belanjaId) belanjaTypeIds.add(belanjaId);
   if (lebaranId) lebaranTypeIds.add(lebaranId);
+
+  const additionalTypeIds = new Set(
+    typeList
+      .filter((dt: any) => {
+        const freq = String(dt.frequency_type || '').toLowerCase();
+        const isAdditionalFreq = freq === 'voluntary' || freq === 'one_time' || freq === 'once';
+        return isAdditionalFreq && !pokokTypeIds.has(dt.id);
+      })
+      .map((dt: any) => dt.id)
+  );
 
   // 2. Ambil Rekening Simpanan & Transaksi Secara Terpisah (LEFT JOIN) dengan paging
   const { data: memberDepositsList } = await fetchAllPaged(
@@ -867,6 +881,11 @@ export async function getComplianceMatrixData(
     }
   }
 
+  // Ambil komitmen tarif Simpanan Lebaran personal per anggota
+  const memberLebaranRates: MemberLebaranRate[] = await getMemberLebaranRates(undefined, true).catch(
+    () => [] as MemberLebaranRate[]
+  );
+
   // 5. Ambil transaksi pokok dengan paging
   const { data: pokokTxs } = await fetchAllPaged(
     'deposit_transactions',
@@ -1003,6 +1022,15 @@ export async function getComplianceMatrixData(
   }
 
   // Agregasi setoran bulanan dan transaksi anggota
+  const isMatrixSettledDescription = (description?: string | null): boolean => {
+    const desc = String(description || '').toLowerCase();
+    return (
+      desc.includes('buku besar') ||
+      desc.includes('setoran rutin') ||
+      desc.includes('matriks')
+    );
+  };
+
   interface MonthlyPaymentDetail {
     w: number;
     b: number;
@@ -1013,6 +1041,9 @@ export async function getComplianceMatrixData(
     notes_w?: string;
     notes_b?: string;
     notes_l?: string;
+    matrix_w?: boolean;
+    matrix_b?: boolean;
+    matrix_l?: boolean;
   }
   // Keyed by member_id, then by column index (0..11) matching periods[0..11]
   const paymentsByMember: Record<string, Record<number, MonthlyPaymentDetail>> = {};
@@ -1134,23 +1165,27 @@ export async function getComplianceMatrixData(
           if (isRoutineMonthly) {
             if (!paymentsByMember[mId]) paymentsByMember[mId] = {};
             if (!paymentsByMember[mId][colIdx]) paymentsByMember[mId][colIdx] = { w: 0, b: 0, l: 0 };
+            const isMatrixTx = isMatrixSettledDescription(tx.description);
 
             if (isWajib) {
               paymentsByMember[mId][colIdx].w += amt;
               if (tx.reference_no) paymentsByMember[mId][colIdx].ref_w = tx.reference_no;
               if (tx.notes) paymentsByMember[mId][colIdx].notes_w = tx.notes;
+              if (isMatrixTx) paymentsByMember[mId][colIdx].matrix_w = true;
               billedMonthsW.add(colIdx);
             }
             if (isBelanja) {
               paymentsByMember[mId][colIdx].b += amt;
               if (tx.reference_no) paymentsByMember[mId][colIdx].ref_b = tx.reference_no;
               if (tx.notes) paymentsByMember[mId][colIdx].notes_b = tx.notes;
+              if (isMatrixTx) paymentsByMember[mId][colIdx].matrix_b = true;
               billedMonthsB.add(colIdx);
             }
             if (isLebaran) {
               paymentsByMember[mId][colIdx].l += amt;
               if (tx.reference_no) paymentsByMember[mId][colIdx].ref_l = tx.reference_no;
               if (tx.notes) paymentsByMember[mId][colIdx].notes_l = tx.notes;
+              if (isMatrixTx) paymentsByMember[mId][colIdx].matrix_l = true;
               billedMonthsL.add(colIdx);
             }
           }
@@ -1210,7 +1245,7 @@ export async function getComplianceMatrixData(
         if (pk.w > 0) {
           lastPaidColW = k;
           const rateW = getRateForPeriod('WAJIB', pPeriod.year, pPeriod.month);
-          if (rateW > 0 && pk.w < rateW) {
+          if (rateW > 0 && pk.w < rateW && !pk.matrix_w) {
             hasPartialW = true;
             partialColW = k;
           }
@@ -1218,15 +1253,19 @@ export async function getComplianceMatrixData(
         if (pk.b > 0) {
           lastPaidColB = k;
           const rateB = getRateForPeriod('BELANJA', pPeriod.year, pPeriod.month);
-          if (rateB > 0 && pk.b < rateB) {
+          if (rateB > 0 && pk.b < rateB && !pk.matrix_b) {
             hasPartialB = true;
             partialColB = k;
           }
         }
         if (pk.l > 0) {
           lastPaidColL = k;
-          const rateL = getRateForPeriod('LEBARAN', pPeriod.year, pPeriod.month);
-          if (rateL > 0 && pk.l < rateL) {
+          const rateL = resolveMemberSavingsRate(m.id, 'LEBARAN', pPeriod.year, pPeriod.month, {
+            globalTiers: rateTiers,
+            depositTypes: typeList,
+            memberLebaranRates
+          });
+          if (rateL > 0 && pk.l < rateL && !pk.matrix_l) {
             hasPartialL = true;
             partialColL = k;
           }
@@ -1267,7 +1306,7 @@ export async function getComplianceMatrixData(
       runningCumB += p.b - wDraw.b;
       runningCumL += p.l - wDraw.l;
 
-      if (isFuture) {
+      if (isFuture && !hasAnyPayment) {
         monthsData.push(null);
       } else if (isBeforeCutoff) {
         const coveredItem: SavingsSubItem = {
@@ -1297,11 +1336,15 @@ export async function getComplianceMatrixData(
         // Resolusi tarif dinamis berjenjang untuk periode kolom i
         const applicableTariffW = getRateForPeriod('WAJIB', colPeriod.year, colPeriod.month);
         const applicableTariffB = getRateForPeriod('BELANJA', colPeriod.year, colPeriod.month);
-        const applicableTariffL = getRateForPeriod('LEBARAN', colPeriod.year, colPeriod.month);
+        const applicableTariffL = resolveMemberSavingsRate(m.id, 'LEBARAN', colPeriod.year, colPeriod.month, {
+          globalTiers: rateTiers,
+          depositTypes: typeList,
+          memberLebaranRates
+        });
 
         // Evaluasi status bulan untuk WAJIB
         const isPostAllocationW = hasPartialW && i > partialColW;
-        const isUnbilledW = isPostAllocationW || (
+        const isUnbilledW = isFuture || isPostAllocationW || (
           colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based) &&
           i > lastPaidColW &&
           (!billedMonthsW.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
@@ -1309,7 +1352,7 @@ export async function getComplianceMatrixData(
         let statusW: SavingsSubItem['status'];
         let amtW = p.w;
 
-        if (p.w >= applicableTariffW && applicableTariffW > 0) {
+        if ((p.w >= applicableTariffW && applicableTariffW > 0) || (p.w > 0 && Boolean(p.matrix_w))) {
           statusW = 'paid';
           amtW = p.w;
         } else if (p.w > 0) {
@@ -1339,7 +1382,7 @@ export async function getComplianceMatrixData(
 
         // Evaluasi status bulan untuk BELANJA
         const isPostAllocationB = hasPartialB && i > partialColB;
-        const isUnbilledB = isPostAllocationB || (
+        const isUnbilledB = isFuture || isPostAllocationB || (
           colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based) &&
           i > lastPaidColB &&
           (!billedMonthsB.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
@@ -1347,7 +1390,7 @@ export async function getComplianceMatrixData(
         let statusB: SavingsSubItem['status'];
         let amtB = p.b;
 
-        if (p.b >= applicableTariffB && applicableTariffB > 0) {
+        if ((p.b >= applicableTariffB && applicableTariffB > 0) || (p.b > 0 && Boolean(p.matrix_b))) {
           statusB = 'paid';
           amtB = p.b;
         } else if (p.b > 0) {
@@ -1377,7 +1420,7 @@ export async function getComplianceMatrixData(
 
         // Evaluasi status bulan untuk LEBARAN
         const isPostAllocationL = hasPartialL && i > partialColL;
-        const isUnbilledL = isPostAllocationL || (
+        const isUnbilledL = isFuture || isPostAllocationL || (
           colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based) &&
           i > lastPaidColL &&
           (!billedMonthsL.has(i) || colPeriod.periodIndex >= (currentYear * 12 + currentMonth1Based))
@@ -1385,7 +1428,7 @@ export async function getComplianceMatrixData(
         let statusL: SavingsSubItem['status'];
         let amtL = p.l;
 
-        if (p.l >= applicableTariffL && applicableTariffL > 0) {
+        if ((p.l >= applicableTariffL && applicableTariffL > 0) || (p.l > 0 && Boolean(p.matrix_l))) {
           statusL = 'paid';
           amtL = p.l;
         } else if (p.l > 0) {
@@ -1477,6 +1520,13 @@ export async function getComplianceMatrixData(
       };
     }
 
+    let additionalSavingsBalance = 0;
+    for (const t of memberTxs[m.id] || []) {
+      if (!additionalTypeIds.has(t.tId)) continue;
+      const amt = Math.abs(Number(t.amt || 0));
+      additionalSavingsBalance += t.type === 'withdrawal' ? -amt : amt;
+    }
+
     return {
       member_id: m.id,
       nrp: m.nrp,
@@ -1500,6 +1550,7 @@ export async function getComplianceMatrixData(
       created_at: m.created_at,
       tgl_awal_anggota: m.tgl_awal_anggota || m.created_at,
       netSavings,
+      additionalSavingsBalance,
     };
   });
 

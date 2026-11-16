@@ -7,7 +7,9 @@ import {
   buildSavingsRateResolver,
   loadSavingsRateConfig,
   clearTierCache,
-  normalizeDepositTypeCode
+  normalizeDepositTypeCode,
+  getMemberLebaranRates,
+  resolveMemberSavingsRate
 } from './savingsRateService';
 
 function shouldFallback(e: any): boolean {
@@ -28,7 +30,7 @@ export interface DepositType {
   id: string;
   code: string;
   name: string;
-  frequency_type: 'one_time' | 'monthly' | 'yearly' | string;
+  frequency_type: 'one_time' | 'once' | 'monthly' | 'yearly' | 'voluntary' | string;
   default_amount: number;
   can_be_withdrawn: boolean;
   is_active: boolean;
@@ -198,8 +200,10 @@ export async function ensureMandatoryDepositsAndEnroll(memberId: string) {
 export async function getMemberDepositBills(memberId: string, month: number, year: number) {
   await ensureMandatoryDepositsAndEnroll(memberId);
   const dTypes = await getDepositTypes();
-  const tiers = await getRateTiers(undefined, true).catch(() => []);
-  const { getRateForPeriod } = buildSavingsRateResolver(tiers, dTypes);
+  const [tiers, memberLebaranRates] = await Promise.all([
+    getRateTiers(undefined, true).catch(() => []),
+    getMemberLebaranRates(memberId, true).catch(() => []),
+  ]);
   const mDeposits = await getMemberDeposits(memberId);
 
   const mdIds = mDeposits.map(md => md.id);
@@ -212,6 +216,7 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
   const bills = [];
   for (const dt of dTypes) {
     if (!dt.is_active) continue;
+    if (String(dt.frequency_type || '').toLowerCase() === 'voluntary') continue;
 
     const md = mDeposits.find(m => m.deposit_type_id === dt.id) || {
       id: `mock-md-${dt.id}`,
@@ -219,7 +224,13 @@ export async function getMemberDepositBills(memberId: string, month: number, yea
       member_id: memberId
     };
 
-    const resolvedRate = getRateForPeriod(dt.code || dt.name || '', year, month);
+    const resolvedRate = resolveMemberSavingsRate(
+      memberId,
+      dt.code || dt.name || '',
+      year,
+      month,
+      { globalTiers: tiers, depositTypes: dTypes, memberLebaranRates }
+    );
     const targetAmount = resolvedRate > 0 ? resolvedRate : dt.default_amount;
 
     if (dt.frequency_type === 'one_time' || dt.frequency_type === 'once') {
@@ -321,6 +332,47 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
   try {
     const resolver = await loadSavingsRateConfig(true);
     const fallbackToday = new Date();
+
+    // Cek transaksi pelunasan dari Buku Besar Matriks untuk mencegah penagihan ulang saat tarif berubah
+    const matrixSettledKeys = new Set<string>();
+    try {
+      const hasAnyPaid = filteredData.some(
+        (r: any) => Number(r.total_paid ?? r.paid_amount ?? 0) > 0
+      );
+      if (hasAnyPaid) {
+        let txQuery: any = supabase
+          .from('deposit_transactions')
+          .select('for_year, for_month, description, transaction_type, member_deposits!inner(member_id, deposit_type_id)');
+        if (txQuery && typeof txQuery.eq === 'function') {
+          txQuery = txQuery.eq('transaction_type', 'deposit');
+          if (month) txQuery = txQuery.eq('for_month', month);
+          if (year) txQuery = txQuery.eq('for_year', year);
+          const txRes = await txQuery;
+          if (txRes && !txRes.error && Array.isArray(txRes.data)) {
+            for (const tx of txRes.data) {
+              const desc = String(tx.description || '').toLowerCase();
+              if (
+                desc.includes('buku besar') ||
+                desc.includes('setoran rutin') ||
+                desc.includes('matriks')
+              ) {
+                const md = Array.isArray(tx.member_deposits) ? tx.member_deposits[0] : tx.member_deposits;
+                const mId = md?.member_id;
+                const dtId = md?.deposit_type_id;
+                const y = Number(tx.for_year || 0);
+                const m = Number(tx.for_month || 0);
+                if (mId && dtId && y > 0 && m > 0) {
+                  matrixSettledKeys.add(`${mId}_${dtId}_${y}_${m}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Abaikan jika tabel/mock tidak mendukung query tambahan
+    }
+
     return filteredData.map((row: any) => {
       const targetYear = Number(row.for_year ?? year ?? fallbackToday.getFullYear());
       const targetMonth = Number(row.for_month ?? month ?? fallbackToday.getMonth() + 1);
@@ -344,12 +396,22 @@ export async function getMonthlyDepositCommitments(month?: number, year?: number
       if (!lookupCode || !targetYear || !targetMonth) {
         return row;
       }
-      const dynamicRate = resolver.getRateForPeriod(lookupCode, targetYear, targetMonth);
+      const dynamicRate = resolver.resolveMemberRate(
+        row.member_id,
+        lookupCode,
+        targetYear,
+        targetMonth
+      );
       if (!dynamicRate || dynamicRate <= 0) {
         return row;
       }
       const totalPaid = Number(row.total_paid ?? row.paid_amount ?? 0);
-      const remaining = Math.max(0, dynamicRate - totalPaid);
+      const dtIdForKey = row.deposit_type_id || matchedType?.id || '';
+      const isMatrixSettled =
+        totalPaid > 0 &&
+        Boolean(dtIdForKey) &&
+        matrixSettledKeys.has(`${row.member_id}_${dtIdForKey}_${targetYear}_${targetMonth}`);
+      const remaining = isMatrixSettled ? 0 : Math.max(0, dynamicRate - totalPaid);
       const existingStatus = String(row.status || '');
       const usesCapitalized =
         existingStatus === 'Lunas' || existingStatus === 'Belum Lunas';

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle } from 'lucide-react';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
 import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
 import { getActiveLoanTypes, syncInitialLoanBalances } from '../../services/loanService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
@@ -9,6 +9,8 @@ import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
 import MemberSuspensionModal from '../../components/members/MemberSuspensionModal';
+import MemberLebaranRateModal from '../../components/members/MemberLebaranRateModal';
+import BulkLebaranRateImportModal from '../../components/members/BulkLebaranRateImportModal';
 import DangerConfirmModal from '../../components/common/DangerConfirmModal';
 import { parseMemberUpload, executeMigration, MemberParseResult } from '../../services/memberExcelService';
 import { downloadInitialSavingsTemplate, parseInitialSavingsExcel, InitialSavingsRow } from '../../utils/initialSavingsParser';
@@ -94,6 +96,7 @@ export interface ManajemenAnggotaProps {
   initialLoansModalOpen?: boolean;
   initialActivePokokRate?: number;
   initialSuspensionMember?: Anggota | null;
+  initialLebaranRateMember?: Anggota | null;
 }
 
 export default function ManajemenAnggota({
@@ -105,6 +108,7 @@ export default function ManajemenAnggota({
   initialLoansModalOpen = false,
   initialActivePokokRate,
   initialSuspensionMember = null,
+  initialLebaranRateMember = null,
 }: ManajemenAnggotaProps = {}) {
   const { showToast } = useFeedback();
   const [anggotaList, setAnggotaList] = useState<Anggota[]>([]);
@@ -158,6 +162,9 @@ export default function ManajemenAnggota({
   // Reset Data State
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
   const [isResetting, setIsResetting] = useState(false);
+
+  // Bulk Lebaran Rate Import Modal State
+  const [isBulkLebaranModalOpen, setIsBulkLebaranModalOpen] = useState(false);
 
   // Saldo Awal Simpanan State
   const initialSavingsInputRef = useRef<HTMLInputElement>(null);
@@ -255,6 +262,11 @@ export default function ManajemenAnggota({
   // Detail Migrasi Awal Modal State
   const [selectedMigrationMember, setSelectedMigrationMember] = useState<Anggota | null>(null);
   const [isMigrationDetailOpen, setIsMigrationDetailOpen] = useState(false);
+
+  // Pengaturan Simpanan Lebaran Pribadi Modal State
+  const [selectedMemberForLebaranRate, setSelectedMemberForLebaranRate] = useState<Anggota | null>(
+    initialLebaranRateMember ?? null
+  );
 
   const handleOpenMigrationDetail = (anggota: Anggota) => {
     setSelectedMigrationMember(anggota);
@@ -755,6 +767,14 @@ export default function ManajemenAnggota({
             </button>
             <button
               type="button"
+              onClick={() => setIsBulkLebaranModalOpen(true)}
+              className="flex items-center px-3.5 py-2 border border-indigo-300 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors text-sm font-medium cursor-pointer whitespace-nowrap"
+            >
+              <FileSpreadsheet className="w-4 h-4 mr-2 text-indigo-600" />
+              Tarif Lebaran Massal
+            </button>
+            <button
+              type="button"
               onClick={handleOpenInitialLoansModal}
               className="flex items-center px-4 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-md hover:bg-amber-100 transition-colors text-sm font-medium cursor-pointer"
             >
@@ -1124,6 +1144,25 @@ export default function ManajemenAnggota({
                         <strong>Kliring &amp; Clearance Anggota</strong> untuk penghentian permanen.
                       </p>
                     </div>
+
+                    <div className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/70 flex flex-col gap-2 mt-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-purple-900">
+                          Tarif Simpanan Lebaran Pribadi
+                        </span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-purple-700">
+                        Atur nominal khusus Simpanan Hari Raya (Lebaran) anggota ini mulai awal siklus Lebaran.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMemberForLebaranRate(editingAnggota)}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors cursor-pointer self-start"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Atur Besaran Simpanan Lebaran Pribadi
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1174,6 +1213,20 @@ export default function ManajemenAnggota({
         isOpen={isMigrationDetailOpen}
         member={selectedMigrationMember}
         onClose={() => setIsMigrationDetailOpen(false)}
+        onOpenLebaranRateModal={(m) => setSelectedMemberForLebaranRate(m)}
+      />
+
+      <MemberLebaranRateModal
+        isOpen={Boolean(selectedMemberForLebaranRate)}
+        member={selectedMemberForLebaranRate}
+        onClose={() => setSelectedMemberForLebaranRate(null)}
+        onSuccess={fetchMembers}
+      />
+
+      <BulkLebaranRateImportModal
+        isOpen={isBulkLebaranModalOpen}
+        onClose={() => setIsBulkLebaranModalOpen(false)}
+        onSuccess={fetchMembers}
       />
 
       <MemberSuspensionModal

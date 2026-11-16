@@ -1,11 +1,13 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 import {
-  getApplicableRate,
   getActivePokokTariff,
   getRateTiers,
   buildSavingsRateResolver,
+  getMemberLebaranRates,
+  resolveMemberSavingsRate,
   SavingsRateTier,
+  MemberLebaranRate,
 } from './savingsRateService';
 
 export type BatchPreviewRow = {
@@ -116,7 +118,8 @@ export function buildSavingsTemplateRows(
   pokokTargetAmount: number = 10000,
   month: number,
   year: number,
-  rateTiers?: SavingsRateTier[]
+  rateTiers?: SavingsRateTier[],
+  memberLebaranRates?: MemberLebaranRate[]
 ): SavingsTemplateRow[] {
   const rows: SavingsTemplateRow[] = [];
   const { getRateForPeriod } = buildSavingsRateResolver(rateTiers || [], depositTypes);
@@ -176,8 +179,8 @@ export function buildSavingsTemplateRows(
     const memberRecurringDeps = memberDeps.filter(dep => {
       const dt = getDepositTypeInfo(dep);
       if (isPokokDepositType(dt)) return false;
-      const freq = dt?.frequency_type;
-      if (freq === 'one_time' || freq === 'once') return false;
+      const freq = String(dt?.frequency_type || '').toLowerCase();
+      if (freq === 'one_time' || freq === 'once' || freq === 'voluntary') return false;
       return true;
     });
 
@@ -192,7 +195,17 @@ export function buildSavingsTemplateRows(
       for (const dep of memberRecurringDeps) {
         const dt = getDepositTypeInfo(dep);
         const typeCode = dt?.code || '';
-        const resolvedRate = getRateForPeriod(typeCode || dt?.name || '', year, month);
+        const resolvedRate = resolveMemberSavingsRate(
+          m.id,
+          typeCode || dt?.name || '',
+          year,
+          month,
+          {
+            globalTiers: rateTiers || [],
+            depositTypes,
+            memberLebaranRates,
+          }
+        );
         const expected = resolvedRate > 0 ? resolvedRate : (dt?.default_amount || 0);
 
         const memberTxs = txsForMonth.filter(tx => tx.member_deposit_id === dep.id);
@@ -223,7 +236,11 @@ export function buildSavingsTemplateRows(
       const standardCodes = ['WAJIB', 'LEBARAN', 'BELANJA'];
       for (const code of standardCodes) {
         const matchedDt = depositTypes.find(t => (t.code || '').toUpperCase() === code);
-        const resolvedRate = getRateForPeriod(code, year, month);
+        const resolvedRate = resolveMemberSavingsRate(m.id, code, year, month, {
+          globalTiers: rateTiers || [],
+          depositTypes,
+          memberLebaranRates,
+        });
         const expected = resolvedRate > 0 ? resolvedRate : (matchedDt?.default_amount || 0);
 
         rows.push({
@@ -318,9 +335,12 @@ export const generateSavingsBatchTemplate = async (
     console.error("Error fetching savings batch template data:", { dErr, tErr, dtErr });
   }
 
-  const rateTiers = await getRateTiers(undefined, false).catch(() => []);
+  const [rateTiers, memberLebaranRates] = await Promise.all([
+    getRateTiers(undefined, false).catch(() => []),
+    getMemberLebaranRates(undefined, true).catch(() => [] as MemberLebaranRate[]),
+  ]);
 
-  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, depositTypes || []);
+  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, depositTypes || [], memberLebaranRates);
 
   // Ambil nominal tarif Simpanan Pokok aktif
   let pokokTargetAmount = await getActivePokokTariff().catch(() => 0);
@@ -371,7 +391,8 @@ export const generateSavingsBatchTemplate = async (
     pokokTargetAmount,
     month,
     year,
-    rateTiers
+    rateTiers,
+    memberLebaranRates
   );
 
   rows.forEach(r => worksheet.addRow(r));

@@ -20,6 +20,7 @@ import PenarikanSimpanan from './pages/admin/penarikan-simpanan';
 import SalaryImport from './pages/admin/SalaryImport';
 import SettlementClearance from './pages/admin/SettlementClearance';
 import ComplianceMatrix from './pages/admin/ComplianceMatrix';
+import RekeningKoranSimpanan from './pages/admin/RekeningKoranSimpanan';
 import { LoanMatrix } from './pages/admin/LoanMatrix';
 import LaporanPinjamanLunas from './pages/admin/LaporanPinjamanLunas';
 import BukuBesarBelanja from './pages/admin/BukuBesarBelanja';
@@ -314,6 +315,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <PengaturanKasir />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/rekening-koran-simpanan" 
+          element={
+            <ProtectedRoute>
+              <RekeningKoranSimpanan />
             </ProtectedRoute>
           } 
         />

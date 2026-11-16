@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { X, UserCheck, Wallet, Banknote, Calendar, CheckCircle2, AlertCircle, Loader2, Info, Building2, CreditCard } from 'lucide-react';
+import { X, UserCheck, Wallet, Banknote, Calendar, CheckCircle2, AlertCircle, Loader2, Info, Building2, CreditCard, Sparkles } from 'lucide-react';
 import { Anggota } from '../../services/koperasiService';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
+import MemberLebaranRateModal from './MemberLebaranRateModal';
 
 interface MemberMigrationDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   member: Anggota | null;
+  onOpenLebaranRateModal?: (member: Anggota) => void;
 }
 
 export interface SimpananSnapshot {
@@ -112,9 +114,11 @@ interface MigrationLoanDetail {
 export default function MemberMigrationDetailModal({
   isOpen,
   onClose,
-  member
+  member,
+  onOpenLebaranRateModal
 }: MemberMigrationDetailModalProps) {
   const [loading, setLoading] = useState(false);
+  const [isLebaranRateModalOpen, setIsLebaranRateModalOpen] = useState(false);
   const [simpanan, setSimpanan] = useState<SimpananSnapshot>({
     pokok: 0,
     wajib: 0,
@@ -306,6 +310,7 @@ export default function MemberMigrationDetailModal({
   const isStatusActive = membershipStatus.toUpperCase() === 'ACTIVE' || membershipStatus.toLowerCase() === 'aktif';
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={onClose}
@@ -462,6 +467,33 @@ export default function MemberMigrationDetailModal({
                     {formatCurrency(simpanan.total)}
                   </span>
                 </div>
+
+                {/* Pintasan Pengaturan Simpanan Lebaran Pribadi */}
+                <div className="mt-4 p-3.5 bg-purple-50/80 border border-purple-200 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-purple-900">
+                      Komitmen Simpanan Lebaran Pribadi
+                    </p>
+                    <p className="text-[11px] text-purple-700 mt-0.5">
+                      Tetapkan nominal iuran Simpanan Lebaran khusus untuk anggota ini mulai awal siklus Lebaran (otomatis carry-forward).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    data-testid="btn-open-member-lebaran-rate"
+                    onClick={() => {
+                      if (onOpenLebaranRateModal) {
+                        onOpenLebaranRateModal(member);
+                      } else {
+                        setIsLebaranRateModalOpen(true);
+                      }
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0 shadow-xs"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Atur Besaran Simpanan Lebaran Pribadi
+                  </button>
+                </div>
               </div>
 
               {/* Card 3: Pinjaman Bawaan Migrasi */}
@@ -570,5 +602,14 @@ export default function MemberMigrationDetailModal({
         </div>
       </div>
     </div>
+
+    {!onOpenLebaranRateModal && (
+      <MemberLebaranRateModal
+        isOpen={isLebaranRateModalOpen}
+        member={member}
+        onClose={() => setIsLebaranRateModalOpen(false)}
+      />
+    )}
+    </>
   );
 }

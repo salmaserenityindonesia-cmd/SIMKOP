@@ -3,8 +3,11 @@ import {
   getRateTiers,
   getApplicableRate,
   buildSavingsRateResolver,
+  getMemberLebaranRates,
+  resolveMemberSavingsRate,
   SavingsRateTier,
-  DepositTypeRateRef
+  DepositTypeRateRef,
+  MemberLebaranRate
 } from './savingsRateService';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
 
@@ -60,6 +63,7 @@ export interface ReconcileSingleMemberOptions {
   lastLebaranCutOffDate?: string | null;
   initialSavingsCutOffDate?: string | Date | null;
   isPostCutOffTarget?: boolean;
+  memberLebaranRates?: MemberLebaranRate[];
 }
 
 export interface ReconcileSingleMemberResult {
@@ -405,7 +409,9 @@ export function calculateTotalChecked(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   customAmounts?: Map<string, number> | Record<string, number>,
-  depositTypes?: DepositTypeRateRef[]
+  depositTypes?: DepositTypeRateRef[],
+  memberId?: string,
+  memberLebaranRates?: MemberLebaranRate[]
 ): number {
   let total = 0;
   for (const key of checkedKeys) {
@@ -422,7 +428,13 @@ export function calculateTotalChecked(
     const y = parseInt(yStr, 10);
     const m = parseInt(mStr, 10);
     if (!isNaN(y) && !isNaN(m)) {
-      total += getApplicableRate(depositTypeCode, y, m, rateTiers, depositTypes);
+      total += memberId
+        ? resolveMemberSavingsRate(memberId, depositTypeCode, y, m, {
+            globalTiers: rateTiers,
+            depositTypes,
+            memberLebaranRates
+          })
+        : getApplicableRate(depositTypeCode, y, m, rateTiers, depositTypes);
     }
   }
   return total;
@@ -444,7 +456,9 @@ export function calculateFifoAllocation(
   memberDepositId?: string,
   cutOffDate?: string | Date | null,
   initialSavingsCutOffDate?: string | Date | null,
-  depositTypes?: DepositTypeRateRef[]
+  depositTypes?: DepositTypeRateRef[],
+  memberId?: string,
+  memberLebaranRates?: MemberLebaranRate[]
 ): FifoAllocationResult {
   if (targetBalance <= 0) {
     return {
@@ -454,6 +468,15 @@ export function calculateFifoAllocation(
       remainingBalance: 0
     };
   }
+
+  const resolvePeriodRate = (yr: number, mo: number): number =>
+    memberId
+      ? resolveMemberSavingsRate(memberId, depositTypeCode, yr, mo, {
+          globalTiers: rateTiers,
+          depositTypes,
+          memberLebaranRates
+        })
+      : getApplicableRate(depositTypeCode, yr, mo, rateTiers, depositTypes);
 
   let remaining = targetBalance;
   const matchedKeys: string[] = [];
@@ -479,7 +502,7 @@ export function calculateFifoAllocation(
       continue;
     }
 
-    const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers, depositTypes);
+    const rate = resolvePeriodRate(m.year, m.month);
     if (rate <= 0) continue;
 
     lastProcessedMonth = { year: m.year, month: m.month };
@@ -572,7 +595,7 @@ export function calculateFifoAllocation(
       }
     }
 
-    const applicableRate = getApplicableRate(depositTypeCode, nextYear, nextMonth, rateTiers, depositTypes);
+    const applicableRate = resolvePeriodRate(nextYear, nextMonth);
 
     partialTransaction = {
       member_deposit_id: memberDepositId,
@@ -613,7 +636,14 @@ export function matchAutomaticFifo(
   depositTypeCode: string,
   rateTiers: SavingsRateTier[],
   joinDate?: string | Date | null,
-  options?: { includePartial?: boolean; cutOffDate?: string | Date | null; initialSavingsCutOffDate?: string | Date | null; depositTypes?: DepositTypeRateRef[] }
+  options?: {
+    includePartial?: boolean;
+    cutOffDate?: string | Date | null;
+    initialSavingsCutOffDate?: string | Date | null;
+    depositTypes?: DepositTypeRateRef[];
+    memberId?: string;
+    memberLebaranRates?: MemberLebaranRate[];
+  }
 ): string[] {
   const includePartial = options?.includePartial ?? true;
   const res = calculateFifoAllocation(
@@ -625,7 +655,9 @@ export function matchAutomaticFifo(
     undefined,
     options?.cutOffDate,
     options?.initialSavingsCutOffDate,
-    options?.depositTypes
+    options?.depositTypes,
+    options?.memberId,
+    options?.memberLebaranRates
   );
   if (!includePartial && res.partialTransaction) {
     return res.matchedKeys.filter(k => k !== res.partialTransaction?.key);
@@ -727,6 +759,15 @@ export async function reconcileSingleMemberDeposit(
 
     if (!rateTiers) {
       rateTiers = [];
+    }
+  }
+
+  let memberLebaranRates = options?.memberLebaranRates;
+  if (!memberLebaranRates && targetType === 'LEBARAN' && memberId) {
+    try {
+      memberLebaranRates = await getMemberLebaranRates(memberId, false);
+    } catch {
+      memberLebaranRates = [];
     }
   }
 
@@ -1066,7 +1107,9 @@ export async function reconcileSingleMemberDeposit(
     md.id,
     targetType === 'LEBARAN' ? effectiveLebaranCutOff : undefined,
     effectiveInitialCutOff,
-    dtList
+    dtList,
+    memberId,
+    memberLebaranRates
   );
   const matchedKeys = fifoResult.matchedKeys;
 
@@ -1377,18 +1420,22 @@ export async function bulkCheckAllUpToCurrentMonth(
 
   // Ambil siklus pencairan lebaran terakhir yang selesai sekali saja di awal untuk cache efisien
   let lastLebaranCutOffDate: string | null = null;
+  let memberLebaranRates: MemberLebaranRate[] = [];
   if (typesToProcess.includes('LEBARAN')) {
     try {
-      const lastCycle = await getLastCompletedLebaranCycle();
+      const [lastCycle, personalRates] = await Promise.all([
+        getLastCompletedLebaranCycle(),
+        getMemberLebaranRates(undefined, false).catch(() => [] as MemberLebaranRate[]),
+      ]);
       if (lastCycle && lastCycle.cut_off_date) {
         lastLebaranCutOffDate = lastCycle.cut_off_date;
       }
+      memberLebaranRates = personalRates;
     } catch (err) {
       console.warn('Gagal memuat siklus lebaran terakhir di bulkCheckAllUpToCurrentMonth:', err);
     }
   }
 
-  const { getRateForPeriod } = buildSavingsRateResolver(rateTiers, depTypes);
   let totalSuccess = 0;
   let totalFailed = 0;
   const BATCH_MEMBER_SIZE = 25;
@@ -1547,7 +1594,12 @@ export async function bulkCheckAllUpToCurrentMonth(
                 continue;
               }
 
-              const rateAmount = getRateForPeriod(typeCode, y, mon) || 200000;
+              const rateAmount =
+                resolveMemberSavingsRate(member.id, typeCode, y, mon, {
+                  globalTiers: rateTiers,
+                  depositTypes: depTypes,
+                  memberLebaranRates
+                }) || 200000;
 
               txsToInsert.push({
                 member_deposit_id: memberDepositId,
