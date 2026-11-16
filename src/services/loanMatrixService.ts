@@ -236,6 +236,11 @@ export interface LoanMatrixMember {
   priorYearRemaining?: number;
   openingPaid?: number;
   openingRemaining?: number;
+  totalPaidAllTime?: number;
+  paidInstallmentsCount?: number;
+  totalInstallmentsCount?: number;
+  remainingPrincipalAllTime?: number;
+  repaymentProgressPct?: number;
   cutoffDate?: string | null;
   membershipStatus?: string;
   suspendedAt?: string | null;
@@ -664,10 +669,36 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
       ? 0
       : Math.max(0, Number(row.principalAmount || 0) - priorYearPaid);
 
+    const allSchedules = schedulesByLoan[rowId] || [];
+    const totalTenor = Number(row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || allSchedules.length || 0);
+    const principalAmount = Number(row.principalAmount || 0);
+
+    const totalPaidAllTime = allSchedules.reduce(
+      (sum: number, s: any) => sum + Number(s.paid_amount || 0),
+      0
+    );
+
+    const paidInstallmentsCount = allSchedules.filter((s: any) => {
+      const target = Number(s.target_amount || 0);
+      const paid = Number(s.paid_amount || 0);
+      return String(s.status || '').toLowerCase() === 'paid' || (target > 0 && paid >= target - 5);
+    }).length;
+
+    const remainingPrincipalAllTime = Math.max(0, principalAmount - totalPaidAllTime);
+    const repaymentProgressPct =
+      principalAmount > 0
+        ? Math.min(100, Math.round((totalPaidAllTime / principalAmount) * 100))
+        : 0;
+
     row.openingPaid = priorYearPaid;
     row.openingRemaining = priorYearRemaining;
     row.priorYearPaid = priorYearPaid;
     row.priorYearRemaining = priorYearRemaining;
+    row.totalPaidAllTime = totalPaidAllTime;
+    row.paidInstallmentsCount = paidInstallmentsCount;
+    row.totalInstallmentsCount = totalTenor;
+    row.remainingPrincipalAllTime = remainingPrincipalAllTime;
+    row.repaymentProgressPct = repaymentProgressPct;
     row.cutoffDate = null;
   });
 

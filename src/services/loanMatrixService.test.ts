@@ -3179,6 +3179,85 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
     expect(schedEqSpy).not.toHaveBeenCalledWith('loan_id', 'loan-susp');
     expect(res.totalSuccess).toBe(1);
   });
+
+  it('menghitung ringkasan All-Time (totalPaidAllTime, paidInstallmentsCount, totalInstallmentsCount, repaymentProgressPct) lintas tahun secara konsisten', async () => {
+    const loanObj = {
+      id: 'loan-dedi',
+      loan_number: 'LOAN-DEDI-01',
+      member_id: 'm-dedi',
+      principal_amount: 1000000,
+      tenor: 8,
+      agreed_tenor_months: 8,
+      monthly_target: 125000,
+      status: 'active',
+      member: {
+        id: 'm-dedi',
+        nrp: '998877',
+        nama: 'Dedi Kurnia',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+      },
+      loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+    };
+
+    const allSchedules = [
+      { id: 's1', loan_id: 'loan-dedi', period_number: 1, due_date: '2026-12-01', target_amount: 125000, paid_amount: 125000, status: 'paid', loan: loanObj },
+      { id: 's2', loan_id: 'loan-dedi', period_number: 2, due_date: '2027-01-01', target_amount: 125000, paid_amount: 125000, status: 'paid', loan: loanObj },
+      { id: 's3', loan_id: 'loan-dedi', period_number: 3, due_date: '2027-02-01', target_amount: 125000, paid_amount: 125000, status: 'paid', loan: loanObj },
+      { id: 's4', loan_id: 'loan-dedi', period_number: 4, due_date: '2027-03-01', target_amount: 125000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 's5', loan_id: 'loan-dedi', period_number: 5, due_date: '2027-04-01', target_amount: 125000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 's6', loan_id: 'loan-dedi', period_number: 6, due_date: '2027-05-01', target_amount: 125000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 's7', loan_id: 'loan-dedi', period_number: 7, due_date: '2027-06-01', target_amount: 125000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 's8', loan_id: 'loan-dedi', period_number: 8, due_date: '2027-07-01', target_amount: 125000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-dedi' }], error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-dedi' }], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: allSchedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary2026 = await getLoanMatrix(2026);
+    expect(summary2026.members).toHaveLength(1);
+    const row2026 = summary2026.members[0];
+    expect(row2026.totalPaidAllTime).toBe(375000);
+    expect(row2026.paidInstallmentsCount).toBe(3);
+    expect(row2026.totalInstallmentsCount).toBe(8);
+    expect(row2026.remainingPrincipalAllTime).toBe(625000);
+    expect(row2026.repaymentProgressPct).toBe(38);
+
+    const summary2027 = await getLoanMatrix(2027);
+    expect(summary2027.members).toHaveLength(1);
+    const row2027 = summary2027.members[0];
+    expect(row2027.totalPaidAllTime).toBe(375000);
+    expect(row2027.paidInstallmentsCount).toBe(3);
+    expect(row2027.totalInstallmentsCount).toBe(8);
+    expect(row2027.remainingPrincipalAllTime).toBe(625000);
+    expect(row2027.repaymentProgressPct).toBe(38);
+  });
 });
 
 

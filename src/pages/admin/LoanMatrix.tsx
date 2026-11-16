@@ -325,6 +325,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       { header: 'No. Pinjaman', key: 'loanNumber', width: 20 },
       { header: 'Jenis Pinjaman', key: 'loanType', width: 20 },
       { header: 'Tenor (Bulan)', key: 'tenor', width: 15 },
+      { header: 'Total Terbayar (Rp)', key: 'totalPaidAllTime', width: 20 },
+      { header: 'Angsuran Lunas (Bln)', key: 'paidInstallments', width: 20 },
       { header: 'Status Pinjaman', key: 'status', width: 15 },
       ...visibleMonths.map(m => ({ header: m.label, key: `m${m.monthNum}`, width: 15 })),
       { header: 'Kepatuhan YTD (%)', key: 'compliance', width: 20 },
@@ -332,12 +334,15 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
 
     filteredMembers.forEach(m => {
       const { isLoanCompleted: isMemberCompleted, rowCompliance: memberCompliance } = getRowComplianceInfo(m, year);
+      const tenorVal = m.totalInstallmentsCount || m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || 0;
       const row: any = {
         nrp: m.anggota?.nrp || m.nrp,
         nama: m.anggota?.nama || m.nama,
         loanNumber: m.loan_number || m.loanNumber || '-',
         loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman Reguler',
         tenor: m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || '-',
+        totalPaidAllTime: Number(m.totalPaidAllTime || 0),
+        paidInstallments: `${m.paidInstallmentsCount || 0} / ${tenorVal} Bln`,
         status: !isMemberCompleted ? 'Aktif' : 'Selesai',
         compliance: memberCompliance.toFixed(1) + '%'
       };
@@ -610,6 +615,32 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                               {row.loan_number || row.loanNumber}
                             </span>
                           )}
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1.5">
+                          <div className="flex items-center justify-between text-[11px] gap-2">
+                            <span className="text-slate-500">Terbayar:</span>
+                            <span className="font-bold text-emerald-700">
+                              Rp {Number(row.totalPaidAllTime || 0).toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px] gap-2">
+                            <span className="text-slate-500">Angsuran Lunas:</span>
+                            <span
+                              className={`font-bold px-1.5 py-0.5 rounded ${
+                                (row.paidInstallmentsCount || 0) > 0
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}
+                            >
+                              {row.paidInstallmentsCount || 0} / {row.totalInstallmentsCount || tenorDisplay} Bln
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                              style={{ width: `${row.repaymentProgressPct || 0}%` }}
+                            />
+                          </div>
                         </div>
                       </td>
                       
