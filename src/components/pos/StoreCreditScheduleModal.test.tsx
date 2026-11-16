@@ -163,8 +163,32 @@ describe('StoreCreditScheduleModal Component', () => {
     expect(html).toContain('SEBAGIAN');
     expect(html).toContain('BELUM BAYAR');
 
-    // Tombol penagihan harus tampil untuk baris belum lunas
+    // Tombol penagihan harus tampil untuk baris belum lunas & tombol Lunasi Semua Sisa Periode
     expect(html).toContain('Tagih / Lunasi Angsuran');
+    expect(html).toContain('Lunasi Semua Sisa Periode (2)');
+  });
+
+  it('renders high-contrast dark theme across table header, rows, badges, and inputs', () => {
+    const html = renderToStaticMarkup(
+      <StoreCreditScheduleModal
+        isOpen={true}
+        plan={mockPlan}
+        onClose={() => {}}
+        onSuccess={() => {}}
+      />
+    );
+
+    expect(html).toContain('bg-slate-900');
+    expect(html).toContain('bg-slate-800/95');
+    expect(html).toContain('bg-rose-950/90');
+    expect(html).toContain('bg-amber-950/90');
+    expect(html).toContain('bg-emerald-950/90');
+    expect(html).not.toMatch(/\bbg-white(?!\/)/);
+    expect(html).not.toContain('bg-slate-50');
+    expect(html).not.toContain('bg-gray-50');
+    expect(html).not.toContain('bg-gray-100');
+    expect(html).not.toContain('bg-gray-750');
+    expect(html).not.toContain('odd:bg-white');
   });
 
   it('ensures complete isolation from loan-matrix and loans table', () => {

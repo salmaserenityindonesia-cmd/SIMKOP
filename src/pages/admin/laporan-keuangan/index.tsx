@@ -3,6 +3,7 @@ import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
 import { resetFinancialTransactions } from '../../../services/cashFlowService';
+import { syncUnrecordedStoreCreditPaymentsToCashFlow } from '../../../services/storeCreditLedgerService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -61,6 +62,9 @@ const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   penjualan_tunai:    { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  PELUNASAN_BON_TOKO: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  pelunasan_bon_toko: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  SETORAN_ANGGOTA:    { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
   simpanan:           { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Simpanan' },
   angsuran_pinjaman:  { bg: 'bg-amber-50',    text: 'text-amber-800',   label: 'Angsuran Pinjaman' },
   restock_supplier:   { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
@@ -86,6 +90,9 @@ async function getCashFlowReport(
   endDate: string,
   unit: string
 ): Promise<CashFlowData> {
+  // Sinkronkan pelunasan bon toko historis yang belum tercatat di cash_flow (idempoten)
+  await syncUnrecordedStoreCreditPaymentsToCashFlow().catch(() => {});
+
   // Fetch cash_flow table
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
   const { data: cfRows, error: cfErr } = await supabase

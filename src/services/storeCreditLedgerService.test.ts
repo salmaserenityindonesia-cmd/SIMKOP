@@ -9,7 +9,8 @@ import {
   getMemberUnpaidStoreCreditSummary,
   createOrTakeoverStoreCreditPlan,
   getActiveStoreCreditPlans,
-  payStoreCreditSchedule
+  payStoreCreditSchedule,
+  syncUnrecordedStoreCreditPaymentsToCashFlow
 } from './storeCreditLedgerService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -290,8 +291,9 @@ describe('storeCreditLedgerService', () => {
         expect.objectContaining({
           direction: 'in',
           amount: 50000,
-          category: 'pelunasan_bon_toko',
-          reference_id: 'new-pay-uuid'
+          category: 'PELUNASAN_BON_TOKO',
+          reference_id: 'new-pay-uuid',
+          description: expect.stringContaining('KWITANSI-01')
         })
       );
     });
@@ -838,10 +840,10 @@ describe('storeCreditLedgerService', () => {
       expect(res.scheduleId).toBe('sch-final');
       expect(res.paymentId).toBe('payment-sync-100');
 
-      // Verifikasi status jadwal menjadi 'paid'
+      // Verifikasi status jadwal menjadi 'paid' dan receipt_number unik per periode
       expect(updatedSchedule.status).toBe('paid');
       expect(updatedSchedule.paid_amount).toBe(100000);
-      expect(updatedSchedule.receipt_number).toBe('BYR-SCHEDULE-100');
+      expect(updatedSchedule.receipt_number).toMatch(/^BYR-SCHEDULE-100-P2-\d{3}$/);
 
       // Verifikasi rencana diupdate menjadi 'paid_off'
       expect(updatedPlan).toBeDefined();
@@ -952,6 +954,386 @@ describe('storeCreditLedgerService', () => {
       expect(updatedSchedule.status).toBe('partial');
       expect(updatedSchedule.paid_amount).toBe(40000);
       expect(updatedPlan).toBeNull(); // Plan tidak boleh jadi paid_off
+    });
+
+    it('tidak memperbarui jadwal atau plan jika INSERT ke store_credit_payments gagal', async () => {
+      let scheduleUpdated = false;
+      let planUpdated = false;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'sch-fail',
+                    plan_id: 'plan-fail',
+                    period_number: 1,
+                    target_amount: 100000,
+                    paid_amount: 0,
+                    status: 'unpaid'
+                  },
+                  error: null
+                })
+              })
+            }),
+            update: vi.fn().mockImplementation(() => {
+              scheduleUpdated = true;
+              return { eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+            })
+          };
+        }
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'plan-fail', member_id: 'm-fail', status: 'active' },
+                  error: null
+                })
+              })
+            }),
+            update: vi.fn().mockImplementation(() => {
+              planUpdated = true;
+              return { eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sale-fail', paid_credit: 100000, sale_status: 'completed' }],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: null,
+                  error: { message: 'duplicate key value violates unique constraint "store_credit_payments_receipt_number_key"' }
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await payStoreCreditSchedule({
+        scheduleId: 'sch-fail',
+        amount: 100000,
+        paymentMethod: 'potong_gaji',
+        receiptNo: 'KWT-DUP'
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.error).toContain('duplicate key');
+      expect(scheduleUpdated).toBe(false);
+      expect(planUpdated).toBe(false);
+    });
+
+    it('menghasilkan receipt_number unik per periode saat beberapa periode dilunasi beruntun dengan receiptNo sama', async () => {
+      const insertedReceipts: string[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockImplementation((_col: string, id: string) => ({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id,
+                        plan_id: 'plan-multi',
+                        period_number: id === 'sch-p1' ? 1 : 2,
+                        target_amount: 100000,
+                        paid_amount: 0,
+                        status: 'unpaid'
+                      },
+                      error: null
+                    })
+                  }))
+                };
+              }
+              return {
+                eq: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'sch-p1', status: 'paid' },
+                    { id: 'sch-p2', status: 'unpaid' }
+                  ],
+                  error: null
+                })
+              };
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null })
+            })
+          };
+        }
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'plan-multi', member_id: 'm-multi', status: 'active' },
+                  error: null
+                })
+              })
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sale-multi', paid_credit: 200000, sale_status: 'completed' }],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              insertedReceipts.push(payload.receipt_number);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: `pay-${insertedReceipts.length}` },
+                    error: null
+                  })
+                })
+              };
+            })
+          };
+        }
+        return {};
+      });
+
+      const res1 = await payStoreCreditSchedule({
+        scheduleId: 'sch-p1',
+        amount: 100000,
+        paymentMethod: 'potong_gaji',
+        receiptNo: 'KWT-ANGS-610459'
+      });
+      const res2 = await payStoreCreditSchedule({
+        scheduleId: 'sch-p2',
+        amount: 100000,
+        paymentMethod: 'potong_gaji',
+        receiptNo: 'KWT-ANGS-610459'
+      });
+
+      expect(res1.success).toBe(true);
+      expect(res2.success).toBe(true);
+      expect(insertedReceipts).toHaveLength(2);
+      expect(insertedReceipts[0]).toMatch(/^KWT-ANGS-610459-P1-\d{3}$/);
+      expect(insertedReceipts[1]).toMatch(/^KWT-ANGS-610459-P2-\d{3}$/);
+      expect(insertedReceipts[0]).not.toBe(insertedReceipts[1]);
+    });
+
+    it('mencatat cash_flow (direction=in, category=PELUNASAN_BON_TOKO) saat pelunasan angsuran via potong_gaji', async () => {
+      const cashFlowInserts: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: { id: 'sch-cf-1', plan_id: 'plan-cf-1', period_number: 1, target_amount: 30000, paid_amount: 0, status: 'unpaid' },
+                      error: null
+                    })
+                  })
+                };
+              }
+              return {
+                eq: vi.fn().mockResolvedValue({ data: [{ id: 'sch-cf-1', status: 'paid' }], error: null })
+              };
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+          };
+        }
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'plan-cf-1', member_id: 'm-cf-1', status: 'active' }, error: null })
+              })
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { nama: 'Budi Santoso', nrp: '123456' }, error: null })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: [{ id: 'sale-cf-1', paid_credit: 30000, sale_status: 'completed' }], error: null })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({ in: vi.fn().mockResolvedValue({ data: [], error: null }) }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'pay-cf-1' }, error: null })
+              })
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+              })
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              cashFlowInserts.push(payload);
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await payStoreCreditSchedule({
+        scheduleId: 'sch-cf-1',
+        amount: 30000,
+        paymentMethod: 'potong_gaji',
+        receiptNo: 'KWT-CF-01'
+      });
+
+      expect(res.success).toBe(true);
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toEqual(
+        expect.objectContaining({
+          direction: 'in',
+          category: 'PELUNASAN_BON_TOKO',
+          amount: 30000,
+          reference_id: 'pay-cf-1',
+          description: expect.stringContaining('Budi Santoso - 123456')
+        })
+      );
+    });
+  });
+
+  describe('syncUnrecordedStoreCreditPaymentsToCashFlow', () => {
+    it('hanya menyisipkan pembayaran bon yang belum memiliki reference_id di cash_flow (idempoten)', async () => {
+      const cashFlowInserts: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'pay-old-1', sale_id: 'sale-1', amount: 20000, receipt_number: 'BYR-001', notes: '[Tunai]', created_at: '2026-11-01T10:00:00Z' },
+                  { id: 'pay-old-2', sale_id: 'sale-2', amount: 30000, receipt_number: 'BYR-002', notes: '[Potong Gaji]', created_at: '2026-11-02T10:00:00Z' }
+                ],
+                error: null
+              })
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === 'reference_id') {
+                return {
+                  in: vi.fn().mockResolvedValue({
+                    data: [{ reference_id: 'pay-old-1' }],
+                    error: null
+                  })
+                };
+              }
+              return {
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+                })
+              };
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              cashFlowInserts.push(payload);
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'sale-2', member_id: 'm-2' }],
+                error: null
+              })
+            })
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-2', nama: 'Siti Aminah', nrp: '654321' }],
+                error: null
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await syncUnrecordedStoreCreditPaymentsToCashFlow();
+
+      expect(res.syncedCount).toBe(1);
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toEqual(
+        expect.objectContaining({
+          direction: 'in',
+          category: 'PELUNASAN_BON_TOKO',
+          amount: 30000,
+          reference_id: 'pay-old-2',
+          created_at: '2026-11-02T10:00:00Z',
+          description: expect.stringContaining('Siti Aminah - 654321')
+        })
+      );
     });
   });
 });

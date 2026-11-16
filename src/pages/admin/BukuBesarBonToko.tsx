@@ -31,6 +31,7 @@ import {
   getStoreCreditLedger,
   exportStoreCreditToExcel,
   getActiveStoreCreditPlans,
+  syncUnrecordedStoreCreditPaymentsToCashFlow,
   StoreCreditSummary,
   StoreCreditLedgerItem,
   StoreCreditFilter,
@@ -121,9 +122,10 @@ export default function BukuBesarBonToko() {
   // Ref untuk Cetak
   const printAreaRef = useRef<HTMLDivElement>(null);
 
-  // Load members on mount
+  // Load members on mount & sync unrecorded store credit payments to cash_flow
   useEffect(() => {
     fetchMembers();
+    syncUnrecordedStoreCreditPaymentsToCashFlow().catch(() => {});
   }, []);
 
   // Fetch ledger data whenever filters change

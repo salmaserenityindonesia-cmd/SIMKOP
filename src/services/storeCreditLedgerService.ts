@@ -563,6 +563,177 @@ export async function getStoreCreditLedger(
 }
 
 /**
+ * Helper internal untuk mencatat Kas Masuk (`direction = 'in'`) ke `public.cash_flow`
+ * secara idempoten berdasarkan `reference_id = paymentId`.
+ */
+async function recordStoreCreditCashIn(params: {
+  paymentId: string;
+  memberName?: string;
+  memberNrp?: string;
+  amount: number;
+  receiptNumber: string;
+  paymentMethod?: string;
+  notes?: string;
+  userId?: string | null;
+  createdAt?: string;
+}) {
+  const nominal = Math.round(Number(params.amount || 0));
+  if (nominal <= 0 || !params.paymentId) return;
+
+  const cfTable: any = supabase.from('cash_flow');
+  if (!cfTable || typeof cfTable.insert !== 'function') return;
+
+  // Cegah duplikasi jika paymentId sudah pernah tercatat di cash_flow
+  if (typeof cfTable.select === 'function') {
+    const { data: existingCf } = await cfTable
+      .select('id')
+      .eq('reference_id', params.paymentId)
+      .maybeSingle();
+
+    if (existingCf) return;
+  }
+
+  const memberInfo = params.memberName
+    ? ` [${params.memberName}${params.memberNrp ? ' - ' + params.memberNrp : ''}]`
+    : '';
+  const methodLabel = params.paymentMethod ? ` (${params.paymentMethod})` : '';
+  const desc = `Pelunasan Bon Toko ${params.receiptNumber}${methodLabel}${memberInfo}${
+    params.notes ? ' - ' + params.notes : ''
+  }`;
+
+  const { error: cfError } = await cfTable.insert({
+    direction: 'in',
+    category: 'PELUNASAN_BON_TOKO',
+    amount: nominal,
+    description: desc,
+    reference_id: params.paymentId,
+    created_by: params.userId || null,
+    created_at: params.createdAt || new Date().toISOString(),
+  });
+
+  if (cfError) {
+    console.error('Gagal mencatat pelunasan bon ke cash_flow:', cfError);
+    throw cfError;
+  }
+}
+
+/**
+ * Sinkronisasi idempoten untuk seluruh pembayaran pelunasan bon di `store_credit_payments`
+ * yang belum memiliki entri padanan (`reference_id`) di `public.cash_flow`.
+ */
+export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ syncedCount: number }> {
+  try {
+    const paymentsTable: any = supabase.from('store_credit_payments');
+    if (!paymentsTable || typeof paymentsTable.select !== 'function') {
+      return { syncedCount: 0 };
+    }
+
+    let pQuery = paymentsTable
+      .select('id, sale_id, amount, payment_date, receipt_number, notes, created_by, created_at');
+    if (typeof pQuery?.order === 'function') {
+      pQuery = pQuery.order('created_at', { ascending: true });
+    }
+
+    const { data: payments, error: payErr } = await pQuery;
+    if (payErr || !payments || payments.length === 0) {
+      return { syncedCount: 0 };
+    }
+
+    const paymentIds = payments.map((p: any) => p.id).filter(Boolean);
+    if (paymentIds.length === 0) return { syncedCount: 0 };
+
+    const cfTable: any = supabase.from('cash_flow');
+    if (!cfTable || typeof cfTable.select !== 'function' || typeof cfTable.insert !== 'function') {
+      return { syncedCount: 0 };
+    }
+
+    let cfQuery = cfTable.select('reference_id');
+    if (typeof cfQuery?.in === 'function') {
+      cfQuery = cfQuery.in('reference_id', paymentIds);
+    }
+    const { data: existingCfRows } = await cfQuery;
+    const existingRefIds = new Set(
+      (existingCfRows || []).map((r: any) => r.reference_id).filter(Boolean)
+    );
+
+    const unrecorded = payments.filter(
+      (p: any) => p.id && !existingRefIds.has(p.id) && Math.round(Number(p.amount || 0)) > 0
+    );
+    if (unrecorded.length === 0) return { syncedCount: 0 };
+
+    // Ambil relasi sales -> anggota untuk memperkaya deskripsi kas masuk
+    const saleIds = Array.from(new Set(unrecorded.map((p: any) => p.sale_id).filter(Boolean)));
+    const saleMemberMap = new Map<string, string>();
+    const memberMap = new Map<string, { nama?: string; nrp?: string }>();
+
+    if (saleIds.length > 0) {
+      const salesTable: any = supabase.from('sales');
+      if (salesTable && typeof salesTable.select === 'function') {
+        let sQuery = salesTable.select('id, member_id');
+        if (typeof sQuery?.in === 'function') {
+          sQuery = sQuery.in('id', saleIds);
+        }
+        const { data: salesRows } = await sQuery;
+        const memberIds = new Set<string>();
+        (salesRows || []).forEach((s: any) => {
+          if (s.id && s.member_id) {
+            saleMemberMap.set(s.id, s.member_id);
+            memberIds.add(s.member_id);
+          }
+        });
+
+        if (memberIds.size > 0) {
+          const anggotaTable: any = supabase.from('anggota');
+          if (anggotaTable && typeof anggotaTable.select === 'function') {
+            let aQuery = anggotaTable.select('id, nama, nrp');
+            if (typeof aQuery?.in === 'function') {
+              aQuery = aQuery.in('id', Array.from(memberIds));
+            }
+            const { data: anggotaRows } = await aQuery;
+            (anggotaRows || []).forEach((a: any) => {
+              if (a.id) memberMap.set(a.id, { nama: a.nama, nrp: a.nrp });
+            });
+          }
+        }
+      }
+    }
+
+    let syncedCount = 0;
+    for (const p of unrecorded) {
+      const memberId = p.sale_id ? saleMemberMap.get(p.sale_id) : undefined;
+      const member = memberId ? memberMap.get(memberId) : undefined;
+      const receiptNo = p.receipt_number || `BYR-${String(p.id).slice(0, 6).toUpperCase()}`;
+      const createdAt =
+        p.created_at ||
+        (p.payment_date
+          ? new Date(`${p.payment_date}T00:00:00.000Z`).toISOString()
+          : new Date().toISOString());
+
+      try {
+        await recordStoreCreditCashIn({
+          paymentId: p.id,
+          memberName: member?.nama,
+          memberNrp: member?.nrp,
+          amount: Number(p.amount),
+          receiptNumber: receiptNo,
+          notes: p.notes || undefined,
+          userId: p.created_by || null,
+          createdAt,
+        });
+        syncedCount++;
+      } catch (syncItemErr) {
+        console.warn('Gagal menyinkronkan pembayaran bon ke cash_flow:', p.id, syncItemErr);
+      }
+    }
+
+    return { syncedCount };
+  } catch (err) {
+    console.warn('Warning syncUnrecordedStoreCreditPaymentsToCashFlow:', err);
+    return { syncedCount: 0 };
+  }
+}
+
+/**
  * 3. Catat Pelunasan Bon Toko (Bayar Tunai Kasir / Potong Gaji)
  */
 export async function settleStoreCredit(
@@ -689,6 +860,24 @@ export async function settleStoreCredit(
       }
     }
 
+    // Ambil identitas anggota untuk memperkaya deskripsi mutasi kas masuk
+    let memberName: string | undefined;
+    let memberNrp: string | undefined;
+    try {
+      const anggotaTable: any = supabase.from('anggota');
+      if (anggotaTable && typeof anggotaTable.select === 'function') {
+        const q = anggotaTable.select('nama, nrp').eq('id', payload.memberId);
+        const { data: memberRow } =
+          typeof q?.maybeSingle === 'function' ? await q.maybeSingle() : await q;
+        if (memberRow) {
+          memberName = memberRow.nama || undefined;
+          memberNrp = memberRow.nrp || undefined;
+        }
+      }
+    } catch {
+      // Abaikan jika gagal memuat profil anggota (deskripsi tetap valid tanpa nama)
+    }
+
     // 1. Simpan ke tabel store_credit_payments (HANYA kolom yang sah sesuai skema: sale_id, amount, payment_date, receipt_number, notes, created_by, created_at)
     let firstPaymentId: string | undefined;
 
@@ -696,15 +885,16 @@ export async function settleStoreCredit(
       const alloc = allocations[i];
       const itemRefNo = allocations.length > 1 ? `${refNo}-${i + 1}` : refNo;
       const formattedNotes = `[${methodLabel}] ${payload.notes || 'Pelunasan Bon Toko'}`.trim();
+      const nowIso = new Date().toISOString();
 
       const insertPayload = {
         sale_id: alloc.saleId,
         amount: Number(alloc.amount),
-        payment_date: new Date().toISOString().split('T')[0],
+        payment_date: nowIso.split('T')[0],
         receipt_number: itemRefNo || null,
         notes: formattedNotes,
         created_by: currentUserId || null,
-        created_at: new Date().toISOString()
+        created_at: nowIso
       };
 
       const { data: newPayment, error: insertError } = await supabase
@@ -717,23 +907,23 @@ export async function settleStoreCredit(
         throw insertError;
       }
 
-      if (!firstPaymentId && newPayment?.id) {
-        firstPaymentId = newPayment.id;
-      }
-    }
+      if (newPayment?.id) {
+        if (!firstPaymentId) {
+          firstPaymentId = newPayment.id;
+        }
 
-    // 2. Jika metode pembayaran tunai kasir, catat arus kas masuk ke cash_flow
-    if (paymentMethod === 'tunai') {
-      try {
-        await supabase.from('cash_flow').insert({
-          direction: 'in',
-          amount: amount,
-          category: 'pelunasan_bon_toko',
-          reference_id: firstPaymentId,
-          notes: `Penerimaan Pelunasan Bon Toko (#${refNo})`
+        // 2. Catat arus kas masuk (direction = 'in') ke public.cash_flow untuk setiap pelunasan bon
+        await recordStoreCreditCashIn({
+          paymentId: newPayment.id,
+          memberName,
+          memberNrp,
+          amount: Number(alloc.amount),
+          receiptNumber: itemRefNo,
+          paymentMethod: methodLabel,
+          notes: payload.notes,
+          userId: currentUserId,
+          createdAt: nowIso
         });
-      } catch (cfErr) {
-        console.warn('Warning catat cash_flow pelunasan bon:', cfErr);
       }
     }
 
@@ -1404,12 +1594,30 @@ export async function payStoreCreditSchedule(
     const newPaid = currentPaid + payAmount;
     const newStatus: 'paid' | 'partial' = newPaid >= targetAmount ? 'paid' : 'partial';
 
-    // 3. Perbarui jadwal angsuran
+    const baseReceipt = (payload.receiptNo || `KWT-ANGS-${Date.now()}`).trim();
+    const uniqueReceiptNumber = `${baseReceipt}-P${schedule.period_number}-${Math.floor(100 + Math.random() * 900)}`;
+
+    // 3. Langkah A (Pertama): Simpan pembayaran ke store_credit_payments & cash_flow terlebih dahulu
+    // agar jika INSERT gagal (mis. constraint unik), jadwal tidak ikut berubah menjadi paid secara diam-diam.
+    const settleRes = await settleStoreCredit({
+      memberId: plan.member_id,
+      amount: payAmount,
+      paymentMethod: payload.paymentMethod || 'potong_gaji',
+      referenceNo: uniqueReceiptNumber,
+      notes: payload.notes || `Angsuran Bon Periode ${schedule.period_number}`,
+      receivedBy: payload.receivedBy
+    });
+
+    if (!settleRes.success) {
+      throw new Error(settleRes.error || 'Gagal mencatat pembayaran ke buku besar bon toko.');
+    }
+
+    // 4. Langkah B (Kedua): Setelah store_credit_payments berhasil tersimpan, baru perbarui jadwal angsuran
     const updateSchedulePayload = {
       paid_amount: newPaid,
       status: newStatus,
       paid_at: new Date().toISOString(),
-      receipt_number: payload.receiptNo || schedule.receipt_number || null,
+      receipt_number: uniqueReceiptNumber,
       notes: payload.notes || schedule.notes || null
     };
 
@@ -1422,18 +1630,7 @@ export async function payStoreCreditSchedule(
       throw updateSchedError;
     }
 
-    // 4. Panggil settleStoreCredit untuk menyinkronkan ke store_credit_payments & cash_flow
-    const refNo = payload.receiptNo || `BYR-${Date.now().toString().slice(-6)}`;
-    const settleRes = await settleStoreCredit({
-      memberId: plan.member_id,
-      amount: payAmount,
-      paymentMethod: payload.paymentMethod || 'potong_gaji',
-      referenceNo: refNo,
-      notes: payload.notes || `Angsuran Bon Periode ${schedule.period_number}`,
-      receivedBy: payload.receivedBy
-    });
-
-    // 5. Cek apakah seluruh jadwal pada rencana ini sudah lunas
+    // 5. Langkah C (Ketiga): Cek apakah seluruh jadwal pada rencana ini sudah lunas
     const { data: allSchedules } = await supabase
       .from('store_credit_schedules')
       .select('id, status')
