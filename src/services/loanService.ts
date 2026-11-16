@@ -481,6 +481,139 @@ export async function syncInitialLoanBalances(
   };
 }
 
+/**
+ * Menghitung sisa pokok riil sebuah kontrak pinjaman langsung dari:
+ * principal_amount - SUM(loan_schedules.paid_amount), dengan fallback ke sisa_pinjaman
+ * jika jadwal angsuran belum tersedia.
+ */
+export function computeRealRemainingPrincipal(loan: any): number {
+  const principal = Number(loan?.principal_amount ?? loan?.amount ?? 0);
+  const schedules = Array.isArray(loan?.loan_schedules) ? loan.loan_schedules : [];
+
+  if (schedules.length > 0) {
+    const totalPaidFromSchedules = schedules.reduce(
+      (sum: number, s: any) => sum + Number(s?.paid_amount || 0),
+      0
+    );
+    return Math.max(0, Math.round(principal - totalPaidFromSchedules));
+  }
+
+  return Math.max(0, Math.round(Number(loan?.sisa_pinjaman ?? principal)));
+}
+
+/**
+ * Menyelaraskan nilai topup_settlement_amount pada pengajuan yang masih pending
+ * agar selalu mencerminkan sisa pokok riil dari loan_schedules kontrak lama,
+ * bukan kolom sisa_pinjaman yang mungkin belum sinkron.
+ */
+async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]> {
+  if (!Array.isArray(applications) || applications.length === 0) {
+    return applications;
+  }
+
+  const pendingApps = applications.filter((app) => {
+    const isPending = !app?.status || app.status === 'draft' || app.status === 'pending';
+    return isPending && (app.refinanced_loan_id || Number(app.topup_settlement_amount || 0) > 0 || (app.member_id && app.loan_type_id));
+  });
+
+  if (pendingApps.length === 0) {
+    return applications;
+  }
+
+  try {
+    const memberIds = Array.from(
+      new Set(pendingApps.map((a) => a.member_id).filter(Boolean).map(String))
+    );
+    const refinancedIds = Array.from(
+      new Set(pendingApps.map((a) => a.refinanced_loan_id).filter(Boolean).map(String))
+    );
+
+    const activeLoansById = new Map<string, any>();
+
+    if (memberIds.length > 0) {
+      const activeRes: any = await supabase
+        .from('loans')
+        .select('id, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
+        .in('member_id', memberIds)
+        .in('status', ['active', 'approved']);
+
+      for (const row of activeRes?.data || []) {
+        if (row?.id) {
+          activeLoansById.set(String(row.id), row);
+        }
+      }
+    }
+
+    const missingRefIds = refinancedIds.filter((id) => !activeLoansById.has(id));
+    if (missingRefIds.length > 0) {
+      const refRes: any = await supabase
+        .from('loans')
+        .select('id, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
+        .in('id', missingRefIds);
+
+      for (const row of refRes?.data || []) {
+        if (row?.id && row.status !== 'paid_off') {
+          activeLoansById.set(String(row.id), row);
+        }
+      }
+    }
+
+    if (activeLoansById.size === 0) {
+      return applications;
+    }
+
+    return applications.map((app) => {
+      const isPending = !app?.status || app.status === 'draft' || app.status === 'pending';
+      if (!isPending) return app;
+
+      const matchedOldLoans = new Map<string, any>();
+
+      if (app.member_id && app.loan_type_id) {
+        for (const oldLoan of activeLoansById.values()) {
+          if (
+            String(oldLoan.id) !== String(app.id) &&
+            String(oldLoan.member_id) === String(app.member_id) &&
+            String(oldLoan.loan_type_id) === String(app.loan_type_id) &&
+            (oldLoan.status === 'active' || oldLoan.status === 'approved') &&
+            computeRealRemainingPrincipal(oldLoan) > 0
+          ) {
+            matchedOldLoans.set(String(oldLoan.id), oldLoan);
+          }
+        }
+      }
+
+      if (app.refinanced_loan_id) {
+        const refLoan = activeLoansById.get(String(app.refinanced_loan_id));
+        if (
+          refLoan &&
+          refLoan.status !== 'paid_off' &&
+          !matchedOldLoans.has(String(refLoan.id)) &&
+          computeRealRemainingPrincipal(refLoan) > 0
+        ) {
+          matchedOldLoans.set(String(refLoan.id), refLoan);
+        }
+      }
+
+      if (matchedOldLoans.size === 0) {
+        return app;
+      }
+
+      const realSettlement = Array.from(matchedOldLoans.values()).reduce(
+        (sum, oldLoan) => sum + computeRealRemainingPrincipal(oldLoan),
+        0
+      );
+
+      return {
+        ...app,
+        topup_settlement_amount: realSettlement,
+      };
+    });
+  } catch (err) {
+    console.warn('Gagal menghitung ulang sisa pokok top-up pending:', err);
+    return applications;
+  }
+}
+
 export const loanService = {
   getActiveLoanTypes,
   syncInitialLoanBalances,
@@ -525,7 +658,7 @@ export const loanService = {
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
-    return data || [];
+    return enrichPendingTopupSettlements(data || []);
   },
 
   async getPendingLoans() {
@@ -908,14 +1041,14 @@ export const loanService = {
         if (loanTypeIdForTopup) {
           const sameTypeRes: any = await supabase
             .from('loans')
-            .select('id, loan_number, sisa_pinjaman, status')
+            .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
             .eq('member_id', memberIdForTopup)
             .eq('loan_type_id', loanTypeIdForTopup)
             .in('status', ['active', 'approved'])
             .neq('id', targetLoanId);
 
           for (const row of sameTypeRes?.data || []) {
-            if (row?.id && Number(row.sisa_pinjaman ?? 0) > 0) {
+            if (row?.id && computeRealRemainingPrincipal(row) > 0) {
               oldLoansMap.set(String(row.id), row);
             }
           }
@@ -924,17 +1057,17 @@ export const loanService = {
         if (refinancedLoanId && !oldLoansMap.has(String(refinancedLoanId))) {
           const refRes: any = await supabase
             .from('loans')
-            .select('id, loan_number, sisa_pinjaman, status')
+            .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
             .eq('id', refinancedLoanId)
             .maybeSingle();
           const refRow = refRes?.data;
-          if (refRow?.id && refRow.status !== 'paid_off' && Number(refRow.sisa_pinjaman ?? 0) > 0) {
+          if (refRow?.id && refRow.status !== 'paid_off' && computeRealRemainingPrincipal(refRow) > 0) {
             oldLoansMap.set(String(refRow.id), refRow);
           }
         }
 
         for (const oldLoan of oldLoansMap.values()) {
-          const settlementAmt = Math.max(0, Number(oldLoan.sisa_pinjaman ?? 0));
+          const settlementAmt = computeRealRemainingPrincipal(oldLoan);
           totalSettlementAmt += settlementAmt;
 
           const { data: unpaidOldSchedules } = await supabase
@@ -973,6 +1106,18 @@ export const loanService = {
               updated_at: new Date().toISOString(),
             })
             .eq('id', oldLoan.id);
+        }
+
+        // Perbarui topup_settlement_amount pada kontrak baru agar sinkron dengan sisa pokok riil
+        if (oldLoansMap.size > 0 && totalSettlementAmt > 0) {
+          await supabase
+            .from('loans')
+            .update({
+              topup_settlement_amount: totalSettlementAmt,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', targetLoanId);
+          loanRecord.topup_settlement_amount = totalSettlementAmt;
         }
       } catch (topupErr) {
         console.warn('Gagal memproses pelunasan otomatis pinjaman top-up:', topupErr);

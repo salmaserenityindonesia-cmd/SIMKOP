@@ -572,6 +572,12 @@ export default function PengajuanPinjaman({
               id,
               code,
               name
+            ),
+            loan_schedules (
+              id,
+              target_amount,
+              paid_amount,
+              status
             )
           `)
           .eq('member_id', memberId)
@@ -583,35 +589,43 @@ export default function PengajuanPinjaman({
         console.error('Gagal memuat rincian pinjaman aktif:', activeLoansRes.error);
       }
 
-      const activeRows = (activeLoansRes.data || []).filter((loan: any) => {
-        if (loan.sisa_pinjaman === null || loan.sisa_pinjaman === undefined) {
-          return true;
-        }
-        return Number(loan.sisa_pinjaman) > 0;
-      });
+      const breakdown: ActiveLoanBreakdownItem[] = (activeLoansRes.data || [])
+        .map((loan: any) => {
+          const principal = Number(loan.principal_amount ?? loan.amount ?? 0);
+          const months = Number(loan.agreed_tenor_months ?? loan.tenor ?? 1);
+          const schedules = Array.isArray(loan.loan_schedules) ? loan.loan_schedules : [];
 
-      const breakdown: ActiveLoanBreakdownItem[] = activeRows.map((loan: any) => {
-        const principal = Number(loan.principal_amount ?? loan.amount ?? 0);
-        const months = Number(loan.agreed_tenor_months ?? loan.tenor ?? 1);
-        const monthlyInstallment = Math.round(
-          Number(loan.planned_installment_amount ?? loan.monthly_target ?? (months > 0 ? principal / months : 0))
-        );
-        const typeName = loan.loan_types?.name || 'Pinjaman Koperasi';
+          const totalPaidFromSchedules = schedules.reduce(
+            (sum: number, s: any) => sum + Number(s.paid_amount || 0),
+            0
+          );
 
-        return {
-          id: String(loan.id),
-          loanNumber: loan.loan_number || '-',
-          loanTypeId: loan.loan_type_id
-            ? String(loan.loan_type_id)
-            : loan.loan_types?.id
-              ? String(loan.loan_types.id)
-              : undefined,
-          typeName,
-          tenor: months,
-          monthlyInstallment,
-          remainingPrincipal: Number(loan.sisa_pinjaman ?? 0),
-        };
-      });
+          // Sisa pokok riil = Pokok Awal - Total yang sudah dibayar di jadwal angsuran
+          const actualRemainingPrincipal =
+            schedules.length > 0
+              ? Math.max(0, Math.round(principal - totalPaidFromSchedules))
+              : Math.max(0, Math.round(Number(loan.sisa_pinjaman ?? principal)));
+
+          const monthlyInstallment = Math.round(
+            Number(loan.planned_installment_amount ?? loan.monthly_target ?? (months > 0 ? principal / months : 0))
+          );
+          const typeName = loan.loan_types?.name || 'Pinjaman Koperasi';
+
+          return {
+            id: String(loan.id),
+            loanNumber: loan.loan_number || '-',
+            loanTypeId: loan.loan_type_id
+              ? String(loan.loan_type_id)
+              : loan.loan_types?.id
+                ? String(loan.loan_types.id)
+                : undefined,
+            typeName,
+            tenor: months,
+            monthlyInstallment,
+            remainingPrincipal: actualRemainingPrincipal,
+          };
+        })
+        .filter((item) => item.remainingPrincipal > 0);
 
       setActiveLoanBreakdown(breakdown);
       const totalExistingInstallment = breakdown.reduce(

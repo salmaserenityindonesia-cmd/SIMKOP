@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loanService, calculateTHPEligibility, MIN_REMAINING_THP, getActiveLoanTypes } from './loanService';
+import { loanService, calculateTHPEligibility, MIN_REMAINING_THP, getActiveLoanTypes, computeRealRemainingPrincipal } from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -1440,6 +1440,184 @@ describe('loanService', () => {
       expect(insertedCashFlows).toHaveLength(1);
       expect(insertedCashFlows[0].direction).toBe('out');
       expect(insertedCashFlows[0].amount).toBe(1375000);
+    });
+
+    it('recalculates topup settlement from loan_schedules (principal - SUM(paid_amount)) instead of stale sisa_pinjaman', async () => {
+      // 1. Unit check for computeRealRemainingPrincipal
+      expect(
+        computeRealRemainingPrincipal({
+          principal_amount: 1500000,
+          sisa_pinjaman: 1500000,
+          loan_schedules: [
+            { paid_amount: 125000, status: 'paid' },
+            { paid_amount: 125000, status: 'paid' },
+            { paid_amount: 125000, status: 'paid' },
+            { paid_amount: 0, status: 'unpaid' },
+          ],
+        })
+      ).toBe(1125000);
+
+      // 2. Integration check for getLoanApplications('PENDING') & approveLoan
+      const pendingTopupLoan = {
+        id: 'loan-fajar-new',
+        loan_number: 'LOAN-NEW-FAJAR',
+        member_id: 'mem-fajar',
+        loan_type_id: 'type-bayar-sendiri',
+        refinanced_loan_id: 'loan-fajar-old',
+        topup_settlement_amount: 1500000, // nilai basi saat pengajuan
+        principal_amount: 2000000,
+        amount: 2000000,
+        agreed_tenor_months: 12,
+        tenor: 12,
+        monthly_target: 166667,
+        planned_installment_amount: 166667,
+        status: 'draft',
+      };
+
+      const oldFajarLoan = {
+        id: 'loan-fajar-old',
+        loan_number: 'LOAN-1794768578628',
+        member_id: 'mem-fajar',
+        loan_type_id: 'type-bayar-sendiri',
+        principal_amount: 1500000,
+        amount: 1500000,
+        sisa_pinjaman: 1500000, // kolom basi tidak sinkron dengan loan_schedules
+        status: 'active',
+        loan_schedules: [
+          { id: 's1', target_amount: 125000, paid_amount: 125000, status: 'paid' },
+          { id: 's2', target_amount: 125000, paid_amount: 125000, status: 'paid' },
+          { id: 's3', target_amount: 125000, paid_amount: 125000, status: 'paid' },
+          { id: 's4', target_amount: 125000, paid_amount: 0, status: 'unpaid' },
+        ],
+      };
+
+      const updatedLoans: any[] = [];
+      const insertedRepayments: any[] = [];
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: (cols: string) => {
+              // getLoanApplications query
+              if (cols.includes('anggota:member_id')) {
+                return {
+                  order: () => ({
+                    eq: () => Promise.resolve({ data: [{ ...pendingTopupLoan }], error: null }),
+                  }),
+                };
+              }
+              // enrichPendingTopupSettlements batch active loans query
+              if (cols.includes('loan_schedules') && !cols.includes('loan_number')) {
+                return {
+                  in: () => ({
+                    in: () => Promise.resolve({ data: [oldFajarLoan], error: null }),
+                  }),
+                };
+              }
+              return {
+                eq: (col: string, val: any) => {
+                  if (col === 'id' && val === 'loan-fajar-new') {
+                    return {
+                      single: () => Promise.resolve({ data: { ...pendingTopupLoan }, error: null }),
+                      maybeSingle: () => Promise.resolve({ data: { ...pendingTopupLoan }, error: null }),
+                    };
+                  }
+                  if (col === 'id' && val === 'loan-fajar-old') {
+                    return {
+                      maybeSingle: () => Promise.resolve({ data: oldFajarLoan, error: null }),
+                    };
+                  }
+                  if (col === 'member_id') {
+                    return {
+                      eq: () => ({
+                        in: () => ({
+                          neq: () => Promise.resolve({ data: [oldFajarLoan], error: null }),
+                        }),
+                      }),
+                    };
+                  }
+                  return { maybeSingle: () => Promise.resolve({ data: null, error: null }) };
+                },
+              };
+            },
+            update: (payload: any) => ({
+              eq: (_col: string, val: any) => {
+                updatedLoans.push({ id: val, payload });
+                return {
+                  select: () => ({
+                    single: () => Promise.resolve({ data: { ...pendingTopupLoan, ...payload }, error: null }),
+                  }),
+                  then: (cb: any) => Promise.resolve({ data: null, error: null }).then(cb),
+                };
+              },
+            }),
+          };
+        }
+
+        if (table === 'loan_schedules') {
+          return {
+            select: () => ({
+              eq: () => ({
+                limit: () => Promise.resolve({ data: [], error: null }),
+                neq: () => Promise.resolve({
+                  data: [{ id: 's4', target_amount: 125000, paid_amount: 0, status: 'unpaid' }],
+                  error: null,
+                }),
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ data: [], error: null }),
+            update: () => ({
+              eq: () => Promise.resolve({ data: null, error: null }),
+            }),
+          };
+        }
+
+        if (table === 'loan_repayments') {
+          return {
+            insert: (payload: any) => {
+              insertedRepayments.push(payload);
+              return Promise.resolve({ data: payload, error: null });
+            },
+          };
+        }
+
+        if (table === 'cash_flow') {
+          return {
+            insert: (payload: any) => {
+              insertedCashFlows.push(...payload);
+              return Promise.resolve({ data: payload, error: null });
+            },
+          };
+        }
+
+        if (table === 'audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+
+        return {};
+      });
+
+      const pendingList = await loanService.getLoanApplications('PENDING');
+      expect(pendingList).toHaveLength(1);
+      expect(pendingList[0].topup_settlement_amount).toBe(1125000);
+
+      const approved = await loanService.approveLoan('loan-fajar-new', '2026-11-16');
+      expect(approved.topup_settlement_amount).toBe(1125000);
+      expect(insertedRepayments).toHaveLength(1);
+      expect(insertedRepayments[0].amount_paid).toBe(1125000);
+      expect(
+        updatedLoans.some(
+          (u) => u.id === 'loan-fajar-new' && u.payload.topup_settlement_amount === 1125000
+        )
+      ).toBe(true);
+      expect(
+        updatedLoans.some(
+          (u) => u.id === 'loan-fajar-old' && u.payload.status === 'paid_off' && u.payload.sisa_pinjaman === 0
+        )
+      ).toBe(true);
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0].amount).toBe(875000);
     });
   });
 });
