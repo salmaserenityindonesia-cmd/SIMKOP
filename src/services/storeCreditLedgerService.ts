@@ -48,6 +48,75 @@ export interface SettleStoreCreditPayload {
   receivedBy?: string | null;
 }
 
+export interface StoreCreditInstallmentPlan {
+  id: string;
+  member_id: string;
+  latest_sale_id?: string | null;
+  previous_unpaid_balance: number;
+  new_credit_amount: number;
+  total_consolidated_debt: number;
+  tenor_months: number;
+  monthly_installment: number;
+  status: 'active' | 'superseded' | 'paid_off';
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  anggota?: {
+    id?: string;
+    nama?: string;
+    nrp?: string;
+    pangkat?: string;
+  };
+  schedules?: StoreCreditSchedule[];
+}
+
+export interface StoreCreditSchedule {
+  id: string;
+  plan_id: string;
+  member_id: string;
+  period_number: number;
+  due_year: number;
+  due_month: number;
+  due_date: string;
+  target_amount: number;
+  paid_amount: number;
+  status: 'unpaid' | 'partial' | 'paid';
+  paid_at?: string | null;
+  receipt_number?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface StoreCreditPlanWithSchedules extends StoreCreditInstallmentPlan {
+  schedules: StoreCreditSchedule[];
+}
+
+export interface MemberStoreCreditSummary {
+  unpaidBalance: number;
+  activePlan: StoreCreditPlanWithSchedules | null;
+  existingTenor: number;
+  existingMonthlyInstallment: number;
+}
+
+export interface CreateStoreCreditPlanPayload {
+  memberId: string;
+  saleId?: string | null;
+  previousUnpaidBalance: number;
+  newCreditAmount: number;
+  tenorMonths: number;
+  userId?: string;
+  baseDate?: string;
+}
+
+export interface PayStoreCreditSchedulePayload {
+  scheduleId: string;
+  amount: number;
+  paymentMethod?: 'potong_gaji' | 'tunai' | 'transfer';
+  receiptNo?: string;
+  notes?: string;
+  receivedBy?: string | null;
+}
+
 export const sanitizeNumber = (val: any, fallback = 0): number => {
   const num = Number(val);
   return isNaN(num) ? fallback : num;
@@ -975,5 +1044,414 @@ export async function exportStoreCreditToExcel(
   a.download = fileName;
   a.click();
   window.URL.revokeObjectURL(url);
+}
+
+/**
+ * 7. Mengambil Ringkasan Sisa Saldo Bon Belum Lunas Anggota & Tenor Aktif
+ * (Digunakan oleh kasir POS sebelum checkout untuk mencegah double-counting)
+ */
+export async function getMemberUnpaidStoreCreditSummary(
+  memberId: string
+): Promise<MemberStoreCreditSummary> {
+  try {
+    if (!memberId) {
+      return {
+        unpaidBalance: 0,
+        activePlan: null,
+        existingTenor: 1,
+        existingMonthlyInstallment: 0
+      };
+    }
+
+    // 1. Ambil rencana aktif terbaru milik memberId
+    let planQuery: any = supabase
+      .from('store_credit_installment_plans')
+      .select('*')
+      .eq('member_id', memberId)
+      .eq('status', 'active');
+
+    if (planQuery && typeof planQuery.order === 'function') {
+      planQuery = planQuery.order('created_at', { ascending: false });
+    }
+    if (planQuery && typeof planQuery.limit === 'function') {
+      planQuery = planQuery.limit(1);
+    }
+
+    const { data: plans } = await planQuery;
+    const activePlan = plans && plans.length > 0 ? plans[0] : null;
+
+    let scheduleUnpaid = 0;
+    let schedules: StoreCreditSchedule[] = [];
+
+    if (activePlan) {
+      let schedQuery: any = supabase
+        .from('store_credit_schedules')
+        .select('*')
+        .eq('plan_id', activePlan.id);
+
+      if (schedQuery && typeof schedQuery.order === 'function') {
+        schedQuery = schedQuery.order('period_number', { ascending: true });
+      }
+
+      const { data: schedData } = await schedQuery;
+      schedules = schedData || [];
+
+      scheduleUnpaid = schedules.reduce((sum, s) => {
+        const target = sanitizeNumber(s.target_amount);
+        const paid = sanitizeNumber(s.paid_amount);
+        return sum + Math.max(0, target - paid);
+      }, 0);
+    }
+
+    // 2. Hitung ledgerDebt untuk transaksi historis tanpa rencana cicilan
+    const ledgerDebt = await getMemberActiveDebt(memberId);
+
+    // 3. Tentukan sisa saldo belum lunas
+    // Jika activePlan ada dan memiliki sisa jadwal > 0, gunakan scheduleUnpaid; jika tidak ada activePlan, gunakan ledgerDebt.
+    let unpaidBalance = 0;
+    let existingTenor = 1;
+    let existingMonthlyInstallment = 0;
+
+    if (activePlan) {
+      unpaidBalance = Math.round(scheduleUnpaid);
+      existingTenor = Number(activePlan.tenor_months) || 1;
+      existingMonthlyInstallment = Number(activePlan.monthly_installment) || 0;
+    } else {
+      unpaidBalance = Math.round(ledgerDebt);
+      existingTenor = 1;
+      existingMonthlyInstallment = unpaidBalance;
+    }
+
+    const planWithSchedules: StoreCreditPlanWithSchedules | null = activePlan
+      ? { ...activePlan, schedules }
+      : null;
+
+    return {
+      unpaidBalance,
+      activePlan: planWithSchedules,
+      existingTenor,
+      existingMonthlyInstallment
+    };
+  } catch (err) {
+    console.warn('Error getMemberUnpaidStoreCreditSummary:', err);
+    return {
+      unpaidBalance: 0,
+      activePlan: null,
+      existingTenor: 1,
+      existingMonthlyInstallment: 0
+    };
+  }
+}
+
+/**
+ * 8. Buat Rencana Angsuran Bon Toko Baru atau Ambil Alih (Takeover) Rencana Aktif Sebelumnya
+ * Menjamin tidak menyentuh public.loans atau public.loan_schedules.
+ */
+export async function createOrTakeoverStoreCreditPlan(
+  payload: CreateStoreCreditPlanPayload
+): Promise<{ success: boolean; planId?: string; plan?: StoreCreditPlanWithSchedules; error?: string }> {
+  try {
+    if (!payload.memberId) {
+      return { success: false, error: 'Member ID wajib diisi.' };
+    }
+    const newCredit = Number(payload.newCreditAmount);
+    if (isNaN(newCredit) || newCredit <= 0) {
+      return { success: false, error: 'Nominal bon baru harus lebih dari 0.' };
+    }
+
+    const tenorMonths = Math.max(1, Math.round(Number(payload.tenorMonths) || 1));
+    const prevBalance = Math.max(0, Math.round(Number(payload.previousUnpaidBalance) || 0));
+    const totalConsolidatedDebt = Math.round(prevBalance + newCredit);
+    const monthlyInstallment = Math.round(totalConsolidatedDebt / tenorMonths);
+
+    const nowIso = new Date().toISOString();
+
+    // 1. Ubah seluruh rencana aktif lama milik member menjadi superseded
+    await supabase
+      .from('store_credit_installment_plans')
+      .update({
+        status: 'superseded',
+        updated_at: nowIso
+      })
+      .eq('member_id', payload.memberId)
+      .eq('status', 'active');
+
+    // 2. Simpan rencana baru dengan status active
+    let currentUserId = payload.userId || null;
+    if (!currentUserId) {
+      try {
+        if (supabase.auth && typeof supabase.auth.getUser === 'function') {
+          const { data: authData } = await supabase.auth.getUser();
+          currentUserId = authData?.user?.id || null;
+        }
+      } catch {
+        currentUserId = null;
+      }
+    }
+
+    const newPlanData = {
+      member_id: payload.memberId,
+      latest_sale_id: payload.saleId || null,
+      previous_unpaid_balance: prevBalance,
+      new_credit_amount: newCredit,
+      total_consolidated_debt: totalConsolidatedDebt,
+      tenor_months: tenorMonths,
+      monthly_installment: monthlyInstallment,
+      status: 'active',
+      created_by: currentUserId || null,
+      created_at: nowIso,
+      updated_at: nowIso
+    };
+
+    let insertPlanQuery = supabase
+      .from('store_credit_installment_plans')
+      .insert(newPlanData);
+
+    let insertedPlan: any = null;
+    if (insertPlanQuery && typeof (insertPlanQuery as any).select === 'function') {
+      const sel = (insertPlanQuery as any).select();
+      if (sel && typeof sel.single === 'function') {
+        const { data, error } = await sel.single();
+        if (error) throw error;
+        insertedPlan = data;
+      } else {
+        const { data, error } = await sel;
+        if (error) throw error;
+        insertedPlan = Array.isArray(data) ? data[0] : data;
+      }
+    } else {
+      const { data, error } = await insertPlanQuery;
+      if (error) throw error;
+      insertedPlan = data;
+    }
+
+    if (!insertedPlan) {
+      insertedPlan = { id: `plan-${Date.now()}`, ...newPlanData };
+    }
+
+    const planId = insertedPlan.id;
+
+    // 3. Bangkitkan baris jadwal angsuran (store_credit_schedules) mulai bulan berikutnya (+1 s/d +tenorMonths)
+    const baseDateStr = payload.baseDate || new Date().toISOString().split('T')[0];
+    const parts = baseDateStr.split('-').map((p) => parseInt(p, 10));
+    const baseYear = parts[0];
+    const baseMonth = parts[1] - 1; // 0-indexed
+    const baseDay = parts[2] || 1;
+
+    const schedulesToInsert = [];
+    for (let period = 1; period <= tenorMonths; period++) {
+      const isLastPeriod = period === tenorMonths;
+      // Periode terakhir disesuaikan agar akumulasi target_amount tepat sama dengan totalConsolidatedDebt
+      const targetAmount = isLastPeriod
+        ? totalConsolidatedDebt - (monthlyInstallment * (tenorMonths - 1))
+        : monthlyInstallment;
+
+      const targetMonthOffset = baseMonth + period;
+      const targetYear = baseYear + Math.floor(targetMonthOffset / 12);
+      const targetMonth0 = ((targetMonthOffset % 12) + 12) % 12;
+      const maxDayInMonth = new Date(targetYear, targetMonth0 + 1, 0).getDate();
+      const clampedDay = Math.min(baseDay, maxDayInMonth);
+      const dueDateStr = `${targetYear}-${String(targetMonth0 + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+
+      schedulesToInsert.push({
+        plan_id: planId,
+        member_id: payload.memberId,
+        period_number: period,
+        due_year: targetYear,
+        due_month: targetMonth0 + 1,
+        due_date: dueDateStr,
+        target_amount: targetAmount,
+        paid_amount: 0,
+        status: 'unpaid' as const,
+        created_at: nowIso
+      });
+    }
+
+    let insertedSchedules: any = null;
+    const schedQuery = supabase
+      .from('store_credit_schedules')
+      .insert(schedulesToInsert);
+
+    if (schedQuery && typeof (schedQuery as any).select === 'function') {
+      const { data, error } = await (schedQuery as any).select();
+      if (error) throw error;
+      insertedSchedules = data;
+    } else {
+      const { error } = await schedQuery;
+      if (error) throw error;
+    }
+
+    const createdSchedules = insertedSchedules || schedulesToInsert;
+
+    return {
+      success: true,
+      planId,
+      plan: {
+        ...insertedPlan,
+        schedules: createdSchedules
+      }
+    };
+  } catch (err: any) {
+    console.error('Error createOrTakeoverStoreCreditPlan:', err);
+    return {
+      success: false,
+      error: err.message || 'Gagal membuat atau mengambil alih rencana cicilan bon toko.'
+    };
+  }
+}
+
+/**
+ * 9. Mengambil Seluruh Rencana Angsuran Bon Toko yang Berstatus Aktif
+ * Menggabungkan relasi profil anggota dan jadwal angsurannya.
+ */
+export async function getActiveStoreCreditPlans(): Promise<StoreCreditPlanWithSchedules[]> {
+  try {
+    const { data: plans, error } = await supabase
+      .from('store_credit_installment_plans')
+      .select(`
+        *,
+        anggota (id, nama, nrp, pangkat),
+        store_credit_schedules (*)
+      `)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('Error getActiveStoreCreditPlans:', error.message);
+      return [];
+    }
+
+    if (!plans || plans.length === 0) return [];
+
+    return plans.map((p: any) => {
+      const rawSchedules = p.store_credit_schedules || p.schedules || [];
+      const schedules = [...rawSchedules].sort(
+        (a, b) => (a.period_number || 0) - (b.period_number || 0)
+      );
+      return {
+        ...p,
+        schedules
+      };
+    });
+  } catch (err) {
+    console.warn('Error getActiveStoreCreditPlans:', err);
+    return [];
+  }
+}
+
+/**
+ * 10. Pelunasan Jadwal Angsuran Bon Toko
+ * Menyinkronkan pembayaran ke store_credit_payments via settleStoreCredit()
+ * dan mengubah status rencana menjadi 'paid_off' jika seluruh jadwal telah lunas.
+ */
+export async function payStoreCreditSchedule(
+  payload: PayStoreCreditSchedulePayload
+): Promise<{ success: boolean; scheduleId?: string; paymentId?: string; error?: string }> {
+  try {
+    if (!payload.scheduleId) {
+      return { success: false, error: 'ID jadwal angsuran wajib diisi.' };
+    }
+    const payAmount = Number(payload.amount);
+    if (isNaN(payAmount) || payAmount <= 0) {
+      return { success: false, error: 'Nominal pembayaran harus lebih dari 0.' };
+    }
+
+    // 1. Ambil jadwal target
+    let schedQuery = supabase
+      .from('store_credit_schedules')
+      .select('*')
+      .eq('id', payload.scheduleId);
+
+    const { data: schedule, error: schedError } = typeof (schedQuery as any).single === 'function'
+      ? await (schedQuery as any).single()
+      : await schedQuery;
+
+    if (schedError || !schedule) {
+      return { success: false, error: 'Jadwal angsuran tidak ditemukan.' };
+    }
+
+    // 2. Ambil rencana induk
+    let planQuery = supabase
+      .from('store_credit_installment_plans')
+      .select('*')
+      .eq('id', schedule.plan_id);
+
+    const { data: plan, error: planError } = typeof (planQuery as any).single === 'function'
+      ? await (planQuery as any).single()
+      : await planQuery;
+
+    if (planError || !plan) {
+      return { success: false, error: 'Rencana angsuran induk tidak ditemukan.' };
+    }
+
+    const currentPaid = sanitizeNumber(schedule.paid_amount);
+    const targetAmount = sanitizeNumber(schedule.target_amount);
+    const newPaid = currentPaid + payAmount;
+    const newStatus: 'paid' | 'partial' = newPaid >= targetAmount ? 'paid' : 'partial';
+
+    // 3. Perbarui jadwal angsuran
+    const updateSchedulePayload = {
+      paid_amount: newPaid,
+      status: newStatus,
+      paid_at: new Date().toISOString(),
+      receipt_number: payload.receiptNo || schedule.receipt_number || null,
+      notes: payload.notes || schedule.notes || null
+    };
+
+    const { error: updateSchedError } = await supabase
+      .from('store_credit_schedules')
+      .update(updateSchedulePayload)
+      .eq('id', schedule.id);
+
+    if (updateSchedError) {
+      throw updateSchedError;
+    }
+
+    // 4. Panggil settleStoreCredit untuk menyinkronkan ke store_credit_payments & cash_flow
+    const refNo = payload.receiptNo || `BYR-${Date.now().toString().slice(-6)}`;
+    const settleRes = await settleStoreCredit({
+      memberId: plan.member_id,
+      amount: payAmount,
+      paymentMethod: payload.paymentMethod || 'potong_gaji',
+      referenceNo: refNo,
+      notes: payload.notes || `Angsuran Bon Periode ${schedule.period_number}`,
+      receivedBy: payload.receivedBy
+    });
+
+    // 5. Cek apakah seluruh jadwal pada rencana ini sudah lunas
+    const { data: allSchedules } = await supabase
+      .from('store_credit_schedules')
+      .select('id, status')
+      .eq('plan_id', plan.id);
+
+    const isAllPaid =
+      allSchedules &&
+      allSchedules.length > 0 &&
+      allSchedules.every((s: any) =>
+        s.id === schedule.id ? newStatus === 'paid' : s.status === 'paid'
+      );
+
+    if (isAllPaid) {
+      await supabase
+        .from('store_credit_installment_plans')
+        .update({
+          status: 'paid_off',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', plan.id);
+    }
+
+    return {
+      success: true,
+      scheduleId: schedule.id,
+      paymentId: settleRes.paymentId
+    };
+  } catch (err: any) {
+    console.error('Error payStoreCreditSchedule:', err);
+    return {
+      success: false,
+      error: err.message || 'Gagal memproses pembayaran jadwal angsuran bon toko.'
+    };
+  }
 }
 

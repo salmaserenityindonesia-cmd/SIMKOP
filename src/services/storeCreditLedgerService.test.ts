@@ -5,7 +5,11 @@ import {
   settleStoreCredit,
   getMemberActiveDebt,
   getMembersWithDebt,
-  sanitizeNumber
+  sanitizeNumber,
+  getMemberUnpaidStoreCreditSummary,
+  createOrTakeoverStoreCreditPlan,
+  getActiveStoreCreditPlans,
+  payStoreCreditSchedule
 } from './storeCreditLedgerService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -453,5 +457,503 @@ describe('storeCreditLedgerService', () => {
       expect(debtors[0].debt).toBe(100000);
     });
   });
+
+  describe('getMemberUnpaidStoreCreditSummary', () => {
+    it('mengambil sisa saldo dari activePlan dan jadwal jika rencana aktif ada', async () => {
+      const activePlanMock = {
+        id: 'plan-1',
+        member_id: 'm-1',
+        total_consolidated_debt: 600000,
+        tenor_months: 3,
+        monthly_installment: 200000,
+        status: 'active',
+        created_at: '2026-11-01T00:00:00Z'
+      };
+
+      const schedulesMock = [
+        { id: 'sch-1', plan_id: 'plan-1', period_number: 1, target_amount: 200000, paid_amount: 200000, status: 'paid' },
+        { id: 'sch-2', plan_id: 'plan-1', period_number: 2, target_amount: 200000, paid_amount: 50000, status: 'partial' },
+        { id: 'sch-3', plan_id: 'plan-1', period_number: 3, target_amount: 200000, paid_amount: 0, status: 'unpaid' }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockResolvedValue({
+                      data: [activePlanMock],
+                      error: null
+                    })
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: schedulesMock,
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockResolvedValue({
+                  data: [],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const summary = await getMemberUnpaidStoreCreditSummary('m-1');
+
+      // sch-1: 0 remaining, sch-2: 150.000 remaining, sch-3: 200.000 remaining -> total 350.000
+      expect(summary.unpaidBalance).toBe(350000);
+      expect(summary.activePlan).toBeDefined();
+      expect(summary.activePlan?.id).toBe('plan-1');
+      expect(summary.existingTenor).toBe(3);
+      expect(summary.existingMonthlyInstallment).toBe(200000);
+      expect(summary.activePlan?.schedules).toHaveLength(3);
+    });
+
+    it('mengambil sisa saldo dari ledgerDebt historis jika tidak ada activePlan', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockResolvedValue({
+                      data: [],
+                      error: null
+                    })
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockResolvedValue({
+                  data: [{ id: 'sale-hist-1', paid_credit: 175000, sale_status: 'completed' }],
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ amount: 25000, sale_id: 'sale-hist-1' }],
+                error: null
+              }),
+              eq: vi.fn().mockResolvedValue({
+                data: [{ amount: 25000 }],
+                error: null
+              })
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const summary = await getMemberUnpaidStoreCreditSummary('m-no-plan');
+
+      expect(summary.unpaidBalance).toBe(150000); // 175k - 25k
+      expect(summary.activePlan).toBeNull();
+      expect(summary.existingTenor).toBe(1);
+      expect(summary.existingMonthlyInstallment).toBe(150000);
+    });
+  });
+
+  describe('createOrTakeoverStoreCreditPlan', () => {
+    it('mengubah rencana aktif lama menjadi superseded dan menyusun jadwal dengan presisi pembulatan', async () => {
+      let updatedPlanPayload: any = null;
+      let insertedPlanPayload: any = null;
+      let insertedSchedulesPayload: any[] = [];
+      const tablesAccessed: string[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        tablesAccessed.push(table);
+        if (table === 'store_credit_installment_plans') {
+          return {
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatedPlanPayload = payload;
+              return {
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: null, error: null })
+                })
+              };
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              insertedPlanPayload = payload;
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'plan-new-99', ...payload },
+                    error: null
+                  })
+                })
+              };
+            })
+          };
+        }
+        if (table === 'store_credit_schedules') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedSchedulesPayload = payload;
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: payload.map((p, idx) => ({ id: `sch-new-${idx + 1}`, ...p })),
+                  error: null
+                })
+              };
+            })
+          };
+        }
+        return {};
+      });
+
+      // previousUnpaidBalance: 50.000, newCreditAmount: 50.000 -> total: 100.000, tenor: 3 bulan
+      // monthlyInstallment = Math.round(100.000 / 3) = 33.333
+      // period 1: 33.333, period 2: 33.333, period 3: 100.000 - (33.333 * 2) = 33.334
+      const result = await createOrTakeoverStoreCreditPlan({
+        memberId: 'm-dedi',
+        saleId: 'sale-999',
+        previousUnpaidBalance: 50000,
+        newCreditAmount: 50000,
+        tenorMonths: 3,
+        userId: 'admin-1',
+        baseDate: '2026-11-15'
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.planId).toBe('plan-new-99');
+
+      // Verifikasi rencana lama diubah jadi superseded
+      expect(updatedPlanPayload.status).toBe('superseded');
+
+      // Verifikasi rencana baru
+      expect(insertedPlanPayload.member_id).toBe('m-dedi');
+      expect(insertedPlanPayload.previous_unpaid_balance).toBe(50000);
+      expect(insertedPlanPayload.new_credit_amount).toBe(50000);
+      expect(insertedPlanPayload.total_consolidated_debt).toBe(100000);
+      expect(insertedPlanPayload.tenor_months).toBe(3);
+      expect(insertedPlanPayload.monthly_installment).toBe(33333);
+      expect(insertedPlanPayload.status).toBe('active');
+
+      // Verifikasi jadwal angsuran
+      expect(insertedSchedulesPayload).toHaveLength(3);
+      expect(insertedSchedulesPayload[0].target_amount).toBe(33333);
+      expect(insertedSchedulesPayload[1].target_amount).toBe(33333);
+      expect(insertedSchedulesPayload[2].target_amount).toBe(33334); // Pembulatan periode terakhir!
+
+      // Total target_amount harus tepat sama dengan total_consolidated_debt
+      const totalScheduleTarget = insertedSchedulesPayload.reduce((sum, s) => sum + s.target_amount, 0);
+      expect(totalScheduleTarget).toBe(100000);
+
+      // Verifikasi jatuh tempo bulan berikutnya (+1, +2, +3)
+      expect(insertedSchedulesPayload[0].due_date).toBe('2026-12-15');
+      expect(insertedSchedulesPayload[1].due_date).toBe('2027-01-15');
+      expect(insertedSchedulesPayload[2].due_date).toBe('2027-02-15');
+
+      // Verifikasi isolasi: tabel loans dan loan_schedules tidak boleh disentuh
+      expect(tablesAccessed).not.toContain('loans');
+      expect(tablesAccessed).not.toContain('loan_schedules');
+    });
+  });
+
+  describe('getActiveStoreCreditPlans', () => {
+    it('mengambil rencana aktif beserta relasi profil anggota dan jadwal terurut', async () => {
+      const mockData = [
+        {
+          id: 'plan-10',
+          member_id: 'm-1',
+          total_consolidated_debt: 300000,
+          status: 'active',
+          anggota: { id: 'm-1', nama: 'Kopda Ahmad', nrp: '654321', pangkat: 'Kopda' },
+          store_credit_schedules: [
+            { id: 's-2', period_number: 2, target_amount: 150000 },
+            { id: 's-1', period_number: 1, target_amount: 150000 }
+          ]
+        }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: mockData,
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const plans = await getActiveStoreCreditPlans();
+      expect(plans).toHaveLength(1);
+      expect(plans[0].anggota?.nama).toBe('Kopda Ahmad');
+      expect(plans[0].schedules[0].period_number).toBe(1);
+      expect(plans[0].schedules[1].period_number).toBe(2);
+    });
+  });
+
+  describe('payStoreCreditSchedule', () => {
+    it('memperbarui jadwal menjadi paid, memanggil settleStoreCredit, dan mengubah status plan menjadi paid_off jika semua lunas', async () => {
+      let updatedSchedule: any = null;
+      let updatedPlan: any = null;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'sch-final',
+                        plan_id: 'plan-target',
+                        period_number: 2,
+                        target_amount: 100000,
+                        paid_amount: 0,
+                        status: 'unpaid'
+                      },
+                      error: null
+                    })
+                  })
+                };
+              }
+              // select id, status untuk cek all schedules
+              return {
+                eq: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'sch-prev', status: 'paid' },
+                    { id: 'sch-final', status: 'paid' }
+                  ],
+                  error: null
+                })
+              };
+            }),
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatedSchedule = payload;
+              return {
+                eq: vi.fn().mockResolvedValue({ data: null, error: null })
+              };
+            })
+          };
+        }
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'plan-target',
+                    member_id: 'm-target',
+                    status: 'active'
+                  },
+                  error: null
+                })
+              })
+            }),
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatedPlan = payload;
+              return {
+                eq: vi.fn().mockResolvedValue({ data: null, error: null })
+              };
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sale-t1', paid_credit: 100000, sale_status: 'completed' }],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [],
+                error: null
+              })
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'payment-sync-100' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await payStoreCreditSchedule({
+        scheduleId: 'sch-final',
+        amount: 100000,
+        paymentMethod: 'potong_gaji',
+        receiptNo: 'BYR-SCHEDULE-100',
+        notes: 'Angsuran Bon Ke-2 via Potong Gaji'
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.scheduleId).toBe('sch-final');
+      expect(res.paymentId).toBe('payment-sync-100');
+
+      // Verifikasi status jadwal menjadi 'paid'
+      expect(updatedSchedule.status).toBe('paid');
+      expect(updatedSchedule.paid_amount).toBe(100000);
+      expect(updatedSchedule.receipt_number).toBe('BYR-SCHEDULE-100');
+
+      // Verifikasi rencana diupdate menjadi 'paid_off'
+      expect(updatedPlan).toBeDefined();
+      expect(updatedPlan.status).toBe('paid_off');
+    });
+
+    it('memperbarui jadwal menjadi partial jika pembayaran kurang dari target_amount dan tidak menandai plan paid_off', async () => {
+      let updatedSchedule: any = null;
+      let updatedPlan: any = null;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_schedules') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'sch-part',
+                        plan_id: 'plan-target-2',
+                        period_number: 1,
+                        target_amount: 100000,
+                        paid_amount: 0,
+                        status: 'unpaid'
+                      },
+                      error: null
+                    })
+                  })
+                };
+              }
+              return {
+                eq: vi.fn().mockResolvedValue({
+                  data: [{ id: 'sch-part', status: 'partial' }],
+                  error: null
+                })
+              };
+            }),
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatedSchedule = payload;
+              return {
+                eq: vi.fn().mockResolvedValue({ data: null, error: null })
+              };
+            })
+          };
+        }
+        if (table === 'store_credit_installment_plans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'plan-target-2',
+                    member_id: 'm-target-2',
+                    status: 'active'
+                  },
+                  error: null
+                })
+              })
+            }),
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatedPlan = payload;
+              return {
+                eq: vi.fn().mockResolvedValue({ data: null, error: null })
+              };
+            })
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sale-t2', paid_credit: 100000, sale_status: 'completed' }],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'payment-part-1' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await payStoreCreditSchedule({
+        scheduleId: 'sch-part',
+        amount: 40000,
+        paymentMethod: 'potong_gaji'
+      });
+
+      expect(res.success).toBe(true);
+      expect(updatedSchedule.status).toBe('partial');
+      expect(updatedSchedule.paid_amount).toBe(40000);
+      expect(updatedPlan).toBeNull(); // Plan tidak boleh jadi paid_off
+    });
+  });
 });
+
 
