@@ -133,6 +133,20 @@ function buildMonthlyDueDate(baseDateStr: string, periodNumber: number): string 
   return formatDateYmd(new Date(targetYear, targetMonth, clampedDay));
 }
 
+function shouldFallbackFromRepaymentRpc(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '');
+  return (
+    code === 'PGRST202' ||
+    code === '42883' ||
+    code === '42804' ||
+    msg.includes('Could not find the function') ||
+    msg.includes('is of type loan_status') ||
+    msg.includes('expression is of type text')
+  );
+}
+
 /**
  * Menyimpan saldo awal pinjaman anggota berdasarkan NRP dan jenis pinjaman Master Produk
  * dengan Clean Overwrite, pembuatan jadwal angsuran penuh mulai (tgl_awal_pinjaman + 1 bulan)
@@ -877,8 +891,7 @@ export const loanService = {
         if (rpcRes) {
           const { data, error } = rpcRes;
           if (error) {
-            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
-            if (!isMissingFunction) {
+            if (!shouldFallbackFromRepaymentRpc(error)) {
               throw new Error(error.message || 'Gagal memproses pembayaran angsuran via atomic RPC');
             }
           } else if (data) {
@@ -898,7 +911,7 @@ export const loanService = {
           }
         }
       } catch (err: any) {
-        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+        if (!shouldFallbackFromRepaymentRpc(err)) {
           throw err;
         }
       }
@@ -922,7 +935,7 @@ export const loanService = {
     // Beri toleransi pembulatan +/- 5 Rupiah untuk pelunasan akhir
     const isFullyPaid = (newPaid >= target) || (Math.abs(target - newPaid) <= 5);
     const newPaidTotal = isFullyPaid ? target : newPaid;
-    const newStatus = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
+    const newStatus: 'paid' | 'partial' | 'unpaid' = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
 
     // 3. Lakukan UPDATE HANYA pada satu baris jadwal tersebut (ISOLASI KETAT)
     const { error: updateErr } = await supabase
@@ -973,7 +986,7 @@ export const loanService = {
         s.id === scheduleId ? newStatus === 'paid' : (s.status === 'paid' || Math.round(Number(s.paid_amount || 0)) >= Math.round(Number(s.target_amount || 0)) || Math.abs(Math.round(Number(s.target_amount || 0)) - Math.round(Number(s.paid_amount || 0))) <= 5)
       );
 
-      const newLoanStatus = isAllPaid ? 'paid_off' : 'active';
+      const newLoanStatus: 'paid_off' | 'active' = isAllPaid ? 'paid_off' : 'active';
 
       // Update loans status & sisa_pinjaman
       const { error: updateLoanErr } = await supabase
@@ -986,10 +999,11 @@ export const loanService = {
 
       if (updateLoanErr) {
         // Fallback jika database belum mendukung status 'paid_off' atau kolom sisa_pinjaman
+        const fallbackLoanStatus: 'completed' | 'active' = isAllPaid ? 'completed' : 'active';
         await supabase
           .from('loans')
           .update({
-            status: isAllPaid ? 'completed' : 'active'
+            status: fallbackLoanStatus
           })
           .eq('id', loanId);
       }
@@ -1050,8 +1064,7 @@ export const loanService = {
         if (rpcRes) {
           const { data, error } = rpcRes;
           if (error) {
-            const isMissingFunction = error.code === 'PGRST202' || error.message?.includes('Could not find the function') || error.code === '42883';
-            if (!isMissingFunction) {
+            if (!shouldFallbackFromRepaymentRpc(error)) {
               throw new Error(error.message || 'Gagal memproses pembayaran angsuran via atomic RPC');
             }
           } else if (data) {
@@ -1068,7 +1081,7 @@ export const loanService = {
           }
         }
       } catch (err: any) {
-        if (!err.message?.includes('Could not find the function') && err.code !== 'PGRST202' && err.code !== '42883') {
+        if (!shouldFallbackFromRepaymentRpc(err)) {
           throw err;
         }
       }
@@ -1094,7 +1107,7 @@ export const loanService = {
       const paymentForSchedule = Math.min(remainingPayment, scheduleShortfall);
       
       const newPaidAmount = Number(schedule.paid_amount) + paymentForSchedule;
-      const newStatus = newPaidAmount >= Number(schedule.target_amount) ? 'paid' : 'partial';
+      const newStatus: 'paid' | 'partial' = newPaidAmount >= Number(schedule.target_amount) ? 'paid' : 'partial';
 
       // Update schedule
       const { error: updateError } = await supabase
@@ -1140,7 +1153,7 @@ export const loanService = {
     const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
     const totalPaidAll = (allSchedules || []).reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
     const sisaPinjaman = Math.max(0, principalAmount - totalPaidAll);
-    const newLoanStatus = isAllPaid ? 'paid_off' : 'active';
+    const newLoanStatus: 'paid_off' | 'active' = isAllPaid ? 'paid_off' : 'active';
 
     const { error: loanUpdateErr } = await supabase
       .from('loans')
@@ -1151,9 +1164,10 @@ export const loanService = {
       .eq('id', loanId);
 
     if (loanUpdateErr) {
+      const fallbackLoanStatus: 'completed' | 'active' = isAllPaid ? 'completed' : 'active';
       await supabase
         .from('loans')
-        .update({ status: isAllPaid ? 'completed' : 'active' })
+        .update({ status: fallbackLoanStatus })
         .eq('id', loanId);
     }
 

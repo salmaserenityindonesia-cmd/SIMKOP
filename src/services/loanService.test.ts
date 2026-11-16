@@ -1159,6 +1159,104 @@ describe('loanService', () => {
       await expect(loanService.paySchedule('loan-1', 'sch-invalid', 100000))
         .rejects.toThrow('Jadwal angsuran tidak ditemukan untuk pinjaman ini');
     });
+
+    it('should fallback to isolated client-side execution when RPC fails with 42804 loan_status enum error', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '42804',
+          message: 'column "status" is of type loan_status but expression is of type text'
+        }
+      });
+
+      const mockSupabase = supabase.from as any;
+      const scheduleUpdates: any[] = [];
+      const scheduleUpdatedIds: string[] = [];
+      const repaymentInserts: any[] = [];
+      let loanUpdatePayload: any = null;
+
+      // 1. Fetch selected schedule
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'sch-2', target_amount: 125000, paid_amount: 0, status: 'unpaid' },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 2. Update ONLY selected schedule
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          scheduleUpdates.push(payload);
+          return {
+            eq: vi.fn().mockImplementation((_col, val) => {
+              scheduleUpdatedIds.push(val);
+              return Promise.resolve({ error: null });
+            })
+          };
+        })
+      }));
+
+      // 3. Insert into loan_repayments
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockImplementation((payload) => {
+          repaymentInserts.push(payload);
+          return Promise.resolve({ error: null });
+        })
+      }));
+
+      // 4. Fetch all schedules for recalculating loan status & remaining balance
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'sch-1', target_amount: 125000, paid_amount: 125000, status: 'paid' },
+              { id: 'sch-2', target_amount: 125000, paid_amount: 125000, status: 'paid' },
+              { id: 'sch-3', target_amount: 125000, paid_amount: 0, status: 'unpaid' }
+            ],
+            error: null
+          })
+        })
+      }));
+
+      // 5. Fetch parent loan
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'loan-dedi', amount: 1000000, principal_amount: 1000000, status: 'active', member_id: 'm-dedi' },
+              error: null
+            })
+          })
+        })
+      }));
+
+      // 6. Update parent loan
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          loanUpdatePayload = payload;
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null })
+          };
+        })
+      }));
+
+      const result = await loanService.paySchedule('loan-dedi', 'sch-2', 125000, 'CASH', 'Cicilan bulan ke-2');
+
+      expect(result.success).toBe(true);
+      expect(result.newStatus).toBe('paid');
+      expect(result.newPaidTotal).toBe(125000);
+      expect(result.isAllPaid).toBe(false);
+      expect(scheduleUpdates).toEqual([{ paid_amount: 125000, status: 'paid' }]);
+      expect(scheduleUpdatedIds).toEqual(['sch-2']);
+      expect(repaymentInserts).toHaveLength(1);
+      expect(repaymentInserts[0][0].schedule_id).toBe('sch-2');
+      expect(loanUpdatePayload.status).toBe('active');
+      expect(loanUpdatePayload.sisa_pinjaman).toBe(750000);
+    });
   });
 
   describe('makePayment - Atomic RPC', () => {

@@ -58,7 +58,7 @@ BEGIN
 
     -- 2. Update pinjaman ke status active dan catat disbursed_at serta inisialisasi sisa_pinjaman
     UPDATE public.loans
-    SET status = 'active',
+    SET status = 'active'::public.loan_status,
         disbursed_at = p_start_date,
         sisa_pinjaman = v_principal,
         updated_at = NOW()
@@ -316,7 +316,7 @@ BEGIN
 
     -- Update pinjaman induk
     UPDATE public.loans
-    SET status = v_new_loan_status,
+    SET status = v_new_loan_status::public.loan_status,
         sisa_pinjaman = v_sisa_pinjaman
     WHERE id = p_loan_id;
 
