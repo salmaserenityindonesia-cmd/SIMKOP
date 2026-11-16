@@ -293,5 +293,28 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(html).toContain('User 4');
       expect(html).toContain('User 5');
     });
+
+    it('renders top-up settlement and net disbursement badge when topup_settlement_amount > 0', () => {
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="PENDING"
+          initialPinjamanList={[
+            {
+              id: 'loan-topup-1',
+              status: 'draft',
+              amount: 2000000,
+              principal_amount: 2000000,
+              tenor: 4,
+              topup_settlement_amount: 625000,
+              anggota: { nama: 'Dedi Kurnia', nrp: '12345' },
+            },
+          ]}
+        />
+      );
+
+      expect(html).toContain('Top-Up');
+      expect(html).toContain('625.000');
+      expect(html).toContain('1.375.000');
+    });
   });
 });

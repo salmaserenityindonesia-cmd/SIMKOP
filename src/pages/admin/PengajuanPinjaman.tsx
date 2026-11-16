@@ -28,6 +28,7 @@ export const calculateAvailableTenors = (maxTenor?: number): number[] => {
 export interface ActiveLoanBreakdownItem {
   id: string;
   loanNumber: string;
+  loanTypeId?: string;
   typeName: string;
   tenor: number;
   monthlyInstallment: number;
@@ -43,6 +44,8 @@ export interface SimulationPanelProps {
     remaining_thp: number;
   } | null;
   activeLoanBreakdown?: ActiveLoanBreakdownItem[];
+  sameTypeActiveLoans?: ActiveLoanBreakdownItem[];
+  selectedLoanTypeName?: string;
   newInstallment: number;
   amount?: number | '';
   tenor?: number | '';
@@ -54,6 +57,8 @@ export interface SimulationPanelProps {
 export function SimulationPanel({
   thpData,
   activeLoanBreakdown = [],
+  sameTypeActiveLoans = [],
+  selectedLoanTypeName,
   newInstallment,
   amount,
   tenor,
@@ -62,11 +67,28 @@ export function SimulationPanel({
   minRemainingThp = MIN_REMAINING_THP
 }: SimulationPanelProps) {
   const externalInstallments = Number(thpData?.angsuran_lain_lain ?? 0);
-  const currentRemainingThp = thpData
+  const sameTypeLoanIds = new Set(sameTypeActiveLoans.map((l) => l.id));
+  const sameTypeSettlementTotal = sameTypeActiveLoans.reduce(
+    (sum, item) => sum + Number(item.remainingPrincipal || 0),
+    0
+  );
+  const replacedMonthlyInstallment = sameTypeActiveLoans.reduce(
+    (sum, item) => sum + Number(item.monthlyInstallment || 0),
+    0
+  );
+  const baseRemainingThp = thpData
     ? (thpData.angsuran_lain_lain !== undefined
         ? thpData.master_thp - thpData.active_installments - externalInstallments - (thpData.savings_deduction || 0)
         : thpData.remaining_thp)
     : 0;
+  // Cicilan kontrak lama sejenis dikecualikan karena digantikan oleh angsuran pinjaman baru
+  const currentRemainingThp = baseRemainingThp + replacedMonthlyInstallment;
+  const effectiveExistingInstallments = thpData
+    ? Math.max(0, thpData.active_installments - replacedMonthlyInstallment)
+    : 0;
+  const principalAmount = Number(amount || 0);
+  const netDisbursedToMember = Math.max(0, principalAmount - sameTypeSettlementTotal);
+  const isTopUpValid = sameTypeSettlementTotal === 0 || principalAmount > sameTypeSettlementTotal;
 
   const eligibility = thpData 
     ? calculateTHPEligibility(currentRemainingThp, newInstallment, minRemainingThp)
@@ -112,30 +134,42 @@ export function SimulationPanel({
           </div>
           <div className="py-2.5 border-b border-gray-200 space-y-1.5">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-rose-600 font-medium">Cicilan Berjalan</span>
+              <span className="text-rose-600 font-medium">
+                {replacedMonthlyInstallment > 0 ? 'Cicilan Berjalan (Jenis Lain)' : 'Cicilan Berjalan'}
+              </span>
               <span className="text-rose-600 font-semibold tabular-nums">
-                - {formatCurrency(thpData.active_installments)}
+                - {formatCurrency(effectiveExistingInstallments)}
               </span>
             </div>
 
             {activeLoanBreakdown.length > 0 && (
               <div className="pl-2.5 border-l-2 border-rose-200 space-y-1 pt-0.5">
-                {activeLoanBreakdown.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between text-[11px] text-slate-600 gap-2"
-                  >
-                    <div className="truncate">
-                      <span className="font-semibold text-slate-700">{item.typeName}</span>
-                      <span className="text-slate-400 ml-1">
-                        ({item.loanNumber} • {item.tenor} Bln)
+                {activeLoanBreakdown.map((item) => {
+                  const isReplaced = sameTypeLoanIds.has(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      className={`flex items-center justify-between text-[11px] gap-2 ${
+                        isReplaced ? 'text-indigo-600 line-through opacity-75' : 'text-slate-600'
+                      }`}
+                    >
+                      <div className="truncate">
+                        <span className="font-semibold">{item.typeName}</span>
+                        <span className="ml-1 opacity-75">
+                          ({item.loanNumber} • {item.tenor} Bln)
+                        </span>
+                        {isReplaced && (
+                          <span className="ml-1 no-underline inline-block font-semibold text-indigo-700">
+                            [Dilunasi Top-Up]
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-medium shrink-0 tabular-nums">
+                        Rp {item.monthlyInstallment.toLocaleString('id-ID')}/bln
                       </span>
                     </div>
-                    <span className="font-medium text-rose-600 shrink-0 tabular-nums">
-                      Rp {item.monthlyInstallment.toLocaleString('id-ID')}/bln
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -167,6 +201,40 @@ export function SimulationPanel({
               {formatCurrency(eligibility.finalRemainingThp)}
             </span>
           </div>
+
+          {sameTypeSettlementTotal > 0 && (
+            <div className="p-3.5 rounded-xl bg-indigo-50 border border-indigo-200 space-y-2 text-xs">
+              <div className="font-bold text-indigo-900">
+                Mode Perpanjangan / Top-Up ({selectedLoanTypeName || sameTypeActiveLoans[0]?.typeName || 'Sejenis'})
+              </div>
+              <p className="text-indigo-700 leading-relaxed">
+                Pinjaman aktif sejenis milik anggota akan otomatis dilunasi dari pencairan pinjaman baru ini:
+              </p>
+              <div className="space-y-1 pt-1 border-t border-indigo-200/70">
+                <div className="flex justify-between text-slate-700">
+                  <span>Plafon Pinjaman Baru:</span>
+                  <span className="font-semibold">Rp {principalAmount.toLocaleString('id-ID')}</span>
+                </div>
+                {sameTypeActiveLoans.map((oldLoan) => (
+                  <div key={oldLoan.id} className="flex justify-between text-rose-700">
+                    <span>Pelunasan {oldLoan.loanNumber}:</span>
+                    <span className="font-semibold">
+                      - Rp {Number(oldLoan.remainingPrincipal).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-emerald-800 font-bold pt-1 border-t border-indigo-200">
+                  <span>Dana Bersih Diterima Anggota:</span>
+                  <span>Rp {netDisbursedToMember.toLocaleString('id-ID')}</span>
+                </div>
+              </div>
+              {!isTopUpValid && principalAmount > 0 && (
+                <p className="text-rose-600 font-semibold pt-1">
+                  Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp {sameTypeSettlementTotal.toLocaleString('id-ID')}).
+                </p>
+              )}
+            </div>
+          )}
 
           {eligibility.isEligible ? (
             <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-3 text-emerald-800 text-xs sm:text-sm">
@@ -233,7 +301,12 @@ export async function submitLoanApplication(
   tenor: number | '',
   selectedLoanTypeId: string,
   maxTenor: number,
-  minThreshold?: number
+  minThreshold?: number,
+  topUpOptions?: {
+    refinancedLoanId?: string | null;
+    topupSettlementAmount?: number;
+    replacedMonthlyInstallment?: number;
+  }
 ) {
   if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
     throw new Error('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
@@ -245,6 +318,18 @@ export async function submitLoanApplication(
 
   if (Number(tenor) > maxTenor) {
     throw new Error(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
+  }
+
+  if (topUpOptions) {
+    return await loanService.applyLoan(
+      selectedAnggota,
+      purpose,
+      Number(amount),
+      Number(tenor),
+      selectedLoanTypeId,
+      minThreshold ?? MIN_REMAINING_THP,
+      topUpOptions
+    );
   }
 
   return minThreshold !== undefined
@@ -474,6 +559,7 @@ export default function PengajuanPinjaman({
           .select(`
             id,
             loan_number,
+            loan_type_id,
             principal_amount,
             amount,
             agreed_tenor_months,
@@ -515,6 +601,11 @@ export default function PengajuanPinjaman({
         return {
           id: String(loan.id),
           loanNumber: loan.loan_number || '-',
+          loanTypeId: loan.loan_type_id
+            ? String(loan.loan_type_id)
+            : loan.loan_types?.id
+              ? String(loan.loan_types.id)
+              : undefined,
           typeName,
           tenor: months,
           monthlyInstallment,
@@ -574,11 +665,28 @@ export default function PengajuanPinjaman({
     return Math.round(Number(amount) / effectiveTenor);
   };
 
-  const thpRemainingForEligibility = thpData
+  const sameTypeActiveLoans = selectedLoanTypeId
+    ? activeLoanBreakdown.filter(
+        (item) => item.loanTypeId && String(item.loanTypeId) === String(selectedLoanTypeId)
+      )
+    : [];
+  const sameTypeSettlementTotal = sameTypeActiveLoans.reduce(
+    (sum, item) => sum + Number(item.remainingPrincipal || 0),
+    0
+  );
+  const replacedMonthlyInstallment = sameTypeActiveLoans.reduce(
+    (sum, item) => sum + Number(item.monthlyInstallment || 0),
+    0
+  );
+  const isTopUpValid =
+    sameTypeSettlementTotal === 0 || Number(amount || 0) > sameTypeSettlementTotal;
+
+  const baseThpRemainingForEligibility = thpData
     ? (thpData.angsuran_lain_lain !== undefined
         ? thpData.master_thp - thpData.active_installments - Number(thpData.angsuran_lain_lain ?? 0) - (thpData.savings_deduction || 0)
         : thpData.remaining_thp)
     : 0;
+  const thpRemainingForEligibility = baseThpRemainingForEligibility + replacedMonthlyInstallment;
 
   const eligibility = thpData 
     ? calculateTHPEligibility(thpRemainingForEligibility, calculateCicilan(), minRemainingThp)
@@ -592,6 +700,10 @@ export default function PengajuanPinjaman({
       setError(`Tenor pinjaman harus berada di antara 1 hingga ${maxTenor} bulan.`);
       return;
     }
+    if (!isTopUpValid) {
+      setError(`Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`);
+      return;
+    }
     if (thpData !== null && !isTHPEligible()) {
       setError(`Pengajuan ditolak: Sisa THP setelah pemotongan (${formatCurrency(eligibility.finalRemainingThp)}) kurang dari batas minimal ${formatCurrency(minRemainingThp)}.`);
       return;
@@ -600,7 +712,30 @@ export default function PengajuanPinjaman({
     setSuccess(null);
     setSubmitting(true);
     try {
-      await submitLoanApplication(selectedAnggota, purpose, amount, effectiveTenor, selectedLoanTypeId, maxTenor, minRemainingThp);
+      const topUpOptions = sameTypeSettlementTotal > 0
+        ? {
+            refinancedLoanId: sameTypeActiveLoans[0]?.id || null,
+            topupSettlementAmount: sameTypeSettlementTotal,
+            replacedMonthlyInstallment,
+          }
+        : undefined;
+      const settlementSummary = sameTypeActiveLoans
+        .map((l) => `${l.loanNumber} (Rp ${Number(l.remainingPrincipal).toLocaleString('id-ID')})`)
+        .join(', ');
+      const netDisbursed = Math.max(0, Number(amount || 0) - sameTypeSettlementTotal);
+      const effectivePurpose = sameTypeSettlementTotal > 0
+        ? `${purpose} [Top-Up Kompensasi: ${settlementSummary} | Cair Bersih: Rp ${netDisbursed.toLocaleString('id-ID')}]`
+        : purpose;
+      await submitLoanApplication(
+        selectedAnggota,
+        effectivePurpose,
+        amount,
+        effectiveTenor,
+        selectedLoanTypeId,
+        maxTenor,
+        minRemainingThp,
+        topUpOptions
+      );
       setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
       
       // Reset form
@@ -786,7 +921,7 @@ export default function PengajuanPinjaman({
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isTenorValid || (thpData !== null && !isTHPEligible())}
+                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isTenorValid || !isTopUpValid || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
@@ -801,6 +936,8 @@ export default function PengajuanPinjaman({
           <SimulationPanel
             thpData={thpData}
             activeLoanBreakdown={activeLoanBreakdown}
+            sameTypeActiveLoans={sameTypeActiveLoans}
+            selectedLoanTypeName={selectedLoanType?.name}
             newInstallment={calculateCicilan()}
             amount={amount}
             tenor={effectiveTenor || ''}

@@ -973,4 +973,65 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
     });
   });
+
+  describe('SimulationPanel - Top-Up Same-Type Loan', () => {
+    const oldSameTypeLoan = {
+      id: 'loan-old-1',
+      loanNumber: 'LOAN-1794788414918',
+      loanTypeId: 'lt-bon-barang',
+      typeName: 'Bon Barang',
+      tenor: 4,
+      monthlyInstallment: 250000,
+      remainingPrincipal: 625000,
+    };
+
+    it('renders top-up compensation breakdown and excludes replaced installment from double-counting', () => {
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={{
+            master_thp: 5000000,
+            active_installments: 250000,
+            angsuran_lain_lain: 0,
+            savings_deduction: 200000,
+            remaining_thp: 4550000,
+          }}
+          activeLoanBreakdown={[oldSameTypeLoan]}
+          sameTypeActiveLoans={[oldSameTypeLoan]}
+          selectedLoanTypeName="Bon Barang"
+          newInstallment={500000}
+          amount={2000000}
+          tenor={4}
+        />
+      );
+
+      expect(html).toContain('Mode Perpanjangan / Top-Up (Bon Barang)');
+      expect(html).toContain('LOAN-1794788414918');
+      expect(html).toContain('625.000');
+      expect(html).toContain('Dana Bersih Diterima Anggota');
+      expect(html).toContain('1.375.000');
+      // Sisa THP Akhir: 5.000.000 - 0 (other types) - 200.000 (savings) - 500.000 (new installment) = 4.300.000
+      expect(html).toContain('4.300.000');
+    });
+
+    it('shows validation warning when new plafon is not greater than existing remaining principal', () => {
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={{
+            master_thp: 5000000,
+            active_installments: 250000,
+            savings_deduction: 200000,
+            remaining_thp: 4550000,
+          }}
+          activeLoanBreakdown={[oldSameTypeLoan]}
+          sameTypeActiveLoans={[oldSameTypeLoan]}
+          selectedLoanTypeName="Bon Barang"
+          newInstallment={125000}
+          amount={500000}
+          tenor={4}
+        />
+      );
+
+      expect(html).toContain('Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama');
+    });
+  });
 });

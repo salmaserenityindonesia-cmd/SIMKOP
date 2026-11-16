@@ -1296,4 +1296,150 @@ describe('loanService', () => {
         .rejects.toThrow('Jumlah pembayaran harus lebih besar dari 0');
     });
   });
+
+  describe('Top-Up Same-Type Loan Settlement', () => {
+    it('applyLoan rejects top-up when plafon is <= remaining principal of old same-type loan', async () => {
+      await expect(
+        loanService.applyLoan('member-1', 'Top-Up', 500000, 4, 'lt-bon', 1500000, {
+          refinancedLoanId: 'loan-old-1',
+          topupSettlementAmount: 625000,
+          replacedMonthlyInstallment: 250000,
+        })
+      ).rejects.toThrow(/harus lebih besar dari sisa pinjaman lama/);
+    });
+
+    it('approveLoan settles old same-type loan schedules, logs TOPUP_COMPENSATION, marks old loan paid_off, and records net cash_flow', async () => {
+      const newLoan = {
+        id: 'loan-new-1',
+        loan_number: 'LOAN-NEW-001',
+        member_id: 'member-1',
+        loan_type_id: 'lt-bon',
+        refinanced_loan_id: 'loan-old-1',
+        topup_settlement_amount: 625000,
+        principal_amount: 2000000,
+        amount: 2000000,
+        tenor: 4,
+        agreed_tenor_months: 4,
+        monthly_target: 500000,
+        planned_installment_amount: 500000,
+        status: 'draft',
+      };
+
+      const oldLoan = {
+        id: 'loan-old-1',
+        loan_number: 'LOAN-1794788414918',
+        sisa_pinjaman: 625000,
+        status: 'active',
+      };
+
+      const updatedLoans: any[] = [];
+      const updatedSchedules: any[] = [];
+      const insertedRepayments: any[] = [];
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: () => ({
+              eq: (col: string, val: any) => {
+                if (col === 'id' && val === 'loan-new-1') {
+                  return { maybeSingle: vi.fn().mockResolvedValue({ data: newLoan, error: null }) };
+                }
+                if (col === 'member_id') {
+                  return {
+                    eq: () => ({
+                      in: () => ({
+                        neq: vi.fn().mockResolvedValue({ data: [oldLoan], error: null }),
+                      }),
+                    }),
+                  };
+                }
+                return { maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+              },
+            }),
+            update: (payload: any) => ({
+              eq: (col: string, val: any) => {
+                updatedLoans.push({ id: val, payload });
+                if (val === 'loan-new-1') {
+                  return {
+                    select: () => ({
+                      single: vi.fn().mockResolvedValue({
+                        data: { ...newLoan, ...payload },
+                        error: null,
+                      }),
+                    }),
+                  };
+                }
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === 'loan_schedules') {
+          return {
+            select: () => ({
+              eq: (_col: string, val: any) => {
+                if (val === 'loan-new-1') {
+                  return { limit: vi.fn().mockResolvedValue({ data: [], error: null }) };
+                }
+                return {
+                  neq: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sch-old-1', target_amount: 625000, paid_amount: 0, status: 'unpaid' }],
+                    error: null,
+                  }),
+                };
+              },
+            }),
+            insert: vi.fn().mockResolvedValue({ data: [], error: null }),
+            update: (payload: any) => ({
+              eq: (_col: string, val: any) => {
+                updatedSchedules.push({ id: val, payload });
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+        }
+
+        if (table === 'loan_repayments') {
+          return {
+            insert: (payload: any) => {
+              insertedRepayments.push(payload);
+              return Promise.resolve({ data: payload, error: null });
+            },
+          };
+        }
+
+        if (table === 'cash_flow') {
+          return {
+            insert: (payload: any) => {
+              insertedCashFlows.push(...payload);
+              return Promise.resolve({ data: payload, error: null });
+            },
+          };
+        }
+
+        if (table === 'audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+
+        return {};
+      });
+
+      const res = await loanService.approveLoan('loan-new-1', '2026-11-16');
+
+      expect(res.status).toBe('active');
+      expect(updatedSchedules).toEqual([
+        { id: 'sch-old-1', payload: { paid_amount: 625000, status: 'paid' } },
+      ]);
+      expect(insertedRepayments).toHaveLength(1);
+      expect(insertedRepayments[0].loan_id).toBe('loan-old-1');
+      expect(insertedRepayments[0].amount_paid).toBe(625000);
+      expect(insertedRepayments[0].payment_method).toBe('TOPUP_COMPENSATION');
+      expect(updatedLoans.some((u) => u.id === 'loan-old-1' && u.payload.status === 'paid_off' && u.payload.sisa_pinjaman === 0)).toBe(true);
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0].direction).toBe('out');
+      expect(insertedCashFlows[0].amount).toBe(1375000);
+    });
+  });
 });

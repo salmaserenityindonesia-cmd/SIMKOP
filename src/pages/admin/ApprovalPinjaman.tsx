@@ -67,9 +67,18 @@ export default function ApprovalPinjaman({
 
   const handleAction = async (id: string, action: 'approved' | 'rejected') => {
     const isApprove = action === 'approved';
+    const targetLoan = pinjamanList.find((item) => String(item.id) === String(id));
+    const settlementAmt = Number(targetLoan?.topup_settlement_amount || 0);
+    const principalAmt = Number(targetLoan?.amount || targetLoan?.principal_amount || 0);
+    const netDisbursedAmt = Math.max(0, principalAmt - settlementAmt);
+    const topupConfirmDetail =
+      isApprove && settlementAmt > 0
+        ? ` Pinjaman lama akan otomatis dilunasi sebesar ${formatRupiah(settlementAmt)} (Cair Bersih ke Anggota: ${formatRupiah(netDisbursedAmt)}).`
+        : '';
+
     const confirmed = await showConfirm({
       title: isApprove ? 'Setujui Pinjaman' : 'Tolak Pinjaman',
-      message: `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?`,
+      message: `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?${topupConfirmDetail}`,
       confirmText: isApprove ? 'Setujui' : 'Tolak',
       variant: isApprove ? 'primary' : 'danger',
     });
@@ -318,7 +327,13 @@ export default function ApprovalPinjaman({
                       <td className="py-3 px-4 text-sm text-gray-600">{formatDate(p.created_at)}</td>
                       <td className="py-3 px-4 text-sm text-gray-600">{formatDate(p.disbursed_at)}</td>
                       <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">
-                        {formatRupiah(p.amount || p.principal_amount || 0)}
+                        <div>{formatRupiah(p.amount || p.principal_amount || 0)}</div>
+                        {Number(p.topup_settlement_amount || 0) > 0 && (
+                          <div className="mt-1 inline-block rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-medium text-indigo-800 text-right">
+                            Top-Up • Potong Lama: {formatRupiah(Number(p.topup_settlement_amount))} • Cair Bersih:{' '}
+                            {formatRupiah(Math.max(0, Number(p.amount || p.principal_amount || 0) - Number(p.topup_settlement_amount)))}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700 text-center">
                         {p.tenor || p.agreed_tenor_months || 0} Bulan

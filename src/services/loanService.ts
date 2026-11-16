@@ -31,6 +31,9 @@ export {
 export interface Loan {
   id: string;
   member_id: string;
+  loan_type_id?: string;
+  refinanced_loan_id?: string | null;
+  topup_settlement_amount?: number;
   notes: string;
   amount: number;
   principal_amount?: number;
@@ -489,6 +492,8 @@ export const loanService = {
         loan_number,
         member_id,
         loan_type_id,
+        refinanced_loan_id,
+        topup_settlement_amount,
         amount,
         principal_amount,
         agreed_tenor_months,
@@ -722,12 +727,26 @@ export const loanService = {
     amount: number,
     tenor: number,
     loanTypeId?: string,
-    minThreshold: number = MIN_REMAINING_THP
+    minThreshold: number = MIN_REMAINING_THP,
+    topUpOptions?: {
+      refinancedLoanId?: string | null;
+      topupSettlementAmount?: number;
+      replacedMonthlyInstallment?: number;
+    }
   ) {
     const monthlyTarget = amount / tenor;
-    
+    const settlementAmount = Math.max(0, Number(topUpOptions?.topupSettlementAmount || 0));
+    const replacedInstallment = Math.max(0, Number(topUpOptions?.replacedMonthlyInstallment || 0));
+
+    if (settlementAmount > 0 && amount <= settlementAmount) {
+      throw new Error(
+        `Plafon pinjaman baru (Rp ${amount.toLocaleString('id-ID')}) harus lebih besar dari sisa pinjaman lama yang dilunasi (Rp ${settlementAmount.toLocaleString('id-ID')}).`
+      );
+    }
+
     const { remaining_thp } = await this.getMemberTHP(memberId);
-    const eligibility = calculateTHPEligibility(remaining_thp, monthlyTarget, minThreshold);
+    const effectiveRemainingThp = remaining_thp + replacedInstallment;
+    const eligibility = calculateTHPEligibility(effectiveRemainingThp, monthlyTarget, minThreshold);
     if (!eligibility.isEligible) {
       throw new Error(
         `Pengajuan ditolak: Sisa THP setelah pemotongan (Rp ${eligibility.finalRemainingThp.toLocaleString('id-ID')}) kurang Rp ${eligibility.shortfall.toLocaleString('id-ID')} dari batas minimal Rp ${minThreshold.toLocaleString('id-ID')}.`
@@ -744,21 +763,30 @@ export const loanService = {
       targetLoanTypeId = loanTypes[0].id;
     }
 
+    const insertPayload: Record<string, any> = {
+      loan_number: `LOAN-${Date.now()}`,
+      member_id: memberId,
+      loan_type_id: targetLoanTypeId,
+      principal_amount: amount,
+      agreed_tenor_months: tenor,
+      planned_installment_amount: monthlyTarget,
+      amount: amount,
+      tenor: tenor,
+      monthly_target: monthlyTarget,
+      notes: purpose,
+      status: 'draft'
+    };
+
+    if (topUpOptions?.refinancedLoanId) {
+      insertPayload.refinanced_loan_id = topUpOptions.refinancedLoanId;
+    }
+    if (settlementAmount > 0) {
+      insertPayload.topup_settlement_amount = settlementAmount;
+    }
+
     const { data, error } = await supabase
       .from('loans')
-      .insert([{
-        loan_number: `LOAN-${Date.now()}`,
-        member_id: memberId,
-        loan_type_id: targetLoanTypeId,
-        principal_amount: amount,
-        agreed_tenor_months: tenor,
-        planned_installment_amount: monthlyTarget,
-        amount: amount,
-        tenor: tenor,
-        monthly_target: monthlyTarget,
-        notes: purpose,
-        status: 'draft'
-      }])
+      .insert([insertPayload])
       .select()
       .single();
 
@@ -778,7 +806,7 @@ export const loanService = {
       const loansFetchTable: any = supabase.from('loans');
       if (loansFetchTable && typeof loansFetchTable.select === 'function') {
         const fetchQuery = loansFetchTable
-          .select('id, member_id, principal_amount, amount, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status')
+          .select('id, loan_number, member_id, loan_type_id, refinanced_loan_id, topup_settlement_amount, principal_amount, amount, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status')
           .eq('id', loanId);
         const fetchRes = typeof fetchQuery?.maybeSingle === 'function'
           ? await fetchQuery.maybeSingle()
@@ -864,6 +892,112 @@ export const loanService = {
           .insert(schedules);
 
         if (scheduleError) throw new Error(scheduleError.message);
+      }
+    }
+
+    // 4b. Pelunasan otomatis kontrak pinjaman lama sejenis jika ini adalah pengajuan Top-Up
+    let totalSettlementAmt = 0;
+    const memberIdForTopup = loanRecord.member_id || existingLoan?.member_id;
+    const loanTypeIdForTopup = loanRecord.loan_type_id || existingLoan?.loan_type_id;
+    const refinancedLoanId = loanRecord.refinanced_loan_id || existingLoan?.refinanced_loan_id || null;
+
+    if (memberIdForTopup && (loanTypeIdForTopup || refinancedLoanId)) {
+      try {
+        const oldLoansMap = new Map<string, any>();
+
+        if (loanTypeIdForTopup) {
+          const sameTypeRes: any = await supabase
+            .from('loans')
+            .select('id, loan_number, sisa_pinjaman, status')
+            .eq('member_id', memberIdForTopup)
+            .eq('loan_type_id', loanTypeIdForTopup)
+            .in('status', ['active', 'approved'])
+            .neq('id', targetLoanId);
+
+          for (const row of sameTypeRes?.data || []) {
+            if (row?.id && Number(row.sisa_pinjaman ?? 0) > 0) {
+              oldLoansMap.set(String(row.id), row);
+            }
+          }
+        }
+
+        if (refinancedLoanId && !oldLoansMap.has(String(refinancedLoanId))) {
+          const refRes: any = await supabase
+            .from('loans')
+            .select('id, loan_number, sisa_pinjaman, status')
+            .eq('id', refinancedLoanId)
+            .maybeSingle();
+          const refRow = refRes?.data;
+          if (refRow?.id && refRow.status !== 'paid_off' && Number(refRow.sisa_pinjaman ?? 0) > 0) {
+            oldLoansMap.set(String(refRow.id), refRow);
+          }
+        }
+
+        for (const oldLoan of oldLoansMap.values()) {
+          const settlementAmt = Math.max(0, Number(oldLoan.sisa_pinjaman ?? 0));
+          totalSettlementAmt += settlementAmt;
+
+          const { data: unpaidOldSchedules } = await supabase
+            .from('loan_schedules')
+            .select('id, target_amount, paid_amount, status')
+            .eq('loan_id', oldLoan.id)
+            .neq('status', 'paid');
+
+          for (const sch of unpaidOldSchedules || []) {
+            await supabase
+              .from('loan_schedules')
+              .update({
+                paid_amount: Number(sch.target_amount || 0),
+                status: 'paid',
+              })
+              .eq('id', sch.id);
+          }
+
+          if (settlementAmt > 0) {
+            await supabase.from('loan_repayments').insert({
+              loan_id: oldLoan.id,
+              schedule_id: null,
+              amount_paid: settlementAmt,
+              payment_method: 'TOPUP_COMPENSATION',
+              payment_date: new Date().toISOString(),
+              receipt_number: `KW-TOPUP-${Date.now()}`,
+              notes: `Pelunasan otomatis via top-up pinjaman baru ${loanRecord.loan_number || targetLoanId}`,
+            });
+          }
+
+          await supabase
+            .from('loans')
+            .update({
+              status: 'paid_off',
+              sisa_pinjaman: 0,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', oldLoan.id);
+        }
+      } catch (topupErr) {
+        console.warn('Gagal memproses pelunasan otomatis pinjaman top-up:', topupErr);
+      }
+    }
+
+    // 4c. Catat pengeluaran kas riil (dana bersih diterima anggota) ke public.cash_flow
+    const effectiveSettlement = totalSettlementAmt > 0
+      ? totalSettlementAmt
+      : Math.max(0, Number(loanRecord.topup_settlement_amount ?? existingLoan?.topup_settlement_amount ?? 0));
+    const netDisbursedAmount = Math.max(0, finalPrincipal - effectiveSettlement);
+    if (netDisbursedAmount > 0) {
+      try {
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          await cfTable.insert([{
+            direction: 'out',
+            amount: netDisbursedAmount,
+            category: 'pencairan_pinjaman',
+            reference_id: targetLoanId,
+            created_at: new Date().toISOString(),
+          }]);
+        }
+      } catch (cfErr) {
+        console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
       }
     }
 
