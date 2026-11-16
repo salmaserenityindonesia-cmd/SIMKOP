@@ -752,8 +752,12 @@ export async function getMemberActiveDebt(memberId: string): Promise<number> {
     if (!memberId) return 0;
 
     // Hitung total belanja bon
-    const { data: sales } = await supabase
-      .from('sales')
+    const salesTable = supabase.from('sales');
+    if (!salesTable || typeof salesTable.select !== 'function') {
+      return 0;
+    }
+
+    const { data: sales } = await salesTable
       .select('id, paid_credit, sale_status')
       .eq('member_id', memberId)
       .gt('paid_credit', 0);
@@ -1064,8 +1068,18 @@ export async function getMemberUnpaidStoreCreditSummary(
     }
 
     // 1. Ambil rencana aktif terbaru milik memberId
-    let planQuery: any = supabase
-      .from('store_credit_installment_plans')
+    const planTable = supabase.from('store_credit_installment_plans');
+    if (!planTable || typeof planTable.select !== 'function') {
+      const ledgerDebt = await getMemberActiveDebt(memberId);
+      return {
+        unpaidBalance: Math.round(ledgerDebt),
+        activePlan: null,
+        existingTenor: 1,
+        existingMonthlyInstallment: Math.round(ledgerDebt)
+      };
+    }
+
+    let planQuery: any = planTable
       .select('*')
       .eq('member_id', memberId)
       .eq('status', 'active');
@@ -1167,14 +1181,16 @@ export async function createOrTakeoverStoreCreditPlan(
     const nowIso = new Date().toISOString();
 
     // 1. Ubah seluruh rencana aktif lama milik member menjadi superseded
-    await supabase
-      .from('store_credit_installment_plans')
-      .update({
-        status: 'superseded',
-        updated_at: nowIso
-      })
-      .eq('member_id', payload.memberId)
-      .eq('status', 'active');
+    const plansTable = supabase.from('store_credit_installment_plans');
+    if (plansTable && typeof plansTable.update === 'function') {
+      await plansTable
+        .update({
+          status: 'superseded',
+          updated_at: nowIso
+        })
+        .eq('member_id', payload.memberId)
+        .eq('status', 'active');
+    }
 
     // 2. Simpan rencana baru dengan status active
     let currentUserId = payload.userId || null;
@@ -1203,26 +1219,25 @@ export async function createOrTakeoverStoreCreditPlan(
       updated_at: nowIso
     };
 
-    let insertPlanQuery = supabase
-      .from('store_credit_installment_plans')
-      .insert(newPlanData);
-
     let insertedPlan: any = null;
-    if (insertPlanQuery && typeof (insertPlanQuery as any).select === 'function') {
-      const sel = (insertPlanQuery as any).select();
-      if (sel && typeof sel.single === 'function') {
-        const { data, error } = await sel.single();
+    if (plansTable && typeof plansTable.insert === 'function') {
+      const insertPlanQuery = plansTable.insert(newPlanData);
+      if (insertPlanQuery && typeof (insertPlanQuery as any).select === 'function') {
+        const sel = (insertPlanQuery as any).select();
+        if (sel && typeof sel.single === 'function') {
+          const { data, error } = await sel.single();
+          if (error) throw error;
+          insertedPlan = data;
+        } else {
+          const { data, error } = await sel;
+          if (error) throw error;
+          insertedPlan = Array.isArray(data) ? data[0] : data;
+        }
+      } else {
+        const { data, error } = await insertPlanQuery;
         if (error) throw error;
         insertedPlan = data;
-      } else {
-        const { data, error } = await sel;
-        if (error) throw error;
-        insertedPlan = Array.isArray(data) ? data[0] : data;
       }
-    } else {
-      const { data, error } = await insertPlanQuery;
-      if (error) throw error;
-      insertedPlan = data;
     }
 
     if (!insertedPlan) {
@@ -1268,17 +1283,17 @@ export async function createOrTakeoverStoreCreditPlan(
     }
 
     let insertedSchedules: any = null;
-    const schedQuery = supabase
-      .from('store_credit_schedules')
-      .insert(schedulesToInsert);
-
-    if (schedQuery && typeof (schedQuery as any).select === 'function') {
-      const { data, error } = await (schedQuery as any).select();
-      if (error) throw error;
-      insertedSchedules = data;
-    } else {
-      const { error } = await schedQuery;
-      if (error) throw error;
+    const schedTable = supabase.from('store_credit_schedules');
+    if (schedTable && typeof schedTable.insert === 'function') {
+      const schedQuery = schedTable.insert(schedulesToInsert);
+      if (schedQuery && typeof (schedQuery as any).select === 'function') {
+        const { data, error } = await (schedQuery as any).select();
+        if (error) throw error;
+        insertedSchedules = data;
+      } else {
+        const { error } = await schedQuery;
+        if (error) throw error;
+      }
     }
 
     const createdSchedules = insertedSchedules || schedulesToInsert;

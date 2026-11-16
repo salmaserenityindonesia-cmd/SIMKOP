@@ -3,6 +3,7 @@ import { processCheckout } from './posCheckoutService';
 import { supabase } from '../lib/supabaseClient';
 import * as cashierShiftService from './cashierShiftService';
 import * as posCreditService from './posCreditService';
+import * as storeCreditLedgerService from './storeCreditLedgerService';
 
 vi.mock('../lib/supabaseClient', () => ({
   supabase: {
@@ -609,5 +610,197 @@ describe('posCheckoutService', () => {
         p_payment_scheme: 'split'
       })
     );
+  });
+
+  describe('Store Credit Installment Plan Integration', () => {
+    it('should create store credit plan on RPC path with pre-checkout unpaidBalance and specified storeCreditTenor', async () => {
+      const preSummarySpy = vi.spyOn(storeCreditLedgerService, 'getMemberUnpaidStoreCreditSummary').mockResolvedValue({
+        unpaidBalance: 120000,
+        activePlan: null,
+        existingTenor: 1,
+        existingMonthlyInstallment: 120000
+      });
+
+      const planSpy = vi.spyOn(storeCreditLedgerService, 'createOrTakeoverStoreCreditPlan').mockResolvedValue({
+        success: true,
+        planId: 'plan-atomic-1'
+      });
+
+      vi.spyOn(posCreditService, 'getMemberFinancials').mockResolvedValue({
+        belanjaBalance: 0,
+        remainingCreditLimit: 1000000,
+        thpSafetyThreshold: 1500000
+      });
+
+      (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+        if (funcName === 'process_pos_checkout') {
+          return Promise.resolve({
+            data: {
+              success: true,
+              sale_id: 'sale-uuid-atomic-credit',
+              sale_number: params.p_sale_number
+            },
+            error: null
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const payload = {
+        memberId: 'member-atomic-credit',
+        cashierId: 'cashier-10',
+        cart: [{ id: 'prod-1', name: 'Barang Bon', qty: 1, price: 80000 }],
+        subtotal: 80000,
+        discount: 0,
+        totalAmount: 80000,
+        paidCash: 0,
+        paidDeposit: 0,
+        paidCredit: 80000,
+        paymentScheme: 'store_credit',
+        storeCreditTenor: 3
+      };
+
+      const res = await processCheckout(payload);
+
+      expect(res.success).toBe(true);
+      expect(res.saleId).toBe('sale-uuid-atomic-credit');
+
+      // Memastikan getMemberUnpaidStoreCreditSummary dipanggil untuk member
+      expect(preSummarySpy).toHaveBeenCalledWith('member-atomic-credit');
+
+      // Memastikan createOrTakeoverStoreCreditPlan dipanggil dengan parameter yang tepat
+      expect(planSpy).toHaveBeenCalledWith({
+        memberId: 'member-atomic-credit',
+        saleId: 'sale-uuid-atomic-credit',
+        previousUnpaidBalance: 120000,
+        newCreditAmount: 80000,
+        tenorMonths: 3,
+        userId: 'cashier-10'
+      });
+    });
+
+    it('should create store credit plan on fallback path with preCheckoutSummary fallback tenor when storeCreditTenor is omitted', async () => {
+      const preSummarySpy = vi.spyOn(storeCreditLedgerService, 'getMemberUnpaidStoreCreditSummary').mockResolvedValue({
+        unpaidBalance: 50000,
+        activePlan: null,
+        existingTenor: 2,
+        existingMonthlyInstallment: 25000
+      });
+
+      const planSpy = vi.spyOn(storeCreditLedgerService, 'createOrTakeoverStoreCreditPlan').mockResolvedValue({
+        success: true,
+        planId: 'plan-fallback-1'
+      });
+
+      vi.spyOn(posCreditService, 'getMemberFinancials').mockResolvedValue({
+        belanjaBalance: 0,
+        remainingCreditLimit: 500000,
+        thpSafetyThreshold: 1500000
+      });
+
+      // Simulate missing RPC -> fallback to sequential client mutations
+      (supabase.rpc as any).mockResolvedValue({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function' }
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: 'sale-fallback-credit-id' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'sale_items') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { stock: 10 }, error: null })
+              })
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null })
+            })
+          };
+        }
+        return {};
+      });
+
+      const payload = {
+        memberId: 'member-fallback-credit',
+        cashierId: 'cashier-fallback',
+        cart: [{ id: 'prod-1', name: 'Barang Fallback', qty: 1, price: 60000 }],
+        subtotal: 60000,
+        discount: 0,
+        totalAmount: 60000,
+        paidCash: 0,
+        paidDeposit: 0,
+        paidCredit: 60000,
+        paymentScheme: 'store_credit'
+        // storeCreditTenor dihilangkan -> fallback ke preCheckoutSummary.existingTenor = 2
+      };
+
+      const res = await processCheckout(payload);
+
+      expect(res.success).toBe(true);
+      expect(res.saleId).toBe('sale-fallback-credit-id');
+
+      expect(preSummarySpy).toHaveBeenCalledWith('member-fallback-credit');
+      expect(planSpy).toHaveBeenCalledWith({
+        memberId: 'member-fallback-credit',
+        saleId: 'sale-fallback-credit-id',
+        previousUnpaidBalance: 50000,
+        newCreditAmount: 60000,
+        tenorMonths: 2, // fallback dari existingTenor
+        userId: 'cashier-fallback'
+      });
+    });
+
+    it('should NOT call createOrTakeoverStoreCreditPlan on cash checkout (paidCredit === 0)', async () => {
+      const preSummarySpy = vi.spyOn(storeCreditLedgerService, 'getMemberUnpaidStoreCreditSummary');
+      const planSpy = vi.spyOn(storeCreditLedgerService, 'createOrTakeoverStoreCreditPlan');
+
+      (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+        if (funcName === 'process_pos_checkout') {
+          return Promise.resolve({
+            data: {
+              success: true,
+              sale_id: 'sale-cash-only',
+              sale_number: params.p_sale_number
+            },
+            error: null
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const payload = {
+        memberId: 'member-cash-only',
+        cashierId: 'cashier-1',
+        cart: [{ id: 'prod-1', name: 'Barang Tunai', qty: 1, price: 20000 }],
+        subtotal: 20000,
+        discount: 0,
+        totalAmount: 20000,
+        paidCash: 20000,
+        paidDeposit: 0,
+        paidCredit: 0,
+        paymentScheme: 'cash'
+      };
+
+      const res = await processCheckout(payload);
+
+      expect(res.success).toBe(true);
+      expect(preSummarySpy).not.toHaveBeenCalled();
+      expect(planSpy).not.toHaveBeenCalled();
+    });
   });
 });

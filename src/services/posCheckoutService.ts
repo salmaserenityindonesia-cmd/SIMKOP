@@ -2,6 +2,10 @@ import { supabase } from '../lib/supabaseClient';
 import { getMemberFinancials } from './posCreditService';
 import { getLocalActiveShift, getActiveShiftId } from './cashierShiftService';
 import {
+  getMemberUnpaidStoreCreditSummary,
+  createOrTakeoverStoreCreditPlan
+} from './storeCreditLedgerService';
+import {
   PosCheckoutItem,
   PosCheckoutRpcPayload,
   PosCheckoutRpcResponse,
@@ -20,6 +24,7 @@ export interface CheckoutPayload {
   paidDeposit: number;
   paidCredit: number;
   paymentScheme: string; // 'cash' | 'split' | 'store_credit'
+  storeCreditTenor?: number;
 }
 
 export const processCheckout = async (payload: CheckoutPayload): Promise<CheckoutResult> => {
@@ -43,6 +48,21 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
       }
       if (payload.paidDeposit > financials.belanjaBalance) {
          return { success: false, error: 'Deposit amount exceeds available Belanja balance.' };
+      }
+    }
+
+    // Pre-checkout: Ambil ringkasan sisa saldo bon anggota SEBELUM transaksi baru tercatat di database (mencegah double-counting)
+    let preCheckoutSummary: { unpaidBalance: number; existingTenor: number } | null = null;
+    if (payload.paidCredit > 0 && payload.memberId) {
+      try {
+        const summary = await getMemberUnpaidStoreCreditSummary(payload.memberId);
+        preCheckoutSummary = {
+          unpaidBalance: summary.unpaidBalance || 0,
+          existingTenor: summary.existingTenor || 1
+        };
+      } catch (err) {
+        console.warn('Warning fetching member unpaid store credit summary before checkout:', err);
+        preCheckoutSummary = { unpaidBalance: 0, existingTenor: 1 };
       }
     }
 
@@ -135,156 +155,176 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
       }
     }
 
+    let resolvedSaleId = '';
+    let resolvedSaleNumber = '';
+
     if (rpcExecuted && rpcResult) {
-      return {
-        success: true,
-        saleId: rpcResult.sale_id,
-        saleNumber: rpcResult.sale_number || saleNumber
-      };
-    }
+      resolvedSaleId = rpcResult.sale_id || '';
+      resolvedSaleNumber = rpcResult.sale_number || saleNumber;
+    } else {
+      // 4. Fallback: Sequential client-side mutations (for environments without process_pos_checkout RPC)
+      const { data: saleData, error: saleError } = await supabase
+        .from('sales')
+        .insert({
+          sale_number: saleNumber,
+          member_id: payload.memberId,
+          cashier_id: payload.cashierId,
+          shift_id: effectiveShiftId,
+          subtotal: payload.subtotal,
+          discount: payload.discount,
+          total_amount: payload.totalAmount,
+          paid_amount: effectivePaidAmount,
+          paid_cash: effectivePaidCash,
+          paid_deposit: payload.paidDeposit,
+          paid_credit: payload.paidCredit,
+          payment_scheme: payload.paymentScheme,
+          sale_status: 'completed'
+        })
+        .select('id')
+        .single();
 
-    // 4. Fallback: Sequential client-side mutations (for environments without process_pos_checkout RPC)
-    const { data: saleData, error: saleError } = await supabase
-      .from('sales')
-      .insert({
-        sale_number: saleNumber,
-        member_id: payload.memberId,
-        cashier_id: payload.cashierId,
-        shift_id: effectiveShiftId,
-        subtotal: payload.subtotal,
-        discount: payload.discount,
-        total_amount: payload.totalAmount,
-        paid_amount: effectivePaidAmount,
-        paid_cash: effectivePaidCash,
-        paid_deposit: payload.paidDeposit,
-        paid_credit: payload.paidCredit,
-        payment_scheme: payload.paymentScheme,
-        sale_status: 'completed'
-      })
-      .select('id')
-      .single();
+      if (saleError) throw saleError;
+      const saleId = saleData.id;
+      resolvedSaleId = saleId;
+      resolvedSaleNumber = saleNumber;
 
-    if (saleError) throw saleError;
-    const saleId = saleData.id;
+      // Insert sale items
+      const items = payload.cart.map(item => ({
+         sale_id: saleId,
+         product_id: item.id,
+         product_name: item.name,
+         quantity: item.qty,
+         unit_price: item.price
+      }));
 
-    // Insert sale items
-    const items = payload.cart.map(item => ({
-       sale_id: saleId,
-       product_id: item.id,
-       product_name: item.name,
-       quantity: item.qty,
-       unit_price: item.price
-    }));
+      const { error: itemsError } = await supabase.from('sale_items').insert(items);
+      if (itemsError) throw itemsError;
 
-    const { error: itemsError } = await supabase.from('sale_items').insert(items);
-    if (itemsError) throw itemsError;
-
-    // Update Product Stock
-    for (const item of payload.cart) {
-      const { data: product } = await supabase.from('products').select('stock').eq('id', item.id).single();
-      if (product) {
-         await supabase.from('products').update({ stock: product.stock - item.qty }).eq('id', item.id);
+      // Update Product Stock
+      for (const item of payload.cart) {
+        const { data: product } = await supabase.from('products').select('stock').eq('id', item.id).single();
+        if (product) {
+           await supabase.from('products').update({ stock: product.stock - item.qty }).eq('id', item.id);
+        }
       }
-    }
 
-    // Deduct from deposit_transactions if deposit used
-    if (payload.paidDeposit > 0 && payload.memberId) {
-      let depositRpcExecuted = false;
-      if (supabase.rpc && typeof supabase.rpc === 'function') {
-        const { data: rpcRes, error: rpcErr } = await supabase.rpc('process_pos_deposit_payment', {
-          p_member_id: payload.memberId,
-          p_amount: payload.paidDeposit,
-          p_sale_id: saleId,
-          p_invoice_number: saleNumber,
-          p_cashier_id: payload.cashierId
-        });
+      // Deduct from deposit_transactions if deposit used
+      if (payload.paidDeposit > 0 && payload.memberId) {
+        let depositRpcExecuted = false;
+        if (supabase.rpc && typeof supabase.rpc === 'function') {
+          const { data: rpcRes, error: rpcErr } = await supabase.rpc('process_pos_deposit_payment', {
+            p_member_id: payload.memberId,
+            p_amount: payload.paidDeposit,
+            p_sale_id: saleId,
+            p_invoice_number: saleNumber,
+            p_cashier_id: payload.cashierId
+          });
 
-        if (rpcErr) {
-          const isMissingFunction = rpcErr.code === 'PGRST202' || rpcErr.message?.includes('Could not find the function');
-          if (!isMissingFunction) {
-            throw new Error(rpcErr.message || 'Gagal memproses pemotongan Simpanan Belanja');
+          if (rpcErr) {
+            const isMissingFunction = rpcErr.code === 'PGRST202' || rpcErr.message?.includes('Could not find the function');
+            if (!isMissingFunction) {
+              throw new Error(rpcErr.message || 'Gagal memproses pemotongan Simpanan Belanja');
+            }
+          } else if (rpcRes && rpcRes.success === false) {
+            throw new Error(rpcRes.message || 'Saldo Simpanan Belanja tidak mencukupi');
+          } else if (!rpcErr && rpcRes?.success !== false) {
+            depositRpcExecuted = true;
           }
-        } else if (rpcRes && rpcRes.success === false) {
-          throw new Error(rpcRes.message || 'Saldo Simpanan Belanja tidak mencukupi');
-        } else if (!rpcErr && rpcRes?.success !== false) {
-          depositRpcExecuted = true;
-        }
-      }
-
-      if (!depositRpcExecuted) {
-        const { data: dTypes } = await supabase.from('deposit_types').select('id').ilike('name', '%belanja%');
-        let shoppingDepositTypeId = dTypes?.[0]?.id;
-
-        if (!shoppingDepositTypeId) {
-          const { data: dtByCode } = await supabase
-            .from('deposit_types')
-            .select('id')
-            .eq('code', 'BELANJA')
-            .maybeSingle();
-          shoppingDepositTypeId = dtByCode?.id;
         }
 
-        if (shoppingDepositTypeId) {
-          const memberDepQuery = supabase
-            .from('member_deposits')
-            .select('id')
-            .eq('member_id', payload.memberId)
-            .eq('deposit_type_id', shoppingDepositTypeId);
+        if (!depositRpcExecuted) {
+          const { data: dTypes } = await supabase.from('deposit_types').select('id').ilike('name', '%belanja%');
+          let shoppingDepositTypeId = dTypes?.[0]?.id;
 
-          const { data: memberDep } = typeof (memberDepQuery as any).maybeSingle === 'function'
-            ? await (memberDepQuery as any).maybeSingle()
-            : await (memberDepQuery as any).single();
+          if (!shoppingDepositTypeId) {
+            const { data: dtByCode } = await supabase
+              .from('deposit_types')
+              .select('id')
+              .eq('code', 'BELANJA')
+              .maybeSingle();
+            shoppingDepositTypeId = dtByCode?.id;
+          }
 
-          let targetMemberDepId = memberDep?.id;
-
-          if (!targetMemberDepId) {
-            const insertQuery = supabase
+          if (shoppingDepositTypeId) {
+            const memberDepQuery = supabase
               .from('member_deposits')
-              .insert({
-                member_id: payload.memberId,
-                deposit_type_id: shoppingDepositTypeId
-              })
-              .select('id');
+              .select('id')
+              .eq('member_id', payload.memberId)
+              .eq('deposit_type_id', shoppingDepositTypeId);
 
-            const { data: newDep } = typeof (insertQuery as any).maybeSingle === 'function'
-              ? await (insertQuery as any).maybeSingle()
-              : typeof (insertQuery as any).single === 'function'
-                ? await (insertQuery as any).single()
-                : await insertQuery;
+            const { data: memberDep } = typeof (memberDepQuery as any).maybeSingle === 'function'
+              ? await (memberDepQuery as any).maybeSingle()
+              : await (memberDepQuery as any).single();
 
-            targetMemberDepId = newDep?.id;
-          }
+            let targetMemberDepId = memberDep?.id;
 
-          if (targetMemberDepId) {
-            await supabase.from('deposit_transactions').insert({
-              member_deposit_id: targetMemberDepId,
-              transaction_date: new Date().toISOString(),
-              transaction_type: 'withdrawal',
-              amount: Number(payload.paidDeposit),
-              description: `Belanja Kasir POS (${saleNumber})`,
-              reference_no: saleNumber,
-              payment_method: 'potong_simpanan_belanja',
-              notes: `Transaksi belanja toko kasir`,
-              created_by: payload.cashierId,
-              created_at: new Date().toISOString()
-            });
+            if (!targetMemberDepId) {
+              const insertQuery = supabase
+                .from('member_deposits')
+                .insert({
+                  member_id: payload.memberId,
+                  deposit_type_id: shoppingDepositTypeId
+                })
+                .select('id');
+
+              const { data: newDep } = typeof (insertQuery as any).maybeSingle === 'function'
+                ? await (insertQuery as any).maybeSingle()
+                : typeof (insertQuery as any).single === 'function'
+                  ? await (insertQuery as any).single()
+                  : await insertQuery;
+
+              targetMemberDepId = newDep?.id;
+            }
+
+            if (targetMemberDepId) {
+              await supabase.from('deposit_transactions').insert({
+                member_deposit_id: targetMemberDepId,
+                transaction_date: new Date().toISOString(),
+                transaction_type: 'withdrawal',
+                amount: Number(payload.paidDeposit),
+                description: `Belanja Kasir POS (${saleNumber})`,
+                reference_no: saleNumber,
+                payment_method: 'potong_simpanan_belanja',
+                notes: `Transaksi belanja toko kasir`,
+                created_by: payload.cashierId,
+                created_at: new Date().toISOString()
+              });
+            }
           }
         }
       }
+
+      // Insert into cash_flow if cash used
+      if (effectivePaidCash > 0) {
+         const { error: cfError } = await supabase.from('cash_flow').insert({
+            direction: 'in',
+            amount: effectivePaidCash,
+            category: 'penjualan_tunai',
+            reference_id: saleId
+         });
+         if (cfError) console.error('cash_flow insert error:', cfError);
+      }
     }
 
-    // Insert into cash_flow if cash used
-    if (effectivePaidCash > 0) {
-       const { error: cfError } = await supabase.from('cash_flow').insert({
-          direction: 'in',
-          amount: effectivePaidCash,
-          category: 'penjualan_tunai',
-          reference_id: saleId
-       });
-       if (cfError) console.error('cash_flow insert error:', cfError);
+    // 5. Buat atau ambil alih rencana tenor angsuran bon toko jika ada pembayaran kredit/bon
+    if (payload.paidCredit > 0 && payload.memberId && resolvedSaleId) {
+      try {
+        const tenorMonths = payload.storeCreditTenor || preCheckoutSummary?.existingTenor || 1;
+        const prevBalance = preCheckoutSummary?.unpaidBalance ?? 0;
+        await createOrTakeoverStoreCreditPlan({
+          memberId: payload.memberId,
+          saleId: resolvedSaleId,
+          previousUnpaidBalance: prevBalance,
+          newCreditAmount: payload.paidCredit,
+          tenorMonths: tenorMonths,
+          userId: payload.cashierId || undefined
+        });
+      } catch (creditPlanErr) {
+        console.error('Failed to create or takeover store credit plan:', creditPlanErr);
+      }
     }
 
-    return { success: true, saleId, saleNumber };
+    return { success: true, saleId: resolvedSaleId, saleNumber: resolvedSaleNumber };
   } catch (error: any) {
     console.error('Checkout error:', error);
     return { success: false, error: error.message };
