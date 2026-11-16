@@ -6,6 +6,7 @@ import SplitPaymentModal, {
   applyBonChange,
   applyCashChange,
   getInitialSplitAmounts,
+  calculateStoreCreditSimulation,
 } from './SplitPaymentModal';
 
 describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
@@ -348,6 +349,188 @@ describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
         })
       );
       expect(bonMarkup).toContain('value="6000"');
+    });
+  });
+
+  describe('calculateStoreCreditSimulation', () => {
+    it('calculates simulation correctly for 1 month without previous unpaid balance', () => {
+      const res = calculateStoreCreditSimulation(0, 100000, 1);
+      expect(res.consolidatedTotal).toBe(100000);
+      expect(res.safeTenor).toBe(1);
+      expect(res.monthlyInstallment).toBe(100000);
+    });
+
+    it('calculates consolidated simulation correctly for 3 months with previous unpaid balance', () => {
+      const res = calculateStoreCreditSimulation(150000, 150000, 3);
+      expect(res.consolidatedTotal).toBe(300000);
+      expect(res.safeTenor).toBe(3);
+      expect(res.monthlyInstallment).toBe(100000);
+    });
+
+    it('calculates simulation for 6 and 12 months with accurate installment division', () => {
+      const res6 = calculateStoreCreditSimulation(200000, 100000, 6);
+      expect(res6.consolidatedTotal).toBe(300000);
+      expect(res6.safeTenor).toBe(6);
+      expect(res6.monthlyInstallment).toBe(50000);
+
+      const res12 = calculateStoreCreditSimulation(300000, 300000, 12);
+      expect(res12.consolidatedTotal).toBe(600000);
+      expect(res12.safeTenor).toBe(12);
+      expect(res12.monthlyInstallment).toBe(50000);
+    });
+
+    it('handles rounding accurately for odd divisions', () => {
+      const res = calculateStoreCreditSimulation(100000, 0, 3);
+      expect(res.consolidatedTotal).toBe(100000);
+      expect(res.safeTenor).toBe(3);
+      expect(res.monthlyInstallment).toBe(33333);
+    });
+
+    it('guards against negative values, NaN, and zero tenor by defaulting to tenor 1', () => {
+      const res = calculateStoreCreditSimulation(-50000, -20000, 0);
+      expect(res.consolidatedTotal).toBe(0);
+      expect(res.safeTenor).toBe(1);
+      expect(res.monthlyInstallment).toBe(0);
+    });
+  });
+
+  describe('Store Credit Installment Simulation Card Rendering', () => {
+    it('renders simulation card with tenor buttons (1, 2, 3, 6, 12 Bln, Custom) for members in store_credit mode', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: dummyMember,
+          memberId: dummyMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          initialStoreCreditSummary: {
+            unpaidBalance: 50000,
+            activePlan: null,
+          },
+          onConfirm: () => {},
+        })
+      );
+
+      // Simulation card is rendered
+      expect(markup).toContain('Total Bon Toko Sebelumnya (Belum Lunas):');
+      expect(markup).toContain('Pilihan Tenor Angsuran:');
+      expect(markup).toContain('1 Bln');
+      expect(markup).toContain('2 Bln');
+      expect(markup).toContain('3 Bln');
+      expect(markup).toContain('6 Bln');
+      expect(markup).toContain('12 Bln');
+      expect(markup).toContain('Custom');
+      expect(markup).toContain('Akumulasi Bon (Sisa Lama + Nota Baru):');
+      expect(markup).toContain('Simulasi Potong Gaji (1x Angsuran):');
+    });
+
+    it('displays notice when member has an active previous installment plan being superseded', () => {
+      const dummyActivePlan = {
+        id: 'plan-old',
+        member_id: dummyMember.id,
+        previous_unpaid_balance: 0,
+        new_credit_amount: 150000,
+        total_consolidated_debt: 150000,
+        tenor_months: 6,
+        monthly_installment: 25000,
+        status: 'active' as const,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 150000,
+          selectedMember: dummyMember,
+          memberId: dummyMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          initialStoreCreditSummary: {
+            unpaidBalance: 150000,
+            activePlan: dummyActivePlan,
+          },
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).toContain('* Menggantikan rencana tenor bon toko sebelumnya (6 Bln).');
+    });
+
+    it('renders custom tenor input when custom tenor is chosen or passed', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: dummyMember,
+          memberId: dummyMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          initialStoreCreditSummary: {
+            unpaidBalance: 0,
+            activePlan: null,
+          },
+          initialStoreCreditTenor: 5,
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).toContain('Bulan Tenor:');
+      expect(markup).toContain('value="5"');
+      expect(markup).toContain('Bulan (1 - 60)');
+      expect(markup).toContain('Simulasi Potong Gaji (5x Angsuran):');
+    });
+
+    it('does NOT render simulation card for non-members even if store_credit mode was requested', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: null,
+          memberId: null,
+          isNonMember: true,
+          primaryMode: 'store_credit',
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).not.toContain('Total Bon Toko Sebelumnya (Belum Lunas):');
+      expect(markup).not.toContain('Pilihan Tenor Angsuran:');
+      expect(markup).not.toContain('Akumulasi Bon (Sisa Lama + Nota Baru):');
+      expect(markup).not.toContain('Simulasi Potong Gaji');
+    });
+
+    it('does NOT render simulation card when member is paying entirely in cash', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: dummyMember,
+          memberId: dummyMember.id,
+          isNonMember: false,
+          primaryMode: 'cash',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).not.toContain('Total Bon Toko Sebelumnya (Belum Lunas):');
+      expect(markup).not.toContain('Pilihan Tenor Angsuran:');
+      expect(markup).not.toContain('Akumulasi Bon (Sisa Lama + Nota Baru):');
     });
   });
 });

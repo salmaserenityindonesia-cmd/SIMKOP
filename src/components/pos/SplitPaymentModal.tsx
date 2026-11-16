@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { UserCheck, User } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import MemberCreditBadge from './MemberCreditBadge';
+import {
+  getMemberUnpaidStoreCreditSummary,
+  type StoreCreditInstallmentPlan,
+} from '../../services/storeCreditLedgerService';
 
 export type PrimaryPaymentMode = 'cash' | 'deposit' | 'store_credit' | 'split';
 
@@ -199,6 +203,30 @@ export function clampDepositInput(
   return clamped > 0 ? clamped.toString() : '';
 }
 
+export interface StoreCreditSimulationResult {
+  consolidatedTotal: number;
+  safeTenor: number;
+  monthlyInstallment: number;
+}
+
+export function calculateStoreCreditSimulation(
+  previousUnpaidBalance: number,
+  newBonAmount: number,
+  tenorMonths: number
+): StoreCreditSimulationResult {
+  const consolidatedTotal = Math.round(
+    Math.max(0, previousUnpaidBalance || 0) + Math.max(0, newBonAmount || 0)
+  );
+  const safeTenor = Math.max(1, Math.round(tenorMonths || 1));
+  const monthlyInstallment = Math.round(consolidatedTotal / safeTenor);
+
+  return {
+    consolidatedTotal,
+    safeTenor,
+    monthlyInstallment,
+  };
+}
+
 export interface SplitPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -210,7 +238,18 @@ export interface SplitPaymentModalProps {
   initialMethod?: string;
   primaryMode?: PrimaryPaymentMode;
   initialFinancials?: any;
-  onConfirm: (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => void;
+  initialStoreCreditSummary?: {
+    unpaidBalance?: number;
+    activePlan?: StoreCreditInstallmentPlan | null;
+  } | null;
+  initialStoreCreditTenor?: number;
+  onConfirm: (payload: {
+    paidCash: number;
+    paidDeposit: number;
+    paidCredit: number;
+    scheme: string;
+    storeCreditTenor?: number;
+  }) => void;
 }
 
 export default function SplitPaymentModal({
@@ -224,6 +263,8 @@ export default function SplitPaymentModal({
   initialMethod = 'Tunai',
   primaryMode,
   initialFinancials = null,
+  initialStoreCreditSummary = null,
+  initialStoreCreditTenor,
   onConfirm
 }: SplitPaymentModalProps) {
   const effectiveMemberId = selectedMember?.id || memberId || null;
@@ -253,6 +294,20 @@ export default function SplitPaymentModal({
   );
   
   const [financials, setFinancials] = useState<any>(isNonMember ? null : initialFinancials);
+
+  // Bon Toko Tenor & Simulation State
+  const initialTenor = initialStoreCreditTenor ?? initialStoreCreditSummary?.activePlan?.tenor_months ?? 1;
+  const [previousUnpaidStoreCredit, setPreviousUnpaidStoreCredit] = useState<number>(
+    initialStoreCreditSummary?.unpaidBalance || 0
+  );
+  const [activeStoreCreditPlan, setActiveStoreCreditPlan] = useState<StoreCreditInstallmentPlan | null>(
+    initialStoreCreditSummary?.activePlan || null
+  );
+  const [storeCreditTenor, setStoreCreditTenor] = useState<number>(initialTenor);
+  const [isCustomTenor, setIsCustomTenor] = useState<boolean>(
+    ![1, 2, 3, 6, 12].includes(initialTenor)
+  );
+
   const cashInputRef = useRef<HTMLInputElement>(null);
   const hasUserEditedRef = useRef<boolean>(false);
 
@@ -301,6 +356,36 @@ export default function SplitPaymentModal({
       });
     }
 
+    // Load store credit summary and active installment plan
+    if (!isNonMember && effectiveMemberId) {
+      if (initialStoreCreditSummary !== undefined && initialStoreCreditSummary !== null) {
+        setPreviousUnpaidStoreCredit(initialStoreCreditSummary.unpaidBalance || 0);
+        setActiveStoreCreditPlan(initialStoreCreditSummary.activePlan || null);
+        const defTenor = initialStoreCreditTenor ?? initialStoreCreditSummary.activePlan?.tenor_months ?? 1;
+        setStoreCreditTenor(defTenor);
+        setIsCustomTenor(![1, 2, 3, 6, 12].includes(defTenor));
+      } else {
+        getMemberUnpaidStoreCreditSummary(effectiveMemberId)
+          .then(summary => {
+            if (!cancelled) {
+              setPreviousUnpaidStoreCredit(summary.unpaidBalance || 0);
+              setActiveStoreCreditPlan(summary.activePlan || null);
+              const defTenor = summary.activePlan?.tenor_months || 1;
+              setStoreCreditTenor(defTenor);
+              setIsCustomTenor(![1, 2, 3, 6, 12].includes(defTenor));
+            }
+          })
+          .catch(err => {
+            console.warn('Error loading member store credit summary:', err);
+          });
+      }
+    } else {
+      setPreviousUnpaidStoreCredit(0);
+      setActiveStoreCreditPlan(null);
+      setStoreCreditTenor(1);
+      setIsCustomTenor(false);
+    }
+
     // Auto-focus and select cash input
     const timer = setTimeout(() => {
       if (cashInputRef.current) {
@@ -313,7 +398,18 @@ export default function SplitPaymentModal({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [isOpen, effectiveMemberId, isNonMember, total, effectivePrimaryMode]);
+  }, [
+    isOpen,
+    effectiveMemberId,
+    isNonMember,
+    total,
+    effectivePrimaryMode,
+    initialStoreCreditSummary,
+    initialStoreCreditTenor,
+    applyInitialAmounts,
+    handleFinancialsLoaded,
+    initialFinancials
+  ]);
 
   useEffect(() => {
     if (isOpen && !isNonMember && initialFinancials) {
@@ -433,11 +529,14 @@ export default function SplitPaymentModal({
       scheme = 'cash';
     }
 
+    const safeTenor = Math.max(1, Math.round(storeCreditTenor || 1));
+
     onConfirm({
       paidCash: cashAmount,
       paidDeposit: isNonMember ? 0 : depositAmount,
       paidCredit: isNonMember ? 0 : creditAmount,
-      scheme
+      scheme,
+      storeCreditTenor: creditAmount > 0 ? safeTenor : undefined
     });
   };
 
@@ -618,6 +717,107 @@ export default function SplitPaymentModal({
                   * Tidak tersedia untuk Non-Anggota
                 </p>
               )}
+
+              {/* Kartu Simulasi Tenor Bon Toko */}
+              {!isNonMember && creditAmount > 0 && (() => {
+                const sim = calculateStoreCreditSimulation(
+                  previousUnpaidStoreCredit,
+                  creditAmount,
+                  storeCreditTenor
+                );
+                const presetTenors = [1, 2, 3, 6, 12];
+
+                return (
+                  <div className="mt-3 p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl space-y-3">
+                    <div className="flex justify-between items-center text-xs text-amber-900">
+                      <span className="font-medium">Total Bon Toko Sebelumnya (Belum Lunas):</span>
+                      <span className="font-bold font-mono text-amber-950">
+                        {formatCurrency(previousUnpaidStoreCredit)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-amber-950 mb-1.5">
+                        Pilihan Tenor Angsuran:
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {presetTenors.map((t) => {
+                          const isSelected = !isCustomTenor && storeCreditTenor === t;
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => {
+                                setIsCustomTenor(false);
+                                setStoreCreditTenor(t);
+                              }}
+                              className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                                isSelected
+                                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                                  : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100/70'
+                              }`}
+                            >
+                              {t} Bln
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCustomTenor(true);
+                          }}
+                          className={`px-3 py-1 text-xs font-semibold rounded-lg border transition-all ${
+                            isCustomTenor
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                              : 'bg-white text-amber-900 border-amber-300 hover:bg-amber-100/70'
+                          }`}
+                        >
+                          Custom
+                        </button>
+                      </div>
+
+                      {isCustomTenor && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="text-xs text-amber-900 font-medium">Bulan Tenor:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={60}
+                            value={storeCreditTenor}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              setStoreCreditTenor(isNaN(val) ? 1 : Math.max(1, Math.min(60, val)));
+                            }}
+                            className="w-20 px-2 py-1 text-sm font-mono border border-amber-300 rounded-md bg-white focus:ring-2 focus:ring-amber-500 text-amber-950"
+                            placeholder="Bulan"
+                          />
+                          <span className="text-xs text-amber-800">Bulan (1 - 60)</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t border-amber-200/80 space-y-1.5 text-xs">
+                      <div className="flex justify-between items-center text-amber-900">
+                        <span>Akumulasi Bon (Sisa Lama + Nota Baru):</span>
+                        <span className="font-bold font-mono text-amber-950">
+                          {formatCurrency(sim.consolidatedTotal)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-amber-950 font-bold bg-amber-100/80 px-2.5 py-1.5 rounded-lg border border-amber-300/60">
+                        <span>Simulasi Potong Gaji ({sim.safeTenor}x Angsuran):</span>
+                        <span className="font-mono text-sm text-amber-950">
+                          {formatCurrency(sim.monthlyInstallment)} / bln
+                        </span>
+                      </div>
+                      {activeStoreCreditPlan && (
+                        <p className="text-[11px] text-amber-800 italic mt-1">
+                          * Menggantikan rencana tenor bon toko sebelumnya ({activeStoreCreditPlan.tenor_months} Bln).
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Input Tunai */}
