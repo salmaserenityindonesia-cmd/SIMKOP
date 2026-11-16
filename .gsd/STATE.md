@@ -1,20 +1,22 @@
 ## Current Position
-- **Phase**: 96
-- **Task**: Planning complete
-- **Status**: Ready for execution
+- **Phase**: 96 (completed)
+- **Task**: All tasks complete
+- **Status**: Verified
 
 ## Last Session Summary
-Phase 96 planned: Implementasi Konsolidasi & Simulasi Tenor Angsuran Bon Toko di Kasir POS (`/admin/kasir`) serta Buku Bantu Angsuran Bon Toko Terpisah dari Matriks Pinjaman (`/admin/buku-besar-bon-toko`).
-- **Research Findings (`.gsd/phases/96/RESEARCH.md`)**:
-  - Rute `/admin/kasir` menggunakan `src/pages/pos/index.tsx` dan `src/components/pos/SplitPaymentModal.tsx` (bukan `PaymentModal.tsx`).
-  - Migrasi berikutnya adalah `supabase/migrations/052_create_store_credit_installments.sql` (karena `043`–`051` sudah ada).
-  - `processCheckout()` di `posCheckoutService.ts` harus mengambil `getMemberUnpaidStoreCreditSummary` **sebelum** RPC/insert `sales` agar tidak terjadi double-counting nota baru, serta menangani jalur sukses RPC maupun fallback.
-  - `payStoreCreditSchedule()` menyinkronkan pelunasan ke `store_credit_payments` melalui `settleStoreCredit()`.
-- **Plans Created**:
-  - `96-1-PLAN.md` (Wave 1): Skema tabel terisolasi `store_credit_installment_plans` & `store_credit_schedules`
-  - `96-2-PLAN.md` (Wave 2): Lookup sisa bon, mesin takeover tenor, penagihan jadwal & integrasi checkout POS
-  - `96-3-PLAN.md` (Wave 3): Panel sisa bon, pilihan tenor (`1, 2, 3, 6, 12 Bln` + `Custom`), dan simulasi potong gaji di `SplitPaymentModal.tsx`
-  - `96-4-PLAN.md` (Wave 4): `StoreCreditScheduleModal.tsx`, tab jadwal di `BukuBesarBonToko.tsx`, unit tests, `tsc --noEmit`, dan `npm run build`
+Phase 96 executed successfully and verified (`PASS`, 5/5 must-haves). 4 plans, 8 tasks completed.
+- **Migrasi Database (`supabase/migrations/052_create_store_credit_installments.sql`)**:
+  - Tabel terisolasi `public.store_credit_installment_plans` dan `public.store_credit_schedules` lengkap dengan indeks, RLS policy idempoten, serta tanpa relasi ke `public.loans`.
+- **Engine Konsolidasi & Checkout (`src/services/storeCreditLedgerService.ts`, `src/services/posCheckoutService.ts`)**:
+  - `getMemberUnpaidStoreCreditSummary`, `createOrTakeoverStoreCreditPlan` (takeover `superseded` -> `active`, penyesuaian pembulatan periode terakhir), `getActiveStoreCreditPlans`, dan `payStoreCreditSchedule` (sinkron ke `store_credit_payments` melalui `settleStoreCredit`).
+  - Integrasi `processCheckout` membaca saldo belum lunas **sebelum** pencatatan penjualan baru (mencegah *double-counting*) pada jalur RPC maupun fallback.
+- **Kasir POS (`src/components/pos/SplitPaymentModal.tsx`, `src/pages/pos/index.tsx`)**:
+  - Panel sisa bon lama belum lunas, pilihan tenor `1, 2, 3, 6, 12 Bln` + `Custom` (1–60 bln), serta simulasi potong gaji per bulan real-time di bawah input **Catat Bon Toko (Potong Gaji)**.
+- **Buku Bantu Angsuran Bon Toko (`src/components/pos/StoreCreditScheduleModal.tsx`, `src/pages/admin/BukuBesarBonToko.tsx`)**:
+  - Tab **Jadwal Angsuran Bon Toko (Potong Gaji)** dan modal **Buku Bantu Angsuran Bon Toko** terpisah total dari `/admin/loan-matrix`.
+- **Verifikasi Independen (`.gsd/phases/96/VERIFICATION.md`)**:
+  - 5 file unit test Vitest (64/64 tests) lulus 100%, `npx tsc --noEmit` exit code 0, dan `npm run build` exit code 0.
 
 ## Next Steps
-1. `/execute 96`
+1. Terapkan migrasi `supabase/migrations/052_create_store_credit_installments.sql` ke instance Supabase jika belum dijalankan di environment target.
+2. Lanjutkan ke kebutuhan fitur berikutnya.

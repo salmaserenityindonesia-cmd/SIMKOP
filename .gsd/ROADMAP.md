@@ -1693,15 +1693,15 @@ updated: 2026-10-30T20:50:00+07:00
 ---
 
 ### Phase 96: Implementasi Konsolidasi & Simulasi Tenor Angsuran Bon Toko di Kasir POS & Buku Bantu Angsuran Bon Toko
-**Status:** 📋 Planned
+**Status:** ✅ Complete
 **Objective:** Menampilkan total bon toko belum lunas sebelumnya, pilihan tenor pelunasan potong gaji (`1, 2, 3, 6, 12 Bulan` atau `Custom`) yang otomatis mengambil alih tenor sebelumnya, serta simulasi angsuran potong gaji per bulan di kasir POS (`/admin/kasir`), menyimpan rencana & jadwalnya di tabel terpisah (`store_credit_installment_plans` & `store_credit_schedules`) tanpa menyentuh `public.loans` maupun `/admin/loan-matrix`, dan menyediakan Buku Bantu Angsuran Bon Toko pada `/admin/buku-besar-bon-toko`.
 **Depends on:** Phase 95
 
 **Plans:**
-- [ ] Plan 96.1: Wave 1 - Dedicated Store Credit Installment Tables (`052_create_store_credit_installments.sql`)
-- [ ] Plan 96.2: Wave 2 - Unpaid Store Credit Lookup, Tenor Takeover Engine & POS Checkout Integration
-- [ ] Plan 96.3: Wave 3 - Unpaid Balance, Tenor Selector & Simulation Box in POS `SplitPaymentModal`
-- [ ] Plan 96.4: Wave 4 - `StoreCreditScheduleModal` & Billing Tab in `/admin/buku-besar-bon-toko` + Full Verification
+- [x] Plan 96.1: Wave 1 - Dedicated Store Credit Installment Tables (`052_create_store_credit_installments.sql`)
+- [x] Plan 96.2: Wave 2 - Unpaid Store Credit Lookup, Tenor Takeover Engine & POS Checkout Integration
+- [x] Plan 96.3: Wave 3 - Unpaid Balance, Tenor Selector & Simulation Box in POS `SplitPaymentModal`
+- [x] Plan 96.4: Wave 4 - `StoreCreditScheduleModal` & Billing Tab in `/admin/buku-besar-bon-toko` + Full Verification
 
 **Deliverables:**
 - Migrasi Supabase `supabase/migrations/052_create_store_credit_installments.sql` (`store_credit_installment_plans` & `store_credit_schedules`)
@@ -1868,7 +1868,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 92 | Perbaiki Bug Double Negation pada Perhitungan Net Settlement Kliring Anggota Keluar | ✅ | 2/2 | 100% |
 | 93 | Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif | ✅ | 2/2 | 100% |
 | 94 | Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota | ✅ | 3/3 | 100% |
-| 96 | Konsolidasi & Simulasi Tenor Angsuran Bon Toko + Buku Bantu Angsuran Bon Toko | 📋 | 0/4 | 0% |
+| 96 | Konsolidasi & Simulasi Tenor Angsuran Bon Toko + Buku Bantu Angsuran Bon Toko | ✅ | 4/4 | 100% |
 
 ---
 
