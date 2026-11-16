@@ -815,4 +815,105 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('4.800.000');
     });
   });
+
+  describe('Custom Tenor Mode & Bound Validation', () => {
+    const mockLoanTypes: LoanType[] = [
+      {
+        id: 'lt-reguler',
+        code: 'REGULER',
+        name: 'Pinjaman Reguler',
+        max_duration_months: 12,
+        is_active: true
+      }
+    ];
+
+    it('renders Custom tenor option in dropdown when a loan type is selected', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+        />
+      );
+
+      expect(html).toContain('<option value="6">6 Bulan</option>');
+      expect(html).toContain('<option value="12">12 Bulan</option>');
+      expect(html).toContain('<option value="CUSTOM">Custom (Tentukan Sendiri: 1 – 12 Bulan)</option>');
+    });
+
+    it('renders custom input, calculates real-time installment, and enables submit when custom tenor is valid', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Renovasi Rumah"
+          initialAmount={5000000}
+          initialTenorMode="CUSTOM"
+          initialCustomTenorInput="5"
+          initialThpData={{
+            master_thp: 6000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 5800000
+          }}
+        />
+      );
+
+      expect(html).toContain('type="number"');
+      expect(html).toContain('value="5"');
+      expect(html).toContain('Batas tenor yang diizinkan untuk <strong>Pinjaman Reguler</strong>: 1 s/d 12 Bulan.');
+      expect(html).toMatch(/Estimasi Cicilan Baru.*?1\.000\.000/s);
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+
+    it('shows max-limit warning and disables submit button when custom tenor exceeds product maxTenor', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Renovasi Rumah"
+          initialAmount={5000000}
+          initialTenorMode="CUSTOM"
+          initialCustomTenorInput="15"
+          initialThpData={{
+            master_thp: 6000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 5800000
+          }}
+        />
+      );
+
+      expect(html).toContain('Tenor custom tidak boleh melebihi batas maksimal jenis pinjaman ini (12 Bulan).');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+
+    it('shows min-month warning and disables submit button when custom tenor is below 1 month', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={mockLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Renovasi Rumah"
+          initialAmount={5000000}
+          initialTenorMode="CUSTOM"
+          initialCustomTenorInput="0"
+          initialThpData={{
+            master_thp: 6000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 5800000
+          }}
+        />
+      );
+
+      expect(html).toContain('Masukkan minimal 1 bulan tenor pinjaman.');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+  });
 });

@@ -198,6 +198,10 @@ export async function submitLoanApplication(
     throw new Error('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
   }
 
+  if (Number(tenor) < 1) {
+    throw new Error('Masukkan minimal 1 bulan tenor pinjaman.');
+  }
+
   if (Number(tenor) > maxTenor) {
     throw new Error(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
   }
@@ -219,6 +223,8 @@ export interface PengajuanPinjamanProps {
   } | null;
   initialAmount?: number | '';
   initialTenor?: number | '';
+  initialTenorMode?: 'PRESET' | 'CUSTOM';
+  initialCustomTenorInput?: string;
   initialPurpose?: string;
   initialLoanTypes?: LoanType[];
   initialSelectedLoanTypeId?: string;
@@ -231,6 +237,8 @@ export default function PengajuanPinjaman({
   initialThpData,
   initialAmount,
   initialTenor,
+  initialTenorMode,
+  initialCustomTenorInput,
   initialPurpose,
   initialLoanTypes,
   initialSelectedLoanTypeId,
@@ -244,11 +252,23 @@ export default function PengajuanPinjaman({
   const [purpose, setPurpose] = useState(initialPurpose || '');
   const [amount, setAmount] = useState<number | ''>(initialAmount ?? '');
   const [tenor, setTenor] = useState<number | ''>(initialTenor ?? '');
+  const [tenorMode, setTenorMode] = useState<'PRESET' | 'CUSTOM'>(initialTenorMode || 'PRESET');
+  const [customTenorInput, setCustomTenorInput] = useState<string>(initialCustomTenorInput || '');
   const [minRemainingThp, setMinRemainingThp] = useState<number>(initialMinRemainingThp ?? MIN_REMAINING_THP);
 
   const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
-  const maxTenor = selectedLoanType ? selectedLoanType.max_duration_months : 0;
+  const maxTenor = Number(selectedLoanType?.max_duration_months || 12);
   const availableTenors = calculateAvailableTenors(selectedLoanType?.max_duration_months);
+
+  const effectiveTenor =
+    tenorMode === 'CUSTOM'
+      ? Math.floor(Number(customTenorInput) || 0)
+      : Number(tenor || 0);
+
+  const isTenorValid =
+    Boolean(selectedLoanTypeId) &&
+    effectiveTenor >= 1 &&
+    effectiveTenor <= maxTenor;
 
   const handleLoanTypeChange = (newTypeId: string) => {
     setSelectedLoanTypeId(newTypeId);
@@ -257,10 +277,12 @@ export default function PengajuanPinjaman({
       return;
     }
     const newType = loanTypes.find(lt => String(lt.id) === String(newTypeId));
+    const newMaxTenor = Number(newType?.max_duration_months || 12);
     const newAvailableTenors = calculateAvailableTenors(newType?.max_duration_months);
-    if (typeof tenor === 'number' && !newAvailableTenors.includes(tenor)) {
+    if (tenorMode === 'PRESET' && typeof tenor === 'number' && (tenor > newMaxTenor || !newAvailableTenors.includes(tenor))) {
       setTenor('');
     }
+    // In CUSTOM mode, if Number(customTenorInput) > newMaxTenor, keep customTenorInput so the max-limit warning shows and submit stays locked.
   };
   
   const [masterThp, setMasterThp] = useState<number>(() => {
@@ -425,8 +447,8 @@ export default function PengajuanPinjaman({
   }
 
   const calculateCicilan = () => {
-    if (!amount || !tenor) return 0;
-    return Number(amount) / Number(tenor);
+    if (!amount || effectiveTenor <= 0) return 0;
+    return Math.round(Number(amount) / effectiveTenor);
   };
 
   const thpRemainingForEligibility = thpData
@@ -443,6 +465,10 @@ export default function PengajuanPinjaman({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isTenorValid) {
+      setError(`Tenor pinjaman harus berada di antara 1 hingga ${maxTenor} bulan.`);
+      return;
+    }
     if (thpData !== null && !isTHPEligible()) {
       setError(`Pengajuan ditolak: Sisa THP setelah pemotongan (${formatCurrency(eligibility.finalRemainingThp)}) kurang dari batas minimal ${formatCurrency(minRemainingThp)}.`);
       return;
@@ -451,7 +477,7 @@ export default function PengajuanPinjaman({
     setSuccess(null);
     setSubmitting(true);
     try {
-      await submitLoanApplication(selectedAnggota, purpose, amount, tenor, selectedLoanTypeId, maxTenor, minRemainingThp);
+      await submitLoanApplication(selectedAnggota, purpose, amount, effectiveTenor, selectedLoanTypeId, maxTenor, minRemainingThp);
       setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
       
       // Reset form
@@ -459,6 +485,8 @@ export default function PengajuanPinjaman({
       setPurpose('');
       setAmount('');
       setTenor('');
+      setTenorMode('PRESET');
+      setCustomTenorInput('');
       if (selectedAnggota) checkTHP(selectedAnggota);
     } catch (err: any) {
       setError(err.message);
@@ -556,35 +584,86 @@ export default function PengajuanPinjaman({
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tenor (Bulan)</label>
-                  <select 
-                    required
-                    value={tenor}
-                    disabled={!selectedLoanTypeId}
-                    onChange={e => {
-                      const val = Number(e.target.value) || '';
-                      if (typeof val === 'number' && maxTenor > 0 && val > maxTenor) {
-                        return;
+                <div className="space-y-2">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    Tenor (Bulan) <span className="text-rose-500">*</span>
+                  </label>
+                  <select
+                    value={tenorMode === 'CUSTOM' ? 'CUSTOM' : tenor}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'CUSTOM') {
+                        setTenorMode('CUSTOM');
+                        setTenor('');
+                        if (!customTenorInput) setCustomTenorInput('3');
+                      } else {
+                        setTenorMode('PRESET');
+                        setTenor(val ? Number(val) : '');
                       }
-                      setTenor(val);
                     }}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
+                    disabled={!selectedLoanTypeId}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-800 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                    required
                   >
                     <option value="">
-                      {!selectedLoanTypeId ? '-- Pilih Jenis Pinjaman Terlebih Dahulu --' : '-- Pilih Tenor --'}
+                      {selectedLoanTypeId ? '-- Pilih Tenor --' : '-- Pilih Jenis Pinjaman Terlebih Dahulu --'}
                     </option>
-                    {availableTenors.map(t => (
-                      <option key={t} value={t}>{t} Bulan</option>
+                    {availableTenors.map((t) => (
+                      <option key={t} value={t}>
+                        {t} Bulan
+                      </option>
                     ))}
+                    {selectedLoanTypeId && (
+                      <option value="CUSTOM">
+                        Custom (Tentukan Sendiri: 1 – {maxTenor} Bulan)
+                      </option>
+                    )}
                   </select>
+
+                  {tenorMode === 'CUSTOM' && selectedLoanTypeId && (
+                    <div className="pt-1 space-y-1">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={1}
+                          max={maxTenor}
+                          step={1}
+                          value={customTenorInput}
+                          onChange={(e) => setCustomTenorInput(e.target.value)}
+                          placeholder={`Masukkan jumlah bulan (1 - ${maxTenor})`}
+                          className={`w-full px-3.5 py-2.5 pr-16 rounded-xl border text-sm font-semibold focus:outline-none focus:ring-2 ${
+                            effectiveTenor < 1 || effectiveTenor > maxTenor
+                              ? 'border-rose-300 bg-rose-50/40 text-rose-800 focus:ring-rose-500'
+                              : 'border-blue-300 bg-blue-50/30 text-slate-900 focus:ring-blue-500'
+                          }`}
+                          required
+                        />
+                        <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-500">
+                          Bulan
+                        </span>
+                      </div>
+                      {effectiveTenor > maxTenor ? (
+                        <p className="text-xs text-rose-600 font-medium">
+                          Tenor custom tidak boleh melebihi batas maksimal jenis pinjaman ini ({maxTenor} Bulan).
+                        </p>
+                      ) : effectiveTenor < 1 ? (
+                        <p className="text-xs text-rose-600 font-medium">
+                          Masukkan minimal 1 bulan tenor pinjaman.
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-slate-500">
+                          Batas tenor yang diizinkan untuk <strong>{selectedLoanType?.name}</strong>: 1 s/d {maxTenor} Bulan.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || (thpData !== null && !isTHPEligible())}
+                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isTenorValid || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
@@ -600,8 +679,11 @@ export default function PengajuanPinjaman({
             thpData={thpData}
             newInstallment={calculateCicilan()}
             amount={amount}
-            tenor={tenor}
-            onSelectTenor={(t) => setTenor(t)}
+            tenor={effectiveTenor || ''}
+            onSelectTenor={(t) => {
+              setTenorMode('PRESET');
+              setTenor(t);
+            }}
             maxTenor={selectedLoanType ? selectedLoanType.max_duration_months : undefined}
             minRemainingThp={minRemainingThp}
           />
