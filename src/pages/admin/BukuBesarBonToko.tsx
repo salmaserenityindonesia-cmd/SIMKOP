@@ -30,13 +30,16 @@ import {
   getStoreCreditSummary,
   getStoreCreditLedger,
   exportStoreCreditToExcel,
+  getActiveStoreCreditPlans,
   StoreCreditSummary,
   StoreCreditLedgerItem,
-  StoreCreditFilter
+  StoreCreditFilter,
+  StoreCreditPlanWithSchedules
 } from '../../services/storeCreditLedgerService';
 import { getSaleDetailByInvoice, SaleDetail } from '../../services/shoppingSavingsLedgerService';
 import { supabase } from '../../lib/supabaseClient';
 import BayarBonModal from '../../components/pos/BayarBonModal';
+import StoreCreditScheduleModal from '../../components/pos/StoreCreditScheduleModal';
 
 interface MemberOption {
   id: string;
@@ -109,6 +112,12 @@ export default function BukuBesarBonToko() {
     receiptNo?: string;
   } | null>(null);
 
+  // Tab & Store Credit Installments State
+  const [activeTab, setActiveTab] = useState<'ledger' | 'installments'>('ledger');
+  const [activePlans, setActivePlans] = useState<StoreCreditPlanWithSchedules[]>([]);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
+  const [selectedPlanForSchedule, setSelectedPlanForSchedule] = useState<StoreCreditPlanWithSchedules | null>(null);
+
   // Ref untuk Cetak
   const printAreaRef = useRef<HTMLDivElement>(null);
 
@@ -153,7 +162,15 @@ export default function BukuBesarBonToko() {
       const summaryData = await getStoreCreditSummary();
       setSummary(summaryData);
 
-      // 2. Fetch Filtered Ledger
+      // 2. Fetch Active Store Credit Installment Plans
+      try {
+        const plansData = await getActiveStoreCreditPlans();
+        setActivePlans(plansData || []);
+      } catch (pErr) {
+        console.warn('Gagal memuat rencana angsuran bon aktif:', pErr);
+      }
+
+      // 3. Fetch Filtered Ledger
       const filterPayload: StoreCreditFilter = {
         memberId: selectedMemberId !== 'all' ? selectedMemberId : undefined,
         statusFilter: statusFilter,
@@ -187,6 +204,17 @@ export default function BukuBesarBonToko() {
       );
     });
   }, [ledgerItems, searchQuery]);
+
+  // Filtered active plans for installment tab
+  const filteredPlans = useMemo(() => {
+    if (!searchQuery.trim()) return activePlans;
+    const q = searchQuery.toLowerCase().trim();
+    return activePlans.filter(p => {
+      const name = p.anggota?.nama?.toLowerCase() || '';
+      const nrp = p.anggota?.nrp?.toLowerCase() || '';
+      return name.includes(q) || nrp.includes(q);
+    });
+  }, [activePlans, searchQuery]);
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
@@ -489,9 +517,46 @@ export default function BukuBesarBonToko() {
         </div>
 
         {/* ========================================================
-            FILTER & SEARCH BAR
+            TAB SELECTOR: Mutasi Bon vs Jadwal Angsuran
         ======================================================== */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5 space-y-4 print:hidden">
+        <div className="flex border-b border-gray-200 gap-6 print:hidden">
+          <button
+            type="button"
+            onClick={() => setActiveTab('ledger')}
+            className={`pb-3 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${
+              activeTab === 'ledger'
+                ? 'border-rose-600 text-rose-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Mutasi Buku Besar Bon</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('installments')}
+            className={`pb-3 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${
+              activeTab === 'installments'
+                ? 'border-emerald-600 text-emerald-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            <span>Jadwal Angsuran Bon Toko (Potong Gaji)</span>
+            {activePlans.length > 0 && (
+              <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                {activePlans.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {activeTab === 'ledger' ? (
+          <>
+            {/* ========================================================
+                FILTER & SEARCH BAR
+            ======================================================== */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5 space-y-4 print:hidden">
           <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
             <Filter className="w-4 h-4 text-rose-600" />
             <span>Filter Mutasi Piutang Bon Toko</span>
@@ -930,6 +995,142 @@ export default function BukuBesarBonToko() {
             </div>
           )}
         </div>
+          </>
+        ) : (
+          /* ========================================================
+             TABEL JADWAL ANGSURAN BON TOKO (POTONG GAJI)
+          ======================================================== */
+          <div className="space-y-4">
+            {/* Search Bar for Installments */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <span>Rencana Angsuran Aktif &amp; Kartu Penagihan</span>
+              </div>
+              <div className="relative sm:w-80">
+                <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Cari nama atau NRP anggota..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Table Card */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900">
+                    Daftar Anggota dengan Angsuran Bon Toko Aktif
+                  </h2>
+                  <p className="text-xs text-gray-500">
+                    Menampilkan {filteredPlans.length} anggota dengan rencana pemotongan gaji / pelunasan bertahap
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-gray-100/75 text-gray-700 border-b border-gray-200">
+                      <th className="py-3 px-4 font-semibold text-center w-12">No</th>
+                      <th className="py-3 px-4 font-semibold">Anggota</th>
+                      <th className="py-3 px-4 font-semibold text-right">Total Akumulasi Bon</th>
+                      <th className="py-3 px-4 font-semibold text-center">Tenor Aktif</th>
+                      <th className="py-3 px-4 font-semibold text-right">Potong Gaji / Bln</th>
+                      <th className="py-3 px-4 font-semibold text-center">Progres Angsuran</th>
+                      <th className="py-3 px-4 font-semibold text-right">Sisa Tagihan</th>
+                      <th className="py-3 px-4 font-semibold text-center">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-150">
+                    {filteredPlans.map((plan, idx) => {
+                      const schedules = plan.schedules || [];
+                      const paidCount = schedules.filter(
+                        s => s.status === 'paid' || (s.paid_amount || 0) >= s.target_amount
+                      ).length;
+                      const totalCount = schedules.length || plan.tenor_months;
+                      const remainingDebt = schedules.length > 0
+                        ? schedules.reduce(
+                            (acc, s) => acc + Math.max(0, s.target_amount - (s.paid_amount || 0)),
+                            0
+                          )
+                        : plan.total_consolidated_debt;
+
+                      return (
+                        <tr key={plan.id} className="hover:bg-gray-50/75 transition-colors">
+                          <td className="py-3 px-4 text-center text-gray-500">{idx + 1}</td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-gray-900">{plan.anggota?.nama || 'Anggota'}</div>
+                            <div className="text-[11px] text-gray-500">
+                              NRP: {plan.anggota?.nrp || '-'}
+                              {plan.anggota?.pangkat && ` • ${plan.anggota.pangkat}`}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-medium text-gray-800">
+                            {formatCurrency(plan.total_consolidated_debt)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                              {plan.tenor_months} Bln
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-bold text-emerald-700">
+                            {formatCurrency(plan.monthly_installment)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center gap-1 font-semibold text-xs px-2 py-0.5 rounded-md bg-gray-100 text-gray-800">
+                              {paidCount} / {totalCount} Periode
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-bold text-rose-700">
+                            {formatCurrency(remainingDebt)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPlanForSchedule(plan);
+                                setIsScheduleModalOpen(true);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium shadow-sm transition-colors"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>Buku Bantu Angsuran</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {filteredPlans.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-12 text-center text-gray-500">
+                          <AlertCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm font-medium">Tidak ada rencana angsuran bon toko aktif.</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            Semua tagihan lunas atau belum ada transaksi bon berkala yang dibuat di kasir POS.
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ========================================================
             MODAL RINCIAN STRUK KASIR POS
@@ -1073,6 +1274,31 @@ export default function BukuBesarBonToko() {
           initialSaleId={payTargetMember?.saleId}
           initialDebtAmount={payTargetMember?.debt}
           initialReceiptNo={payTargetMember?.receiptNo}
+        />
+
+        {/* ========================================================
+            MODAL BUKU BANTU ANGSURAN BON TOKO (StoreCreditScheduleModal)
+        ======================================================== */}
+        <StoreCreditScheduleModal
+          isOpen={isScheduleModalOpen}
+          plan={selectedPlanForSchedule}
+          onClose={() => {
+            setIsScheduleModalOpen(false);
+            setSelectedPlanForSchedule(null);
+          }}
+          onSuccess={async () => {
+            await loadLedgerData();
+            try {
+              const updatedPlans = await getActiveStoreCreditPlans();
+              setActivePlans(updatedPlans || []);
+              if (selectedPlanForSchedule) {
+                const refreshed = (updatedPlans || []).find(p => p.id === selectedPlanForSchedule.id);
+                setSelectedPlanForSchedule(refreshed || null);
+              }
+            } catch (pErr) {
+              console.warn('Gagal refresh rencana angsuran aktif:', pErr);
+            }
+          }}
         />
       </div>
     </AdminLayout>

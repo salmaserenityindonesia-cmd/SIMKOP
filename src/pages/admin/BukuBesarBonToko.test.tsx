@@ -50,6 +50,25 @@ vi.mock('../../services/storeCreditLedgerService', () => ({
   getMemberActiveDebt: vi.fn().mockResolvedValue(500000),
   getMembersWithDebt: vi.fn().mockResolvedValue([]),
   settleStoreCredit: vi.fn().mockResolvedValue({ id: 'scp-1' }),
+  getActiveStoreCreditPlans: vi.fn().mockResolvedValue([
+    {
+      id: 'plan-1',
+      member_id: 'm-1',
+      previous_unpaid_balance: 300000,
+      new_credit_amount: 300000,
+      total_consolidated_debt: 600000,
+      tenor_months: 3,
+      monthly_installment: 200000,
+      status: 'active',
+      anggota: { id: 'm-1', nama: 'Sertu Budi', nrp: '12345', pangkat: 'Sertu' },
+      schedules: [
+        { id: 's-1', plan_id: 'plan-1', member_id: 'm-1', period_number: 1, target_amount: 200000, paid_amount: 200000, status: 'paid', due_date: '2026-12-01' },
+        { id: 's-2', plan_id: 'plan-1', member_id: 'm-1', period_number: 2, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-01-01' },
+        { id: 's-3', plan_id: 'plan-1', member_id: 'm-1', period_number: 3, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-02-01' },
+      ],
+    },
+  ]),
+  payStoreCreditSchedule: vi.fn().mockResolvedValue({ success: true, scheduleId: 's-2' }),
 }));
 
 // Mock shoppingSavingsLedgerService
@@ -118,5 +137,19 @@ describe('BukuBesarBonToko Page Component', () => {
     const html = renderToStaticMarkup(<BukuBesarBonToko />);
 
     expect(html).toContain('Memuat mutasi buku besar bon toko...');
+  });
+
+  it('renders tab switcher for Mutasi Buku Besar Bon and Jadwal Angsuran Bon Toko (Potong Gaji)', () => {
+    const html = renderToStaticMarkup(<BukuBesarBonToko />);
+
+    expect(html).toContain('Mutasi Buku Besar Bon');
+    expect(html).toContain('Jadwal Angsuran Bon Toko (Potong Gaji)');
+  });
+
+  it('maintains complete isolation from loan matrix and loans table', () => {
+    const html = renderToStaticMarkup(<BukuBesarBonToko />);
+
+    expect(html).not.toContain('/admin/loan-matrix');
+    expect(html).not.toContain('Matriks Pinjaman');
   });
 });
