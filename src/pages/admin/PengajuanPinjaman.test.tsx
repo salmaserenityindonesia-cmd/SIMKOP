@@ -337,6 +337,63 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).not.toContain('Rekomendasi:');
       expect(html).not.toContain('18 bulan');
     });
+
+    it('renders itemized active loan breakdown under Cicilan Berjalan when provided', () => {
+      const thpData = {
+        master_thp: 6000000,
+        active_installments: 325000,
+        savings_deduction: 200000,
+        remaining_thp: 5475000
+      };
+      const html = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={thpData}
+          activeLoanBreakdown={[
+            {
+              id: 'loan-1',
+              loanNumber: 'LN-2026-001',
+              typeName: 'Pinjaman Reguler',
+              tenor: 12,
+              monthlyInstallment: 125000,
+              remainingPrincipal: 1000000,
+            },
+            {
+              id: 'loan-2',
+              loanNumber: 'LN-2026-002',
+              typeName: 'Pinjaman Khusus',
+              tenor: 6,
+              monthlyInstallment: 200000,
+              remainingPrincipal: 800000,
+            },
+          ]}
+          newInstallment={500000}
+        />
+      );
+
+      expect(html).toContain('Cicilan Berjalan');
+      expect(html).toContain('Pinjaman Reguler');
+      expect(html).toContain('LN-2026-001 • 12 Bln');
+      expect(html).toContain('125.000/bln');
+      expect(html).toContain('Pinjaman Khusus');
+      expect(html).toContain('LN-2026-002 • 6 Bln');
+      expect(html).toContain('200.000/bln');
+    });
+
+    it('does not render active loan breakdown list when activeLoanBreakdown is empty', () => {
+      const thpData = {
+        master_thp: 6000000,
+        active_installments: 0,
+        savings_deduction: 200000,
+        remaining_thp: 5800000
+      };
+      const html = renderToStaticMarkup(
+        <SimulationPanel thpData={thpData} activeLoanBreakdown={[]} newInstallment={500000} />
+      );
+
+      expect(html).toContain('Cicilan Berjalan');
+      expect(html).not.toContain('border-rose-200');
+      expect(html).not.toContain('/bln');
+    });
   });
 
   describe('calculateAvailableTenors helper', () => {

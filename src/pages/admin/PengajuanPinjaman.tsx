@@ -25,6 +25,15 @@ export const calculateAvailableTenors = (maxTenor?: number): number[] => {
   return tenors.length > 0 ? tenors : [6];
 };
 
+export interface ActiveLoanBreakdownItem {
+  id: string;
+  loanNumber: string;
+  typeName: string;
+  tenor: number;
+  monthlyInstallment: number;
+  remainingPrincipal: number;
+}
+
 export interface SimulationPanelProps {
   thpData: {
     master_thp: number;
@@ -33,6 +42,7 @@ export interface SimulationPanelProps {
     savings_deduction?: number;
     remaining_thp: number;
   } | null;
+  activeLoanBreakdown?: ActiveLoanBreakdownItem[];
   newInstallment: number;
   amount?: number | '';
   tenor?: number | '';
@@ -43,6 +53,7 @@ export interface SimulationPanelProps {
 
 export function SimulationPanel({
   thpData,
+  activeLoanBreakdown = [],
   newInstallment,
   amount,
   tenor,
@@ -99,9 +110,34 @@ export function SimulationPanel({
             <span className="text-gray-600">Gaji Pokok (Master THP)</span>
             <span className="font-semibold">{formatCurrency(thpData.master_thp)}</span>
           </div>
-          <div className="flex justify-between pb-2 border-b border-gray-200 text-red-600">
-            <span>Cicilan Berjalan</span>
-            <span>- {formatCurrency(thpData.active_installments)}</span>
+          <div className="py-2.5 border-b border-gray-200 space-y-1.5">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-rose-600 font-medium">Cicilan Berjalan</span>
+              <span className="text-rose-600 font-semibold tabular-nums">
+                - {formatCurrency(thpData.active_installments)}
+              </span>
+            </div>
+
+            {activeLoanBreakdown.length > 0 && (
+              <div className="pl-2.5 border-l-2 border-rose-200 space-y-1 pt-0.5">
+                {activeLoanBreakdown.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between text-[11px] text-slate-600 gap-2"
+                  >
+                    <div className="truncate">
+                      <span className="font-semibold text-slate-700">{item.typeName}</span>
+                      <span className="text-slate-400 ml-1">
+                        ({item.loanNumber} • {item.tenor} Bln)
+                      </span>
+                    </div>
+                    <span className="font-medium text-rose-600 shrink-0 tabular-nums">
+                      Rp {item.monthlyInstallment.toLocaleString('id-ID')}/bln
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between text-sm py-2 border-b border-slate-100">
             <span className="text-rose-600 font-medium">Angsuran Lain-lain</span>
@@ -325,6 +361,7 @@ export default function PengajuanPinjaman({
     return null;
   });
   
+  const [activeLoanBreakdown, setActiveLoanBreakdown] = useState<ActiveLoanBreakdownItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -365,6 +402,7 @@ export default function PengajuanPinjaman({
     } else {
       setMasterThp(0);
       setThpData(null);
+      setActiveLoanBreakdown([]);
     }
   }, [selectedAnggota]);
 
@@ -396,6 +434,7 @@ export default function PengajuanPinjaman({
 
   const handleSelectMember = (memberId: string) => {
     setSelectedAnggota(memberId);
+    setActiveLoanBreakdown([]);
     if (!memberId) {
       setMasterThp(0);
       setThpData(null);
@@ -426,10 +465,69 @@ export default function PengajuanPinjaman({
       const currentYear = now.getFullYear();
       const currentMonth = now.getMonth() + 1;
       // Refresh ketentuan Simpanan Lebaran personal sebelum menghitung potongan rutin THP
-      const [rateConfig, personalLebaranRates] = await Promise.all([
+      // Sekaligus ambil rincian pinjaman aktif beserta nama jenis pinjamannya
+      const [rateConfig, personalLebaranRates, activeLoansRes] = await Promise.all([
         loadSavingsRateConfig().catch(() => null),
         getMemberLebaranRates(undefined, true).catch(() => []),
+        supabase
+          .from('loans')
+          .select(`
+            id,
+            loan_number,
+            principal_amount,
+            amount,
+            agreed_tenor_months,
+            tenor,
+            planned_installment_amount,
+            monthly_target,
+            sisa_pinjaman,
+            status,
+            loan_types:loan_type_id (
+              id,
+              code,
+              name
+            )
+          `)
+          .eq('member_id', memberId)
+          .in('status', ['active', 'approved'])
+          .order('created_at', { ascending: true }),
       ]);
+
+      if (activeLoansRes.error) {
+        console.error('Gagal memuat rincian pinjaman aktif:', activeLoansRes.error);
+      }
+
+      const activeRows = (activeLoansRes.data || []).filter((loan: any) => {
+        if (loan.sisa_pinjaman === null || loan.sisa_pinjaman === undefined) {
+          return true;
+        }
+        return Number(loan.sisa_pinjaman) > 0;
+      });
+
+      const breakdown: ActiveLoanBreakdownItem[] = activeRows.map((loan: any) => {
+        const principal = Number(loan.principal_amount ?? loan.amount ?? 0);
+        const months = Number(loan.agreed_tenor_months ?? loan.tenor ?? 1);
+        const monthlyInstallment = Math.round(
+          Number(loan.planned_installment_amount ?? loan.monthly_target ?? (months > 0 ? principal / months : 0))
+        );
+        const typeName = loan.loan_types?.name || 'Pinjaman Koperasi';
+
+        return {
+          id: String(loan.id),
+          loanNumber: loan.loan_number || '-',
+          typeName,
+          tenor: months,
+          monthlyInstallment,
+          remainingPrincipal: Number(loan.sisa_pinjaman ?? 0),
+        };
+      });
+
+      setActiveLoanBreakdown(breakdown);
+      const totalExistingInstallment = breakdown.reduce(
+        (sum, item) => sum + item.monthlyInstallment,
+        0
+      );
+
       const data = await loanService.getMemberTHP(memberId);
       const selectedMember = anggotaList.find(a => String(a.id) === String(memberId));
       let numericThp = data.master_thp;
@@ -439,7 +537,7 @@ export default function PengajuanPinjaman({
       }
 
       setMasterThp(numericThp);
-      const currentInstallments = Number(data.active_installments || 0);
+      const currentInstallments = Number(data.active_installments || 0) || totalExistingInstallment;
       const externalInstallments = Number(
         (data as any)?.angsuran_lain_lain ?? selectedMember?.angsuran_lain_lain ?? 0
       );
@@ -702,6 +800,7 @@ export default function PengajuanPinjaman({
         <div className="lg:col-span-1">
           <SimulationPanel
             thpData={thpData}
+            activeLoanBreakdown={activeLoanBreakdown}
             newInstallment={calculateCicilan()}
             amount={amount}
             tenor={effectiveTenor || ''}

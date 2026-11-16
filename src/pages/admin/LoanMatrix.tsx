@@ -284,7 +284,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         m.nama.toLowerCase().includes(search.toLowerCase()) ||
         (m.loanNumber || '').toLowerCase().includes(search.toLowerCase()) ||
         (m.loan_number || '').toLowerCase().includes(search.toLowerCase()) ||
-        (m.loanTypeName || '').toLowerCase().includes(search.toLowerCase());
+        (m.loanTypeName || m.loan_types?.name || '').toLowerCase().includes(search.toLowerCase()) ||
+        (m.loanTypeCode || m.loan_types?.code || '').toLowerCase().includes(search.toLowerCase());
       const matchStatus = 
         statusFilter === 'ALL' ? true :
         statusFilter === 'ACTIVE' ? m.isLoanActive :
@@ -335,7 +336,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         nrp: m.anggota?.nrp || m.nrp,
         nama: m.anggota?.nama || m.nama,
         loanNumber: m.loan_number || m.loanNumber || '-',
-        loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman',
+        loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman Reguler',
         tenor: m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || '-',
         status: !isMemberCompleted ? 'Aktif' : 'Selesai',
         compliance: memberCompliance.toFixed(1) + '%'
@@ -597,11 +598,19 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                             </span>
                           )}
                         </div>
-                        {(row.loan_number || row.loanNumber) && (
-                          <div className="text-[10px] font-mono text-slate-400 mt-0.5 truncate" title={row.loan_number || row.loanNumber}>
-                            {row.loan_number || row.loanNumber}
-                          </div>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
+                            {row.loanTypeName || row.loan_types?.name || 'Pinjaman Reguler'}
+                          </span>
+                          {(row.loan_number || row.loanNumber) && (
+                            <span
+                              className="text-[10px] font-mono text-slate-400 truncate"
+                              title={row.loan_number || row.loanNumber}
+                            >
+                              {row.loan_number || row.loanNumber}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       
                       <td className="px-2.5 py-2.5 border-r border-slate-200 bg-slate-50/40 min-w-[145px] max-w-[160px] w-[150px] text-[11px] tabular-nums whitespace-nowrap select-none font-mono" data-testid={`prior-summary-${row.memberId}`}>

@@ -216,6 +216,7 @@ export interface LoanMatrixMember {
   nama: string;
   pangkat?: string;
   loanTypeName?: string;
+  loanTypeCode?: string;
   agreedTenorMonths?: number;
   agreed_tenor_months?: number;
   tenor?: number;
@@ -464,7 +465,8 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         nrp: member.nrp,
         nama: member.nama,
         pangkat: member.pangkat || loan.pangkat || '',
-        loanTypeName: loanType?.name || loan.loanTypeName || '',
+        loanTypeName: loanType?.name || loan.loanTypeName || 'Pinjaman Reguler',
+        loanTypeCode: loanType?.code || loan.loanTypeCode || 'REGULER',
         agreedTenorMonths: Number(loan.agreed_tenor_months || loan.tenor || 0),
         tenor: Number(loan.tenor || 0),
         monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
