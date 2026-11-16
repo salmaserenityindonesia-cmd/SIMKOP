@@ -339,7 +339,13 @@ export default function POSPage() {
     setTimeout(() => searchInputRef.current?.focus(), 100);
   };
 
-  const handleCheckoutConfirm = async (payload: { paidCash: number; paidDeposit: number; paidCredit: number; scheme: string }) => {
+  const handleCheckoutConfirm = async (payload: {
+    paidCash: number;
+    paidDeposit: number;
+    paidCredit: number;
+    scheme: string;
+    storeCreditTenor?: number;
+  }) => {
     if (!activeShift) {
       showToast('Shift kasir belum aktif! Harap buka shift kasir terlebih dahulu.', 'error');
       setModals(m => ({ ...m, bukaKasir: true }));
@@ -358,7 +364,8 @@ export default function POSPage() {
       paidCash: payload.paidCash,
       paidDeposit: payload.paidDeposit,
       paidCredit: payload.paidCredit,
-      paymentScheme: payload.scheme
+      paymentScheme: payload.scheme,
+      storeCreditTenor: payload.storeCreditTenor
     });
 
     if (res.success) {
