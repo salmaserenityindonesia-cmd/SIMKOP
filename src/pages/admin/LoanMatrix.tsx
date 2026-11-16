@@ -179,7 +179,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const [year, setYear] = useState<number>(initialYear ?? currentYear);
   const [availableYears, setAvailableYears] = useState<number[]>(initialAvailableYears ?? [currentYear]);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID' | 'FROZEN'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
@@ -288,7 +288,11 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       const matchStatus = 
         statusFilter === 'ALL' ? true :
         statusFilter === 'ACTIVE' ? m.isLoanActive :
-        statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') : true;
+        statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
+        statusFilter === 'FROZEN' ? (
+          (m.membershipStatus || '').toUpperCase() === 'SUSPENDED' ||
+          Object.values(m.months).some(mo => (mo.status || '').toUpperCase() === 'FROZEN')
+        ) : true;
       
       return matchSearch && matchStatus;
     });
@@ -424,6 +428,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
               <option value="ALL">Semua Status</option>
               <option value="ACTIVE">Pinjaman Aktif</option>
               <option value="UNPAID">Ada Tunggakan</option>
+              <option value="FROZEN">Dibekukan Sementara</option>
             </select>
           </div>
         </div>
@@ -544,7 +549,15 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                 </tr>
               ) : paginatedMembers.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleMonths.length === 12 ? 15 : visibleMonths.length + 4} className="text-center py-8 text-slate-500">Tidak ada data untuk tahun {year}</td>
+                  <td colSpan={visibleMonths.length === 12 ? 15 : visibleMonths.length + 4} className="text-center py-8 text-slate-500">
+                    <div>Tidak ada data untuk tahun {year}</div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      Pinjaman yang sudah lunas dapat dilihat pada{' '}
+                      <a href="/admin/laporan-pinjaman-lunas" className="text-emerald-600 hover:underline font-medium">
+                        Daftar Pinjaman Lunas
+                      </a>.
+                    </div>
+                  </td>
                 </tr>
               ) : (
                 paginatedMembers.map(row => {

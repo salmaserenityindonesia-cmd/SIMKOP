@@ -496,7 +496,7 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
     expect(rowLoan3?.priorYearRemaining).toBe(0);
   });
 
-  it('correctly handles completed loans by setting cell status to FINISHED/PAID, remainingBalance to 0, and complianceYTD to 100', async () => {
+  it('excludes completed, paid_off, and all-schedules-paid loans from getLoanMatrix and KPIs', async () => {
     (supabase.from as any).mockImplementation((table: string) => {
       if (table === 'loan_schedules') {
         return {
@@ -505,7 +505,12 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
               return {
                 gte: vi.fn().mockReturnValue({
                   lte: vi.fn().mockResolvedValue({
-                    data: [{ loan_id: 'loan-completed-x' }],
+                    data: [
+                      { loan_id: 'loan-completed-x' },
+                      { loan_id: 'loan-paidoff-y' },
+                      { loan_id: 'loan-allpaid-z' },
+                      { loan_id: 'loan-active-1' },
+                    ],
                     error: null,
                   }),
                 }),
@@ -529,7 +534,7 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
                         tenor: 2,
                         monthly_target: 1000000,
                         status: 'completed',
-                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Sertu Selesai' },
+                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Mulyono Santoso' },
                       },
                     },
                     {
@@ -546,7 +551,58 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
                         tenor: 2,
                         monthly_target: 1000000,
                         status: 'completed',
-                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Sertu Selesai' },
+                        member: { id: 'mem-comp-1', nrp: '112233', nama: 'Mulyono Santoso' },
+                      },
+                    },
+                    {
+                      id: 'sched-po-1',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 500000,
+                      paid_amount: 500000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-paidoff-y',
+                        loan_number: 'PINJ-PO-002',
+                        principal_amount: 500000,
+                        tenor: 1,
+                        monthly_target: 500000,
+                        status: 'paid_off',
+                        member: { id: 'mem-po-1', nrp: '445566', nama: 'Guntur Sutrisno' },
+                      },
+                    },
+                    {
+                      id: 'sched-ap-1',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 750000,
+                      paid_amount: 750000,
+                      status: 'paid',
+                      loan: {
+                        id: 'loan-allpaid-z',
+                        loan_number: 'PINJ-AP-003',
+                        principal_amount: 750000,
+                        tenor: 1,
+                        monthly_target: 750000,
+                        status: 'active',
+                        member: { id: 'mem-ap-1', nrp: '778899', nama: 'Sertu Lunas Penuh' },
+                      },
+                    },
+                    {
+                      id: 'sched-act-1',
+                      period_number: 1,
+                      due_date: '2026-01-15',
+                      target_amount: 1000000,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      loan: {
+                        id: 'loan-active-1',
+                        loan_number: 'PINJ-ACT-004',
+                        principal_amount: 2000000,
+                        tenor: 2,
+                        monthly_target: 1000000,
+                        status: 'active',
+                        member: { id: 'mem-act-1', nrp: '990011', nama: 'Kopda Berjalan' },
                       },
                     },
                   ],
@@ -562,20 +618,11 @@ describe('loanMatrixService - getLoanMatrix & MonthLoanCell Data Contract', () =
 
     const summary = await getLoanMatrix(2026);
     expect(summary.members.length).toBe(1);
-
-    const completedRow = summary.members[0];
-    expect(completedRow.isLoanActive).toBe(false);
-    expect(completedRow.status).toBe('completed');
-    expect(completedRow.complianceYTD).toBe(100);
-
-    // Month 1 and Month 2 cells should be FINISHED or PAID with remainingBalance 0
-    expect(completedRow.months[1].remainingBalance).toBe(0);
-    expect(['FINISHED', 'PAID']).toContain(completedRow.months[1].status);
-
-    expect(completedRow.months[2].remainingBalance).toBe(0);
-    expect(['FINISHED', 'PAID']).toContain(completedRow.months[2].status);
-
-    expect(completedRow.priorYearRemaining).toBe(0);
+    expect(summary.members[0].loanId).toBe('loan-active-1');
+    expect(summary.members[0].nama).toBe('Kopda Berjalan');
+    // KPIs only reflect the active unfinished loan (0 collected out of 1,000,000 target)
+    expect(summary.totalCollectedYTD).toBe(0);
+    expect(summary.complianceYTD).toBe(0);
   });
 });
 

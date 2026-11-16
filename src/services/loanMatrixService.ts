@@ -373,7 +373,51 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   const loanCumulativePaid: Record<string, number> = {};
   const loanPriorYearPaid: Record<string, number> = {};
 
+  // Filter out completed / paid-off / rejected / draft loans and loans whose schedules are all paid or remaining <= 0
+  const schedulesByLoan: Record<string, any[]> = {};
   (schedules || []).forEach((sched: any) => {
+    const loanId = sched?.loan?.id;
+    if (!loanId) return;
+    if (!schedulesByLoan[loanId]) {
+      schedulesByLoan[loanId] = [];
+    }
+    schedulesByLoan[loanId].push(sched);
+  });
+
+  const activeLoanIdsSet = new Set<string>();
+  Object.entries(schedulesByLoan).forEach(([loanId, loanSchedules]) => {
+    const loan = loanSchedules[0]?.loan;
+    if (!loan) return;
+
+    const statusLower = String(loan.status || '').toLowerCase();
+    if (['paid_off', 'completed', 'rejected', 'draft'].includes(statusLower)) {
+      return;
+    }
+
+    const tenor = Number(loan.tenor || loan.agreed_tenor_months || 0);
+    const isAllSchedulesPaid =
+      loanSchedules.length > 0 &&
+      loanSchedules.every((s: any) => String(s.status || '').toLowerCase() === 'paid') &&
+      (tenor <= 0 || loanSchedules.length >= tenor);
+
+    const hasZeroRemaining =
+      loan.sisa_pinjaman !== null &&
+      loan.sisa_pinjaman !== undefined &&
+      Number(loan.sisa_pinjaman) <= 0;
+
+    // Jika seluruh jadwal sudah lunas atau sisa pinjaman <= 0, sembunyikan dari matriks berjalan
+    if (isAllSchedulesPaid || hasZeroRemaining) {
+      return;
+    }
+
+    activeLoanIdsSet.add(loanId);
+  });
+
+  const activeSchedules = (schedules || []).filter(
+    (sched: any) => sched?.loan?.id && activeLoanIdsSet.has(sched.loan.id)
+  );
+
+  activeSchedules.forEach((sched: any) => {
     const loan = sched.loan;
     if (!loan) return;
     const member = loan.member || loan.anggota;
