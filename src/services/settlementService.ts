@@ -30,24 +30,14 @@ export const settlementService = {
    * Mengambil data settlement hak dan kewajiban anggota (endpoint-like function)
    */
   async getSettlementByMember(memberId: string): Promise<SettlementSummary> {
-    // 1. Fetch deposit settlement via RPC (or we can just fetch and calculate manually if RPC is not deployed)
-    const { data: depositData, error: depositError } = await supabase.rpc('get_member_deposit_settlement', {
-      p_member_id: memberId
-    });
-
-    // Fallback to manual calculation if RPC is missing (e.g., migration not run)
-    let deposits: DepositSettlementDetail[] = depositData || [];
-    if (depositError && depositError.code === '42883') { // function does not exist
-      console.warn('RPC get_member_deposit_settlement not found. Falling back to manual calculation.');
-      deposits = await this._getManualDepositSettlement(memberId);
-    } else if (depositError) {
-      throw new Error(`Gagal mengambil rincian simpanan: ${depositError.message}`);
-    }
+    // 1. Hitung saldo simpanan langsung dari mutasi deposit_transactions (Single Source of Truth)
+    //    bukan dari kolom cache member_deposits.balance atau RPC lama yang menjumlahkan amount tanpa transaction_type.
+    const deposits: DepositSettlementDetail[] = await this._getManualDepositSettlement(memberId);
 
     const normalizedDeposits: DepositSettlementDetail[] = deposits.map((d: any) => ({
       deposit_name: d.deposit_name || 'Unknown',
       can_be_withdrawn: Boolean(d.can_be_withdrawn),
-      total_amount: Math.max(0, Number(d.total_amount || 0))
+      total_amount: Math.max(0, Math.round(Number(d.total_amount || 0)))
     }));
 
     // 2. Fetch loan settlement via RPC
@@ -247,25 +237,84 @@ export const settlementService = {
     const { data: mdData, error: mdError } = await supabase
       .from('member_deposits')
       .select(`
-        id, 
-        deposit_types (name, can_be_withdrawn),
-        deposit_transactions (amount)
+        id,
+        balance,
+        deposit_types (id, code, name, can_be_withdrawn, is_active),
+        deposit_transactions (transaction_type, amount)
       `)
       .eq('member_id', memberId);
 
     if (mdError) throw new Error(mdError.message);
+    if (!mdData || mdData.length === 0) return [];
+
+    const memberDepositIds = mdData.map((md: any) => md.id).filter(Boolean);
+    const realBalanceMap = new Map<string, number>();
+
+    if (memberDepositIds.length > 0) {
+      const { data: txList, error: txError } = await supabase
+        .from('deposit_transactions')
+        .select('member_deposit_id, transaction_type, amount')
+        .in('member_deposit_id', memberDepositIds);
+
+      if (txError) throw new Error(txError.message);
+
+      if (txList && txList.length > 0) {
+        for (const tx of txList) {
+          const current = realBalanceMap.get(tx.member_deposit_id) || 0;
+          const amt = Number(tx.amount || 0);
+          if (tx.transaction_type === 'deposit') {
+            realBalanceMap.set(tx.member_deposit_id, current + amt);
+          } else {
+            realBalanceMap.set(tx.member_deposit_id, current - amt);
+          }
+        }
+      } else {
+        // Fallback ke relasi deposit_transactions jika query terpisah kosong (misal pada mock unit test)
+        for (const md of mdData) {
+          const embeddedTxs = (md as any).deposit_transactions || [];
+          let sum = 0;
+          for (const tx of embeddedTxs) {
+            const amt = Number(tx.amount || 0);
+            if (!tx.transaction_type || tx.transaction_type === 'deposit') {
+              sum += amt;
+            } else {
+              sum -= amt;
+            }
+          }
+          realBalanceMap.set(md.id, sum);
+        }
+      }
+    }
 
     const result: DepositSettlementDetail[] = [];
-    if (mdData) {
-      for (const md of mdData) {
-        const typeInfo = Array.isArray(md.deposit_types) ? md.deposit_types[0] : md.deposit_types;
-        const txs = md.deposit_transactions || [];
-        const total = txs.reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0);
-        
+    for (const md of mdData) {
+      const typeInfo = Array.isArray(md.deposit_types) ? md.deposit_types[0] : md.deposit_types;
+      const realBalance = Math.max(0, Math.round(realBalanceMap.get(md.id) ?? 0));
+
+      // Penyelarasan otomatis kolom cache member_deposits.balance jika berbeda dari saldo mutasi riil
+      if (md.balance !== undefined && md.balance !== null && Math.round(Number(md.balance)) !== realBalance) {
+        try {
+          await supabase
+            .from('member_deposits')
+            .update({ balance: realBalance, updated_at: new Date().toISOString() })
+            .eq('id', md.id);
+        } catch (syncErr) {
+          console.warn(`Gagal menyelaraskan balance cache member_deposits (${md.id}):`, syncErr);
+        }
+      }
+
+      const codeUpper = (typeInfo?.code || '').toUpperCase();
+      const nameLower = (typeInfo?.name || '').toLowerCase();
+      const isCorePokok = codeUpper === 'POKOK' || nameLower.includes('pokok');
+      const isActiveType = typeInfo?.is_active !== false;
+
+      // Sertakan semua simpanan bersaldo riil > 0 (termasuk SUKARELA / DD),
+      // simpanan pokok, serta jenis simpanan aktif lainnya (seperti Lebaran bersaldo Rp 0).
+      if (realBalance > 0 || isCorePokok || isActiveType) {
         result.push({
           deposit_name: typeInfo?.name || 'Unknown',
           can_be_withdrawn: Boolean(typeInfo?.can_be_withdrawn),
-          total_amount: Math.max(0, total)
+          total_amount: realBalance
         });
       }
     }

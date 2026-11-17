@@ -569,6 +569,17 @@ export async function approveAndExecuteDisbursement(
             }));
             await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
           }
+
+          // Pastikan kolom cache member_deposits.balance ikut diselaraskan menjadi 0
+          const disbursedDepositIds = simulation.members
+            .map(m => m.memberDepositId)
+            .filter((id): id is string => Boolean(id));
+          if (disbursedDepositIds.length > 0) {
+            await supabase
+              .from('member_deposits')
+              .update({ balance: 0, updated_at: new Date().toISOString() })
+              .in('id', disbursedDepositIds);
+          }
         } catch (itemErr) {
           console.warn('Catatan: Gagal mencatat items penerima setelah RPC:', itemErr);
         }
@@ -640,6 +651,15 @@ export async function approveAndExecuteDisbursement(
 
     if (txErr) {
       console.warn(`Gagal mencatat mutasi penarikan untuk ${m.nama}:`, txErr.message);
+    } else {
+      try {
+        await supabase
+          .from('member_deposits')
+          .update({ balance: 0, updated_at: new Date().toISOString() })
+          .eq('id', m.memberDepositId);
+      } catch (balErr) {
+        console.warn(`Catatan: Gagal memperbarui balance member_deposits untuk ${m.nama}:`, balErr);
+      }
     }
 
     if (tx?.id) {
@@ -1161,6 +1181,17 @@ async function executeReplayClientFallback(): Promise<ReplayExecutionResult> {
 
     if (txsToInsert.length > 0) {
       await supabase.from('deposit_transactions').insert(txsToInsert);
+      try {
+        const replayedDepositIds = Array.from(new Set(txsToInsert.map(t => t.member_deposit_id).filter(Boolean)));
+        if (replayedDepositIds.length > 0) {
+          await supabase
+            .from('member_deposits')
+            .update({ balance: 0, updated_at: new Date().toISOString() })
+            .in('id', replayedDepositIds);
+        }
+      } catch (balErr) {
+        console.warn('Catatan: Gagal menyinkronkan balance member_deposits saat replay:', balErr);
+      }
     }
     if (itemsToInsert.length > 0) {
       await supabase.from('lebaran_disbursement_items').insert(itemsToInsert);

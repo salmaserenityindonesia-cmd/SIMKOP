@@ -32,17 +32,23 @@ describe('settlementService', () => {
 
   describe('getSettlementByMember - Pencegahan Double Negation & Normalisasi Nilai', () => {
     it('menormalkan remaining_balance negatif dari database (Asep Saputra: -6.666.680 & simpanan 15.960.000 -> surplus 9.293.320)', async () => {
-      // Mock RPC deposit settlement
-      (supabase.rpc as any).mockImplementation((fnName: string) => {
-        if (fnName === 'get_member_deposit_settlement') {
-          return Promise.resolve({
-            data: [
-              { deposit_name: 'Simpanan Pokok', can_be_withdrawn: false, total_amount: 1000000 },
-              { deposit_name: 'Simpanan Wajib', can_be_withdrawn: false, total_amount: 14960000 }
-            ],
-            error: null
-          });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return createChainMock([
+            { id: 'md-pokok', balance: 1000000, deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } },
+            { id: 'md-wajib', balance: 14960000, deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib', can_be_withdrawn: false, is_active: true } }
+          ]);
         }
+        if (table === 'deposit_transactions') {
+          return createChainMock([
+            { member_deposit_id: 'md-pokok', transaction_type: 'deposit', amount: 1000000 },
+            { member_deposit_id: 'md-wajib', transaction_type: 'deposit', amount: 14960000 }
+          ]);
+        }
+        return createChainMock([]);
+      });
+
+      (supabase.rpc as any).mockImplementation((fnName: string) => {
         if (fnName === 'get_member_loan_settlement') {
           return Promise.resolve({
             data: [
@@ -82,15 +88,21 @@ describe('settlementService', () => {
     });
 
     it('menghitung defisit dengan benar saat total kewajiban lebih besar dari total simpanan', async () => {
-      (supabase.rpc as any).mockImplementation((fnName: string) => {
-        if (fnName === 'get_member_deposit_settlement') {
-          return Promise.resolve({
-            data: [
-              { deposit_name: 'Simpanan Sukarela', can_be_withdrawn: true, total_amount: 5000000 }
-            ],
-            error: null
-          });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return createChainMock([
+            { id: 'md-sukarela', balance: 5000000, deposit_types: { code: 'SUKARELA', name: 'Simpanan Sukarela', can_be_withdrawn: true, is_active: true } }
+          ]);
         }
+        if (table === 'deposit_transactions') {
+          return createChainMock([
+            { member_deposit_id: 'md-sukarela', transaction_type: 'deposit', amount: 5000000 }
+          ]);
+        }
+        return createChainMock([]);
+      });
+
+      (supabase.rpc as any).mockImplementation((fnName: string) => {
         if (fnName === 'get_member_loan_settlement') {
           return Promise.resolve({
             data: [
@@ -119,13 +131,21 @@ describe('settlementService', () => {
     });
 
     it('menangani pinjaman paralel aktif dengan banyak baris dan memastikan semua sisa dinormalisasi positif', async () => {
-      (supabase.rpc as any).mockImplementation((fnName: string) => {
-        if (fnName === 'get_member_deposit_settlement') {
-          return Promise.resolve({
-            data: [{ deposit_name: 'Simpanan Pokok', can_be_withdrawn: false, total_amount: 2000000 }],
-            error: null
-          });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return createChainMock([
+            { id: 'md-pokok', balance: 2000000, deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } }
+          ]);
         }
+        if (table === 'deposit_transactions') {
+          return createChainMock([
+            { member_deposit_id: 'md-pokok', transaction_type: 'deposit', amount: 2000000 }
+          ]);
+        }
+        return createChainMock([]);
+      });
+
+      (supabase.rpc as any).mockImplementation((fnName: string) => {
         if (fnName === 'get_member_loan_settlement') {
           return Promise.resolve({
             data: [
@@ -159,6 +179,50 @@ describe('settlementService', () => {
       expect(result.total_kewajiban).toBe(4000000); // 3.000.000 + 1.000.000
       expect(result.net_settlement).toBe(-2000000); // 2.000.000 - 4.000.000
     });
+
+    it('menghitung saldo riil dari deposit_transactions (Agus Susanto: Lebaran 2.400.000 - 2.400.000 = 0, abaikan balance cache 4.800.000, dan sinkronkan)', async () => {
+      const memberDepositsMock = createChainMock([
+        { id: 'md-belanja', balance: 2550000, deposit_types: { code: 'BELANJA', name: 'Simpanan Belanja', can_be_withdrawn: true, is_active: true } },
+        { id: 'md-wajib', balance: 10200000, deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib', can_be_withdrawn: false, is_active: true } },
+        { id: 'md-pokok', balance: 10000, deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } },
+        { id: 'md-lebaran', balance: 4800000, deposit_types: { code: 'LEBARAN', name: 'Simpanan Hari Raya (Lebaran)', can_be_withdrawn: true, is_active: true } },
+        { id: 'md-dd', balance: 500000, deposit_types: { code: 'DD', name: 'Dana Darurat', can_be_withdrawn: true, is_active: true } }
+      ]);
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return memberDepositsMock;
+        }
+        if (table === 'deposit_transactions') {
+          return createChainMock([
+            { member_deposit_id: 'md-belanja', transaction_type: 'deposit', amount: 2550000 },
+            { member_deposit_id: 'md-wajib', transaction_type: 'deposit', amount: 10200000 },
+            { member_deposit_id: 'md-pokok', transaction_type: 'deposit', amount: 10000 },
+            { member_deposit_id: 'md-lebaran', transaction_type: 'deposit', amount: 2400000 },
+            { member_deposit_id: 'md-lebaran', transaction_type: 'withdrawal', amount: 2400000 },
+            { member_deposit_id: 'md-dd', transaction_type: 'deposit', amount: 500000 }
+          ]);
+        }
+        return createChainMock([]);
+      });
+
+      (supabase.rpc as any).mockImplementation((fnName: string) => {
+        if (fnName === 'get_member_loan_settlement') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const result = await settlementService.getSettlementByMember('member-agus-95168420');
+
+      const lebaran = result.deposit_details.find(d => d.deposit_name.includes('Lebaran'));
+      const dd = result.deposit_details.find(d => d.deposit_name === 'Dana Darurat');
+      expect(lebaran?.total_amount).toBe(0);
+      expect(dd?.total_amount).toBe(500000);
+      // 2.550.000 + 10.200.000 + 10.000 + 0 + 500.000 = 13.260.000
+      expect(result.total_hak).toBe(13260000);
+      expect(memberDepositsMock.update).toHaveBeenCalledWith(expect.objectContaining({ balance: 0 }));
+    });
   });
 
   describe('Fallback Manual Methods', () => {
@@ -179,8 +243,18 @@ describe('settlementService', () => {
         return Promise.resolve({ data: null, error: null });
       });
 
-      // Mock from('loans')
+      // Mock from('loans'), from('member_deposits'), from('deposit_transactions')
       (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'member_deposits') {
+          return createChainMock([
+            { id: 'md-pokok', balance: 1000000, deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } }
+          ]);
+        }
+        if (table === 'deposit_transactions') {
+          return createChainMock([
+            { member_deposit_id: 'md-pokok', transaction_type: 'deposit', amount: 1000000 }
+          ]);
+        }
         if (table === 'loans') {
           return createChainMock([
             {
