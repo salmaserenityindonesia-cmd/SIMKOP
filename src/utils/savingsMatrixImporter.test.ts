@@ -193,6 +193,50 @@ describe('savingsMatrixImporter', () => {
       expect(result.errors[0]).toContain('Tidak ditemukan kolom bulan transaksi');
     });
 
+    it('harus membaca kolom Saldo Awal (Per Mar-26) sebagai entri cut-off dan mengabaikan kolom sebelum Mar-26', async () => {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Matriks WAJIB');
+
+      ws.addRow([
+        'NRP',
+        'Nama Anggota',
+        'Tgl Masuk',
+        'Saldo Awal (Per Mar-26)',
+        'Feb-26', // harus diabaikan karena sebelum Mar-26
+        'Mar-26',
+        'Apr-26',
+        'Total Saldo Akhir',
+        'Saldo Acuan Database',
+        'Selisih',
+        'Status Validasi'
+      ]);
+
+      ws.addRow([
+        '2001',
+        'Iwan Budiman',
+        '2021-05-01',
+        13400000,
+        150000,
+        200000,
+        0,
+        13600000,
+        13600000,
+        0,
+        'SEIMBANG'
+      ]);
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const result = await parseSavingsMatrixExcel(buffer);
+
+      expect(result.success).toBe(true);
+      expect(result.openingBalances).toEqual([{ nrp: '2001', amount: 13400000 }]);
+      expect(result.detectedMonths.map(m => m.label)).toEqual(['Mar-26', 'Apr-26']);
+      expect(result.mutations).toEqual([
+        { nrp: '2001', year: 2026, month: 2, amount: 13400000, isOpeningBalance: true },
+        { nrp: '2001', year: 2026, month: 3, amount: 200000 }
+      ]);
+    });
+
     it('harus menangani file/buffer rusak dengan aman tanpa melempar unhandled exception', async () => {
       const corruptBuffer = new ArrayBuffer(16);
       const result = await parseSavingsMatrixExcel(corruptBuffer);

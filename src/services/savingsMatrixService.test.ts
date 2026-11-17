@@ -364,15 +364,14 @@ describe('savingsMatrixService - reconcileSingleMemberDeposit', () => {
       joinDate: '2024-01-01'
     });
 
+    // Sesuai Cut-Off Maret 2026, saldo migrasi pra-Maret 2026 TIDAK dipecah ke 2024-01 / 2024-02
     expect(res.success).toBe(true);
-    expect(res.matchedKeys).toEqual(['2024-01', '2024-02']);
-    expect(res.insertedCount).toBe(2);
-    expect(inserted).toHaveLength(2);
-    expect(inserted[0].amount).toBe(150000);
-    expect(inserted[1].amount).toBe(150000);
+    expect(res.matchedKeys).toEqual([]);
+    expect(res.insertedCount).toBe(0);
+    expect(inserted).toHaveLength(0);
   });
 
-  it('rekonsiliasi berhasil membaca baseline dari "Saldo Simpanan Belum Teralokasi" setelah uncheck all', async () => {
+  it('rekonsiliasi mempertahankan "Saldo Simpanan Belum Teralokasi" pra-Maret 2026 dan tidak memecahnya ke tahun 2022-2025', async () => {
     const mockDeposits = [
       {
         id: 'md-single-unallocated',
@@ -462,20 +461,10 @@ describe('savingsMatrixService - reconcileSingleMemberDeposit', () => {
       endYear: 2026
     });
 
+    // Sesuai Cut-Off Maret 2026, saldo belum teralokasi pra-Maret 2026 tidak dipecah ke 2022-2025
     expect(res.success).toBe(true);
-    expect(res.totalAllocated).toBe(10200000);
-    // 15 bulan @ 200k + 34 bulan @ 210k + 1 bulan parsial @ 60k = 50 bulan
-    expect(res.matchedKeys.length).toBe(50);
-    expect(res.matchedKeys[0]).toBe('2022-08');
-    expect(res.matchedKeys[14]).toBe('2023-10');
-    expect(res.matchedKeys[15]).toBe('2023-11');
-    expect(res.matchedKeys[48]).toBe('2026-08');
-    expect(res.matchedKeys[49]).toBe('2026-09');
-
-    // Cek alokasi parsial bulan terakhir (Sep 2026)
-    const partialTx = res.allocatedTransactions?.find(t => t.key === '2026-09');
-    expect(partialTx?.isPartial).toBe(true);
-    expect(partialTx?.amount).toBe(60000);
+    expect(res.matchedKeys).toEqual([]);
+    expect(res.insertedCount).toBe(0);
   });
 
   describe('bulkCheckAllUpToCurrentMonth', () => {

@@ -1749,6 +1749,72 @@ describe('complianceService - importSavingsMatrixLedger', () => {
       expect(result.success).toBe(false);
       expect(result.errors?.[0]).toContain('Gagal memuat tipe simpanan');
     });
+
+    it('harus menyimpan Saldo Awal Cut-Off (s/d Feb 2026) sebagai 1 entri cut-off dan mutasi bulanan mulai Mar-26', async () => {
+      const mockMembers = [{ id: 'm-iwan', nrp: '2001', nama: 'Iwan Budiman' }];
+      const mockDeposits = [{ id: 'md-iwan', member_id: 'm-iwan', deposit_type_id: 'dt-wajib' }];
+      const insertedTxs: any[][] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return { select: vi.fn().mockResolvedValue({ data: mockTypes, error: null }) };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                in: vi.fn().mockResolvedValue({ data: mockDeposits, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            delete: vi.fn().mockImplementation(() => createDeleteChain()),
+            insert: vi.fn().mockImplementation((batch: any[]) => {
+              insertedTxs.push(batch);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const mutations = [
+        { nrp: '2001', year: 2026, month: 2, amount: 13400000, isOpeningBalance: true },
+        { nrp: '2001', year: 2026, month: 3, amount: 200000 },
+      ];
+
+      const result = await importSavingsMatrixLedger('WAJIB', mutations);
+      expect(result.success).toBe(true);
+      expect(result.totalTransactions).toBe(2);
+
+      const allInserted = insertedTxs.flat();
+      expect(allInserted[0]).toMatchObject({
+        member_deposit_id: 'md-iwan',
+        transaction_type: 'deposit',
+        amount: 13400000,
+        for_year: 2026,
+        for_month: 2,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        created_at: '2026-03-01T00:00:00.000Z',
+      });
+      expect(allInserted[1]).toMatchObject({
+        member_deposit_id: 'md-iwan',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_year: 2026,
+        for_month: 3,
+        description: 'Import Matriks Buku Besar Excel',
+      });
+    });
   });
 
   describe('getComplianceMatrixData - Net Savings Aggregation (real cash position)', () => {

@@ -221,17 +221,21 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
         />
       );
 
-      // Pastikan kolom bulan terurut secara kronologis maju (periode awal muncul lebih dulu)
-      const idxJan24 = html.indexOf('<div>Jan-24</div>');
+      // Pastikan kolom bulan terurut secara kronologis maju mulai Mar-26 (Cut-Off resmi Maret 2026)
+      const idxMar26 = html.indexOf('<div>Mar-26</div>');
       const idxNov26 = html.indexOf('<div>Nov-26</div>');
       const idxDes26 = html.indexOf('<div>Des-26</div>');
 
-      expect(idxJan24).toBeGreaterThan(-1);
+      expect(idxMar26).toBeGreaterThan(-1);
       expect(idxNov26).toBeGreaterThan(-1);
       expect(idxDes26).toBeGreaterThan(-1);
 
-      // Jan-24 harus muncul sebelum Nov-26, dan Nov-26 sebelum Des-26
-      expect(idxJan24).toBeLessThan(idxNov26);
+      // Kolom pra-Maret 2026 tidak boleh muncul
+      expect(html).not.toContain('<div>Jan-24</div>');
+      expect(html).not.toContain('<div>Feb-26</div>');
+
+      // Mar-26 harus muncul sebelum Nov-26, dan Nov-26 sebelum Des-26
+      expect(idxMar26).toBeLessThan(idxNov26);
       expect(idxNov26).toBeLessThan(idxDes26);
 
       // Pastikan terdapat penanda "Bulan Ini" dan testid "current-month-col"
@@ -299,8 +303,9 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
 
       // Verify Saldo Database is preserved
       expect(html).toContain('10.200.000');
-      // Verify Total Tercentang is 0
-      expect(html).toContain('Total Tercentang:');
+      // Verify Total Tercentang (Pasca Saldo Awal) is 0 and badge Mar-26 appears
+      expect(html).toContain('Saldo Awal Cut-Off (Per Mar-26):');
+      expect(html).toContain('Total Tercentang (Pasca Saldo Awal):');
       // Verify badge text
       expect(html).toContain('Selisih');
       expect(html).toContain('(Belum Dialokasikan)');
