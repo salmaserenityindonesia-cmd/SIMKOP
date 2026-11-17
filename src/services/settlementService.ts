@@ -238,7 +238,6 @@ export const settlementService = {
       .from('member_deposits')
       .select(`
         id,
-        balance,
         deposit_types (id, code, name, can_be_withdrawn, is_active),
         deposit_transactions (transaction_type, amount)
       `)
@@ -290,18 +289,6 @@ export const settlementService = {
     for (const md of mdData) {
       const typeInfo = Array.isArray(md.deposit_types) ? md.deposit_types[0] : md.deposit_types;
       const realBalance = Math.max(0, Math.round(realBalanceMap.get(md.id) ?? 0));
-
-      // Penyelarasan otomatis kolom cache member_deposits.balance jika berbeda dari saldo mutasi riil
-      if (md.balance !== undefined && md.balance !== null && Math.round(Number(md.balance)) !== realBalance) {
-        try {
-          await supabase
-            .from('member_deposits')
-            .update({ balance: realBalance, updated_at: new Date().toISOString() })
-            .eq('id', md.id);
-        } catch (syncErr) {
-          console.warn(`Gagal menyelaraskan balance cache member_deposits (${md.id}):`, syncErr);
-        }
-      }
 
       const codeUpper = (typeInfo?.code || '').toUpperCase();
       const nameLower = (typeInfo?.name || '').toLowerCase();

@@ -180,13 +180,13 @@ describe('settlementService', () => {
       expect(result.net_settlement).toBe(-2000000); // 2.000.000 - 4.000.000
     });
 
-    it('menghitung saldo riil dari deposit_transactions (Agus Susanto: Lebaran 2.400.000 - 2.400.000 = 0, abaikan balance cache 4.800.000, dan sinkronkan)', async () => {
+    it('menghitung saldo riil dari deposit_transactions (Agus Susanto: Lebaran 2.400.000 - 2.400.000 = 0, serta produk tambahan DD)', async () => {
       const memberDepositsMock = createChainMock([
-        { id: 'md-belanja', balance: 2550000, deposit_types: { code: 'BELANJA', name: 'Simpanan Belanja', can_be_withdrawn: true, is_active: true } },
-        { id: 'md-wajib', balance: 10200000, deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib', can_be_withdrawn: false, is_active: true } },
-        { id: 'md-pokok', balance: 10000, deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } },
-        { id: 'md-lebaran', balance: 4800000, deposit_types: { code: 'LEBARAN', name: 'Simpanan Hari Raya (Lebaran)', can_be_withdrawn: true, is_active: true } },
-        { id: 'md-dd', balance: 500000, deposit_types: { code: 'DD', name: 'Dana Darurat', can_be_withdrawn: true, is_active: true } }
+        { id: 'md-belanja', deposit_types: { code: 'BELANJA', name: 'Simpanan Belanja', can_be_withdrawn: true, is_active: true } },
+        { id: 'md-wajib', deposit_types: { code: 'WAJIB', name: 'Simpanan Wajib', can_be_withdrawn: false, is_active: true } },
+        { id: 'md-pokok', deposit_types: { code: 'POKOK', name: 'Simpanan Pokok', can_be_withdrawn: false, is_active: true } },
+        { id: 'md-lebaran', deposit_types: { code: 'LEBARAN', name: 'Simpanan Hari Raya (Lebaran)', can_be_withdrawn: true, is_active: true } },
+        { id: 'md-dd', deposit_types: { code: 'DD', name: 'Dana Darurat', can_be_withdrawn: true, is_active: true } }
       ]);
 
       (supabase.from as any).mockImplementation((table: string) => {
@@ -221,7 +221,6 @@ describe('settlementService', () => {
       expect(dd?.total_amount).toBe(500000);
       // 2.550.000 + 10.200.000 + 10.000 + 0 + 500.000 = 13.260.000
       expect(result.total_hak).toBe(13260000);
-      expect(memberDepositsMock.update).toHaveBeenCalledWith(expect.objectContaining({ balance: 0 }));
     });
   });
 
