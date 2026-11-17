@@ -6,7 +6,6 @@ import {
   RefreshCw, 
   Clock, 
   Ban, 
-  Trash2, 
   Eye
 } from 'lucide-react';
 import { 
@@ -43,22 +42,6 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
       console.error('Error loading cycles history:', err);
     } finally {
       setIsLoadingHistory(false);
-    }
-  };
-
-  // Handle Delete Cycle Date
-  const handleDeleteCycle = async (cycle: LebaranDisbursementCycle) => {
-    const cycleDate = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
-    if (!window.confirm(`Hapus tanggal siklus "${cycle.cycle_name}" (${cycleDate}) dari daftar riwayat?`)) {
-      return;
-    }
-
-    try {
-      await bulkWithdrawalService.deleteHistoricalDisbursementDate(cycle.id);
-      setSuccessMessage(`Siklus "${cycle.cycle_name}" berhasil dihapus.`);
-      await loadCyclesData();
-    } catch (err: any) {
-      setExecutionError(err.message || 'Gagal menghapus siklus');
     }
   };
 
@@ -238,24 +221,14 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
                         {badge}
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleViewRecipients(cycle)}
-                            className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
-                            title="Lihat daftar nominatif penerima pada tanggal ini"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Lihat Penerima</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleDeleteCycle(cycle)}
-                            className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition-colors cursor-pointer"
-                            title="Hapus tanggal siklus ini"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleViewRecipients(cycle)}
+                          className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg transition-colors inline-flex items-center gap-1 cursor-pointer"
+                          title="Lihat daftar nominatif penerima pada tanggal ini"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Lihat Penerima</span>
+                        </button>
                       </td>
                     </tr>
                   );

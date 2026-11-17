@@ -21,8 +21,11 @@ export default function CycleRecipientsModal({
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   useEffect(() => {
+    setCurrentPage(1);
     if (isOpen && cycle?.id) {
       loadRecipients(cycle.id);
     } else {
@@ -60,11 +63,22 @@ export default function CycleRecipientsModal({
     return filteredRecipients.reduce((sum, r) => sum + Number(r.amount_disbursed || 0), 0);
   }, [filteredRecipients]);
 
+  const totalRecipientsCount = filteredRecipients.length;
+  const totalRecipientPages = Math.max(1, Math.ceil(totalRecipientsCount / pageSize));
+  const safeRecipientPage = Math.min(currentPage, totalRecipientPages);
+  const recipientStartIndex = (safeRecipientPage - 1) * pageSize;
+  const recipientEndIndex = Math.min(recipientStartIndex + pageSize, totalRecipientsCount);
+
+  const paginatedRecipients = useMemo(
+    () => filteredRecipients.slice(recipientStartIndex, recipientEndIndex),
+    [filteredRecipients, recipientStartIndex, recipientEndIndex]
+  );
+
   const handleExportCSV = () => {
-    if (recipients.length === 0) return;
+    if (filteredRecipients.length === 0) return;
     const cycleDate = cycle?.disbursement_date || (cycle?.cut_off_date ? cycle.cut_off_date.slice(0, 10) : 'siklus');
     const headers = ['No', 'NRP', 'Nama Anggota', 'Nomor Rekening', 'Nominal Dicairkan (Rp)'];
-    const rows = recipients.map((r, idx) => [
+    const rows = filteredRecipients.map((r, idx) => [
       idx + 1,
       `"${r.nrp || '-'}"`,
       `"${(r.member_name || '-').replace(/"/g, '""')}"`,
@@ -136,7 +150,7 @@ export default function CycleRecipientsModal({
           <div className="flex items-center gap-2">
             <button
               onClick={handleExportCSV}
-              disabled={recipients.length === 0}
+              disabled={filteredRecipients.length === 0}
               className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
@@ -153,7 +167,10 @@ export default function CycleRecipientsModal({
               type="text"
               placeholder="Cari NRP, Nama, atau Rekening..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
             />
           </div>
@@ -192,9 +209,9 @@ export default function CycleRecipientsModal({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredRecipients.map((rec, idx) => (
-                    <tr key={rec.id || idx} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-2.5 px-3 text-center text-slate-400 font-mono">{idx + 1}</td>
+                  {paginatedRecipients.map((rec, idx) => (
+                    <tr key={rec.id || `${recipientStartIndex + idx}`} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 px-3 text-center text-slate-400 font-mono">{recipientStartIndex + idx + 1}</td>
                       <td className="py-2.5 px-3 font-mono font-medium text-slate-700">{rec.nrp || '-'}</td>
                       <td className="py-2.5 px-3 font-semibold text-slate-800">{rec.member_name || '-'}</td>
                       <td className="py-2.5 px-3 text-slate-600 font-mono">
@@ -210,6 +227,53 @@ export default function CycleRecipientsModal({
                   ))}
                 </tbody>
               </table>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-slate-100 bg-slate-50/70 text-xs text-slate-600">
+                <div className="flex items-center gap-3">
+                  <span>
+                    Menampilkan{' '}
+                    <strong className="font-semibold text-slate-800">
+                      {totalRecipientsCount > 0 ? recipientStartIndex + 1 : 0}-{recipientEndIndex}
+                    </strong>{' '}
+                    dari <strong className="font-semibold text-slate-800">{totalRecipientsCount}</strong> penerima
+                  </span>
+                  <select
+                    aria-label="Jumlah baris per halaman"
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value={10}>10 / halaman</option>
+                    <option value={25}>25 / halaman</option>
+                    <option value={50}>50 / halaman</option>
+                    <option value={100}>100 / halaman</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={safeRecipientPage <= 1}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Prev
+                  </button>
+                  <span className="px-3 py-1.5 font-semibold text-slate-800">
+                    Halaman {safeRecipientPage} / {totalRecipientPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((prev) => Math.min(totalRecipientPages, prev + 1))}
+                    disabled={safeRecipientPage >= totalRecipientPages}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
