@@ -159,8 +159,8 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       // Controls toolbar
       expect(html).toContain('Semua Jenis Simpanan');
       expect(html).toContain('Cari NRP / Nama Anggota...');
-      expect(html).toContain('Export Rekap Excel');
-      expect(html).toContain('Kirim Pengingat');
+      expect(html).not.toContain('Export Rekap Excel');
+      expect(html).not.toContain('Kirim Pengingat');
     });
 
     it('renders dynamic year dropdown options with [2026, 2025, 2024, 2023]', () => {
