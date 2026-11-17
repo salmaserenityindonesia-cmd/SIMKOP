@@ -103,7 +103,7 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     );
 
     // Button should be disabled
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Konfirmasi Reset/);
+    expect(html).toMatch(/<button type="submit"[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*?Konfirmasi Reset/);
   });
 
   it('enables submit button when verification keyword matches "RESET KAS KEUANGAN"', () => {
@@ -112,7 +112,21 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     );
 
     // Button should NOT have disabled attribute
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?Konfirmasi Reset/);
+    expect(html).not.toMatch(/<button type="submit"[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*?Konfirmasi Reset/);
     expect(html).toContain('Konfirmasi Reset');
+  });
+
+  it('renders pagination controls (10/25/50/100 rows, Prev/Next) for Mutasi Arus Kas Terperinci', () => {
+    const html = renderToStaticMarkup(<LaporanKeuangan />);
+
+    expect(html).toContain('Mutasi Arus Kas Terperinci');
+    expect(html).toContain('Menampilkan');
+    expect(html).toContain('10 / halaman');
+    expect(html).toContain('25 / halaman');
+    expect(html).toContain('50 / halaman');
+    expect(html).toContain('100 / halaman');
+    expect(html).toContain('Prev');
+    expect(html).toContain('Next');
+    expect(html).toContain('Halaman 1 / 1');
   });
 });

@@ -293,6 +293,8 @@ export default function LaporanKeuangan({
 
   const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(null);
   const [shuData, setShuData]           = useState<ShuEstimationData | null>(null);
+  const [cashFlowPage, setCashFlowPage] = useState<number>(1);
+  const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
 
   // State Modal Konfirmasi Reset Kas
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
@@ -317,6 +319,18 @@ export default function LaporanKeuangan({
   }, [startDate, endDate, unit]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    setCashFlowPage(1);
+  }, [startDate, endDate, unit]);
+
+  const cashFlowTransactions = cashFlowData?.transactions ?? [];
+  const totalCashFlowItems = cashFlowTransactions.length;
+  const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
+  const safeCashFlowPage = Math.min(cashFlowPage, totalCashFlowPages);
+  const cashFlowStartIndex = (safeCashFlowPage - 1) * cashFlowPageSize;
+  const cashFlowEndIndex = Math.min(cashFlowStartIndex + cashFlowPageSize, totalCashFlowItems);
+  const paginatedCashFlow = cashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
 
   // Quick preset handlers
   const applyPreset = (preset: 'today' | 'thisMonth' | 'year2026') => {
@@ -494,7 +508,10 @@ export default function LaporanKeuangan({
           {/* Action Buttons */}
           <div className="flex items-center gap-2 pb-0.5">
             <button
-              onClick={fetchData}
+              onClick={() => {
+                setCashFlowPage(1);
+                fetchData();
+              }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
             >
               <span className="material-symbols-outlined text-[18px]">filter_alt</span>
@@ -646,7 +663,7 @@ export default function LaporanKeuangan({
                   </tr>
                 </thead>
                 <tbody>
-                  {(cashFlowData?.transactions ?? []).length === 0 ? (
+                  {totalCashFlowItems === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-12 text-on-surface-variant text-sm">
                         <span className="material-symbols-outlined text-[36px] block mb-2 text-outline">inbox</span>
@@ -654,7 +671,7 @@ export default function LaporanKeuangan({
                       </td>
                     </tr>
                   ) : (
-                    cashFlowData?.transactions.map((t, i) => (
+                    paginatedCashFlow.map((t, i) => (
                       <tr key={t.id} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`}>
                         <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
                         <td className="px-4 py-3 font-mono text-[12px] text-on-surface-variant">{t.referensi}</td>
@@ -674,7 +691,7 @@ export default function LaporanKeuangan({
                     ))
                   )}
                 </tbody>
-                {(cashFlowData?.transactions.length ?? 0) > 0 && (
+                {totalCashFlowItems > 0 && (
                   <tfoot className="bg-primary/5 border-t-2 border-primary/20">
                     <tr>
                       <td colSpan={5} className="px-4 py-3 font-bold text-primary text-sm">TOTAL</td>
@@ -691,6 +708,53 @@ export default function LaporanKeuangan({
                   </tfoot>
                 )}
               </table>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl text-xs sm:text-sm text-slate-600">
+              <div className="flex items-center gap-3">
+                <span>
+                  Menampilkan{' '}
+                  <strong className="font-semibold text-slate-800">
+                    {totalCashFlowItems > 0 ? cashFlowStartIndex + 1 : 0}-{cashFlowEndIndex}
+                  </strong>{' '}
+                  dari <strong className="font-semibold text-slate-800">{totalCashFlowItems}</strong> transaksi
+                </span>
+                <select
+                  value={cashFlowPageSize}
+                  onChange={(e) => {
+                    setCashFlowPageSize(Number(e.target.value));
+                    setCashFlowPage(1);
+                  }}
+                  aria-label="Jumlah baris per halaman"
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCashFlowPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeCashFlowPage <= 1}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Prev
+                </button>
+                <span className="px-3 py-1.5 text-xs font-semibold text-slate-800">
+                  Halaman {safeCashFlowPage} / {totalCashFlowPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCashFlowPage((prev) => Math.min(totalCashFlowPages, prev + 1))}
+                  disabled={safeCashFlowPage >= totalCashFlowPages}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         </div>
