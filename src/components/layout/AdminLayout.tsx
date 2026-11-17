@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { PanelLeftClose, PanelLeftOpen, X, LogOut, Menu } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import AdminProfileModal from '../admin/AdminProfileModal';
 import Sidebar, {
@@ -10,7 +11,8 @@ import Sidebar, {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [user, setUser] = useState<{ email: string; name: string; role: string } | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const navContainerRef = useRef<HTMLDivElement | null>(null);
@@ -22,7 +24,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   useLayoutEffect(() => {
     try {
       const activeItem = navContainerRef.current?.querySelector(
-        '[aria-current="page"], .border-secondary-fixed'
+        '[aria-current="page"]'
       ) as HTMLElement | null;
       restoreSidebarScroll(navContainerRef.current, activeItem);
     } catch {
@@ -31,17 +33,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }, [location.pathname]);
 
   useEffect(() => {
-    if (window.innerWidth < 1024) {
-      setIsSidebarOpen(false);
-    }
+    setIsMobileMenuOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 1024) {
-        setIsSidebarOpen(true);
-      } else {
-        setIsSidebarOpen(false);
+        setIsMobileMenuOpen(false);
       }
     };
     window.addEventListener('resize', handleResize);
@@ -74,68 +72,147 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   const initials = user?.name?.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() || 'AD';
+  const desktopMarginClass = isCollapsed ? 'lg:ml-[72px]' : 'lg:ml-64';
 
   return (
     <div className="bg-background text-on-surface antialiased font-body-md text-body-md overflow-x-hidden min-h-screen">
-      {/* Mobile Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-slate-900/50 z-30 lg:hidden backdrop-blur-sm transition-opacity"
-          onClick={() => setIsSidebarOpen(false)}
+      {/* Mobile & Tablet Overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-slate-950/60 z-30 lg:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
 
       {/* SIDEBAR NAVIGATION */}
-      <aside className={`fixed top-0 left-0 h-screen w-72 flex flex-col z-40 bg-primary-container text-on-primary-container shadow-md border-r border-outline-variant/20 transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="w-72 h-full flex flex-col justify-between p-4">
-          <div 
-            ref={navContainerRef}
-            onScroll={handleNavScroll}
-            className="space-y-6 flex-1 overflow-y-auto pb-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+      <aside
+        className={`fixed top-0 left-0 h-screen flex flex-col z-40 bg-[#0F1E36] text-slate-300 shadow-xl border-r border-[#1E3252] transition-all duration-300 ease-in-out w-72 ${
+          isCollapsed ? 'lg:w-[72px]' : 'lg:w-64'
+        } ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+      >
+        <div className="w-full h-full flex flex-col justify-between">
+          {/* Top Brand Header */}
+          <div
+            className={`h-16 flex items-center shrink-0 border-b border-[#1E3252] ${
+              isCollapsed ? 'lg:justify-center lg:px-2 px-4 justify-between' : 'justify-between px-4'
+            }`}
           >
-            <div className="flex items-center gap-3 px-2 py-1">
-              <div className="w-10 h-10 rounded-lg bg-surface-container-lowest p-1 shadow-sm flex items-center justify-center text-primary font-bold text-xl">S</div>
-              <div className="flex flex-col">
-                <span className="text-title-md font-title-md text-surface-container-lowest tracking-tight leading-tight">SIMKOP Enterprise</span>
-                <span className="text-label-sm font-label-sm text-secondary-fixed tracking-normal">Koperasi Digital Mandiri</span>
+            <div className={`flex items-center gap-2.5 min-w-0 ${isCollapsed ? 'lg:justify-center' : ''}`}>
+              <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-extrabold text-sm shrink-0 shadow-inner">
+                SK
+              </div>
+              <div className={`flex flex-col leading-tight min-w-0 ${isCollapsed ? 'lg:hidden' : ''}`}>
+                <span className="text-sm font-bold text-white tracking-tight truncate">
+                  SIMKOP Enterprise
+                </span>
+                <span className="text-[11px] font-medium text-emerald-400 tracking-wide truncate">
+                  Koperasi Digital Mandiri
+                </span>
               </div>
             </div>
-            
-            <Sidebar 
-              userRole={user?.role} 
-              onItemClick={() => {
-                if (window.innerWidth < 1024) setIsSidebarOpen(false);
-              }} 
-            />
 
+            {/* Desktop Collapse Toggle */}
+            {!isCollapsed && (
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(true)}
+                title="Ciutkan Sidebar"
+                aria-label="Ciutkan Sidebar"
+                className="hidden lg:flex w-8 h-8 rounded-lg items-center justify-center text-slate-300 hover:text-white hover:bg-[#1E3252]/70 transition-colors cursor-pointer shrink-0"
+              >
+                <PanelLeftClose className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Mobile Close Drawer Button */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(false)}
+              title="Tutup Menu"
+              aria-label="Tutup Menu"
+              className="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-[#1E3252]/70 transition-colors cursor-pointer shrink-0"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
-          <div className="space-y-3 pt-4 border-t border-outline-variant/15">
-            <nav className="space-y-1">
-              <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-2 rounded-lg text-on-primary-container hover:text-error-container hover:bg-surface-container-lowest/5 font-label-md transition-colors">
-                <span className="material-symbols-outlined text-[18px]">logout</span>
-                <span>Log Keluar</span>
+          {/* Expand button when collapsed on desktop */}
+          {isCollapsed && (
+            <div className="hidden lg:flex justify-center pt-2">
+              <button
+                type="button"
+                onClick={() => setIsCollapsed(false)}
+                title="Lebarkan Sidebar"
+                aria-label="Lebarkan Sidebar"
+                className="w-11 h-9 rounded-xl flex items-center justify-center text-slate-300 hover:text-white hover:bg-[#1E3252]/70 transition-colors cursor-pointer"
+              >
+                <PanelLeftOpen className="w-4 h-4" />
               </button>
-            </nav>
-            <div className="px-4 py-2 bg-surface-container-lowest/5 rounded-lg flex items-center justify-between text-[11px] text-on-primary-container/80">
-              <span>SIMKOP v1.0.0</span>
-              <span className="inline-flex items-center gap-1 text-secondary-fixed">
-                <span className="w-1.5 h-1.5 rounded-full bg-secondary-fixed animate-pulse"></span> Online
+            </div>
+          )}
+
+          {/* Scrollable Accordion Navigation */}
+          <div
+            ref={navContainerRef}
+            onScroll={handleNavScroll}
+            className="flex-1 overflow-y-auto px-3 py-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+          >
+            <Sidebar
+              userRole={user?.role}
+              isCollapsed={isCollapsed && !isMobileMenuOpen}
+              onItemClick={() => {
+                if (window.innerWidth < 1024) setIsMobileMenuOpen(false);
+              }}
+            />
+          </div>
+
+          {/* Pinned Footer */}
+          <div className="p-3 space-y-2 border-t border-[#1E3252] bg-[#0C182C] shrink-0">
+            <div
+              title="SIMKOP v1.0.0 • Online"
+              className={`px-3 py-1.5 rounded-lg bg-[#162846] border border-[#1E3252] flex items-center text-[11px] text-slate-300 ${
+                isCollapsed ? 'lg:justify-center lg:px-0 justify-between' : 'justify-between'
+              }`}
+            >
+              <span className={isCollapsed ? 'lg:hidden' : ''}>SIMKOP v1.0.0</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className={isCollapsed ? 'lg:hidden' : ''}>Online</span>
               </span>
             </div>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              title="Log Keluar"
+              className={`w-full flex items-center gap-2.5 min-h-[40px] px-3 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:text-white hover:bg-rose-500/20 border border-transparent hover:border-rose-500/30 transition-colors cursor-pointer ${
+                isCollapsed ? 'lg:justify-center lg:px-0' : ''
+              }`}
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span className={isCollapsed ? 'lg:hidden' : ''}>Log Keluar</span>
+            </button>
           </div>
         </div>
       </aside>
 
       {/* TOP APP BAR */}
       <header className="sticky top-0 right-0 h-16 w-full z-20 bg-surface-container-lowest shadow-sm border-b border-outline-variant/40">
-        <div className={`flex justify-between items-center h-16 px-4 lg:px-6 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-72' : ''}`}>
+        <div className={`flex justify-between items-center h-16 px-4 lg:px-6 transition-all duration-300 ${desktopMarginClass}`}>
           <div className="flex items-center gap-4 flex-1 max-w-2xl">
-            <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors flex items-center justify-center"
+            <button
+              type="button"
+              onClick={() => {
+                if (window.innerWidth >= 1024) {
+                  setIsCollapsed((prev) => !prev);
+                } else {
+                  setIsMobileMenuOpen((prev) => !prev);
+                }
+              }}
+              aria-label="Toggle Menu Navigasi"
+              className="p-2 text-on-surface-variant hover:bg-surface-container-low rounded-lg transition-colors flex items-center justify-center cursor-pointer"
             >
-              <span className="material-symbols-outlined">menu</span>
+              <Menu className="w-5 h-5" />
             </button>
             <div className="hidden xl:flex items-center gap-2 text-label-md font-label-md text-on-surface-variant">
               <span className="font-title-sm text-primary">SIMKOP</span>
@@ -163,7 +240,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </header>
 
       {/* MAIN CONTENT */}
-      <main className={`p-4 lg:p-8 max-w-[1440px] space-y-8 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-72' : ''}`}>
+      <main className={`p-4 lg:p-8 max-w-[1440px] space-y-8 transition-all duration-300 ${desktopMarginClass}`}>
         {children}
       </main>
 

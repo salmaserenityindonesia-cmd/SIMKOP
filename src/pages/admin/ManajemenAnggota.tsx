@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
-import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
+import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle, Sparkles, Sliders } from 'lucide-react';
 import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
 import { getActiveLoanTypes, syncInitialLoanBalances } from '../../services/loanService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
@@ -737,89 +737,111 @@ export default function ManajemenAnggota({
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         {/* Toolbar */}
-        <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Cari anggota (No. Ref / Nama / NRP)..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] w-64"
-            />
-          </div>
-          <div className="flex space-x-2">
+        <div className="p-4 border-b border-slate-200/80 space-y-3 bg-gray-50">
+          {/* Baris 1: Pencarian di Kiri & Tombol Tambah Anggota di Kanan */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Cari anggota (No. Ref / Nama / NRP)..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full h-10 pl-9 pr-4 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
             <button
               type="button"
-              onClick={() => setIsMemberImportModalOpen(true)}
-              className="flex items-center px-4 py-2 bg-slate-600 text-white rounded-md hover:bg-slate-700 transition-colors text-sm font-medium cursor-pointer whitespace-nowrap"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Import Data Anggota
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsInitialSavingsModalOpen(true)}
-              className="flex items-center px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors text-sm font-medium cursor-pointer"
-            >
-              <Wallet className="w-4 h-4 mr-2" />
-              Saldo Awal Simpanan
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsBulkLebaranModalOpen(true)}
-              className="flex items-center px-3.5 py-2 border border-indigo-300 bg-indigo-50 text-indigo-700 rounded-md hover:bg-indigo-100 transition-colors text-sm font-medium cursor-pointer whitespace-nowrap"
-            >
-              <FileSpreadsheet className="w-4 h-4 mr-2 text-indigo-600" />
-              Tarif Lebaran Massal
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenInitialLoansModal}
-              className="flex items-center px-4 py-2 border border-amber-300 bg-amber-50 text-amber-800 rounded-md hover:bg-amber-100 transition-colors text-sm font-medium cursor-pointer"
-            >
-              <Banknote className="w-4 h-4 mr-2 text-amber-700" />
-              Saldo Awal Pinjaman
-            </button>
-            <button
-              onClick={handleExportExcel}
-              disabled={isExportingExcel}
-              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isExportingExcel ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-              ) : (
-                <Download className="w-4 h-4 mr-2" />
-              )}
-              Excel
-            </button>
-            <button
-              onClick={handleExportPDF}
-              disabled={isExportingPdf}
-              className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isExportingPdf ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-              ) : (
-                <Download className="w-4 h-4 mr-2" />
-              )}
-              PDF
-            </button>
-            <button
-              onClick={() => setIsResetModalOpen(true)}
-              title="Kosongkan seluruh data anggota, simpanan, dan pinjaman"
-              className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 font-medium text-sm transition-colors shadow-xs cursor-pointer shrink-0"
-            >
-              <RotateCcw className="w-4 h-4 text-rose-600" />
-              <span>Reset Data</span>
-            </button>
-            <button
               onClick={handleOpenAddModal}
-              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 font-medium text-sm shadow-xs transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-slate-900 text-white hover:bg-slate-800 active:bg-slate-950 text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer shadow-xs"
             >
-              <Plus className="w-4 h-4 text-white" />
+              <Plus className="w-4 h-4 text-white shrink-0" />
               <span>Tambah Anggota</span>
             </button>
+          </div>
+
+          {/* Baris 2: Deretan Tombol Impor, Ekspor, dan Reset dengan Tinggi & Ukuran Seragam */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70">
+            {/* Kelompok Kiri: Fitur Impor & Tarif Massal */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsMemberImportModalOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs"
+              >
+                <Upload className="w-3.5 h-3.5 shrink-0" />
+                <span>Impor Anggota (.xlsx)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsInitialSavingsModalOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                <span>Impor Saldo Simpanan</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsBulkLebaranModalOpen(true)}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5 shrink-0" />
+                <span>Atur Tarif Lebaran</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenInitialLoansModal}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+                <span>Impor Saldo Pinjaman</span>
+              </button>
+            </div>
+
+            {/* Kelompok Kanan: Ekspor Laporan & Reset */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                disabled={isExportingExcel}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExportingExcel ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>Ekspor Excel</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportPDF}
+                disabled={isExportingPdf}
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isExportingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>Ekspor PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(true)}
+                title="Kosongkan seluruh data anggota, simpanan, dan pinjaman"
+                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+                <span>Reset Data</span>
+              </button>
+            </div>
           </div>
         </div>
 

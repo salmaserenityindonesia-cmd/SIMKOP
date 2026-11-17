@@ -31,6 +31,12 @@ export interface LebaranDisbursementItem {
   created_at: string;
 }
 
+export interface DepositHistorySegment {
+  count: number;
+  amount: number;
+  label: string;
+}
+
 export interface LebaranSimulationMember {
   memberId: string;
   memberDepositId?: string;
@@ -42,6 +48,8 @@ export interface LebaranSimulationMember {
   saldoLebaran: number;
   hasActiveLoan: boolean;
   activeLoanRemaining: number;
+  depositHistorySummary: string;
+  depositHistorySegments: DepositHistorySegment[];
 }
 
 export interface LebaranSimulationSummary {
@@ -101,11 +109,71 @@ export function isLebaranDepositType(code?: string | null, name?: string | null)
 }
 
 /**
+ * Memformat nominal rupiah ke format ringkas ribuan (`k`), misal 200000 -> "200k"
+ */
+export function formatCompactK(amount: number): string {
+  const val = Math.round(Number(amount || 0));
+  if (val >= 1000 && val % 1000 === 0) {
+    return `${val / 1000}k`;
+  }
+  if (val >= 1000) {
+    return `${(val / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  }
+  return `${val}`;
+}
+
+/**
+ * Mengelompokkan nominal setoran berurutan (run-length encoding) menjadi ringkasan pecahan setoran
+ */
+export function buildDepositBreakdownSummary(
+  depositAmounts: number[],
+  fallbackTotalBalance: number
+): { summaryText: string; segments: DepositHistorySegment[] } {
+  const cleanAmounts = depositAmounts.filter((a) => Number(a) > 0);
+  if (cleanAmounts.length === 0) {
+    if (fallbackTotalBalance > 0) {
+      const roundedFallback = Math.round(Number(fallbackTotalBalance));
+      const singleLabel = `1x${formatCompactK(roundedFallback)}`;
+      return {
+        summaryText: `(${singleLabel})`,
+        segments: [{ count: 1, amount: roundedFallback, label: singleLabel }],
+      };
+    }
+    return { summaryText: '-', segments: [] };
+  }
+
+  // Kelompokkan nominal yang sama secara berurutan (run-length encoding)
+  const segments: DepositHistorySegment[] = [];
+  for (const amt of cleanAmounts) {
+    const rounded = Math.round(Number(amt));
+    const last = segments[segments.length - 1];
+    if (last && last.amount === rounded) {
+      last.count += 1;
+      last.label = `${last.count}x${formatCompactK(rounded)}`;
+    } else {
+      segments.push({
+        count: 1,
+        amount: rounded,
+        label: `1x${formatCompactK(rounded)}`,
+      });
+    }
+  }
+
+  return {
+    summaryText: `(${segments.map((s) => s.label).join(', ')})`,
+    segments,
+  };
+}
+
+/**
  * 2. simulateLebaranDisbursement()
  * Menghitung simulasi daftar nominatif anggota aktif yang berhak menerima pencairan simpanan lebaran,
  * total dana yang dibutuhkan, rata-rata nominal per anggota, serta mengecek ada tidaknya pinjaman aktif.
  */
 export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSummary> {
+  // 0. Ambil siklus pencairan massal terakhir yang selesai untuk menentukan cut-off siklus aktif
+  const lastCycle = await getLastCompletedLebaranCycle().catch(() => null);
+  const lastCutOffDate = lastCycle?.disbursement_date || lastCycle?.cut_off_date || null;
   // 1. Ambil master deposit type untuk kategori 'LEBARAN'
   const { data: dTypes, error: dtError } = await supabase
     .from('deposit_types')
@@ -187,7 +255,7 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
     const chunk = mdIds.slice(i, i + chunkSize);
     const { data: txs, error: txError } = await supabase
       .from('deposit_transactions')
-      .select('member_deposit_id, amount, transaction_type')
+      .select('member_deposit_id, amount, transaction_type, for_year, for_month, transaction_date, created_at')
       .in('member_deposit_id', chunk);
 
     if (txError) {
@@ -199,16 +267,55 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
     }
   }
 
-  // Hitung saldo berjalan per member_deposit_id
+  // Hitung saldo berjalan & kumpulkan transaksi setoran siklus aktif per member_deposit_id
   const mdBalanceMap = new Map<string, number>();
+  const mdActiveDepositsMap = new Map<string, any[]>();
+  const cutOffDateOnly = lastCutOffDate ? String(lastCutOffDate).slice(0, 10) : null;
+
   for (const tx of allTxs) {
     const current = mdBalanceMap.get(tx.member_deposit_id) || 0;
     const amt = Number(tx.amount || 0);
     if (tx.transaction_type === 'deposit') {
       mdBalanceMap.set(tx.member_deposit_id, current + amt);
+
+      if (amt > 0) {
+        const txDateRaw = tx.transaction_date || tx.created_at || null;
+        const isAfterCutOff =
+          !cutOffDateOnly ||
+          !txDateRaw ||
+          String(txDateRaw).slice(0, 10) > cutOffDateOnly;
+
+        if (isAfterCutOff) {
+          const list = mdActiveDepositsMap.get(tx.member_deposit_id) || [];
+          list.push(tx);
+          mdActiveDepositsMap.set(tx.member_deposit_id, list);
+        }
+      }
     } else if (tx.transaction_type === 'withdrawal') {
       mdBalanceMap.set(tx.member_deposit_id, current - amt);
     }
+  }
+
+  // Urutkan transaksi setoran per rekening secara kronologis (for_year ASC, for_month ASC, created_at ASC)
+  const mdDepositAmountsMap = new Map<string, number[]>();
+  for (const [mdId, depositTxs] of mdActiveDepositsMap.entries()) {
+    depositTxs.sort((a, b) => {
+      const yearA = Number(a.for_year || 0);
+      const yearB = Number(b.for_year || 0);
+      if (yearA !== yearB) return yearA - yearB;
+
+      const monthA = Number(a.for_month || 0);
+      const monthB = Number(b.for_month || 0);
+      if (monthA !== monthB) return monthA - monthB;
+
+      const dateA = String(a.transaction_date || a.created_at || '');
+      const dateB = String(b.transaction_date || b.created_at || '');
+      return dateA.localeCompare(dateB);
+    });
+    mdDepositAmountsMap.set(
+      mdId,
+      depositTxs.map(t => Number(t.amount || 0))
+    );
   }
 
   // Akumulasikan per anggota & filter yang memiliki saldo > 0
@@ -317,6 +424,8 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
   // 6. Bentuk daftar LebaranSimulationMember
   const members: LebaranSimulationMember[] = memberBalances.map(mb => {
     const loanInfo = loanMap.get(mb.member.id) || { hasActiveLoan: false, remaining: 0 };
+    const depositAmounts = mdDepositAmountsMap.get(mb.memberDepositId) || [];
+    const breakdown = buildDepositBreakdownSummary(depositAmounts, mb.saldoLebaran);
     return {
       memberId: mb.member.id,
       memberDepositId: mb.memberDepositId,
@@ -327,7 +436,9 @@ export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSu
       bankName: mb.member.bank_name || 'Bank BRI',
       saldoLebaran: mb.saldoLebaran,
       hasActiveLoan: loanInfo.hasActiveLoan,
-      activeLoanRemaining: loanInfo.remaining
+      activeLoanRemaining: loanInfo.remaining,
+      depositHistorySummary: breakdown.summaryText,
+      depositHistorySegments: breakdown.segments
     };
   });
 
@@ -418,19 +529,46 @@ export async function approveAndExecuteDisbursement(
     );
 
     if (!rpcError && rpcData?.success) {
+      const today = new Date().toISOString().slice(0, 10);
+
+      // Pastikan tanggal pencairan hari eksekusi, source_type, dan status tercatat pada siklus
+      try {
+        await supabase
+          .from('lebaran_disbursement_cycles')
+          .update({
+            disbursement_date: today,
+            source_type: 'MASSAL',
+            status: 'COMPLETED',
+            total_members: Number(rpcData.total_members || simulation?.totalMembers || 0),
+            total_amount: Number(rpcData.total_amount || simulation?.totalAmount || 0),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', cycleId);
+      } catch (cycleSyncErr) {
+        console.warn('Catatan: Gagal menyinkronkan metadata siklus setelah RPC:', cycleSyncErr);
+      }
+
       // Pastikan penerima tercatat di lebaran_disbursement_items jika ada data nominatif
       if (simulation && simulation.members.length > 0) {
         try {
-          const itemsPayload = simulation.members.map(m => ({
-            cycle_id: cycleId,
-            member_id: m.memberId,
-            nrp: m.nrp || null,
-            member_name: m.nama || null,
-            bank_account: m.bankAccount || null,
-            amount_disbursed: m.saldoLebaran,
-            created_at: new Date().toISOString()
-          }));
-          await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
+          const { data: existingItems } = await supabase
+            .from('lebaran_disbursement_items')
+            .select('id')
+            .eq('cycle_id', cycleId)
+            .limit(1);
+
+          if (!existingItems || existingItems.length === 0) {
+            const itemsPayload = simulation.members.map(m => ({
+              cycle_id: cycleId,
+              member_id: m.memberId,
+              nrp: m.nrp || null,
+              member_name: m.nama || null,
+              bank_account: m.bankAccount || null,
+              amount_disbursed: m.saldoLebaran,
+              created_at: new Date().toISOString()
+            }));
+            await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
+          }
         } catch (itemErr) {
           console.warn('Catatan: Gagal mencatat items penerima setelah RPC:', itemErr);
         }
@@ -468,13 +606,12 @@ export async function approveAndExecuteDisbursement(
   }
 
   const sim = simulation || await simulateLebaranDisbursement();
+  const today = new Date().toISOString().slice(0, 10);
   const cutOffDateObj = cycle.cut_off_date ? new Date(cycle.cut_off_date) : new Date();
   const yearStr = isNaN(cutOffDateObj.getTime())
     ? new Date().getFullYear().toString()
     : cutOffDateObj.getFullYear().toString();
-  const dateOnly = isNaN(cutOffDateObj.getTime())
-    ? new Date().toISOString().slice(0, 10)
-    : cutOffDateObj.toISOString().slice(0, 10);
+  const dateOnly = today;
 
   const itemsPayload: any[] = [];
 
@@ -793,7 +930,7 @@ export async function deleteHistoricalDisbursementDate(cycleId: string): Promise
  */
 export async function recordManualLebaranWithdrawal(payload: RecordManualLebaranPayload): Promise<void> {
   const dateStr = payload.transactionDate || new Date().toISOString().slice(0, 10);
-  const cycleName = payload.cycleName || `Pencairan Manual Lebaran ${dateStr}`;
+  const cycleName = payload.cycleName || 'Pencairan Simpanan Lebaran';
 
   try {
     // 1. Cari siklus pada tanggal tersebut

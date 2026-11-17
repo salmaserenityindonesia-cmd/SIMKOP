@@ -4,13 +4,10 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   RefreshCw, 
-  History, 
   Clock, 
   Ban, 
-  Plus, 
   Trash2, 
-  Eye, 
-  PlayCircle 
+  Eye
 } from 'lucide-react';
 import { 
   bulkWithdrawalService,
@@ -25,14 +22,8 @@ interface LebaranDatesTabProps {
 export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProps) {
   const [cyclesHistory, setCyclesHistory] = useState<LebaranDisbursementCycle[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [isSubmittingDate, setIsSubmittingDate] = useState(false);
-  const [isReplaying, setIsReplaying] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
-  // Single date form state (input 1 per 1)
-  const [singleDate, setSingleDate] = useState('');
-  const [singleCycleName, setSingleCycleName] = useState('');
 
   // Recipients modal state
   const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
@@ -55,32 +46,6 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
     }
   };
 
-  // Handle Add Single Historical Date (1 per 1)
-  const handleAddSingleHistoricalDate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!singleDate) {
-      alert('Silakan pilih tanggal pencairan terlebih dahulu.');
-      return;
-    }
-
-    setIsSubmittingDate(true);
-    setExecutionError(null);
-    try {
-      await bulkWithdrawalService.addHistoricalDisbursementDate(
-        singleDate,
-        singleCycleName.trim() || undefined
-      );
-      setSuccessMessage(`Tanggal historis ${singleDate} berhasil ditambahkan ke daftar riwayat siklus.`);
-      setSingleDate('');
-      setSingleCycleName('');
-      await loadCyclesData();
-    } catch (err: any) {
-      setExecutionError(err.message || 'Gagal menambahkan tanggal historis');
-    } finally {
-      setIsSubmittingDate(false);
-    }
-  };
-
   // Handle Delete Cycle Date
   const handleDeleteCycle = async (cycle: LebaranDisbursementCycle) => {
     const cycleDate = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
@@ -94,37 +59,6 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
       await loadCyclesData();
     } catch (err: any) {
       setExecutionError(err.message || 'Gagal menghapus siklus');
-    }
-  };
-
-  // Handle Replay All Cycles (Simulasi Pengosongan Ulang)
-  const handleExecuteReplay = async () => {
-    if (cyclesHistory.length === 0) {
-      alert('Belum ada tanggal siklus pencairan yang terdaftar. Tambahkan tanggal pencairan terlebih dahulu.');
-      return;
-    }
-
-    const confirmMsg = 
-      `Apakah Anda yakin ingin menjalankan SIMULASI PENGOSONGAN ULANG (REPLAY) sesuai seluruh ${cyclesHistory.length} tanggal siklus tercatat?\n\n` +
-      `Sistem akan mengosongkan mutasi penarikan lebaran sebelumnya dan menghitung ulang setoran anggota secara berantai dari tanggal tertua s/d terbaru sehingga saldo terkini terhitung presisi dari tanggal pencairan terakhir.`;
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsReplaying(true);
-    setExecutionError(null);
-    setSuccessMessage(null);
-
-    try {
-      const replayResult = await bulkWithdrawalService.executeReplayAllCycles();
-      setSuccessMessage(
-        `Pengosongan ulang berhasil dieksekusi (${replayResult.mode === 'rpc' ? 'Engine Atomik Database' : 'Kalkulasi Fallback Klien'}). Total ${replayResult.totalCycles} siklus dan ${replayResult.totalRecipients} mutasi pencairan telah disinkronkan senilai Rp ${replayResult.totalAmount.toLocaleString('id-ID')}. Saldo berjalan telah disegarkan!`
-      );
-      await loadCyclesData();
-    } catch (err: any) {
-      console.error('Error executing replay:', err);
-      setExecutionError(err.message || 'Gagal menjalankan simulasi pengosongan ulang.');
-    } finally {
-      setIsReplaying(false);
     }
   };
 
@@ -167,88 +101,6 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
         </div>
       )}
 
-      {/* Panel Utama: Header & Tombol Eksekusi Replay */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
-                <History className="w-5 h-5" />
-              </div>
-              <h3 className="font-bold text-slate-800 text-base md:text-lg">
-                Daftar Tanggal Pencairan Simpanan Lebaran
-              </h3>
-            </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Daftarkan tanggal pencairan lebaran satu per satu untuk mencatat riwayat siklus dan menjalankan pengosongan ulang saldo lebaran.
-            </p>
-          </div>
-
-          <button
-            onClick={handleExecuteReplay}
-            disabled={isReplaying || cyclesHistory.length === 0}
-            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-bold rounded-xl text-sm shadow-md shadow-indigo-100 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer"
-            title="Mengosongkan dan menghitung ulang mutasi penarikan simpanan lebaran sesuai seluruh tanggal terdaftar"
-          >
-            <PlayCircle className={`w-4 h-4 ${isReplaying ? 'animate-spin' : ''}`} />
-            <span>
-              {isReplaying 
-                ? 'Sedang Menjalankan Simulasi Replay...' 
-                : `Kosongkan Ulang Sesuai Semua Tanggal (${cyclesHistory.length} Siklus)`}
-            </span>
-          </button>
-        </div>
-
-        {/* Form Tambah Tanggal 1 per 1 */}
-        <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Plus className="w-4 h-4 text-indigo-600" />
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
-              Tambah Tanggal Pencairan (1 per 1)
-            </span>
-          </div>
-
-          <form onSubmit={handleAddSingleHistoricalDate} className="flex flex-wrap items-end gap-3">
-            <div className="flex-1 min-w-[200px] max-w-xs">
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                Tanggal Pencairan <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={singleDate}
-                onChange={(e) => setSingleDate(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800"
-                required
-              />
-            </div>
-
-            <div className="flex-[2] min-w-[250px]">
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                Keterangan / Nama Siklus (Opsional)
-              </label>
-              <input
-                type="text"
-                placeholder="Contoh: Pencairan Lebaran Idul Fitri 2025"
-                value={singleCycleName}
-                onChange={(e) => setSingleCycleName(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800"
-              />
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                disabled={isSubmittingDate || !singleDate}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-semibold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 shadow-xs cursor-pointer disabled:cursor-not-allowed"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{isSubmittingDate ? 'Menyimpan...' : '+ Tambah Tanggal'}</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
       {/* Tabel Riwayat Seluruh Tanggal Siklus */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -259,7 +111,7 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
                 Riwayat Seluruh Tanggal Pencairan Lebaran
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Daftar siklus pencairan yang terdaftar, diajukan, atau dicatat dalam simulasi berantai
+                Tanggal pencairan tercatat secara otomatis setiap kali pencairan massal maupun penarikan perorangan Simpanan Lebaran dieksekusi.
               </p>
             </div>
           </div>
@@ -279,7 +131,7 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
           </div>
         ) : cyclesHistory.length === 0 ? (
           <div className="py-12 text-center text-slate-400 text-sm">
-            Belum ada riwayat tanggal pencairan lebaran yang tercatat. Silakan tambahkan tanggal pencairan di form atas.
+            Belum ada riwayat pencairan Simpanan Lebaran. Tanggal akan tercatat otomatis saat pencairan dieksekusi.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -289,9 +141,9 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
                   <th className="py-3 px-4 w-12 text-center">No</th>
                   <th className="py-3 px-4">Tanggal Pencairan</th>
                   <th className="py-3 px-4">Nama Siklus / Keterangan</th>
-                  <th className="py-3 px-4 text-center">Sumber</th>
-                  <th className="py-3 px-4 text-center">Penerima</th>
-                  <th className="py-3 px-4 text-right">Total Cair (Rp)</th>
+                  <th className="py-3 px-4 text-center">Metode / Sumber</th>
+                  <th className="py-3 px-4 text-center">Jumlah Penerima</th>
+                  <th className="py-3 px-4 text-right">Total Dicairkan (Rp)</th>
                   <th className="py-3 px-4 text-center">Status</th>
                   <th className="py-3 px-4 text-center">Aksi</th>
                 </tr>
@@ -321,7 +173,7 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
                   } else if (src === 'MANUAL') {
                     sourceBadge = (
                       <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 text-[11px] font-semibold rounded-md">
-                        Penarikan Manual
+                        Penarikan Perorangan
                       </span>
                     );
                   }

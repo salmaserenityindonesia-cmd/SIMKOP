@@ -17,25 +17,20 @@ describe('LebaranDatesTab Component', () => {
     vi.clearAllMocks();
   });
 
-  it('renders header with replay button, 1-by-1 date input form without bulk textarea, and table headers', () => {
+  it('renders automatic cycle history table without manual date input form or replay button', () => {
     const html = renderToStaticMarkup(<LebaranDatesTab />);
 
-    // Header & Replay button
-    expect(html).toContain('Daftar Tanggal Pencairan Simpanan Lebaran');
-    expect(html).toContain('Kosongkan Ulang Sesuai Semua Tanggal');
-
-    // 1-by-1 Form
-    expect(html).toContain('Tambah Tanggal Pencairan (1 per 1)');
-    expect(html).toContain('Tanggal Pencairan');
-    expect(html).toContain('Keterangan / Nama Siklus (Opsional)');
-    expect(html).toContain('+ Tambah Tanggal');
-
-    // Confirm bulk textarea is NOT present
+    // Confirm manual date form and replay button are NOT present
+    expect(html).not.toContain('Daftar Tanggal Pencairan Simpanan Lebaran');
+    expect(html).not.toContain('Kosongkan Ulang Sesuai Semua Tanggal');
+    expect(html).not.toContain('Tambah Tanggal Pencairan (1 per 1)');
+    expect(html).not.toContain('+ Tambah Tanggal');
     expect(html).not.toContain('Input Banyak Sekaligus (Bulk)');
     expect(html).not.toContain('Tempel Daftar Tanggal');
 
     // History Table
     expect(html).toContain('Riwayat Seluruh Tanggal Pencairan Lebaran');
+    expect(html).toContain('Tanggal pencairan tercatat secara otomatis');
     expect(html).toContain('Refresh Riwayat');
   });
 });

@@ -12,10 +12,10 @@ import {
   RefreshCw, 
   Landmark, 
   ShieldAlert, 
-  Info, 
-  Check
+  Info
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
+import { exportToExcel } from '../../../lib/exportUtils';
 import { 
   bulkWithdrawalService,
   LebaranSimulationSummary,
@@ -24,7 +24,11 @@ import {
 } from '../../../services/bulkWithdrawalService';
 import BulkDisbursementConfirmModal from './BulkDisbursementConfirmModal';
 
-export default function BulkLebaranTab() {
+interface BulkLebaranTabProps {
+  onCyclesUpdated?: () => void;
+}
+
+export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps) {
   const [simulation, setSimulation] = useState<LebaranSimulationSummary | null>(null);
   const [lastCycle, setLastCycle] = useState<LebaranDisbursementCycle | null>(null);
   
@@ -109,50 +113,27 @@ export default function BulkLebaranTab() {
     return filteredMembers.slice(start, start + pageSize);
   }, [filteredMembers, currentPage, pageSize]);
 
-  // Export CSV
-  const handleExportCSV = () => {
+  // Export Excel (.xlsx)
+  const handleExportExcel = () => {
     if (!simulation?.members || simulation.members.length === 0) {
       alert('Tidak ada data nominatif untuk diekspor.');
       return;
     }
 
-    const headers = [
-      'No',
-      'NRP',
-      'Nama Anggota',
-      'Pangkat',
-      'Nomor Rekening',
-      'Nama Bank',
-      'Saldo Lebaran (Rp)',
-      'Status Pinjaman Aktif',
-      'Sisa Hutang Pinjaman (Rp)'
-    ];
+    const rows = filteredMembers.map((m, idx) => ({
+      'No': idx + 1,
+      'NRP': m.nrp,
+      'Nama Anggota': m.nama,
+      'Pangkat': m.pangkat,
+      'Nomor Rekening': m.bankAccount,
+      'Nama Bank': m.bankName,
+      'Saldo Lebaran (Rp)': m.saldoLebaran,
+      'Rincian History Tabungan': m.depositHistorySummary || '-',
+      'Status Pinjaman Aktif': m.hasActiveLoan ? 'ADA PINJAMAN' : 'BEBAS PINJAMAN',
+      'Sisa Hutang Pinjaman (Rp)': m.activeLoanRemaining
+    }));
 
-    const rows = filteredMembers.map((m, idx) => [
-      idx + 1,
-      `"${m.nrp}"`,
-      `"${m.nama}"`,
-      `"${m.pangkat}"`,
-      `"${m.bankAccount}"`,
-      `"${m.bankName}"`,
-      m.saldoLebaran,
-      m.hasActiveLoan ? 'ADA PINJAMAN' : 'BEBAS PINJAMAN',
-      m.activeLoanRemaining
-    ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(e => e.join(','))
-    ].join('\n');
-
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Nominatif_Pencairan_Lebaran_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcel(rows, `Nominatif_Pencairan_Lebaran_${new Date().toISOString().slice(0, 10)}`);
   };
 
   // Open Execution Modal
@@ -200,6 +181,7 @@ export default function BulkLebaranTab() {
       setTargetCycleForExecution(null);
 
       await loadAllData();
+      onCyclesUpdated?.();
     } catch (err: any) {
       console.error('Error executing bulk disbursement:', err);
       setExecutionError(err.message || 'Terjadi kesalahan saat memproses pencairan massal simpanan lebaran.');
@@ -425,10 +407,10 @@ export default function BulkLebaranTab() {
           </button>
 
           <button
-            onClick={handleExportCSV}
+            onClick={handleExportExcel}
             disabled={isLoadingSimulation || !simulation || simulation.members.length === 0}
             className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Unduh daftar nominatif ke format file CSV/Excel"
+            title="Unduh daftar nominatif ke format file Excel (.xlsx)"
           >
             <Download className="w-3.5 h-3.5" />
             Ekspor Nominatif
@@ -479,7 +461,7 @@ export default function BulkLebaranTab() {
                   <th className="py-3 px-4">Anggota</th>
                   <th className="py-3 px-4">Rekening Tujuan</th>
                   <th className="py-3 px-4 text-right">Saldo Lebaran (Cair)</th>
-                  <th className="py-3 px-4 text-center">Status Pinjaman</th>
+                  <th className="py-3 px-4 text-right">Rincian History Tabungan</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -495,6 +477,17 @@ export default function BulkLebaranTab() {
                         <div className="text-xs text-slate-500 font-mono">
                           NRP: {member.nrp} • {member.pangkat}
                         </div>
+                        {member.hasActiveLoan && (
+                          <div className="mt-1">
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-medium rounded-md"
+                              title={`Sisa Hutang: Rp ${member.activeLoanRemaining.toLocaleString('id-ID')}`}
+                            >
+                              <ShieldAlert className="w-3 h-3 text-amber-600" />
+                              Ada pinjaman aktif
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         {member.bankAccount ? (
@@ -514,18 +507,10 @@ export default function BulkLebaranTab() {
                           Rp {member.saldoLebaran.toLocaleString('id-ID')}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {member.hasActiveLoan ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-xs font-medium rounded-full" title={`Sisa Hutang: Rp ${member.activeLoanRemaining.toLocaleString('id-ID')}`}>
-                            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-                            Ada Pinjaman
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium rounded-full">
-                            <Check className="w-3.5 h-3.5 text-emerald-600" />
-                            Bebas Pinjaman
-                          </span>
-                        )}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-indigo-800 font-mono text-xs font-semibold">
+                          <span>{member.depositHistorySummary || '-'}</span>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -7,6 +7,8 @@ import {
   getLebaranDisbursementCycles,
   getLastCompletedLebaranCycle,
   isLebaranDepositType,
+  formatCompactK,
+  buildDepositBreakdownSummary,
   bulkWithdrawalService
 } from './bulkWithdrawalService';
 import { supabase } from '../lib/supabaseClient';
@@ -48,6 +50,26 @@ describe('bulkWithdrawalService', () => {
       expect(isLebaranDepositType('SW', 'Simpanan Wajib')).toBe(false);
       expect(isLebaranDepositType('SB', 'Simpanan Belanja')).toBe(false);
       expect(isLebaranDepositType('SP', 'Simpanan Pokok')).toBe(false);
+    });
+  });
+
+  describe('formatCompactK & buildDepositBreakdownSummary', () => {
+    it('formats amounts into compact k notation', () => {
+      expect(formatCompactK(200000)).toBe('200k');
+      expect(formatCompactK(1000000)).toBe('1000k');
+      expect(formatCompactK(1500)).toBe('1.5k');
+      expect(formatCompactK(500)).toBe('500');
+    });
+
+    it('groups consecutive equal amounts using run-length encoding', () => {
+      const twelveEqual = Array(12).fill(200000);
+      expect(buildDepositBreakdownSummary(twelveEqual, 2400000).summaryText).toBe('(12x200k)');
+
+      const varied = [350000, 1000000, 1000000, 450000];
+      expect(buildDepositBreakdownSummary(varied, 2800000).summaryText).toBe('(1x350k, 2x1000k, 1x450k)');
+
+      expect(buildDepositBreakdownSummary([], 500000).summaryText).toBe('(1x500k)');
+      expect(buildDepositBreakdownSummary([], 0).summaryText).toBe('-');
     });
   });
 
@@ -146,6 +168,51 @@ describe('bulkWithdrawalService', () => {
       expect(result.members[1].saldoLebaran).toBe(1000000);
       expect(result.members[1].hasActiveLoan).toBe(true);
       expect(result.members[1].activeLoanRemaining).toBe(2000000);
+      expect(result.members[1].depositHistorySummary).toBe('(2x500k)');
+    });
+
+    it('computes run-length deposit breakdown after last completed cycle cut-off chronologically', async () => {
+      const mockDepositTypes = [{ id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' }];
+      const mockMemberDeposits = [{ id: 'md-01', member_id: 'mem-01', deposit_type_id: 'dt-lebaran' }];
+      const mockAnggota = [
+        { id: 'mem-01', nrp: '112233', nama: 'Siti Aminah', pangkat: 'Serda', bank_account_number: '12345', status: 'aktif' }
+      ];
+      const mockLastCycle = {
+        id: 'cyc-last',
+        status: 'COMPLETED',
+        disbursement_date: '2026-03-20',
+        cut_off_date: '2026-03-20'
+      };
+      // Unordered transactions + one before cut-off
+      const mockTransactions = [
+        { member_deposit_id: 'md-01', amount: 200000, transaction_type: 'deposit', for_year: 2026, for_month: 2, created_at: '2026-02-10T00:00:00Z' },
+        { member_deposit_id: 'md-01', amount: 200000, transaction_type: 'withdrawal', for_year: 2026, for_month: 3, created_at: '2026-03-20T00:00:00Z' },
+        // Active cycle deposits (after 2026-03-20), intentionally out of order
+        { member_deposit_id: 'md-01', amount: 450000, transaction_type: 'deposit', for_year: 2026, for_month: 7, created_at: '2026-07-05T00:00:00Z' },
+        { member_deposit_id: 'md-01', amount: 1000000, transaction_type: 'deposit', for_year: 2026, for_month: 5, created_at: '2026-05-05T00:00:00Z' },
+        { member_deposit_id: 'md-01', amount: 350000, transaction_type: 'deposit', for_year: 2026, for_month: 4, created_at: '2026-04-05T00:00:00Z' },
+        { member_deposit_id: 'md-01', amount: 1000000, transaction_type: 'deposit', for_year: 2026, for_month: 6, created_at: '2026-06-05T00:00:00Z' }
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') return createMockChain(mockLastCycle);
+        if (table === 'deposit_types') return createMockChain(mockDepositTypes);
+        if (table === 'member_deposits') return createMockChain(mockMemberDeposits);
+        if (table === 'anggota') return createMockChain(mockAnggota);
+        if (table === 'deposit_transactions') return createMockChain(mockTransactions);
+        if (table === 'loans') return createMockChain([]);
+        return createMockChain([]);
+      });
+
+      const result = await simulateLebaranDisbursement();
+      expect(result.totalMembers).toBe(1);
+      expect(result.members[0].saldoLebaran).toBe(2800000);
+      expect(result.members[0].depositHistorySummary).toBe('(1x350k, 2x1000k, 1x450k)');
+      expect(result.members[0].depositHistorySegments).toEqual([
+        { count: 1, amount: 350000, label: '1x350k' },
+        { count: 2, amount: 1000000, label: '2x1000k' },
+        { count: 1, amount: 450000, label: '1x450k' }
+      ]);
     });
 
     it('returns empty summary when no Lebaran deposit type exists', async () => {

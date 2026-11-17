@@ -8,6 +8,34 @@ export interface WithdrawableDeposit {
   saldo: number;
 }
 
+export interface LockedDeposit {
+  deposit_type_id: string;
+  deposit_name: string;
+  deposit_code: string;
+  saldo: number;
+}
+
+async function calculateDepositSaldo(memberDepositId: string): Promise<number> {
+  const { data: txs, error: txError } = await supabase
+    .from('deposit_transactions')
+    .select('amount, transaction_type')
+    .eq('member_deposit_id', memberDepositId);
+
+  if (txError) throw new Error(txError.message);
+
+  let saldo = 0;
+  if (txs) {
+    for (const tx of txs) {
+      if (tx.transaction_type === 'deposit') {
+        saldo += tx.amount;
+      } else if (tx.transaction_type === 'withdrawal') {
+        saldo -= tx.amount;
+      }
+    }
+  }
+  return saldo;
+}
+
 export async function getWithdrawableSavings(memberId: string): Promise<WithdrawableDeposit[]> {
   // Fetch deposit types that can be withdrawn
   const { data: dTypes, error: dtError } = await supabase
@@ -37,24 +65,7 @@ export async function getWithdrawableSavings(memberId: string): Promise<Withdraw
     const dType = dTypes.find(t => t.id === md.deposit_type_id);
     if (!dType) continue;
 
-    // Fetch transactions
-    const { data: txs, error: txError } = await supabase
-      .from('deposit_transactions')
-      .select('amount, transaction_type')
-      .eq('member_deposit_id', md.id);
-    
-    if (txError) throw new Error(txError.message);
-
-    let saldo = 0;
-    if (txs) {
-      for (const tx of txs) {
-        if (tx.transaction_type === 'deposit') {
-          saldo += tx.amount;
-        } else if (tx.transaction_type === 'withdrawal') {
-          saldo -= tx.amount;
-        }
-      }
-    }
+    const saldo = await calculateDepositSaldo(md.id);
 
     if (saldo > 0) {
       results.push({
@@ -65,6 +76,44 @@ export async function getWithdrawableSavings(memberId: string): Promise<Withdraw
         saldo
       });
     }
+  }
+
+  return results;
+}
+
+/**
+ * Fetch active deposit types from master `deposit_types` with `can_be_withdrawn = false`
+ * along with the member's current balance (if a member_deposits record exists).
+ */
+export async function getLockedSavings(memberId: string): Promise<LockedDeposit[]> {
+  const { data: dTypes, error: dtError } = await supabase
+    .from('deposit_types')
+    .select('id, name, code, is_active')
+    .eq('can_be_withdrawn', false);
+
+  if (dtError) throw new Error(dtError.message);
+  const activeTypes = (dTypes || []).filter(t => t.is_active !== false);
+  if (activeTypes.length === 0) return [];
+
+  const typeIds = activeTypes.map(t => t.id);
+  const { data: mDeposits, error: mdError } = await supabase
+    .from('member_deposits')
+    .select('id, deposit_type_id')
+    .eq('member_id', memberId)
+    .in('deposit_type_id', typeIds);
+
+  if (mdError) throw new Error(mdError.message);
+
+  const results: LockedDeposit[] = [];
+  for (const dType of activeTypes) {
+    const md = (mDeposits || []).find(m => m.deposit_type_id === dType.id);
+    const saldo = md ? await calculateDepositSaldo(md.id) : 0;
+    results.push({
+      deposit_type_id: dType.id,
+      deposit_name: dType.name,
+      deposit_code: dType.code,
+      saldo,
+    });
   }
 
   return results;

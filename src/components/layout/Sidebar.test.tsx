@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Sidebar, {
+  topDashboardItem,
   navigationGroups,
+  findActiveGroupId,
   SIDEBAR_SCROLL_STORAGE_KEY,
   saveSidebarScrollTop,
   getSavedSidebarScrollTop,
@@ -11,98 +13,86 @@ import Sidebar, {
   handleSidebarItemClick,
 } from './Sidebar';
 
-describe('Sidebar Navigation Hierarchy & Ordering', () => {
-  it('places TOKO RETAIL & INVENTORI group directly above SIMPAN PINJAM (KSP / USP)', () => {
-    const groupNames = navigationGroups.map((g) => g.groupName);
-    
-    expect(groupNames).toEqual([
-      'OPERASIONAL',
-      'TOKO RETAIL & INVENTORI',
-      'SIMPAN PINJAM (KSP / USP)',
-      'UTILITY & REKONSILIASI GAJI',
-      'MANAJEMEN & AKSES',
-      'LAPORAN & ANALITIK',
+describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
+  it('defines Dashboard Operasional as the single top item and 6 nested accordion groups', () => {
+    expect(topDashboardItem.label).toBe('Dashboard Operasional');
+    expect(topDashboardItem.href).toBe('/admin');
+
+    expect(navigationGroups.map((g) => g.groupName)).toEqual([
+      'Toko Retail & POS',
+      'Simpanan & Buku Besar',
+      'Pinjaman & Pembiayaan',
+      'Gaji & Kliring',
+      'Laporan & Keuangan',
+      'Master & Pengaturan',
     ]);
-
-    const operasionalIndex = groupNames.indexOf('OPERASIONAL');
-    const retailIndex = groupNames.indexOf('TOKO RETAIL & INVENTORI');
-    const kspIndex = groupNames.indexOf('SIMPAN PINJAM (KSP / USP)');
-
-    expect(operasionalIndex).toBe(0);
-    expect(retailIndex).toBe(1);
-    expect(kspIndex).toBe(2);
-    expect(retailIndex).toBeLessThan(kspIndex);
-    expect(retailIndex).toBe(operasionalIndex + 1);
   });
 
-  it('contains all required items in TOKO RETAIL & INVENTORI', () => {
-    const retailGroup = navigationGroups.find((g) => g.groupName === 'TOKO RETAIL & INVENTORI');
+  it('preserves all 9 retail routes in Toko Retail & POS', () => {
+    const retailGroup = navigationGroups.find((g) => g.id === 'retail');
     expect(retailGroup).toBeDefined();
 
-    const items = retailGroup!.items;
-    expect(items.map((i) => i.label)).toEqual([
-      'Kasir (POS)',
-      'Inventori Produk',
-      'Kategori Produk',
-      'Manajemen Pembelian',
-      'Retur Pembelian',
-      'Pengaturan Kasir',
-      'Laporan Retail & Stok',
-      'Laporan Mutasi Barang',
-      'Buku Besar Bon Toko',
-    ]);
-
-    expect(items.map((i) => i.href)).toEqual([
+    expect(retailGroup!.items.map((i) => i.href)).toEqual([
       '/admin/kasir',
       '/admin/produk',
       '/admin/kategori',
       '/admin/pembelian',
       '/admin/retur-pembelian',
+      '/admin/buku-besar-bon-toko',
       '/admin/pengaturan-kasir',
       '/admin/laporan-retail',
       '/admin/laporan-mutasi',
-      '/admin/buku-besar-bon-toko',
     ]);
   });
 
-  it('contains all required items in SIMPAN PINJAM (KSP / USP)', () => {
-    const kspGroup = navigationGroups.find((g) => g.groupName === 'SIMPAN PINJAM (KSP / USP)');
-    expect(kspGroup).toBeDefined();
-
-    const items = kspGroup!.items;
-    expect(items.map((i) => i.label)).toEqual([
-      'Master Produk Koperasi',
-      'Pusat Terima Setoran',
-      'Tagihan Simpanan',
-      'Penarikan Simpanan',
-      'Laporan Penarikan',
-      'Pengajuan Pinjaman',
-      'Approval Pinjaman',
-      'Matriks Simpanan',
-      'Matriks Pinjaman',
-      'Laporan Pinjaman Lunas',
-      'Buku Besar Belanja',
-    ]);
+  it('preserves all Simpanan, Pinjaman, Gaji, Laporan, and Master routes', () => {
+    const allHrefs = navigationGroups.flatMap((g) => g.items.map((i) => i.href));
+    expect(allHrefs).toContain('/admin/setoran');
+    expect(allHrefs).toContain('/admin/simpanan');
+    expect(allHrefs).toContain('/admin/compliance-matrix');
+    expect(allHrefs).toContain('/admin/rekening-koran-simpanan');
+    expect(allHrefs).toContain('/admin/penarikan-simpanan');
+    expect(allHrefs).toContain('/admin/laporan-penarikan');
+    expect(allHrefs).toContain('/admin/buku-besar-belanja');
+    expect(allHrefs).toContain('/admin/pengajuan-pinjaman');
+    expect(allHrefs).toContain('/admin/approval');
+    expect(allHrefs).toContain('/admin/loan-matrix');
+    expect(allHrefs).toContain('/admin/laporan-pinjaman-lunas');
+    expect(allHrefs).toContain('/admin/import-gaji');
+    expect(allHrefs).toContain('/admin/batch-update');
+    expect(allHrefs).toContain('/admin/clearance');
+    expect(allHrefs).toContain('/admin/laporan-keuangan');
+    expect(allHrefs).toContain('/admin/master-simpan-pinjam');
+    expect(allHrefs).toContain('/admin/anggota');
+    expect(allHrefs).toContain('/admin/users');
+    expect(allHrefs).toContain('/admin/pengaturan');
   });
 
-  it('renders correctly for admin user with both groups in proper DOM sequence', () => {
+  it('auto-detects the active parent group from pathname', () => {
+    expect(findActiveGroupId('/admin/approval')).toBe('pinjaman');
+    expect(findActiveGroupId('/admin/kasir')).toBe('retail');
+    expect(findActiveGroupId('/admin/rekening-koran-simpanan')).toBe('simpanan');
+    expect(findActiveGroupId('/admin/clearance')).toBe('gaji');
+    expect(findActiveGroupId('/admin/laporan-keuangan')).toBe('laporan');
+    expect(findActiveGroupId('/admin/anggota')).toBe('master');
+    expect(findActiveGroupId('/admin')).toBeNull();
+  });
+
+  it('auto-expands the group matching the active route and renders its children', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/admin']}>
+      <MemoryRouter initialEntries={['/admin/loan-matrix']}>
         <Sidebar userRole="admin" />
       </MemoryRouter>
     );
 
-    const retailPos = html.indexOf('TOKO RETAIL &amp; INVENTORI');
-    const kspPos = html.indexOf('SIMPAN PINJAM (KSP / USP)');
-
-    expect(retailPos).toBeGreaterThan(-1);
-    expect(kspPos).toBeGreaterThan(-1);
-    expect(retailPos).toBeLessThan(kspPos);
+    expect(html).toContain('Pinjaman &amp; Pembiayaan');
+    expect(html).toContain('/admin/loan-matrix');
+    expect(html).toContain('Matriks Pinjaman');
   });
 
-  it('hides adminOnly items when user role is not admin', () => {
+  it('hides adminOnly items and empty adminOnly groups when user role is not admin', () => {
     const html = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/admin']}>
+      <MemoryRouter initialEntries={['/admin/kasir']}>
         <Sidebar userRole="staff" />
       </MemoryRouter>
     );
@@ -111,23 +101,22 @@ describe('Sidebar Navigation Hierarchy & Ordering', () => {
     expect(html).not.toContain('/admin/pengaturan-kasir');
     // Kasir (POS) is visible
     expect(html).toContain('/admin/kasir');
+    // Gaji & Kliring has only adminOnly items, so the entire group is hidden for staff
+    expect(html).not.toContain('Gaji &amp; Kliring');
   });
 
-  it('renders Laporan Mutasi Barang route for admin and staff users', () => {
-    const adminHtml = renderToStaticMarkup(
+  it('renders icon-only rail buttons when isCollapsed is true', () => {
+    const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/admin']}>
-        <Sidebar userRole="admin" />
+        <Sidebar userRole="admin" isCollapsed={true} />
       </MemoryRouter>
     );
-    expect(adminHtml).toContain('/admin/laporan-mutasi');
-    expect(adminHtml).toContain('Laporan Mutasi Barang');
 
-    const staffHtml = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/admin']}>
-        <Sidebar userRole="staff" />
-      </MemoryRouter>
-    );
-    expect(staffHtml).toContain('/admin/laporan-mutasi');
+    expect(html).toContain('title="Dashboard Operasional"');
+    expect(html).toContain('title="Toko Retail &amp; POS"');
+    expect(html).toContain('title="Pinjaman &amp; Pembiayaan"');
+    // Sub-item labels should not be inline in collapsed rail until hovered/clicked
+    expect(html).not.toContain('aria-expanded');
   });
 });
 
@@ -153,7 +142,6 @@ describe('Sidebar Scroll Persistence & Contextual Focus', () => {
       (globalThis as any).window = {};
     }
     (globalThis.window as any).sessionStorage = mockSessionStorage;
-    (globalThis as any).sessionStorage = mockSessionStorage;
   });
 
   afterEach(() => {

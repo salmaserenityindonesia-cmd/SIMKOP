@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
 import { Search, Wallet, Lock, AlertCircle, ArrowRight, CheckCircle2, Banknote, Landmark, Users, Calendar } from 'lucide-react';
-import { getWithdrawableSavings, withdrawSavings, WithdrawableDeposit } from '../../../services/withdrawal.service';
+import { getWithdrawableSavings, getLockedSavings, withdrawSavings, WithdrawableDeposit, LockedDeposit } from '../../../services/withdrawal.service';
 import { bulkWithdrawalService } from '../../../services/bulkWithdrawalService';
 import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalReceiptModal';
 import BulkLebaranTab from './BulkLebaranTab';
@@ -26,6 +26,7 @@ export default function PenarikanSimpanan() {
   const [selectedAnggota, setSelectedAnggota] = useState<Anggota | null>(null);
   
   const [withdrawableSavings, setWithdrawableSavings] = useState<WithdrawableDeposit[]>([]);
+  const [lockedSavings, setLockedSavings] = useState<LockedDeposit[]>([]);
   const [isLoadingSavings, setIsLoadingSavings] = useState(false);
 
   // Modal State
@@ -40,16 +41,17 @@ export default function PenarikanSimpanan() {
   // Receipt Modal State
   const [receiptData, setReceiptData] = useState<any>(null);
 
+  const loadCycleHistory = async () => {
+    try {
+      const history = await bulkWithdrawalService.getLebaranDisbursementCycles();
+      setCyclesCount(history.length);
+    } catch (err) {
+      console.error('Error fetching cycles history count:', err);
+    }
+  };
+
   useEffect(() => {
-    const fetchCyclesCount = async () => {
-      try {
-        const history = await bulkWithdrawalService.getLebaranDisbursementCycles();
-        setCyclesCount(history.length);
-      } catch (err) {
-        console.error('Error fetching cycles history count:', err);
-      }
-    };
-    fetchCyclesCount();
+    loadCycleHistory();
   }, []);
 
   useEffect(() => {
@@ -96,8 +98,12 @@ export default function PenarikanSimpanan() {
     
     setIsLoadingSavings(true);
     try {
-      const savings = await getWithdrawableSavings(anggota.id);
+      const [savings, locked] = await Promise.all([
+        getWithdrawableSavings(anggota.id),
+        getLockedSavings(anggota.id),
+      ]);
       setWithdrawableSavings(savings);
+      setLockedSavings(locked);
     } catch (err) {
       console.error('Error fetching savings:', err);
     } finally {
@@ -164,6 +170,7 @@ export default function PenarikanSimpanan() {
           transactionDate: new Date().toISOString().slice(0, 10),
           notes: `Pencairan Manual ${selectedDeposit.deposit_name} (${methodText})`
         });
+        await loadCycleHistory();
       }
 
       // Show receipt
@@ -355,24 +362,43 @@ export default function PenarikanSimpanan() {
                         </div>
                       ))}
                       
-                      {/* Mock Simpanan Pokok (Non-withdrawable) */}
-                      <div className="bg-slate-50 rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col opacity-75">
-                        <div className="p-5 flex-1">
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="flex items-center gap-2">
-                              <Lock className="text-slate-400 w-5 h-5" />
-                              <h3 className="font-bold text-slate-600">Simpanan Pokok & Wajib</h3>
+                      {/* Locked Savings Cards (can_be_withdrawn = false in Master Produk, e.g., Simpanan Pokok) */}
+                      {(lockedSavings.length > 0
+                        ? lockedSavings
+                        : [{ deposit_type_id: 'pokok-default', deposit_name: 'Simpanan Pokok', deposit_code: 'POKOK', saldo: null as number | null }]
+                      ).map((locked) => (
+                        <div key={locked.deposit_type_id} className="bg-slate-50/80 border border-slate-200 rounded-2xl p-5 flex flex-col justify-between">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 text-slate-700 font-bold text-sm">
+                                <Lock className="w-4 h-4 text-slate-400" />
+                                <span>{locked.deposit_name}</span>
+                              </div>
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-200/80 text-slate-600 text-[11px] font-semibold">
+                                <Lock className="w-3 h-3" />
+                                <span>Terkunci</span>
+                              </span>
                             </div>
-                            <span className="px-2 py-1 bg-slate-200 text-slate-600 text-xs font-bold rounded-md flex items-center gap-1">
-                              <Lock className="w-3 h-3" /> Terkunci
-                            </span>
+
+                            {locked.saldo !== null && (
+                              <div>
+                                <div className="text-xs text-slate-500">Saldo Tersimpan</div>
+                                <div className="text-xl font-black text-slate-700">
+                                  Rp {locked.saldo.toLocaleString('id-ID')}
+                                </div>
+                              </div>
+                            )}
+
+                            <div>
+                              <div className="text-xs text-slate-500">Status Penarikan</div>
+                              <p className="text-xs font-medium text-slate-600 mt-1 leading-relaxed">
+                                Tidak dapat ditarik reguler (Bisa Ditarik: Tidak di Master Produk). Hanya dapat dicairkan saat pengunduran diri melalui menu{' '}
+                                <span className="font-semibold text-slate-800">Kliring &amp; Clearance Anggota</span>.
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-sm text-slate-500 mb-1">Status Penarikan</p>
-                          <p className="text-sm font-medium text-slate-700">
-                            Hanya bisa dicairkan saat pengunduran diri (Kliring).
-                          </p>
                         </div>
-                      </div>
+                      ))}
                     </>
                   )}
                 </div>
@@ -380,7 +406,7 @@ export default function PenarikanSimpanan() {
             )}
           </div>
         ) : activeTab === 'bulk_lebaran' ? (
-          <BulkLebaranTab />
+          <BulkLebaranTab onCyclesUpdated={loadCycleHistory} />
         ) : (
           <LebaranDatesTab onCyclesUpdated={(count) => setCyclesCount(count)} />
         )}

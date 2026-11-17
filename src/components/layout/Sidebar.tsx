@@ -1,4 +1,4 @@
-import React, { useRef, useLayoutEffect } from 'react';
+import React, { useRef, useLayoutEffect, useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -10,6 +10,7 @@ import {
   CheckSquare,
   Grid,
   BarChart,
+  BarChart3,
   Upload,
   RefreshCw,
   UserCheck,
@@ -29,6 +30,8 @@ import {
   CreditCard,
   CheckCircle2,
   BookOpen,
+  Banknote,
+  ChevronDown,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -39,7 +42,9 @@ export interface NavigationItem {
 }
 
 export interface NavigationGroup {
+  id: string;
   groupName: string;
+  icon: React.ComponentType<{ className?: string }>;
   items: NavigationItem[];
 }
 
@@ -101,46 +106,58 @@ export function handleSidebarItemClick(
   }
 }
 
+export const topDashboardItem: NavigationItem = {
+  label: 'Dashboard Operasional',
+  icon: LayoutDashboard,
+  href: '/admin',
+};
+
 export const navigationGroups: NavigationGroup[] = [
   {
-    groupName: 'OPERASIONAL',
-    items: [
-      { label: 'Dashboard Operasional', icon: LayoutDashboard, href: '/admin' },
-    ],
-  },
-  {
-    groupName: 'TOKO RETAIL & INVENTORI',
+    id: 'retail',
+    groupName: 'Toko Retail & POS',
+    icon: ShoppingCart,
     items: [
       { label: 'Kasir (POS)', icon: ShoppingCart, href: '/admin/kasir' },
       { label: 'Inventori Produk', icon: Package, href: '/admin/produk' },
       { label: 'Kategori Produk', icon: Tags, href: '/admin/kategori' },
       { label: 'Manajemen Pembelian', icon: Truck, href: '/admin/pembelian' },
       { label: 'Retur Pembelian', icon: RotateCcw, href: '/admin/retur-pembelian' },
+      { label: 'Buku Besar Bon Toko', icon: CreditCard, href: '/admin/buku-besar-bon-toko' },
       { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
       { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
       { label: 'Laporan Mutasi Barang', icon: ArrowLeftRight, href: '/admin/laporan-mutasi' },
-      { label: 'Buku Besar Bon Toko', icon: CreditCard, href: '/admin/buku-besar-bon-toko' },
     ],
   },
   {
-    groupName: 'SIMPAN PINJAM (KSP / USP)',
+    id: 'simpanan',
+    groupName: 'Simpanan & Buku Besar',
+    icon: Wallet,
     items: [
-      { label: 'Master Produk Koperasi', icon: Boxes, href: '/admin/master-simpan-pinjam', adminOnly: true },
       { label: 'Pusat Terima Setoran', icon: Wallet, href: '/admin/setoran' },
       { label: 'Tagihan Simpanan', icon: Receipt, href: '/admin/simpanan' },
-      { label: 'Penarikan Simpanan', icon: ArrowUpRight, href: '/admin/penarikan-simpanan' },
-      { label: 'Laporan Penarikan', icon: FileSpreadsheet, href: '/admin/laporan-penarikan' },
-      { label: 'Pengajuan Pinjaman', icon: FileText, href: '/admin/pengajuan-pinjaman' },
-      { label: 'Approval Pinjaman', icon: CheckSquare, href: '/admin/approval', adminOnly: true },
       { label: 'Matriks Simpanan', icon: Grid, href: '/admin/compliance-matrix' },
       { label: 'Rekening Koran Simpanan', icon: BookOpen, href: '/admin/rekening-koran-simpanan' },
-      { label: 'Matriks Pinjaman', icon: BarChart, href: '/admin/loan-matrix' },
-      { label: 'Laporan Pinjaman Lunas', icon: CheckCircle2, href: '/admin/laporan-pinjaman-lunas' },
+      { label: 'Penarikan Simpanan', icon: ArrowUpRight, href: '/admin/penarikan-simpanan' },
+      { label: 'Laporan Penarikan', icon: FileSpreadsheet, href: '/admin/laporan-penarikan' },
       { label: 'Buku Besar Belanja', icon: ShoppingBag, href: '/admin/buku-besar-belanja' },
     ],
   },
   {
-    groupName: 'UTILITY & REKONSILIASI GAJI',
+    id: 'pinjaman',
+    groupName: 'Pinjaman & Pembiayaan',
+    icon: CreditCard,
+    items: [
+      { label: 'Pengajuan Pinjaman', icon: FileText, href: '/admin/pengajuan-pinjaman' },
+      { label: 'Approval Pinjaman', icon: CheckSquare, href: '/admin/approval', adminOnly: true },
+      { label: 'Matriks Pinjaman', icon: BarChart, href: '/admin/loan-matrix' },
+      { label: 'Laporan Pinjaman Lunas', icon: CheckCircle2, href: '/admin/laporan-pinjaman-lunas' },
+    ],
+  },
+  {
+    id: 'gaji',
+    groupName: 'Gaji & Kliring',
+    icon: Banknote,
     items: [
       { label: 'Import Gaji & Rekening', icon: Upload, href: '/admin/import-gaji', adminOnly: true },
       { label: 'Update Massal Bulanan', icon: RefreshCw, href: '/admin/batch-update', adminOnly: true },
@@ -148,39 +165,72 @@ export const navigationGroups: NavigationGroup[] = [
     ],
   },
   {
-    groupName: 'MANAJEMEN & AKSES',
+    id: 'laporan',
+    groupName: 'Laporan & Keuangan',
+    icon: BarChart3,
     items: [
+      { label: 'Laporan Keuangan Terpadu', icon: FileSpreadsheet, href: '/admin/laporan-keuangan', adminOnly: true },
+    ],
+  },
+  {
+    id: 'master',
+    groupName: 'Master & Pengaturan',
+    icon: Settings,
+    items: [
+      { label: 'Master Produk Koperasi', icon: Boxes, href: '/admin/master-simpan-pinjam', adminOnly: true },
       { label: 'Manajemen Anggota', icon: Users, href: '/admin/anggota' },
       { label: 'Manajemen User', icon: ShieldCheck, href: '/admin/users', adminOnly: true },
       { label: 'Pengaturan Koperasi', icon: Settings, href: '/admin/pengaturan', adminOnly: true },
     ],
   },
-  {
-    groupName: 'LAPORAN & ANALITIK',
-    items: [
-      { label: 'Laporan Keuangan', icon: FileSpreadsheet, href: '/admin/laporan-keuangan', adminOnly: true },
-    ],
-  },
 ];
+
+export function findActiveGroupId(pathname: string): string | null {
+  const match = navigationGroups.find((group) =>
+    group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
+  );
+  return match?.id ?? null;
+}
 
 interface SidebarProps {
   userRole?: string;
+  isCollapsed?: boolean;
   onItemClick?: () => void;
 }
 
-export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
+export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: SidebarProps) {
   const location = useLocation();
   const navRef = useRef<HTMLElement | null>(null);
+  const closeTimeoutRef = useRef<number | null>(null);
 
-  const handleItemClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    handleSidebarItemClick(e, onItemClick);
-  };
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const activeId = findActiveGroupId(location.pathname);
+    return activeId ? { [activeId]: true } : { retail: true };
+  });
+
+  const [popoverGroupId, setPopoverGroupId] = useState<string | null>(null);
+  const [popoverTop, setPopoverTop] = useState<number>(80);
+
+  // Auto-expand the parent group whenever the active route changes
+  useEffect(() => {
+    const activeId = findActiveGroupId(location.pathname);
+    if (activeId) {
+      setOpenGroups((prev) => (prev[activeId] ? prev : { ...prev, [activeId]: true }));
+    }
+    setPopoverGroupId(null);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isCollapsed) {
+      setPopoverGroupId(null);
+    }
+  }, [isCollapsed]);
 
   useLayoutEffect(() => {
     try {
       const container = navRef.current?.closest('.overflow-y-auto') as HTMLElement | null;
       const activeItem = navRef.current?.querySelector(
-        '[aria-current="page"], .border-secondary-fixed'
+        '[aria-current="page"]'
       ) as HTMLElement | null;
       restoreSidebarScroll(container, activeItem);
     } catch {
@@ -188,64 +238,255 @@ export default function Sidebar({ userRole, onItemClick }: SidebarProps) {
     }
   }, [location.pathname]);
 
-  return (
-    <nav ref={navRef} className="space-y-6">
-      {navigationGroups.map((group) => {
-        // Filter items based on user role (if adminOnly, only render for admin)
-        const visibleItems = group.items.filter(
-          (item) => !item.adminOnly || userRole === 'admin'
-        );
+  const handleItemClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    setPopoverGroupId(null);
+    handleSidebarItemClick(e, onItemClick);
+  };
 
-        if (visibleItems.length === 0) return null;
+  const toggleGroup = (groupId: string) => {
+    setOpenGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  };
 
-        return (
-          <div key={group.groupName} className="space-y-1.5">
-            {/* Domain-Driven Group Header */}
-            <div className="px-3 py-1 flex items-center gap-2">
-              <span className="text-[11px] font-bold tracking-wider text-on-primary-container/60 uppercase">
-                {group.groupName}
+  const clearPopoverCloseTimer = () => {
+    if (closeTimeoutRef.current !== null) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  };
+
+  const schedulePopoverClose = () => {
+    clearPopoverCloseTimer();
+    closeTimeoutRef.current = window.setTimeout(() => {
+      setPopoverGroupId(null);
+    }, 150);
+  };
+
+  const openPopoverForGroup = (groupId: string, targetEl: HTMLElement) => {
+    clearPopoverCloseTimer();
+    const rect = targetEl.getBoundingClientRect();
+    const maxTop = typeof window !== 'undefined' ? Math.max(16, window.innerHeight - 320) : rect.top;
+    setPopoverTop(Math.min(rect.top, maxTop));
+    setPopoverGroupId(groupId);
+  };
+
+  const DashboardIcon = topDashboardItem.icon;
+
+  // Visible groups filtered by userRole
+  const visibleGroups = navigationGroups
+    .map((group) => ({
+      ...group,
+      visibleItems: group.items.filter((item) => !item.adminOnly || userRole === 'admin'),
+    }))
+    .filter((group) => group.visibleItems.length > 0);
+
+  if (isCollapsed) {
+    const activePopoverGroup = visibleGroups.find((g) => g.id === popoverGroupId) || null;
+
+    return (
+      <nav
+        ref={navRef}
+        className="flex flex-col items-center space-y-2 py-1 relative"
+        onMouseLeave={schedulePopoverClose}
+      >
+        {/* Top Single Dashboard Icon */}
+        <NavLink
+          to={topDashboardItem.href}
+          end
+          title={topDashboardItem.label}
+          onClick={handleItemClick}
+          className={({ isActive }) =>
+            `w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-150 ${
+              isActive
+                ? 'bg-emerald-500 text-white shadow-md shadow-emerald-950/40'
+                : 'text-slate-300 hover:text-white hover:bg-[#1E3252]/80'
+            }`
+          }
+        >
+          <DashboardIcon className="w-5 h-5 shrink-0" />
+        </NavLink>
+
+        <div className="w-8 border-t border-[#1E3252] my-1" />
+
+        {/* Group Icons */}
+        {visibleGroups.map((group) => {
+          const GroupIcon = group.icon;
+          const isGroupActive = group.visibleItems.some(
+            (item) => location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
+          );
+          const isPopoverOpen = popoverGroupId === group.id;
+
+          return (
+            <button
+              key={group.id}
+              type="button"
+              title={group.groupName}
+              aria-label={group.groupName}
+              onMouseEnter={(e) => openPopoverForGroup(group.id, e.currentTarget)}
+              onClick={(e) => {
+                if (isPopoverOpen) {
+                  setPopoverGroupId(null);
+                } else {
+                  openPopoverForGroup(group.id, e.currentTarget);
+                }
+              }}
+              className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-150 cursor-pointer ${
+                isGroupActive || isPopoverOpen
+                  ? 'bg-[#172B4D] text-emerald-400 ring-1 ring-emerald-500/40'
+                  : 'text-slate-300 hover:text-white hover:bg-[#1E3252]/80'
+              }`}
+            >
+              {isGroupActive && (
+                <span className="absolute left-0 top-2.5 bottom-2.5 w-1 rounded-r-full bg-emerald-500" />
+              )}
+              <GroupIcon className="w-5 h-5 shrink-0" />
+            </button>
+          );
+        })}
+
+        {/* Floating Sub-Menu Popover Card */}
+        {activePopoverGroup && (
+          <div
+            style={{ top: `${popoverTop}px` }}
+            onMouseEnter={clearPopoverCloseTimer}
+            onMouseLeave={schedulePopoverClose}
+            className="fixed left-[76px] z-50 min-w-[236px] max-w-[270px] rounded-xl bg-[#0F1E36] border border-[#1E3252] shadow-2xl p-2"
+          >
+            <div className="px-2.5 py-2 mb-1 border-b border-[#1E3252] flex items-center gap-2">
+              <activePopoverGroup.icon className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="text-xs font-bold text-white truncate">
+                {activePopoverGroup.groupName}
               </span>
-              <div className="h-[1px] flex-1 bg-outline-variant/15" />
             </div>
-
-            {/* Menu Items */}
-            <div className="space-y-0.5">
-              {visibleItems.map((item) => {
-                const IconComponent = item.icon;
+            <div className="space-y-0.5 max-h-[60vh] overflow-y-auto">
+              {activePopoverGroup.visibleItems.map((item) => {
+                const ItemIcon = item.icon;
                 return (
                   <NavLink
                     key={item.href}
                     to={item.href}
-                    end={item.href === '/admin'}
                     onClick={handleItemClick}
                     className={({ isActive }) =>
-                      `group flex items-center gap-3 px-3 py-2 rounded-lg font-medium text-xs transition-all duration-150 ${
+                      `flex items-center gap-2.5 min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                         isActive
-                          ? 'bg-surface-container-lowest/15 text-surface-container-lowest font-semibold shadow-sm border-l-4 border-secondary-fixed pl-2'
-                          : 'text-on-primary-container/80 hover:text-surface-container-lowest hover:bg-surface-container-lowest/8 border-l-4 border-transparent pl-2'
+                          ? 'bg-emerald-500 text-white font-semibold shadow-xs'
+                          : 'text-slate-300 hover:text-white hover:bg-[#1E3252]'
                       }`
                     }
                   >
-                    {({ isActive }) => (
-                      <>
-                        <IconComponent
-                          className={`w-4 h-4 shrink-0 transition-colors ${
-                            isActive
-                              ? 'text-secondary-fixed'
-                              : 'text-on-primary-container/70 group-hover:text-surface-container-lowest'
-                          }`}
-                        />
-                        <span className="truncate">{item.label}</span>
-                      </>
-                    )}
+                    <ItemIcon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{item.label}</span>
                   </NavLink>
                 );
               })}
             </div>
+          </div>
+        )}
+      </nav>
+    );
+  }
+
+  return (
+    <nav ref={navRef} className="space-y-1.5">
+      {/* Top Single Item: Dashboard Operasional */}
+      <NavLink
+        to={topDashboardItem.href}
+        end
+        onClick={handleItemClick}
+        className={({ isActive }) =>
+          `flex items-center gap-3 min-h-[42px] px-3 py-2 rounded-xl text-xs font-semibold transition-all duration-150 ${
+            isActive
+              ? 'bg-emerald-500 text-white shadow-md shadow-emerald-950/40'
+              : 'text-slate-300 hover:text-white hover:bg-[#1E3252]/70'
+          }`
+        }
+      >
+        <DashboardIcon className="w-4 h-4 shrink-0" />
+        <span className="truncate">{topDashboardItem.label}</span>
+      </NavLink>
+
+      <div className="my-2 border-t border-[#1E3252]" />
+
+      {/* 6 Nested Accordion Groups */}
+      {visibleGroups.map((group) => {
+        const GroupIcon = group.icon;
+        const isOpen = !!openGroups[group.id];
+        const isGroupActive = group.visibleItems.some(
+          (item) => location.pathname === item.href || location.pathname.startsWith(`${item.href}/`)
+        );
+
+        return (
+          <div key={group.id} className="space-y-1">
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              onClick={() => toggleGroup(group.id)}
+              className={`w-full flex items-center justify-between gap-2 min-h-[42px] px-3 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
+                isGroupActive || isOpen
+                  ? 'bg-[#172B4D] text-white'
+                  : 'text-slate-300 hover:text-white hover:bg-[#1E3252]/60'
+              }`}
+            >
+              <span className="flex items-center gap-2.5 min-w-0">
+                <GroupIcon
+                  className={`w-4 h-4 shrink-0 ${
+                    isGroupActive ? 'text-emerald-400' : 'text-slate-300'
+                  }`}
+                />
+                <span className="truncate">{group.groupName}</span>
+              </span>
+              <span className="flex items-center gap-1.5 shrink-0">
+                {isGroupActive && !isOpen && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                )}
+                <ChevronDown
+                  className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                    isOpen ? 'rotate-180 text-white' : ''
+                  }`}
+                />
+              </span>
+            </button>
+
+            {isOpen && (
+              <div className="ml-4 pl-3 border-l border-slate-700/80 space-y-0.5 py-0.5">
+                {group.visibleItems.map((item) => {
+                  const ItemIcon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.href}
+                      to={item.href}
+                      onClick={handleItemClick}
+                      className={({ isActive }) =>
+                        `relative flex items-center gap-2.5 min-h-[42px] lg:min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs transition-all duration-150 ${
+                          isActive
+                            ? 'bg-emerald-500/15 text-emerald-300 font-semibold border border-emerald-500/30'
+                            : 'text-slate-300 hover:text-white hover:bg-[#1E3252]/50 font-medium border border-transparent'
+                        }`
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          {isActive && (
+                            <span className="absolute -left-[13px] top-1/2 -translate-y-1/2 w-1 h-4 rounded-r-full bg-emerald-500" />
+                          )}
+                          <ItemIcon
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              isActive ? 'text-emerald-400' : 'text-slate-400'
+                            }`}
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}
     </nav>
   );
 }
-
