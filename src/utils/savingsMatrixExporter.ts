@@ -16,9 +16,12 @@ import {
 import {
   isMonthBeforeJoin,
   resolveDepositTypeCode,
-  matchAutomaticFifo,
   MONTH_NAMES
 } from '../services/savingsMatrixService';
+
+export const CUTOFF_YEAR = 2026;
+export const CUTOFF_MONTH = 3; // Maret 2026
+export const CUTOFF_PERIOD_INDEX = CUTOFF_YEAR * 12 + CUTOFF_MONTH;
 
 export type DepositTypeKey = 'WAJIB' | 'BELANJA' | 'LEBARAN';
 
@@ -271,35 +274,12 @@ export async function generateSavingsMatrixWorkbook(
     }
   }
 
-  // 5. Tentukan rentang horizontal bulan
-  let sYear = options.startYear;
-  let sMonth = options.startMonth;
-  if (!sYear || !sMonth) {
-    let oldestDate: Date | null = null;
-    for (const m of members) {
-      const raw = m.tgl_awal_anggota || m.created_at;
-      if (raw) {
-        const d = new Date(raw);
-        if (!isNaN(d.getTime())) {
-          if (!oldestDate || d < oldestDate) {
-            oldestDate = d;
-          }
-        }
-      }
-    }
-
-    if (oldestDate) {
-      sYear = oldestDate.getFullYear();
-      sMonth = oldestDate.getMonth() + 1;
-      // Batasi fallback minimal ke Mei 2021 jika tanggal tertua setelah Mei 2021
-      if (sYear * 12 + sMonth > 2021 * 12 + 5) {
-        sYear = 2021;
-        sMonth = 5;
-      }
-    } else {
-      sYear = 2021;
-      sMonth = 5;
-    }
+  // 5. Tentukan rentang horizontal bulan (selalu dimulai tepat dari Mar-26 sesuai cut-off resmi)
+  let sYear = options.startYear ?? CUTOFF_YEAR;
+  let sMonth = options.startMonth ?? CUTOFF_MONTH;
+  if (sYear * 12 + sMonth < CUTOFF_PERIOD_INDEX) {
+    sYear = CUTOFF_YEAR;
+    sMonth = CUTOFF_MONTH;
   }
 
   // Tentukan batas akhir periode ekspor secara deterministik (default: bulan berjalan saat file diekspor)
@@ -307,13 +287,13 @@ export async function generateSavingsMatrixWorkbook(
   const currentYear = endPeriodDate.getFullYear();
   const currentMonth = endPeriodDate.getMonth() + 1;
 
-  const eYear = options.endYear ?? currentYear;
-  const eMonth = options.endMonth ?? (options.endYear !== undefined && options.endYear !== currentYear ? 12 : currentMonth);
+  let eYear = options.endYear ?? currentYear;
+  let eMonth = options.endMonth ?? (options.endYear !== undefined && options.endYear !== currentYear ? 12 : currentMonth);
 
-  // Pastikan rentang awal tidak melebihi rentang akhir
-  if (sYear * 12 + sMonth > eYear * 12 + eMonth) {
-    sYear = eYear;
-    sMonth = eMonth;
+  // Pastikan rentang akhir tidak lebih awal dari rentang awal
+  if (eYear * 12 + eMonth < sYear * 12 + sMonth) {
+    eYear = sYear;
+    eMonth = sMonth;
   }
 
   const monthColumns = generateHorizontalMonths(sYear, sMonth, eYear, eMonth, 5);
@@ -322,10 +302,12 @@ export async function generateSavingsMatrixWorkbook(
 
   // Kolom formula agregasi
   const totalColIndex = 5 + totalMonths;
-  const selisihColIndex = totalColIndex + 1;
+  const dbColIndex = totalColIndex + 1;
+  const selisihColIndex = dbColIndex + 1;
   const statusColIndex = selisihColIndex + 1;
 
   const totalColLetter = getColumnLetter(totalColIndex);
+  const dbColLetter = getColumnLetter(dbColIndex);
   const selisihColLetter = getColumnLetter(selisihColIndex);
   const statusColLetter = getColumnLetter(statusColIndex);
 
@@ -350,9 +332,10 @@ export async function generateSavingsMatrixWorkbook(
     'NRP',
     'Nama Anggota',
     'Tgl Masuk',
-    'Saldo Acuan Database',
+    'Saldo Awal (Per Mar-26)',
     ...monthColumns.map(m => m.label),
-    'Total Alokasi',
+    'Total Saldo Akhir',
+    'Saldo Acuan Database',
     'Selisih',
     'Status Validasi'
   ];
@@ -402,47 +385,37 @@ export async function generateSavingsMatrixWorkbook(
 
     const txs: any[] = Array.isArray(md?.deposit_transactions) ? md.deposit_transactions : [];
 
-    // Tentukan saldo acuan database
-    const migrationTx = txs.find((t: any) => {
-      const desc = (t.description || '').toLowerCase();
-      return desc.includes('migra') || desc.includes('saldo awal') || desc.includes('historical') || desc.includes('one-time');
-    });
-
-    let saldoAcuan = 0;
-    if (migrationTx) {
-      saldoAcuan = Number(migrationTx.amount || 0);
-    } else {
-      let net = 0;
-      for (const t of txs) {
-        const amt = Number(t.amount || 0);
-        if (t.transaction_type === 'withdrawal') net -= amt;
-        else net += amt;
-      }
-      saldoAcuan = Math.max(0, net);
+    // Hitung total saldo riil jenis simpanan di database
+    let totalSaldoRiilDatabase = 0;
+    for (const t of txs) {
+      const amt = Number(t.amount || 0);
+      if (t.transaction_type === 'withdrawal') totalSaldoRiilDatabase -= amt;
+      else totalSaldoRiilDatabase += amt;
     }
+    totalSaldoRiilDatabase = Math.max(0, totalSaldoRiilDatabase);
 
-    // Identifikasi alokasi per bulan
+    // Kumpulkan mutasi bulanan hanya untuk periode Mar-26 ke atas (>= CUTOFF_PERIOD_INDEX)
     const monthlyTxMap = new Map<string, number>();
+    let sumMutasiSetelahMaret = 0;
     for (const t of txs) {
       if (t.transaction_type === 'deposit' && t.for_year && t.for_month) {
-        const desc = (t.description || '').toLowerCase();
-        const isLumpSum = desc.includes('migrasi saldo awal (as-is)') && Number(t.amount || 0) > 200000;
-        if (!isLumpSum) {
+        const periodIndex = Number(t.for_year) * 12 + Number(t.for_month);
+        if (periodIndex >= CUTOFF_PERIOD_INDEX) {
+          const amt = Number(t.amount || 0);
           const k = `${t.for_year}-${String(t.for_month).padStart(2, '0')}`;
-          monthlyTxMap.set(k, (monthlyTxMap.get(k) || 0) + Number(t.amount || 0));
+          monthlyTxMap.set(k, (monthlyTxMap.get(k) || 0) + amt);
+          sumMutasiSetelahMaret += amt;
         }
       }
     }
 
-    let matchedMonthKeys = new Set<string>();
-    if (monthlyTxMap.size === 0 && saldoAcuan > 0) {
-      // Jika belum ada mutasi buku besar bulanan, buat rekomendasi FIFO berdasarkan saldo acuan
-      const fifoKeys = matchAutomaticFifo(saldoAcuan, monthColumns, depositTypeCode, rateTiers, joinDate);
-      matchedMonthKeys = new Set(fifoKeys);
-    }
+    // Saldo Awal (Per Mar-26) = total riil dikurangi mutasi Mar-26+ (jika ada); tanpa penguraian mundur
+    const saldoAwalPerMaret = monthlyTxMap.size > 0
+      ? Math.max(0, totalSaldoRiilDatabase - sumMutasiSetelahMaret)
+      : totalSaldoRiilDatabase;
 
-    // Susun nilai baris
-    let calculatedTotalAlokasi = 0;
+    // Susun nilai baris bulanan mulai Mar-26 (kosong/null jika belum ada transaksi)
+    let calculatedMonthlySum = 0;
     const monthValues: Array<number | null> = monthColumns.map(m => {
       if (isMonthBeforeJoin(m.year, m.month, joinDate)) {
         return null;
@@ -450,20 +423,15 @@ export async function generateSavingsMatrixWorkbook(
 
       if (monthlyTxMap.has(m.key)) {
         const val = monthlyTxMap.get(m.key)!;
-        calculatedTotalAlokasi += val;
+        calculatedMonthlySum += val;
         return val;
-      }
-
-      if (matchedMonthKeys.has(m.key)) {
-        const rate = getApplicableRate(depositTypeCode, m.year, m.month, rateTiers);
-        calculatedTotalAlokasi += rate;
-        return rate;
       }
 
       return null;
     });
 
-    const calculatedSelisih = calculatedTotalAlokasi - saldoAcuan;
+    const calculatedTotalSaldoAkhir = saldoAwalPerMaret + calculatedMonthlySum;
+    const calculatedSelisih = calculatedTotalSaldoAkhir - totalSaldoRiilDatabase;
     const calculatedStatus = calculatedSelisih === 0
       ? 'SEIMBANG'
       : (calculatedSelisih < 0 ? 'KURANG' : 'LEBIH');
@@ -473,16 +441,18 @@ export async function generateSavingsMatrixWorkbook(
       member.nrp || '-',
       member.nama || '-',
       formattedJoin,
-      saldoAcuan,
+      saldoAwalPerMaret,
       ...monthValues,
-      // Total Alokasi (Formula)
+      // Total Saldo Akhir (Formula)
       {
-        formula: totalMonths > 0 ? `SUM(E${rowNum}:${lastMonthColLetter}${rowNum})` : '0',
-        result: calculatedTotalAlokasi
+        formula: totalMonths > 0 ? `D${rowNum}+SUM(E${rowNum}:${lastMonthColLetter}${rowNum})` : `D${rowNum}`,
+        result: calculatedTotalSaldoAkhir
       },
+      // Saldo Acuan Database
+      totalSaldoRiilDatabase,
       // Selisih (Formula)
       {
-        formula: `${totalColLetter}${rowNum}-D${rowNum}`,
+        formula: `${totalColLetter}${rowNum}-${dbColLetter}${rowNum}`,
         result: calculatedSelisih
       },
       // Status Validasi (Formula)
@@ -514,11 +484,16 @@ export async function generateSavingsMatrixWorkbook(
       }
     }
 
-    // Kolom Total Alokasi
+    // Kolom Total Saldo Akhir
     const totalCell = row.getCell(totalColIndex);
     totalCell.alignment = { horizontal: 'right', vertical: 'middle' };
     totalCell.numFmt = '#,##0';
     totalCell.font = { name: 'Calibri', size: 9, bold: true };
+
+    // Kolom Saldo Acuan Database
+    const dbCell = row.getCell(dbColIndex);
+    dbCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    dbCell.numFmt = '#,##0';
 
     // Kolom Selisih
     const selisihCell = row.getCell(selisihColIndex);
@@ -626,9 +601,10 @@ export async function generateSavingsMatrixWorkbook(
     { width: 14 }, // A: NRP
     { width: 28 }, // B: Nama Anggota
     { width: 14 }, // C: Tgl Masuk
-    { width: 22 }, // D: Saldo Acuan Database
+    { width: 24 }, // D: Saldo Awal (Per Mar-26)
     ...monthColumns.map(() => ({ width: 12 })), // E..[N]: Bulan
-    { width: 18 }, // Total Alokasi
+    { width: 20 }, // Total Saldo Akhir
+    { width: 22 }, // Saldo Acuan Database
     { width: 16 }, // Selisih
     { width: 18 }  // Status Validasi
   ];

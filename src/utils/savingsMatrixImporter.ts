@@ -11,6 +11,12 @@ export interface ParsedMonthlyDeposit {
   year: number;
   month: number;
   amount: number;
+  isOpeningBalance?: boolean;
+}
+
+export interface ParsedOpeningBalance {
+  nrp: string;
+  amount: number;
 }
 
 export interface DetectedMonthColumn {
@@ -25,6 +31,7 @@ export interface ParseSavingsMatrixResult {
   totalRows: number;
   totalMutations: number;
   mutations: ParsedMonthlyDeposit[];
+  openingBalances?: ParsedOpeningBalance[];
   errors: string[];
   detectedMonths: DetectedMonthColumn[];
 }
@@ -218,6 +225,7 @@ export async function parseSavingsMatrixExcel(
 ): Promise<ParseSavingsMatrixResult> {
   const errors: string[] = [];
   const mutations: ParsedMonthlyDeposit[] = [];
+  const openingBalances: ParsedOpeningBalance[] = [];
   const detectedMonths: DetectedMonthColumn[] = [];
 
   try {
@@ -283,10 +291,17 @@ export async function parseSavingsMatrixExcel(
     const headerRow = worksheet.getRow(headerRowIndex);
     const colCount = Math.max(headerRow.cellCount, worksheet.columnCount || 0);
 
-    // Deteksi kolom-kolom bulan
+    // Deteksi kolom Saldo Awal (Per Mar-26) dan kolom-kolom bulan
+    let openingBalanceColIndex = -1;
     for (let c = 1; c <= colCount; c++) {
       if (c === nrpColIndex) continue;
       const cellVal = headerRow.getCell(c).value;
+      const headerText = extractCellText(cellVal).toLowerCase();
+      if (headerText.includes('saldo awal')) {
+        openingBalanceColIndex = c;
+        continue;
+      }
+
       const parsed = parseMonthYearHeader(cellVal);
       if (parsed) {
         let label = '';
@@ -304,7 +319,12 @@ export async function parseSavingsMatrixExcel(
       }
     }
 
-    if (detectedMonths.length === 0) {
+    // Jika format Cut-Off Maret 2026 digunakan (ada kolom Saldo Awal), hanya proses kolom mulai Mar-26
+    const effectiveDetectedMonths = openingBalanceColIndex !== -1
+      ? detectedMonths.filter(m => m.year * 12 + m.month >= 2026 * 12 + 3)
+      : detectedMonths;
+
+    if (effectiveDetectedMonths.length === 0 && openingBalanceColIndex === -1) {
       return {
         success: false,
         totalRows: 0,
@@ -316,7 +336,7 @@ export async function parseSavingsMatrixExcel(
     }
 
     // Urutkan kolom bulan terdeteksi berdasarkan urutan indeks kolom
-    detectedMonths.sort((a, b) => a.colIndex - b.colIndex);
+    effectiveDetectedMonths.sort((a, b) => a.colIndex - b.colIndex);
 
     // Iterasi baris data (mulai dari baris setelah header)
     let totalRows = 0;
@@ -334,7 +354,22 @@ export async function parseSavingsMatrixExcel(
 
       totalRows++;
 
-      for (const mCol of detectedMonths) {
+      if (openingBalanceColIndex !== -1) {
+        const openingAmount = extractNumericAmount(row.getCell(openingBalanceColIndex).value);
+        if (openingAmount > 0) {
+          const roundedOpening = Math.round(openingAmount);
+          openingBalances.push({ nrp, amount: roundedOpening });
+          mutations.push({
+            nrp,
+            year: 2026,
+            month: 2,
+            amount: roundedOpening,
+            isOpeningBalance: true
+          });
+        }
+      }
+
+      for (const mCol of effectiveDetectedMonths) {
         const cell = row.getCell(mCol.colIndex);
         const amount = extractNumericAmount(cell.value);
 
@@ -343,7 +378,7 @@ export async function parseSavingsMatrixExcel(
             nrp,
             year: mCol.year,
             month: mCol.month,
-            amount
+            amount: Math.round(amount)
           });
         }
       }
@@ -354,8 +389,9 @@ export async function parseSavingsMatrixExcel(
       totalRows,
       totalMutations: mutations.length,
       mutations,
+      openingBalances,
       errors: [],
-      detectedMonths
+      detectedMonths: effectiveDetectedMonths
     };
   } catch (err: any) {
     return {

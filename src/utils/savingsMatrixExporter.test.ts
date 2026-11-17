@@ -283,13 +283,13 @@ describe('savingsMatrixExporter', () => {
   });
 
   describe('generateSavingsMatrixWorkbook', () => {
-    it('should generate workbook with correct headers and column structure', async () => {
+    it('should generate workbook with correct headers and column structure starting at Mar-26', async () => {
       const wb = await generateSavingsMatrixWorkbook({
         depositTypeCode: 'WAJIB',
-        startYear: 2024,
+        startYear: 2024, // clamped to 2026-03
         startMonth: 1,
-        endYear: 2024,
-        endMonth: 3,
+        endYear: 2026,
+        endMonth: 5,
         members: mockMembers,
         rateTiers: mockRateTiers,
         memberDeposits: mockMemberDeposits,
@@ -304,22 +304,21 @@ describe('savingsMatrixExporter', () => {
       expect(headerRow.getCell(1).value).toBe('NRP');
       expect(headerRow.getCell(2).value).toBe('Nama Anggota');
       expect(headerRow.getCell(3).value).toBe('Tgl Masuk');
-      expect(headerRow.getCell(4).value).toBe('Saldo Acuan Database');
-      expect(headerRow.getCell(5).value).toBe('Jan-24');
-      expect(headerRow.getCell(6).value).toBe('Feb-24');
-      expect(headerRow.getCell(7).value).toBe('Mar-24');
-      expect(headerRow.getCell(8).value).toBe('Total Alokasi');
-      expect(headerRow.getCell(9).value).toBe('Selisih');
-      expect(headerRow.getCell(10).value).toBe('Status Validasi');
+      expect(headerRow.getCell(4).value).toBe('Saldo Awal (Per Mar-26)');
+      expect(headerRow.getCell(5).value).toBe('Mar-26');
+      expect(headerRow.getCell(6).value).toBe('Apr-26');
+      expect(headerRow.getCell(7).value).toBe('Mei-26');
+      expect(headerRow.getCell(8).value).toBe('Total Saldo Akhir');
+      expect(headerRow.getCell(9).value).toBe('Saldo Acuan Database');
+      expect(headerRow.getCell(10).value).toBe('Selisih');
+      expect(headerRow.getCell(11).value).toBe('Status Validasi');
     });
 
-    it('should assign correct dynamic Excel formulas to Total Alokasi, Selisih, and Status Validasi', async () => {
+    it('should assign correct dynamic Excel formulas to Total Saldo Akhir, Selisih, and Status Validasi', async () => {
       const wb = await generateSavingsMatrixWorkbook({
         depositTypeCode: 'WAJIB',
-        startYear: 2024,
-        startMonth: 1,
-        endYear: 2024,
-        endMonth: 3,
+        endYear: 2026,
+        endMonth: 5,
         members: mockMembers,
         rateTiers: mockRateTiers,
         memberDeposits: mockMemberDeposits,
@@ -330,76 +329,108 @@ describe('savingsMatrixExporter', () => {
       expect(ws).toBeDefined();
 
       // Baris 2 (Budi Santoso):
-      // Bulan E-G (Jan-Mar 2024), Total Alokasi di Kolom H (8), Selisih di Kolom I (9), Status di Kolom J (10)
+      // Bulan E-G (Mar-26..Mei-26), Total Saldo Akhir di H (8), Saldo Acuan DB di I (9), Selisih di J (10), Status di K (11)
       const row2 = ws!.getRow(2);
+      const saldoAwalCell = row2.getCell(4);
       const totalCell = row2.getCell(8);
-      const selisihCell = row2.getCell(9);
-      const statusCell = row2.getCell(10);
+      const dbCell = row2.getCell(9);
+      const selisihCell = row2.getCell(10);
+      const statusCell = row2.getCell(11);
 
-      // Total formula: SUM(E2:G2)
-      expect(totalCell.formula).toBe('SUM(E2:G2)');
-      expect(totalCell.result).toBe(300000); // 150k Jan + 150k Feb
+      expect(saldoAwalCell.value).toBe(300000);
+      expect(dbCell.value).toBe(300000);
 
-      // Selisih formula: H2-D2
-      expect(selisihCell.formula).toBe('H2-D2');
-      expect(selisihCell.result).toBe(0); // 300k - 300k = 0
+      // Total formula: D2+SUM(E2:G2)
+      expect(totalCell.formula).toBe('D2+SUM(E2:G2)');
+      expect(totalCell.result).toBe(300000);
 
-      // Status Validasi formula: IF(I2=0,"SEIMBANG",IF(I2<0,"KURANG","LEBIH"))
-      expect(statusCell.formula).toBe('IF(I2=0,"SEIMBANG",IF(I2<0,"KURANG","LEBIH"))');
+      // Selisih formula: H2-I2
+      expect(selisihCell.formula).toBe('H2-I2');
+      expect(selisihCell.result).toBe(0);
+
+      // Status Validasi formula: IF(J2=0,"SEIMBANG",IF(J2<0,"KURANG","LEBIH"))
+      expect(statusCell.formula).toBe('IF(J2=0,"SEIMBANG",IF(J2<0,"KURANG","LEBIH"))');
       expect(statusCell.result).toBe('SEIMBANG');
     });
 
-    it('should evaluate and populate KURANG status correctly when allocation < saldo acuan', async () => {
+    it('should separate post-March 2026 monthly mutations from Saldo Awal (Per Mar-26) and stay SEIMBANG', async () => {
+      const memberWithPostMar = [
+        { id: 'mem-iwan', nrp: '2001', nama: 'Iwan Budiman', created_at: '2021-05-01', status: 'aktif' }
+      ];
+      const depositsWithPostMar = [
+        {
+          id: 'md-iwan',
+          member_id: 'mem-iwan',
+          deposit_type_id: 'dt-wajib',
+          deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+          deposit_transactions: [
+            { id: 'tx-open', amount: 13400000, transaction_type: 'deposit', for_month: 2, for_year: 2026, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+            { id: 'tx-mar', amount: 200000, transaction_type: 'deposit', for_month: 3, for_year: 2026, description: 'Setoran Mar-26' },
+            { id: 'tx-apr', amount: 200000, transaction_type: 'deposit', for_month: 4, for_year: 2026, description: 'Setoran Apr-26' }
+          ]
+        }
+      ];
+
       const wb = await generateSavingsMatrixWorkbook({
         depositTypeCode: 'WAJIB',
-        startYear: 2024,
-        startMonth: 1,
-        endYear: 2024,
-        endMonth: 3,
-        members: mockMembers,
+        endYear: 2026,
+        endMonth: 5,
+        members: memberWithPostMar,
         rateTiers: mockRateTiers,
-        memberDeposits: mockMemberDeposits,
-        autoSave: false
-      });
-
-      const ws = wb.getWorksheet('Matriks WAJIB');
-      // Baris 4: Ahmad Fauzi (Saldo acuan 500k, join 2024-06-01 -> di rentang Jan-Mar 2024 belum join)
-      const row4 = ws!.getRow(4);
-      const saldoCell = row4.getCell(4);
-      const totalCell = row4.getCell(8);
-      const selisihCell = row4.getCell(9);
-      const statusCell = row4.getCell(10);
-
-      expect(saldoCell.value).toBe(500000);
-      expect(totalCell.result).toBe(0);
-      expect(selisihCell.result).toBe(-500000);
-      expect(statusCell.result).toBe('KURANG');
-    });
-
-    it('should leave months prior to member join date empty (null)', async () => {
-      const wb = await generateSavingsMatrixWorkbook({
-        depositTypeCode: 'WAJIB',
-        startYear: 2023,
-        startMonth: 11,
-        endYear: 2024,
-        endMonth: 2,
-        members: [mockMembers[1]], // Siti Aminah, join: 2024-01-01
-        rateTiers: mockRateTiers,
-        memberDeposits: mockMemberDeposits,
+        memberDeposits: depositsWithPostMar,
         autoSave: false
       });
 
       const ws = wb.getWorksheet('Matriks WAJIB');
       const row2 = ws!.getRow(2);
 
-      // Kolom 5: Nov-23 (sebelum join) -> null
-      // Kolom 6: Des-23 (sebelum join) -> null
-      // Kolom 7: Jan-24 (setelah join) -> 150000
-      // Kolom 8: Feb-24 (setelah join) -> 150000
+      expect(row2.getCell(4).value).toBe(13400000); // Saldo Awal (Per Mar-26)
+      expect(row2.getCell(5).value).toBe(200000);   // Mar-26
+      expect(row2.getCell(6).value).toBe(200000);   // Apr-26
+      expect(row2.getCell(7).value).toBeNull();     // Mei-26 (belum ada transaksi)
+      expect(row2.getCell(8).result).toBe(13800000); // Total Saldo Akhir
+      expect(row2.getCell(9).value).toBe(13800000);  // Saldo Acuan Database
+      expect(row2.getCell(10).result).toBe(0);       // Selisih
+      expect(row2.getCell(11).result).toBe('SEIMBANG');
+    });
+
+    it('should leave months prior to member join date empty (null)', async () => {
+      const postCutoffMember = {
+        id: 'mem-new-2026',
+        nrp: '3001',
+        nama: 'Anggota Baru Mei 2026',
+        created_at: '2026-05-01T00:00:00.000Z',
+        status: 'aktif'
+      };
+      const wb = await generateSavingsMatrixWorkbook({
+        depositTypeCode: 'WAJIB',
+        endYear: 2026,
+        endMonth: 5,
+        members: [postCutoffMember],
+        rateTiers: mockRateTiers,
+        memberDeposits: [
+          {
+            id: 'md-new',
+            member_id: 'mem-new-2026',
+            deposit_type_id: 'dt-wajib',
+            deposit_types: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+            deposit_transactions: [
+              { id: 'tx-mei', amount: 200000, transaction_type: 'deposit', for_month: 5, for_year: 2026, description: 'Setoran Mei-26' }
+            ]
+          }
+        ],
+        autoSave: false
+      });
+
+      const ws = wb.getWorksheet('Matriks WAJIB');
+      const row2 = ws!.getRow(2);
+
+      // Kolom 5: Mar-26 (sebelum join) -> null
+      // Kolom 6: Apr-26 (sebelum join) -> null
+      // Kolom 7: Mei-26 (setelah join) -> 200000
       expect(row2.getCell(5).value).toBeNull();
       expect(row2.getCell(6).value).toBeNull();
-      expect(row2.getCell(7).value).toBe(150000);
-      expect(row2.getCell(8).value).toBe(150000);
+      expect(row2.getCell(7).value).toBe(200000);
     });
 
     it('should register conditional formatting rules for the Status Validasi column', async () => {
@@ -489,10 +520,8 @@ describe('savingsMatrixExporter', () => {
 
       const wb = await generateSavingsMatrixWorkbook({
         depositTypeCode: 'WAJIB',
-        startYear: 2024,
-        startMonth: 1,
-        endYear: 2024,
-        endMonth: 3,
+        endYear: 2026,
+        endMonth: 5,
         members: [memberWithoutDeposits],
         rateTiers: mockRateTiers,
         memberDeposits: [], // kosong sama sekali
@@ -506,21 +535,23 @@ describe('savingsMatrixExporter', () => {
       expect(row2.getCell(1).value).toBe('1099');
       expect(row2.getCell(2).value).toBe('Zainal Baru');
       expect(row2.getCell(3).value).toBe('2024-01-01');
-      expect(row2.getCell(4).value).toBe(0); // Saldo Acuan = 0
+      expect(row2.getCell(4).value).toBe(0); // Saldo Awal (Per Mar-26) = 0
 
-      // Kolom 5, 6, 7 (Jan, Feb, Mar) -> null
+      // Kolom 5, 6, 7 (Mar-26, Apr-26, Mei-26) -> null
       expect(row2.getCell(5).value).toBeNull();
       expect(row2.getCell(6).value).toBeNull();
       expect(row2.getCell(7).value).toBeNull();
 
-      // Formula total alokasi, selisih, status validasi tetap terbentuk
+      // Formula total saldo akhir, selisih, status validasi tetap terbentuk
       const totalCell = row2.getCell(8);
-      const selisihCell = row2.getCell(9);
-      const statusCell = row2.getCell(10);
+      const dbCell = row2.getCell(9);
+      const selisihCell = row2.getCell(10);
+      const statusCell = row2.getCell(11);
 
-      expect(totalCell.formula).toBe('SUM(E2:G2)');
+      expect(totalCell.formula).toBe('D2+SUM(E2:G2)');
       expect(totalCell.result).toBe(0);
-      expect(selisihCell.formula).toBe('H2-D2');
+      expect(dbCell.value).toBe(0);
+      expect(selisihCell.formula).toBe('H2-I2');
       expect(selisihCell.result).toBe(0);
       expect(statusCell.result).toBe('SEIMBANG');
     });
@@ -628,32 +659,41 @@ describe('savingsMatrixExporter', () => {
       const ws = wb.getWorksheet('Matriks BELANJA');
       expect(ws).toBeDefined();
 
-      // Pastikan kolom bulan mencakup hingga Nov-26 (bukan terpotong di Sep-26)
+      // Pastikan kolom bulan dimulai dari Mar-26 hingga Nov-26 tanpa kolom pra-Maret 2026
       const headerRow = ws!.getRow(1);
       const cellValues: string[] = [];
       headerRow.eachCell((cell) => {
         if (typeof cell.value === 'string') cellValues.push(cell.value);
       });
 
+      expect(cellValues[3]).toBe('Saldo Awal (Per Mar-26)');
+      expect(cellValues[4]).toBe('Mar-26');
+      expect(cellValues).not.toContain('Mei-21');
+      expect(cellValues).not.toContain('Feb-26');
       expect(cellValues).toContain('Nov-26');
-      expect(cellValues).toContain('Total Alokasi');
+      expect(cellValues).toContain('Total Saldo Akhir');
+      expect(cellValues).toContain('Saldo Acuan Database');
       expect(cellValues).toContain('Selisih');
       expect(cellValues).toContain('Status Validasi');
 
       // Seluruh 5 anggota harus memiliki status validasi "SEIMBANG" dan selisih = 0
-      const totalColIdx = cellValues.indexOf('Total Alokasi') + 1;
+      const totalColIdx = cellValues.indexOf('Total Saldo Akhir') + 1;
+      const dbColIdx = cellValues.indexOf('Saldo Acuan Database') + 1;
       const selisihColIdx = cellValues.indexOf('Selisih') + 1;
       const statusColIdx = cellValues.indexOf('Status Validasi') + 1;
 
       for (let r = 2; r <= 6; r++) {
         const row = ws!.getRow(r);
-        const saldoAcuan = row.getCell(4).value;
+        const saldoAwal = row.getCell(4).value;
         const totalCell = row.getCell(totalColIdx);
+        const dbCell = row.getCell(dbColIdx);
         const selisihCell = row.getCell(selisihColIdx);
         const statusCell = row.getCell(statusColIdx);
 
-        expect(saldoAcuan).toBe(3300000);
+        expect(saldoAwal).toBe(3300000);
+        expect(row.getCell(5).value).toBeNull(); // Mar-26 kosong siap diisi admin
         expect(totalCell.result).toBe(3300000);
+        expect(dbCell.value).toBe(3300000);
         expect(selisihCell.result).toBe(0);
         expect(statusCell.result).toBe('SEIMBANG');
       }

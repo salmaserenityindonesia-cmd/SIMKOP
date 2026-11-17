@@ -1884,19 +1884,34 @@ export async function importSavingsMatrixLedger(
           throw delErr;
         }
 
-        // d. Kumpulkan mutasi bulanan milik anggota ini yang memiliki amount > 0
+        // d. Kumpulkan mutasi bulanan & saldo awal cut-off milik anggota ini yang memiliki amount > 0
         const memberMutations = validMutations.filter(
           m => String(m.nrp || '').trim().toUpperCase() === memberNrpUpper
         );
 
-        const memberTransactions = memberMutations.map(m => ({
-          member_deposit_id: depositAccountId,
-          transaction_type: 'deposit',
-          amount: m.amount,
-          for_month: m.month,
-          for_year: m.year,
-          description: 'Import Matriks Buku Besar Excel'
-        }));
+        const memberTransactions = memberMutations.map(m => {
+          const isCutOffOpening = Boolean(m.isOpeningBalance) || (m.year === 2026 && m.month === 2);
+          if (isCutOffOpening) {
+            return {
+              member_deposit_id: depositAccountId,
+              transaction_type: 'deposit',
+              amount: Math.round(m.amount),
+              for_month: 2,
+              for_year: 2026,
+              description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+              created_at: '2026-03-01T00:00:00.000Z'
+            };
+          }
+          return {
+            member_deposit_id: depositAccountId,
+            transaction_type: 'deposit',
+            amount: Math.round(m.amount),
+            for_month: m.month,
+            for_year: m.year,
+            description: 'Import Matriks Buku Besar Excel',
+            created_at: new Date(m.year, m.month - 1, 10).toISOString()
+          };
+        });
 
         // e. Chunking Massal Transaksi Baru (Maksimal 100 Baris per Request)
         const CHUNK_SIZE = 100;

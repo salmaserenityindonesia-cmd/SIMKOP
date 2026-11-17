@@ -372,8 +372,8 @@ export default function SavingsLedgerMatrixModal({
     LEBARAN: initialDbBalances?.LEBARAN ?? 0
   });
 
-  // Cut-off date Saldo Awal Simpanan dan Saldo Awal Utuh per jenis simpanan
-  const [cutoffDate, setCutoffDate] = useState<string | null>(initialCutoffDate ?? null);
+  // Cut-off date Saldo Awal Simpanan dan Saldo Awal Utuh per jenis simpanan (default resmi Maret 2026)
+  const [cutoffDate, setCutoffDate] = useState<string | null>(initialCutoffDate || '2026-03-01');
   const [openingBalances, setOpeningBalances] = useState<Record<DepositTabType, number>>({
     WAJIB: initialOpeningBalances?.WAJIB ?? 0,
     BELANJA: initialOpeningBalances?.BELANJA ?? 0,
@@ -382,7 +382,7 @@ export default function SavingsLedgerMatrixModal({
 
   useEffect(() => {
     if (initialCutoffDate !== undefined) {
-      setCutoffDate(initialCutoffDate ?? null);
+      setCutoffDate(initialCutoffDate || '2026-03-01');
     }
   }, [initialCutoffDate]);
 
@@ -427,23 +427,13 @@ export default function SavingsLedgerMatrixModal({
 
   const [resolvedJoinDate, setResolvedJoinDate] = useState<string | null>(joinDate || null);
 
-  // Hitung timeline bulan untuk grid (mulai dari periode cut-off saldo awal jika tersedia)
+  // Hitung timeline bulan untuk grid (selalu dimulai dari periode cut-off saldo awal, minimal Mar-26)
   const { startYear, endYear, timelineMonths, allGridMonths } = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const eYear = Math.max(2026, currentYear);
-    const months = cutoffDate
-      ? generateMemberTimeline(cutoffDate, resolvedJoinDate, eYear)
-      : (() => {
-          let sYear = 2024;
-          if (resolvedJoinDate) {
-            const d = new Date(resolvedJoinDate);
-            if (!isNaN(d.getTime())) {
-              sYear = Math.min(2024, d.getFullYear());
-            }
-          }
-          return generateMonthGrid(sYear, eYear);
-        })();
-    const sYear = months.length > 0 ? months[0].year : 2024;
+    const effectiveTimelineCutoff = cutoffDate || '2026-03-01';
+    const months = generateMemberTimeline(effectiveTimelineCutoff, resolvedJoinDate, eYear);
+    const sYear = months.length > 0 ? months[0].year : 2026;
     return { startYear: sYear, endYear: eYear, timelineMonths: months, allGridMonths: months };
   }, [cutoffDate, resolvedJoinDate]);
 
@@ -591,7 +581,7 @@ export default function SavingsLedgerMatrixModal({
         }
 
         const effectiveCutoffDate =
-          initialCutoffDate || (await getInitialSavingsCutOffDate(allMemberTxs));
+          initialCutoffDate || (await getInitialSavingsCutOffDate(allMemberTxs)) || '2026-03-01';
 
         if (memberDepositsData && memberDepositsData.length > 0) {
           for (const md of memberDepositsData as any[]) {
@@ -1196,7 +1186,9 @@ export default function SavingsLedgerMatrixModal({
                 <div className="flex items-center gap-1.5 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
                   <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
                   <span className="text-[11px] text-indigo-700">
-                    Saldo Awal{parsedCutoffInfo ? ` (Cut-Off ${parsedCutoffInfo.formattedDate})` : ''}:
+                    {parsedCutoffInfo && (parsedCutoffInfo.year !== 2026 || parsedCutoffInfo.month !== 3)
+                      ? `Saldo Awal (Cut-Off ${parsedCutoffInfo.formattedDate}):`
+                      : 'Saldo Awal Cut-Off (Per Mar-26):'}
                   </span>
                   <span className="font-bold text-indigo-900 font-mono text-xs">{formatCurrency(currentOpeningBalance)}</span>
                 </div>

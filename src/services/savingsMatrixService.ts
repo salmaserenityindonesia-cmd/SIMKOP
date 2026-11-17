@@ -190,9 +190,11 @@ export function isMonthBeforeCutOff(
   return targetIndex < cutOffIndex;
 }
 
+export const OFFICIAL_CUTOFF_DATE = '2026-03-01';
+
 /**
  * Mengambil tanggal pengesahan saldo awal (initial_savings_effective_date) dari system_settings,
- * atau fallback dari deskripsi transaksi 'Saldo Awal Simpanan'.
+ * atau fallback dari deskripsi transaksi 'Saldo Awal Simpanan', atau default resmi 2026-03-01 (Maret 2026).
  */
 export async function getInitialSavingsCutOffDate(transactions?: any[]): Promise<string | null> {
   try {
@@ -204,14 +206,16 @@ export async function getInitialSavingsCutOffDate(transactions?: any[]): Promise
         : (typeof eqQ?.single === 'function' ? await eqQ.single() : await eqQ);
       const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
       if (rowData?.value) {
-        return String(rowData.value).slice(0, 10);
+        const valStr = String(rowData.value).slice(0, 10);
+        return valStr >= OFFICIAL_CUTOFF_DATE ? valStr : OFFICIAL_CUTOFF_DATE;
       }
     } else if (query && typeof query.then === 'function') {
       const res = await query;
       const rows = Array.isArray(res?.data) ? res.data : (res?.data ? [res.data] : []);
       const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
       if (found?.value) {
-        return String(found.value).slice(0, 10);
+        const valStr = String(found.value).slice(0, 10);
+        return valStr >= OFFICIAL_CUTOFF_DATE ? valStr : OFFICIAL_CUTOFF_DATE;
       }
     }
   } catch {
@@ -229,10 +233,12 @@ export async function getInitialSavingsCutOffDate(transactions?: any[]): Promise
         }
       }
     }
-    if (latestDate) return latestDate;
+    if (latestDate) {
+      return latestDate >= OFFICIAL_CUTOFF_DATE ? latestDate : OFFICIAL_CUTOFF_DATE;
+    }
   }
 
-  return null;
+  return OFFICIAL_CUTOFF_DATE;
 }
 
 /**
