@@ -317,4 +317,64 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(html).toContain('1.375.000');
     });
   });
+
+  describe('Filter Toolbar & Pagination Controls', () => {
+    it('renders search input, loan type dropdown, loan type badge, and approval date labels on APPROVED tab', () => {
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={[
+            {
+              id: 'loan-1',
+              loan_number: 'LOAN-202611-001',
+              loan_type_id: 'lt-1',
+              loan_types: { id: 'lt-1', code: 'REGULER', name: 'Pinjaman Reguler Tanpa Bunga' },
+              status: 'active',
+              amount: 5000000,
+              tenor: 10,
+              disbursed_at: '2026-11-10',
+              created_at: '2026-11-09T08:00:00Z',
+              anggota: { nama: 'Budi Santoso', nrp: '21001' },
+            },
+          ]}
+        />
+      );
+
+      expect(html).toContain('Cari NRP, Nama Anggota, atau No. Pinjaman...');
+      expect(html).toContain('Semua Jenis Pinjaman');
+      expect(html).toContain('Pinjaman Reguler Tanpa Bunga');
+      expect(html).toContain('Tgl Disetujui (Dari)');
+      expect(html).toContain('Tgl Disetujui (Sampai)');
+      expect(html).toContain('LOAN-202611-001');
+    });
+
+    it('renders standard date labels on PENDING tab and paginates rows to default pageSize of 10', () => {
+      const manyLoans = Array.from({ length: 12 }, (_, idx) => ({
+        id: `loan-${idx + 1}`,
+        loan_number: `LOAN-${idx + 1}`,
+        status: 'draft',
+        amount: 1000000,
+        tenor: 5,
+        created_at: '2026-11-15T08:00:00Z',
+        anggota: { nama: `Anggota Ke-${idx + 1}`, nrp: `NRP-${idx + 1}` },
+      }));
+
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="PENDING"
+          initialPinjamanList={manyLoans}
+        />
+      );
+
+      expect(html).toContain('Dari Tanggal');
+      expect(html).toContain('Sampai Tanggal');
+      expect(html).toContain('Anggota Ke-1');
+      expect(html).toContain('Anggota Ke-10');
+      expect(html).not.toContain('Anggota Ke-11');
+      expect(html).not.toContain('Anggota Ke-12');
+      expect(html).toContain('1-10');
+      expect(html).toContain('12');
+      expect(html).toContain('Halaman 1 / 2');
+    });
+  });
 });

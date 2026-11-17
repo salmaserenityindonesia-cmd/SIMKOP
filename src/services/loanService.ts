@@ -27,6 +27,7 @@ export {
   DEFAULT_RAT_NOTES,
   type LoanSettings
 };
+export type { LoanType };
 
 export interface Loan {
   id: string;
@@ -631,11 +632,17 @@ export const loanService = {
         principal_amount,
         agreed_tenor_months,
         tenor,
+        planned_installment_amount,
         monthly_target,
         disbursed_at,
         created_at,
         status,
         notes,
+        loan_types:loan_type_id (
+          id,
+          code,
+          name
+        ),
         anggota:member_id (
           id,
           nrp,
