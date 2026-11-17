@@ -53,6 +53,11 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     expect(allHrefs).toContain('/admin/rekening-koran-simpanan');
     expect(allHrefs).toContain('/admin/penarikan-simpanan');
     expect(allHrefs).toContain('/admin/laporan-penarikan');
+
+    const simpananGroup = navigationGroups.find((g) => g.id === 'simpanan');
+    const simpananLabels = simpananGroup!.items.map((i) => i.label);
+    expect(simpananLabels).toContain('Pencairan Simpanan');
+    expect(simpananLabels).toContain('Laporan Pencairan');
     expect(allHrefs).toContain('/admin/buku-besar-belanja');
     expect(allHrefs).toContain('/admin/pengajuan-pinjaman');
     expect(allHrefs).toContain('/admin/approval');

@@ -13,10 +13,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Eye,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   ShieldAlert,
   ArrowDownRight
 } from 'lucide-react';
@@ -170,7 +166,7 @@ export default function LaporanPenarikanSimpanan({
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const itemsPerPage = 15;
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Receipt Modal State
   const [receiptData, setReceiptData] = useState<{
@@ -252,11 +248,14 @@ export default function LaporanPenarikanSimpanan({
   }, [loadReportData, initialItems]);
 
   // Pagination calculation
-  const totalPages = Math.max(1, Math.ceil(items.length / itemsPerPage));
+  const totalItems = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
   const paginatedItems = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return items.slice(startIndex, startIndex + itemsPerPage);
-  }, [items, currentPage, itemsPerPage]);
+    return items.slice(startIndex, endIndex);
+  }, [items, startIndex, endIndex]);
 
   // Handler: Ekspor Excel
   const handleExportExcel = async () => {
@@ -614,7 +613,7 @@ export default function LaporanPenarikanSimpanan({
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden table-container">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
             <div>
-              <h2 className="text-base font-bold text-slate-800">Buku Besar Pengawasan Mutasi Penarikan</h2>
+              <h2 className="text-base font-bold text-slate-800">Mutasi Pencairan</h2>
               <p className="text-xs text-slate-500">
                 Menampilkan {items.length} catatan transaksi pencairan simpanan
               </p>
@@ -666,7 +665,7 @@ export default function LaporanPenarikanSimpanan({
                   </tr>
                 ) : (
                   paginatedItems.map((item, idx) => {
-                    const rowNumber = (currentPage - 1) * itemsPerPage + idx + 1;
+                    const rowNumber = startIndex + idx + 1;
                     return (
                       <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="py-3 px-3 text-center text-slate-500 font-medium">
@@ -768,46 +767,51 @@ export default function LaporanPenarikanSimpanan({
           </div>
 
           {/* Pagination Controls */}
-          {!isLoading && items.length > itemsPerPage && (
-            <div className="p-4 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 no-print">
-              <span className="text-xs text-slate-500">
-                Halaman {currentPage} dari {totalPages} ({items.length} total transaksi)
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage(1)}
-                  disabled={currentPage === 1}
-                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Halaman Pertama"
+          {!isLoading && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-slate-50/70 rounded-b-2xl text-xs text-slate-600 no-print">
+              <div className="flex items-center gap-3">
+                <span>
+                  Menampilkan{' '}
+                  <strong className="font-semibold text-slate-800">
+                    {totalItems > 0 ? startIndex + 1 : 0}-{endIndex}
+                  </strong>{' '}
+                  dari <strong className="font-semibold text-slate-800">{totalItems}</strong> transaksi
+                </span>
+                <select
+                  aria-label="Jumlah baris per halaman"
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <ChevronsLeft className="w-4 h-4" />
-                </button>
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Halaman Sebelumnya"
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safePage <= 1}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  Prev
                 </button>
-                <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-slate-100 rounded-lg">
-                  {currentPage}
+                <span className="px-3 py-1.5 font-semibold text-slate-800">
+                  Halaman {safePage} / {totalPages}
                 </span>
                 <button
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Halaman Berikutnya"
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safePage >= totalPages}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setCurrentPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Halaman Terakhir"
-                >
-                  <ChevronsRight className="w-4 h-4" />
+                  Next
                 </button>
               </div>
             </div>

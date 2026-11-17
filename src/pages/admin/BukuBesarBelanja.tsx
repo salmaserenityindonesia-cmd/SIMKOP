@@ -12,8 +12,6 @@ import {
   ShoppingCart,
   Users,
   Coins,
-  ChevronLeft,
-  ChevronRight,
   X,
   Eye,
   Loader2,
@@ -88,7 +86,7 @@ export default function BukuBesarBelanja() {
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(25);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   // Modal Detail Struk POS State
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<SaleDetail | null>(null);
@@ -175,12 +173,20 @@ export default function BukuBesarBelanja() {
     });
   }, [ledgerItems, searchQuery]);
 
+  // Reset to page 1 when searchQuery changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
   // Pagination calculation
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const totalItems = filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalItems);
   const paginatedItems = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredItems.slice(start, start + pageSize);
-  }, [filteredItems, currentPage, pageSize]);
+    return filteredItems.slice(startIndex, endIndex);
+  }, [filteredItems, startIndex, endIndex]);
 
   // Aggregate totals for visible filtered items
   const aggregatedTotals = useMemo(() => {
@@ -682,7 +688,7 @@ export default function BukuBesarBelanja() {
                   </tr>
                 ) : (
                   paginatedItems.map((item, idx) => {
-                    const rowNumber = (currentPage - 1) * pageSize + idx + 1;
+                    const rowNumber = startIndex + idx + 1;
                     const isDeposit = item.transaction_type === 'deposit';
 
                     return (
@@ -822,50 +828,51 @@ export default function BukuBesarBelanja() {
           </div>
 
           {/* Pagination Controls */}
-          {filteredItems.length > 0 && (
-            <div className="px-5 py-3.5 border-t border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500 print:hidden">
-              <div className="flex items-center gap-2">
-                <span>Tampilkan</span>
+          {totalItems > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-slate-50/70 rounded-b-2xl text-xs sm:text-sm text-slate-600 print:hidden">
+              <div className="flex items-center gap-3">
+                <span>
+                  Menampilkan{' '}
+                  <strong className="font-semibold text-slate-800">
+                    {totalItems > 0 ? startIndex + 1 : 0}-{endIndex}
+                  </strong>{' '}
+                  dari <strong className="font-semibold text-slate-800">{totalItems}</strong> mutasi
+                </span>
                 <select
                   value={pageSize}
-                  onChange={e => {
+                  onChange={(e) => {
                     setPageSize(Number(e.target.value));
                     setCurrentPage(1);
                   }}
-                  className="border border-gray-300 rounded px-2 py-1 bg-white text-gray-900 focus:ring-1 focus:ring-emerald-500"
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
-                  <option value={10}>10</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                  <option value={100}>100 / halaman</option>
                 </select>
-                <span>baris per halaman (Total {filteredItems.length} transaksi)</span>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span>
-                  Halaman {currentPage} dari {totalPages}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeCurrentPage <= 1}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Prev
+                </button>
+                <span className="px-3 py-1.5 text-xs font-semibold text-slate-800">
+                  Halaman {safeCurrentPage} / {totalPages}
                 </span>
-                <div className="inline-flex rounded-md shadow-sm">
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                    className="p-1.5 border border-gray-300 rounded-l-md bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Halaman Sebelumnya"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-1.5 border-t border-b border-r border-gray-300 rounded-r-md bg-white hover:bg-gray-50 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Halaman Selanjutnya"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={safeCurrentPage >= totalPages}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
               </div>
             </div>
           )}

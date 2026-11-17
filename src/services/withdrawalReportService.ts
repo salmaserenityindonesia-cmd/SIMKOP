@@ -190,6 +190,18 @@ export function categorizeDepositType(
 /**
  * Mengambil buku besar detail pencairan simpanan lengkap dengan deteksi pinjaman aktif (Cross-Obligation Risk Indicator).
  */
+const toLocalBoundaryIso = (dateStr: string, endOfDay: boolean): string => {
+  if (dateStr.includes('T')) return dateStr;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) {
+    return endOfDay ? `${dateStr}T23:59:59.999Z` : `${dateStr}T00:00:00.000Z`;
+  }
+  const dt = endOfDay
+    ? new Date(y, m - 1, d, 23, 59, 59, 999)
+    : new Date(y, m - 1, d, 0, 0, 0, 0);
+  return dt.toISOString();
+};
+
 export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilters): Promise<WithdrawalLedgerItem[]> {
   try {
     let query: any = supabase
@@ -238,11 +250,11 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
 
     // Abaikan filter rentang tanggal jika filter periode 'Semua Waktu' (startDate/endDate kosong)
     if (filters?.startDate && filters.startDate.trim() !== '') {
-      const startIso = filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000Z`;
+      const startIso = toLocalBoundaryIso(filters.startDate.trim(), false);
       query = query.gte('created_at', startIso);
     }
     if (filters?.endDate && filters.endDate.trim() !== '') {
-      const endIso = filters.endDate.includes('T') ? filters.endDate : `${filters.endDate}T23:59:59.999Z`;
+      const endIso = toLocalBoundaryIso(filters.endDate.trim(), true);
       query = query.lte('created_at', endIso);
     }
 
@@ -265,11 +277,11 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       }
 
       if (filters?.startDate && filters.startDate.trim() !== '') {
-        const startIso = filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000Z`;
+        const startIso = toLocalBoundaryIso(filters.startDate.trim(), false);
         fbQuery = fbQuery.gte('created_at', startIso);
       }
       if (filters?.endDate && filters.endDate.trim() !== '') {
-        const endIso = filters.endDate.includes('T') ? filters.endDate : `${filters.endDate}T23:59:59.999Z`;
+        const endIso = toLocalBoundaryIso(filters.endDate.trim(), true);
         fbQuery = fbQuery.lte('created_at', endIso);
       }
       if (fbQuery.order) {

@@ -37,10 +37,10 @@ describe('PenarikanSimpanan Page with Navigation Tabs', () => {
     const html = renderToStaticMarkup(<PenarikanSimpanan />);
 
     // Header & Breadcrumb
-    expect(html).toContain('Penarikan &amp; Pencairan Simpanan');
+    expect(html).toContain('Pencairan Simpanan');
     
-    // Tab 1: Penarikan Perorangan (Reguler)
-    expect(html).toContain('Penarikan Perorangan (Reguler)');
+    // Tab 1: Pencairan Perorangan 3 jenis Simpanan
+    expect(html).toContain('Pencairan Perorangan 3 jenis Simpanan');
 
     // Tab 2: Pencairan Massal Simpanan Lebaran
     expect(html).toContain('Pencairan Massal Simpanan Lebaran');

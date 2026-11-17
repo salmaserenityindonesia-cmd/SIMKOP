@@ -381,4 +381,33 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     expect(html).toContain('bg-amber-100');
     expect(html).toContain(withdrawalReportService.formatRupiah(41000));
   });
+
+  it('renders Mutasi Pencairan heading and pagination controls with 10/25/50/100 page sizes', () => {
+    const manyItems = Array.from({ length: 12 }, (_, idx) => ({
+      ...mockLedgerItems[0],
+      id: `tx-${idx + 1}`,
+      reference_no: `WD-2026-${String(idx + 1).padStart(3, '0')}`,
+      member_name: `Anggota ${idx + 1}`,
+    }));
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanPenarikanSimpanan initialItems={manyItems} initialSummary={mockSummary} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Mutasi Pencairan');
+    expect(html).not.toContain('Buku Besar Pengawasan Mutasi Penarikan');
+    expect(html).toContain('1-10');
+    expect(html).toContain('12');
+    expect(html).toContain('10 / halaman');
+    expect(html).toContain('25 / halaman');
+    expect(html).toContain('50 / halaman');
+    expect(html).toContain('100 / halaman');
+    expect(html).toContain('Prev');
+    expect(html).toContain('Next');
+    expect(html).toContain('Halaman 1 / 2');
+    expect(html).toContain('Anggota 10');
+    expect(html).not.toContain('Anggota 11');
+  });
 });

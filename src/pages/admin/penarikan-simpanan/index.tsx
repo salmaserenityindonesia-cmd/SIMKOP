@@ -208,7 +208,7 @@ export default function PenarikanSimpanan() {
             <span className="material-symbols-outlined text-sm">chevron_right</span>
             <span className="text-emerald-600 font-medium">Penarikan Simpanan</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-800">Penarikan & Pencairan Simpanan</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Pencairan Simpanan</h1>
           <p className="text-slate-500">Cairkan simpanan sukarela / berkala perorangan atau eksekusi pencairan massal simpanan lebaran.</p>
         </div>
 
@@ -224,7 +224,7 @@ export default function PenarikanSimpanan() {
             }`}
           >
             <Wallet className="w-4 h-4" />
-            <span>Penarikan Perorangan (Reguler)</span>
+            <span>Pencairan Perorangan 3 jenis Simpanan</span>
           </button>
           <button
             type="button"
