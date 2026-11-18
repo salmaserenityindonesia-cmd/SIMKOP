@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabaseClient';
 import type { Simpanan } from './depositManagementService';
 import { getActiveSavingsRateTiers } from './savingsRateService';
 import { normalizeName, type InitialSavingsRow } from '../utils/initialSavingsParser';
+import { syncInitialSavingsOpeningCashFlow } from './cashFlowService';
 
 export type { InitialSavingsRow };
 
@@ -1258,7 +1259,8 @@ export interface InitialSavingsSyncResult {
  */
 export async function syncInitialSavingsBalances(
   rows: InitialSavingsRow[],
-  effectiveDate: string
+  effectiveDate: string,
+  onProgress?: (current: number, total: number, currentMemberName?: string) => void
 ): Promise<InitialSavingsSyncResult> {
   const trimmedDate = typeof effectiveDate === 'string' ? effectiveDate.trim() : '';
   if (!trimmedDate || !/^\d{4}-\d{2}-\d{2}$/.test(trimmedDate)) {
@@ -1344,32 +1346,66 @@ export async function syncInitialSavingsBalances(
     throw new Error(`Gagal memuat jenis simpanan: ${dtErr.message}`);
   }
 
-  if (!dTypes || dTypes.length === 0) {
-    const seeds = [
-      { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
-      { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
-      { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
-      { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true },
-    ];
-    await supabase.from('deposit_types').insert(seeds);
-    const { data: refreshed } = await supabase.from('deposit_types').select('*');
-    dTypes = refreshed || [];
-  }
+  const defaultSeedSpecs = [
+    {
+      codes: ['pokok', 'sp'],
+      patterns: ['pokok'],
+      seed: { code: 'SP', name: 'Simpanan Pokok', frequency_type: 'one_time', default_amount: 100000, can_be_withdrawn: false, is_active: true },
+    },
+    {
+      codes: ['wajib', 'sw'],
+      patterns: ['wajib'],
+      seed: { code: 'SW', name: 'Simpanan Wajib', frequency_type: 'monthly', default_amount: 50000, can_be_withdrawn: false, is_active: true },
+    },
+    {
+      codes: ['belanja', 'sb'],
+      patterns: ['belanja'],
+      seed: { code: 'SB', name: 'Simpanan Belanja', frequency_type: 'monthly', default_amount: 25000, can_be_withdrawn: true, is_active: true },
+    },
+    {
+      codes: ['lebaran', 'sl'],
+      patterns: ['lebaran', 'hari raya'],
+      seed: { code: 'SL', name: 'Simpanan Lebaran', frequency_type: 'monthly', default_amount: 30000, can_be_withdrawn: true, is_active: true },
+    },
+  ];
 
-  const typeMap: Record<string, string> = {};
-  (dTypes || []).forEach((dt: any) => {
-    if (dt.code) typeMap[String(dt.code).toLowerCase()] = dt.id;
-    if (dt.name) typeMap[String(dt.name).toLowerCase()] = dt.id;
-  });
-
-  const keys = Object.keys(typeMap);
-  const resolveTypeId = (codes: string[], namePatterns: string[]) => {
-    for (const c of codes) {
-      if (typeMap[c]) return typeMap[c];
-    }
-    const matchedKey = keys.find((k) => namePatterns.some((p) => k.includes(p)));
-    return matchedKey ? typeMap[matchedKey] : undefined;
+  const buildTypeResolver = (typesList: any[]) => {
+    const map: Record<string, string> = {};
+    (typesList || []).forEach((dt: any) => {
+      if (dt.code) map[String(dt.code).toLowerCase()] = dt.id;
+      if (dt.name) map[String(dt.name).toLowerCase()] = dt.id;
+    });
+    const keys = Object.keys(map);
+    const resolve = (codes: string[], namePatterns: string[]) => {
+      for (const c of codes) {
+        if (map[c]) return map[c];
+      }
+      const matchedKey = keys.find((k) => namePatterns.some((p) => k.includes(p)));
+      return matchedKey ? map[matchedKey] : undefined;
+    };
+    return resolve;
   };
+
+  let resolveTypeId = buildTypeResolver(dTypes || []);
+  const missingSeeds = defaultSeedSpecs
+    .filter((spec) => !resolveTypeId(spec.codes, spec.patterns))
+    .map((spec) => spec.seed);
+
+  if (missingSeeds.length > 0) {
+    try {
+      const dtTable: any = supabase.from('deposit_types');
+      if (dtTable && typeof dtTable.insert === 'function') {
+        await dtTable.insert(missingSeeds);
+        const { data: refreshed } = await supabase.from('deposit_types').select('*');
+        if (refreshed) {
+          dTypes = refreshed;
+          resolveTypeId = buildTypeResolver(dTypes);
+        }
+      }
+    } catch (seedErr) {
+      console.warn('Gagal melengkapi jenis simpanan bawaan:', seedErr);
+    }
+  }
 
   const typePokok = resolveTypeId(['pokok', 'sp'], ['pokok']);
   const typeWajib = resolveTypeId(['wajib', 'sw'], ['wajib']);
@@ -1377,15 +1413,18 @@ export async function syncInitialSavingsBalances(
   const typeLebaran = resolveTypeId(['lebaran', 'sl'], ['lebaran', 'hari raya']);
 
   let updatedCount = 0;
+  let totalImportedOpening = 0;
   const skippedNrps: string[] = [];
 
   // 3. Proses per anggota dengan Clean Overwrite pada deposit_transactions
-  for (const row of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     const nrpKey = String(row.nrp || '').trim();
     const memberId = memberMap.get(nrpKey)?.id;
 
     if (!memberId) {
       if (nrpKey) skippedNrps.push(nrpKey);
+      onProgress?.(i + 1, rows.length, row.nama);
       continue;
     }
 
@@ -1398,25 +1437,27 @@ export async function syncInitialSavingsBalances(
       throw new Error(`Gagal memuat rekening simpanan anggota ${nrpKey}: ${accErr.message}`);
     }
 
-    const accountByType = new Map<string, string>();
+    const accountsByType = new Map<string, string[]>();
     (existingAccounts || []).forEach((acc: any) => {
       if (acc.deposit_type_id && acc.id) {
-        accountByType.set(acc.deposit_type_id, acc.id);
+        const list = accountsByType.get(acc.deposit_type_id) || [];
+        list.push(acc.id);
+        accountsByType.set(acc.deposit_type_id, list);
       }
     });
 
     const savingsEntries = [
-      { typeId: typePokok, amount: Number(row.jumlah_simpanan_pokok) || 0 },
-      { typeId: typeWajib, amount: Number(row.jumlah_simpanan_wajib) || 0 },
-      { typeId: typeBelanja, amount: Number(row.jumlah_simpanan_belanja) || 0 },
-      { typeId: typeLebaran, amount: Number(row.jumlah_simpanan_lebaran) || 0 },
+      { typeId: typePokok, amount: Math.round(Number(row.jumlah_simpanan_pokok) || 0) },
+      { typeId: typeWajib, amount: Math.round(Number(row.jumlah_simpanan_wajib) || 0) },
+      { typeId: typeBelanja, amount: Math.round(Number(row.jumlah_simpanan_belanja) || 0) },
+      { typeId: typeLebaran, amount: Math.round(Number(row.jumlah_simpanan_lebaran) || 0) },
     ];
 
     for (const entry of savingsEntries) {
       if (!entry.typeId) continue;
 
-      let depositAccountId = accountByType.get(entry.typeId);
-      if (!depositAccountId) {
+      let accountIdsForType = accountsByType.get(entry.typeId) || [];
+      if (accountIdsForType.length === 0) {
         const { data: createdAcc, error: createAccErr } = await supabase
           .from('member_deposits')
           .insert({
@@ -1432,32 +1473,36 @@ export async function syncInitialSavingsBalances(
             `Gagal membuat rekening simpanan anggota ${nrpKey}: ${createAccErr?.message || 'ID kosong'}`
           );
         }
-        depositAccountId = createdAcc.id;
-        accountByType.set(entry.typeId, depositAccountId as string);
+        accountIdsForType = [createdAcc.id as string];
+        accountsByType.set(entry.typeId, accountIdsForType);
       }
+
+      const primaryDepositAccountId = accountIdsForType[0];
 
       // Clean Overwrite: bersihkan transaksi saldo awal / migrasi sebelumnya untuk rekening ini
-      const delBase: any = supabase
-        .from('deposit_transactions')
-        .delete()
-        .eq('member_deposit_id', depositAccountId);
+      for (const accId of accountIdsForType) {
+        const delBase: any = supabase
+          .from('deposit_transactions')
+          .delete()
+          .eq('member_deposit_id', accId);
 
-      let delErr: any = null;
-      if (typeof delBase?.or === 'function' && typeof delBase.then !== 'function') {
-        const res = await delBase.or('description.ilike.%Saldo Awal%,description.ilike.%Migrasi%,for_month.is.null');
-        delErr = res?.error;
-      } else {
-        const res = await delBase;
-        delErr = res?.error;
-      }
+        let delErr: any = null;
+        if (typeof delBase?.or === 'function') {
+          const res = await delBase.or('description.ilike.%Saldo Awal%,description.ilike.%Migrasi%,for_month.is.null');
+          delErr = res?.error;
+        } else {
+          const res = await delBase;
+          delErr = res?.error;
+        }
 
-      if (delErr) {
-        throw new Error(`Gagal membersihkan saldo awal lama anggota ${nrpKey}: ${delErr.message}`);
+        if (delErr) {
+          throw new Error(`Gagal membersihkan saldo awal lama anggota ${nrpKey}: ${delErr.message}`);
+        }
       }
 
       if (entry.amount > 0) {
         const { error: insTxErr } = await supabase.from('deposit_transactions').insert({
-          member_deposit_id: depositAccountId,
+          member_deposit_id: primaryDepositAccountId,
           transaction_type: 'deposit',
           amount: entry.amount,
           description: `Saldo Awal Simpanan (Aktif sejak ${trimmedDate})`,
@@ -1470,9 +1515,55 @@ export async function syncInitialSavingsBalances(
           throw new Error(`Gagal menyimpan transaksi saldo awal anggota ${nrpKey}: ${insTxErr.message}`);
         }
       }
+
+      totalImportedOpening += entry.amount;
+
+      // Selaraskan cache kolom member_deposits.balance dengan total mutasi bersih deposit_transactions
+      try {
+        const mdTable: any = supabase.from('member_deposits');
+        if (mdTable && typeof mdTable.update === 'function') {
+          let syncedBalance = entry.amount;
+          try {
+            const dtTable: any = supabase.from('deposit_transactions');
+            if (dtTable && typeof dtTable.select === 'function') {
+              const q = dtTable.select('amount, transaction_type');
+              if (q && typeof q.eq === 'function') {
+                const { data: accTxs, error: txSumErr } = await q.eq('member_deposit_id', primaryDepositAccountId);
+                if (!txSumErr && Array.isArray(accTxs) && accTxs.length > 0) {
+                  syncedBalance = Math.max(
+                    0,
+                    Math.round(
+                      accTxs.reduce((sum: number, t: any) => {
+                        const amt = Number(t?.amount || 0);
+                        return t?.transaction_type === 'withdrawal' ? sum - amt : sum + amt;
+                      }, 0)
+                    )
+                  );
+                }
+              }
+            }
+          } catch {
+            // Fallback ke entry.amount
+          }
+
+          const updPrimary = mdTable.update({ balance: syncedBalance });
+          if (updPrimary && typeof updPrimary.eq === 'function') {
+            await updPrimary.eq('id', primaryDepositAccountId);
+          }
+          for (const extraAccId of accountIdsForType.slice(1)) {
+            const updExtra = mdTable.update({ balance: 0 });
+            if (updExtra && typeof updExtra.eq === 'function') {
+              await updExtra.eq('id', extraAccId);
+            }
+          }
+        }
+      } catch {
+        // Non-blocking jika kolom cache balance tidak tersedia
+      }
     }
 
     updatedCount++;
+    onProgress?.(i + 1, rows.length, row.nama);
   }
 
   // 4. Catat metadata ke system_settings & audit_logs
@@ -1504,6 +1595,13 @@ export async function syncInitialSavingsBalances(
   } catch (e) {
     console.warn('Gagal mencatat UPLOAD_INITIAL_SAVINGS ke audit_logs:', e);
   }
+
+  // 5. Sinkronkan rekap saldo awal simpanan ke public.cash_flow secara idempoten berbasis selisih
+  await syncInitialSavingsOpeningCashFlow(totalImportedOpening, trimmedDate).catch((cfErr) => {
+    console.warn('Gagal menyinkronkan saldo awal simpanan ke cash_flow:', cfErr);
+  });
+
+  onProgress?.(rows.length, rows.length, rows[rows.length - 1]?.nama);
 
   return {
     updatedCount,

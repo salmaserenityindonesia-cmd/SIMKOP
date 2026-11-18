@@ -341,5 +341,261 @@ describe('syncInitialSavingsBalances', () => {
       /Nama tidak cocok! Di Excel tertulis 'Orang Lain', sedangkan di sistem untuk NRP 12345678 terdaftar atas nama 'Budi Santoso'\./
     );
   });
+
+  it('syncs member_deposits.balance, runs .or() cleanup on PostgREST-like builders, and idempotently inserts/updates SALDO_AWAL_SIMPANAN in cash_flow', async () => {
+    const balanceUpdates: Array<{ id: string; balance: number }> = [];
+    const cashFlowRows: any[] = [];
+    const txStore: any[] = [];
+    const orCalls: string[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'dt-pokok', code: 'SP', name: 'Simpanan Pokok' },
+              { id: 'dt-wajib', code: 'SW', name: 'Simpanan Wajib' },
+              { id: 'dt-belanja', code: 'SB', name: 'Simpanan Belanja' },
+              { id: 'dt-lebaran', code: 'SL', name: 'Simpanan Lebaran' },
+            ],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('balance')) {
+              return Promise.resolve({ data: [], error: null });
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-pokok', deposit_type_id: 'dt-pokok' },
+                  { id: 'md-wajib', deposit_type_id: 'dt-wajib' },
+                  { id: 'md-belanja', deposit_type_id: 'dt-belanja' },
+                  { id: 'md-lebaran', deposit_type_id: 'dt-lebaran' },
+                ],
+                error: null,
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((payload: any) => ({
+            eq: vi.fn().mockImplementation((_col: string, id: string) => {
+              balanceUpdates.push({ id, balance: payload.balance });
+              return Promise.resolve({ error: null });
+            }),
+          })),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, id: string) =>
+              Promise.resolve({ data: txStore.filter((t) => t.member_deposit_id === id), error: null })
+            ),
+            then: (resolve: any) => resolve({ data: [...txStore], error: null }),
+          }),
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, id: string) => ({
+              then: (resolve: any) => resolve({ error: null }),
+              or: vi.fn().mockImplementation((filter: string) => {
+                orCalls.push(filter);
+                for (let idx = txStore.length - 1; idx >= 0; idx--) {
+                  if (txStore[idx].member_deposit_id === id) txStore.splice(idx, 1);
+                }
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          }),
+          insert: vi.fn().mockImplementation((payload: any) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            txStore.push(...rows);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation(() => Promise.resolve({ data: [...cashFlowRows], error: null })),
+          }),
+          insert: vi.fn().mockImplementation((payload: any) => {
+            cashFlowRows.push({ id: `cf-${cashFlowRows.length + 1}`, ...payload });
+            return Promise.resolve({ error: null });
+          }),
+          update: vi.fn().mockImplementation((payload: any) => ({
+            eq: vi.fn().mockImplementation((_col: string, id: string) => {
+              const target = cashFlowRows.find((r) => r.id === id);
+              if (target) Object.assign(target, payload);
+              return Promise.resolve({ error: null });
+            }),
+          })),
+        };
+      }
+      if (table === 'system_settings') {
+        return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+      }
+      if (table === 'audit_logs') {
+        return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      }
+      return {};
+    });
+
+    // Impor pertama: 100.000 + 500.000 + 50.000 + 200.000 = 850.000
+    await syncInitialSavingsBalances(
+      [
+        {
+          nrp: '12345678',
+          nama: 'Budi Santoso',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 500000,
+          jumlah_simpanan_belanja: 50000,
+          jumlah_simpanan_lebaran: 200000,
+        },
+      ],
+      '2026-03-01'
+    );
+
+    expect(orCalls).toHaveLength(4);
+    expect(balanceUpdates).toEqual([
+      { id: 'md-pokok', balance: 100000 },
+      { id: 'md-wajib', balance: 500000 },
+      { id: 'md-belanja', balance: 50000 },
+      { id: 'md-lebaran', balance: 200000 },
+    ]);
+    expect(cashFlowRows).toHaveLength(1);
+    expect(cashFlowRows[0]).toMatchObject({
+      direction: 'in',
+      category: 'SALDO_AWAL_SIMPANAN',
+      amount: 850000,
+      created_at: '2026-03-01T00:00:00.000Z',
+    });
+
+    // Impor ulang dengan perubahan nominal: total menjadi 1.000.000 (tidak boleh duplikat baris cash_flow)
+    await syncInitialSavingsBalances(
+      [
+        {
+          nrp: '12345678',
+          nama: 'Budi Santoso',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 650000,
+          jumlah_simpanan_belanja: 50000,
+          jumlah_simpanan_lebaran: 200000,
+        },
+      ],
+      '2026-03-01'
+    );
+
+    expect(cashFlowRows).toHaveLength(1);
+    expect(cashFlowRows[0].amount).toBe(1000000);
+  });
+
+  it('invokes onProgress callback sequentially from 1 to total with member name', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'mem-1', nrp: '111', nama: 'Anggota Satu' },
+              { id: 'mem-2', nrp: '222', nama: 'Anggota Dua' },
+            ],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'dt-pokok', code: 'SP', name: 'Simpanan Pokok' },
+              { id: 'dt-wajib', code: 'SW', name: 'Simpanan Wajib' },
+              { id: 'dt-belanja', code: 'SB', name: 'Simpanan Belanja' },
+              { id: 'dt-lebaran', code: 'SL', name: 'Simpanan Lebaran' },
+            ],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'md-1', deposit_type_id: 'dt-pokok' }],
+              error: null,
+            }),
+          }),
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({ data: { id: 'md-new' }, error: null }),
+            }),
+          }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              or: vi.fn().mockResolvedValue({ error: null }),
+            }),
+          }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [], error: null }) }),
+        };
+      }
+      if (table === 'system_settings') return { upsert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'audit_logs') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ data: [], error: null }) }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      return {};
+    });
+
+    const progressUpdates: Array<{ current: number; total: number; memberName?: string }> = [];
+    await syncInitialSavingsBalances(
+      [
+        {
+          nrp: '111',
+          nama: 'Anggota Satu',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 0,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+        },
+        {
+          nrp: '222',
+          nama: 'Anggota Dua',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 0,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+        },
+      ],
+      '2026-03-01',
+      (current, total, memberName) => {
+        progressUpdates.push({ current, total, memberName });
+      }
+    );
+
+    expect(progressUpdates[0]).toEqual({ current: 1, total: 2, memberName: 'Anggota Satu' });
+    expect(progressUpdates[1]).toEqual({ current: 2, total: 2, memberName: 'Anggota Dua' });
+    expect(progressUpdates[progressUpdates.length - 1]).toEqual({
+      current: 2,
+      total: 2,
+      memberName: 'Anggota Dua',
+    });
+  });
 });
 

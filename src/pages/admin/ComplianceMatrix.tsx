@@ -4,7 +4,7 @@
  * Menyediakan audit visual kepatuhan, ekspor Excel berformula, dan modal impor mutasi buku besar.
  */
 import { useState, useEffect, useContext, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useInRouterContext } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
@@ -254,6 +254,7 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialIsExporting,
   initialCutoffDate,
 }) => {
+  const inRouter = useInRouterContext();
   const currentYearStr = new Date().getFullYear().toString();
   const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
   const [availableYears, setAvailableYears] = useState<number[]>(
@@ -1049,6 +1050,12 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center justify-between px-1 text-slate-600">
+                          <span className="text-slate-500">Pokok:</span>
+                          <span className="font-semibold text-slate-800 tabular-nums whitespace-nowrap">
+                            Rp {Number(row.pokokBalance ?? row.priorSummary?.pokok ?? 0).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-1 text-slate-600">
                           <span className="text-slate-500">Wajib:</span>
                           <span className="font-semibold text-slate-800 tabular-nums whitespace-nowrap">
                             Rp {Number(row.netSavings?.wajib || 0).toLocaleString('id-ID')}
@@ -1066,19 +1073,35 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
                             Rp {Number(row.netSavings?.lebaran || 0).toLocaleString('id-ID')}
                           </span>
                         </div>
-                        <Link
-                          to={`/admin/rekening-koran-simpanan?memberId=${row.member_id}`}
-                          title="Buka Rekening Koran Simpanan Tambahan"
-                          className="mt-0.5 flex items-center justify-between px-1.5 py-0.5 rounded bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200/70 text-indigo-800 transition-colors"
-                        >
-                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold">
-                            <BookOpen className="w-3 h-3 text-indigo-600" />
-                            Tambahan:
-                          </span>
-                          <span className="font-semibold text-indigo-900 tabular-nums whitespace-nowrap">
-                            Rp {Number(row.additionalSavingsBalance || 0).toLocaleString('id-ID')}
-                          </span>
-                        </Link>
+                        {inRouter ? (
+                          <Link
+                            to={`/admin/rekening-koran-simpanan?memberId=${row.member_id}`}
+                            title="Buka Rekening Koran Simpanan Tambahan"
+                            className="mt-0.5 flex items-center justify-between px-1.5 py-0.5 rounded bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200/70 text-indigo-800 transition-colors"
+                          >
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold">
+                              <BookOpen className="w-3 h-3 text-indigo-600" />
+                              Tambahan:
+                            </span>
+                            <span className="font-semibold text-indigo-900 tabular-nums whitespace-nowrap">
+                              Rp {Number(row.additionalSavingsBalance || 0).toLocaleString('id-ID')}
+                            </span>
+                          </Link>
+                        ) : (
+                          <a
+                            href={`/admin/rekening-koran-simpanan?memberId=${row.member_id}`}
+                            title="Buka Rekening Koran Simpanan Tambahan"
+                            className="mt-0.5 flex items-center justify-between px-1.5 py-0.5 rounded bg-indigo-50/70 hover:bg-indigo-100/80 border border-indigo-200/70 text-indigo-800 transition-colors"
+                          >
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold">
+                              <BookOpen className="w-3 h-3 text-indigo-600" />
+                              Tambahan:
+                            </span>
+                            <span className="font-semibold text-indigo-900 tabular-nums whitespace-nowrap">
+                              Rp {Number(row.additionalSavingsBalance || 0).toLocaleString('id-ID')}
+                            </span>
+                          </a>
+                        )}
                       </div>
                     </div>
                   </td>

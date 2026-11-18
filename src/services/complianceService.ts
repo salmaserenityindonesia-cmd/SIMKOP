@@ -444,7 +444,10 @@ async function resolveCutoffDateInfo(transactions?: any[] | null): Promise<Cutof
     let latestExtractedDate = '';
     for (const tx of transactions) {
       const desc = String(tx.description || '');
-      if (desc.toLowerCase().includes('saldo awal simpanan')) {
+      if (
+        desc.toLowerCase().includes('saldo awal simpanan') ||
+        desc.toLowerCase().includes('saldo awal cut-off')
+      ) {
         const descMatch = desc.match(/(\d{4}-\d{2}-\d{2})/);
         let candidate = descMatch ? descMatch[1] : '';
         if (!candidate && tx.created_at) {
@@ -928,12 +931,13 @@ export async function getComplianceMatrixData(
   // Ambil tanggal pengesahan saldo awal (cut-off) dari system_settings atau transaksi Saldo Awal Simpanan
   const cutoffInfo = await resolveCutoffDateInfo(transactions);
 
-  // 3b. Query view_member_net_savings untuk posisi saldo kas riil netto
+  // 3b. Query view_member_net_savings untuk posisi saldo kas riil netto (gunakan fetchAllPaged anti-1000-baris)
   const netSavingsByMember: Record<string, MemberNetSavings> = {};
   try {
-    const { data: viewNetSavings, error: viewError } = await supabase
-      .from('view_member_net_savings')
-      .select('member_id, deposit_type_code, deposit_type_name, net_cash_balance');
+    const { data: viewNetSavings, error: viewError } = await fetchAllPaged<any>(
+      'view_member_net_savings',
+      'member_id, deposit_type_code, deposit_type_name, net_cash_balance'
+    );
 
     if (!viewError && Array.isArray(viewNetSavings) && viewNetSavings.length > 0) {
       viewNetSavings.forEach((row: any) => {
@@ -974,7 +978,7 @@ export async function getComplianceMatrixData(
   // Helper untuk mengidentifikasi transaksi saldo awal cut-off resmi
   const isInitialSavingsCutoffTx = (tx: any): boolean => {
     const desc = (tx.description || '').toLowerCase();
-    return desc.includes('saldo awal simpanan');
+    return desc.includes('saldo awal simpanan') || desc.includes('saldo awal cut-off');
   };
 
   // Helper untuk mengidentifikasi transaksi gelondongan migrasi / saldo awal
@@ -1487,38 +1491,39 @@ export async function getComplianceMatrixData(
 
     const compliance = expectedCount > 0 ? Math.round((paidCount / expectedCount) * 100) : 100;
 
-    // Hitung posisi saldo kas riil netto (dari view atau fallback dari log transaksi)
-    let netSavings = netSavingsByMember[m.id];
-    if (!netSavings) {
-      const memberTxList = memberTxs[m.id] || [];
-      let fallbackWajib = 0;
-      let fallbackBelanja = 0;
-      let fallbackLebaran = 0;
+    // Hitung posisi saldo kas riil netto (gabungkan view & kalkulasi langsung log transaksi per komponen)
+    const memberTxList = memberTxs[m.id] || [];
+    let fallbackWajib = 0;
+    let fallbackBelanja = 0;
+    let fallbackLebaran = 0;
 
-      for (const t of memberTxList) {
-        const isWajib = wajibTypeIds.has(t.tId) || t.tId === wajibId;
-        const isBelanja = belanjaTypeIds.has(t.tId) || t.tId === belanjaId;
-        const isLebaran = lebaranTypeIds.has(t.tId) || t.tId === lebaranId;
+    for (const t of memberTxList) {
+      const isWajib = wajibTypeIds.has(t.tId) || t.tId === wajibId;
+      const isBelanja = belanjaTypeIds.has(t.tId) || t.tId === belanjaId;
+      const isLebaran = lebaranTypeIds.has(t.tId) || t.tId === lebaranId;
 
-        const amt = Math.abs(t.amt);
-        if (t.type === 'deposit') {
-          if (isWajib) fallbackWajib += amt;
-          if (isBelanja) fallbackBelanja += amt;
-          if (isLebaran) fallbackLebaran += amt;
-        } else if (t.type === 'withdrawal') {
-          if (isWajib) fallbackWajib -= amt;
-          if (isBelanja) fallbackBelanja -= amt;
-          if (isLebaran) fallbackLebaran -= amt;
-        }
+      const amt = Math.abs(t.amt);
+      if (t.type === 'deposit') {
+        if (isWajib) fallbackWajib += amt;
+        if (isBelanja) fallbackBelanja += amt;
+        if (isLebaran) fallbackLebaran += amt;
+      } else if (t.type === 'withdrawal') {
+        if (isWajib) fallbackWajib -= amt;
+        if (isBelanja) fallbackBelanja -= amt;
+        if (isLebaran) fallbackLebaran -= amt;
       }
-
-      netSavings = {
-        wajib: fallbackWajib,
-        belanja: fallbackBelanja,
-        lebaran: fallbackLebaran,
-        total: fallbackWajib + fallbackBelanja + fallbackLebaran,
-      };
     }
+
+    const viewNet = netSavingsByMember[m.id];
+    const resolvedWajib = viewNet ? Math.max(viewNet.wajib, fallbackWajib) : fallbackWajib;
+    const resolvedBelanja = viewNet ? Math.max(viewNet.belanja, fallbackBelanja) : fallbackBelanja;
+    const resolvedLebaran = viewNet ? Math.max(viewNet.lebaran, fallbackLebaran) : fallbackLebaran;
+    const netSavings: MemberNetSavings = {
+      wajib: resolvedWajib,
+      belanja: resolvedBelanja,
+      lebaran: resolvedLebaran,
+      total: resolvedWajib + resolvedBelanja + resolvedLebaran,
+    };
 
     let additionalSavingsBalance = 0;
     for (const t of memberTxs[m.id] || []) {

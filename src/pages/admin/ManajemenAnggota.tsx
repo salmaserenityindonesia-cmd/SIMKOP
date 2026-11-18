@@ -172,9 +172,14 @@ export default function ManajemenAnggota({
   const [initialSavingsRows, setInitialSavingsRows] = useState<InitialSavingsRow[]>([]);
   const [initialSavingsFileName, setInitialSavingsFileName] = useState<string>('');
   const [initialSavingsError, setInitialSavingsError] = useState<string | null>(null);
-  const [initialSavingsDate, setInitialSavingsDate] = useState<string>('');
+  const [initialSavingsDate, setInitialSavingsDate] = useState<string>(initialSavingsModalOpen ? '2026-03-01' : '');
   const [isInitialSavingsConfirmed, setIsInitialSavingsConfirmed] = useState<boolean>(false);
   const [isSavingInitialSavings, setIsSavingInitialSavings] = useState<boolean>(false);
+  const [savingsImportProgress, setSavingsImportProgress] = useState<{
+    current: number;
+    total: number;
+    memberName?: string;
+  } | null>(null);
   const [isDownloadingSavingsTemplate, setIsDownloadingSavingsTemplate] = useState<boolean>(false);
 
   // Saldo Awal Pinjaman State
@@ -520,6 +525,7 @@ export default function ManajemenAnggota({
     setInitialSavingsError(null);
     setInitialSavingsDate('');
     setIsInitialSavingsConfirmed(false);
+    setSavingsImportProgress(null);
     if (initialSavingsInputRef.current) {
       initialSavingsInputRef.current.value = '';
     }
@@ -583,8 +589,15 @@ export default function ManajemenAnggota({
     }
 
     setIsSavingInitialSavings(true);
+    setSavingsImportProgress({ current: 0, total: initialSavingsRows.length });
     try {
-      const result = await syncInitialSavingsBalances(initialSavingsRows, initialSavingsDate);
+      const result = await syncInitialSavingsBalances(
+        initialSavingsRows,
+        initialSavingsDate,
+        (current, total, memberName) => {
+          setSavingsImportProgress({ current, total, memberName });
+        }
+      );
       const formattedDate = new Date(`${result.effectiveDate}T00:00:00`).toLocaleDateString('id-ID', {
         day: 'numeric',
         month: 'long',
@@ -609,6 +622,7 @@ export default function ManajemenAnggota({
       showToast(err?.message || 'Gagal menyimpan saldo awal simpanan', 'error');
     } finally {
       setIsSavingInitialSavings(false);
+      setSavingsImportProgress(null);
     }
   };
 
@@ -776,7 +790,11 @@ export default function ManajemenAnggota({
 
               <button
                 type="button"
-                onClick={() => setIsInitialSavingsModalOpen(true)}
+                onClick={() => {
+                  if (!initialSavingsDate) setInitialSavingsDate('2026-03-01');
+                  setSavingsImportProgress(null);
+                  setIsInitialSavingsModalOpen(true);
+                }}
                 className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
@@ -1798,39 +1816,72 @@ export default function ManajemenAnggota({
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-4 bg-white border-t border-slate-200 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={handleCloseInitialSavingsModal}
-                disabled={isSavingInitialSavings}
-                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveInitialSavings}
-                disabled={
-                  isSavingInitialSavings ||
-                  initialSavingsRows.length === 0 ||
-                  initialSavingsRows.some((r) => r.isValid === false) ||
-                  !initialSavingsDate ||
-                  !isInitialSavingsConfirmed
-                }
-                className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSavingInitialSavings ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Menyimpan...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-4 h-4" />
-                    Simpan &amp; Aktifkan Saldo Awal
-                  </>
-                )}
-              </button>
+            <div className="px-6 py-4 bg-white border-t border-slate-200">
+              {isSavingInitialSavings && savingsImportProgress && (
+                <div className="mb-3 rounded-xl border border-indigo-200/80 bg-indigo-50/70 px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold text-indigo-700">
+                    <div className="flex items-center gap-2 truncate">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-indigo-600" />
+                      <span className="truncate">
+                        Menyimpan saldo awal simpanan: {savingsImportProgress.current} / {savingsImportProgress.total}
+                        {savingsImportProgress.memberName ? ` (${savingsImportProgress.memberName})` : ''}...
+                      </span>
+                    </div>
+                    <span className="shrink-0 font-bold tabular-nums">
+                      {savingsImportProgress.total > 0
+                        ? Math.min(100, Math.round((savingsImportProgress.current / savingsImportProgress.total) * 100))
+                        : 0}
+                      %
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-indigo-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-200 ease-out"
+                      style={{
+                        width: `${
+                          savingsImportProgress.total > 0
+                            ? Math.min(100, Math.round((savingsImportProgress.current / savingsImportProgress.total) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseInitialSavingsModal}
+                  disabled={isSavingInitialSavings}
+                  className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveInitialSavings}
+                  disabled={
+                    isSavingInitialSavings ||
+                    initialSavingsRows.length === 0 ||
+                    initialSavingsRows.some((r) => r.isValid === false) ||
+                    !initialSavingsDate ||
+                    !isInitialSavingsConfirmed
+                  }
+                  className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSavingInitialSavings ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Menyimpan...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      Simpan &amp; Aktifkan Saldo Awal
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

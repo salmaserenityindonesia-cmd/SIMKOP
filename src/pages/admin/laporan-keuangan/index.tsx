@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
-import { resetFinancialTransactions } from '../../../services/cashFlowService';
+import {
+  resetFinancialTransactions,
+  syncInitialSavingsOpeningCashFlow,
+} from '../../../services/cashFlowService';
 import { syncUnrecordedStoreCreditPaymentsToCashFlow } from '../../../services/storeCreditLedgerService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
@@ -61,20 +64,22 @@ const startOfMonth = getLocalDateString(new Date(today.getFullYear(), today.getM
 const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  penjualan_tunai:    { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
-  PELUNASAN_BON_TOKO: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
-  pelunasan_bon_toko: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
-  SETORAN_ANGGOTA:    { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
-  simpanan:           { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Simpanan' },
-  angsuran_pinjaman:  { bg: 'bg-amber-50',    text: 'text-amber-800',   label: 'Angsuran Pinjaman' },
-  restock_supplier:   { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
-  pembelian_barang:   { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Pembelian Barang' },
-  pencairan_pinjaman: { bg: 'bg-purple-50',   text: 'text-purple-800',  label: 'Pencairan Pinjaman' },
-  penarikan_simpanan: { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
-  beban_operasional:  { bg: 'bg-red-50',      text: 'text-red-800',     label: 'Beban Operasional' },
+  penjualan_tunai:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  SALDO_AWAL_SIMPANAN: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Saldo Awal Simpanan' },
+  saldo_awal_simpanan: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Saldo Awal Simpanan' },
+  PELUNASAN_BON_TOKO:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  pelunasan_bon_toko:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  SETORAN_ANGGOTA:     { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
+  simpanan:            { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Simpanan' },
+  angsuran_pinjaman:   { bg: 'bg-amber-50',    text: 'text-amber-800',   label: 'Angsuran Pinjaman' },
+  restock_supplier:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
+  pembelian_barang:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Pembelian Barang' },
+  pencairan_pinjaman:  { bg: 'bg-purple-50',   text: 'text-purple-800',  label: 'Pencairan Pinjaman' },
+  penarikan_simpanan:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
+  beban_operasional:   { bg: 'bg-red-50',      text: 'text-red-800',     label: 'Beban Operasional' },
 };
 
-const KategoriBadge = ({ kategori }: { kategori: string }) => {
+export const KategoriBadge = ({ kategori }: { kategori: string }) => {
   const cfg = KATEGORI_BADGE[kategori] ?? { bg: 'bg-slate-50', text: 'text-slate-700', label: kategori };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
@@ -85,23 +90,38 @@ const KategoriBadge = ({ kategori }: { kategori: string }) => {
 
 // ─── Service Layer (Wave 2) ───────────────────────────────────────────────────
 
-async function getCashFlowReport(
+export async function getCashFlowReport(
   startDate: string,
   endDate: string,
   unit: string
 ): Promise<CashFlowData> {
-  // Sinkronkan pelunasan bon toko historis yang belum tercatat di cash_flow (idempoten)
+  // Sinkronkan pelunasan bon toko historis & saldo awal simpanan cut-off ke cash_flow (idempoten)
   await syncUnrecordedStoreCreditPaymentsToCashFlow().catch(() => {});
+  await syncInitialSavingsOpeningCashFlow().catch(() => {});
 
-  // Fetch cash_flow table
+  // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
-  const { data: cfRows, error: cfErr } = await supabase
+  let cfQueryRes: any = await supabase
     .from('cash_flow')
     .select('id, created_at, description, category, direction, amount, reference_id')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
     .order('created_at', { ascending: true });
-  if (cfErr) console.error('cash_flow query error:', cfErr);
+
+  if (cfQueryRes?.error) {
+    const fallbackRes = await supabase
+      .from('cash_flow')
+      .select('id, created_at, category, direction, amount, reference_id')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate + 'T23:59:59')
+      .order('created_at', { ascending: true });
+    if (!fallbackRes?.error) {
+      cfQueryRes = fallbackRes;
+    } else {
+      console.error('cash_flow query error:', cfQueryRes.error);
+    }
+  }
+  const cfRows = cfQueryRes?.data;
 
   // Cross-check: also fetch sales.paid_cash for the period (retail inflow)
   // NOTE: actual column is 'sale_status' (enum), not 'status'
@@ -122,11 +142,15 @@ async function getCashFlowReport(
     const masuk  = r.direction === 'in'  ? Number(r.amount) : 0;
     const keluar = r.direction === 'out' ? Number(r.amount) : 0;
     runningSaldo += masuk - keluar;
+    const isOpeningSavings =
+      r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
     rows.push({
       id: r.id,
       tanggal: new Date(r.created_at).toLocaleDateString('id-ID'),
       referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
-      deskripsi: r.description ?? '-',
+      deskripsi:
+        r.description ??
+        (isOpeningSavings ? 'Saldo Awal Simpanan Anggota (Cut-Off Per 1 Maret 2026)' : '-'),
       kategori: r.category ?? 'lainnya',
       unit_usaha: 'Umum', // cash_flow table has no 'unit' column
       kas_masuk: masuk,

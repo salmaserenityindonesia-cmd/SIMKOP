@@ -1,9 +1,10 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import LaporanKeuangan from './index';
+import LaporanKeuangan, { KategoriBadge, getCashFlowReport } from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
 import * as cashFlowService from '../../../services/cashFlowService';
+import { supabase } from '../../../lib/supabaseClient';
 
 // Mock AdminLayout
 vi.mock('../../../components/layout/AdminLayout', () => ({
@@ -128,5 +129,107 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('Prev');
     expect(html).toContain('Next');
     expect(html).toContain('Halaman 1 / 1');
+  });
+
+  it('renders SALDO_AWAL_SIMPANAN category badge cleanly as "Saldo Awal Simpanan" with emerald styling', () => {
+    const html = renderToStaticMarkup(<KategoriBadge kategori="SALDO_AWAL_SIMPANAN" />);
+
+    expect(html).toContain('Saldo Awal Simpanan');
+    expect(html).toContain('bg-emerald-50');
+    expect(html).toContain('text-emerald-700');
+    expect(html).toContain('border-emerald-200');
+  });
+
+  it('getCashFlowReport syncs opening savings and maps SALDO_AWAL_SIMPANAN to inflowTotal with default description', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'tx-open-1',
+                  member_deposit_id: 'md-1',
+                  transaction_type: 'deposit',
+                  amount: 1250000,
+                  for_year: 2026,
+                  for_month: 2,
+                  description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+                  created_at: '2026-03-01T00:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+        }
+        if (table === 'cash_flow') {
+          const cfRows = [
+            {
+              id: 'cf-open-1111',
+              created_at: '2026-03-01T00:00:00.000Z',
+              category: 'SALDO_AWAL_SIMPANAN',
+              direction: 'in',
+              amount: 1250000,
+            },
+          ];
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+                };
+              }
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const report = await getCashFlowReport('2026-01-01', '2026-03-18', 'all');
+      expect(report.inflowTotal).toBe(1250000);
+      expect(report.outflowTotal).toBe(0);
+      expect(report.netCashflow).toBe(1250000);
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0]).toMatchObject({
+        kategori: 'SALDO_AWAL_SIMPANAN',
+        kas_masuk: 1250000,
+        deskripsi: 'Saldo Awal Simpanan Anggota (Cut-Off Per 1 Maret 2026)',
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
   });
 });

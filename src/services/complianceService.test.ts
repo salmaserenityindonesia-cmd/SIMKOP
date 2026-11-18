@@ -2948,5 +2948,118 @@ describe('complianceService - SUSPENDED (Nonaktif Sementara)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('menggabungkan view_member_net_savings parsial dengan deposit_transactions agar Kas Riil selalu sinkron penuh dengan Saldo Awal Cut-Off', async () => {
+    const mockDTypes = [
+      { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok', default_amount: 100000 },
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 200000 },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja', default_amount: 50000 },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Hari Raya', default_amount: 50000 },
+    ];
+
+    const mockMembers = [
+      {
+        id: 'm-aan',
+        nama: 'AAN KRISDIANTORO',
+        nrp: '88010001',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+
+    // Simulasi view hanya memuat sebagian jenis simpanan (misal Wajib saja), sementara Belanja & Lebaran terlewat dari view
+    const partialViewRows = [
+      {
+        member_id: 'm-aan',
+        deposit_type_code: 'WAJIB',
+        deposit_type_name: 'Simpanan Wajib',
+        net_cash_balance: 2400000,
+      },
+    ];
+
+    const txList = [
+      {
+        id: 'tx-aan-pokok',
+        amount: 100000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 2,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        created_at: '2026-03-01T00:00:00.000Z',
+        member_deposits: { member_id: 'm-aan', deposit_type_id: 'dt-pokok' },
+      },
+      {
+        id: 'tx-aan-wajib',
+        amount: 2400000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 2,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        created_at: '2026-03-01T00:00:00.000Z',
+        member_deposits: { member_id: 'm-aan', deposit_type_id: 'dt-wajib' },
+      },
+      {
+        id: 'tx-aan-belanja',
+        amount: 500000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 2,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        created_at: '2026-03-01T00:00:00.000Z',
+        member_deposits: { member_id: 'm-aan', deposit_type_id: 'dt-belanja' },
+      },
+      {
+        id: 'tx-aan-lebaran',
+        amount: 600000,
+        transaction_type: 'deposit',
+        for_year: 2026,
+        for_month: 2,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        created_at: '2026-03-01T00:00:00.000Z',
+        member_deposits: { member_id: 'm-aan', deposit_type_id: 'dt-lebaran' },
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: mockDTypes, error: null }) };
+      }
+      if (table === 'anggota') {
+        const chainObj: any = {
+          or: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          lte: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+        };
+        return { select: vi.fn().mockReturnValue(chainObj) };
+      }
+      if (table === 'view_member_net_savings') {
+        return { select: vi.fn().mockResolvedValue({ data: partialViewRows, error: null }) };
+      }
+      if (table === 'deposit_transactions') {
+        return { select: vi.fn().mockReturnValue(Promise.resolve({ data: txList, error: null })) };
+      }
+      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+    });
+
+    const result = await getComplianceMatrixData(2026);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0];
+    expect(row.cutoffDate).toBe('2026-03-01');
+    expect(row.pokokBalance).toBe(100000);
+    expect(row.priorSummary).toEqual({
+      wajib: 2400000,
+      belanja: 500000,
+      lebaran: 600000,
+      total: 3500000,
+    });
+    expect(row.netSavings).toEqual({
+      wajib: 2400000,
+      belanja: 500000,
+      lebaran: 600000,
+      total: 3500000,
+    });
+  });
 });
 
