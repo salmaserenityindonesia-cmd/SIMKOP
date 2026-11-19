@@ -1,5 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   LoanMatrix,
@@ -711,20 +712,20 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('dari 2 pinjaman (1 anggota)');
     });
 
-    it('renders shortened tenor badges without loan type name, narrowed column width, and loan numbers on each row', () => {
+    it('renders shortened tenor badges with loan type badges, narrowed column width, and loan numbers on each row', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={multiLoanMemberSummary} />);
 
       // Narrowed ANGGOTA column width classes on header and cells
       expect(html).toContain('min-w-[185px] max-w-[205px] w-[195px]');
 
-      // First loan: shortened (12 Bln) badge & PJ-2026-001 (without verbose loan type name)
+      // First loan: shortened (12 Bln) badge, loan type badge & PJ-2026-001
       expect(html).toContain('(12 Bln)');
-      expect(html).not.toContain('Pinjaman Reguler');
+      expect(html).toContain('Pinjaman Reguler');
       expect(html).toContain('PJ-2026-001');
 
-      // Second loan: shortened (24 Bln) badge & PJ-2026-002 (without verbose loan type name)
+      // Second loan: shortened (24 Bln) badge, loan type badge & PJ-2026-002
       expect(html).toContain('(24 Bln)');
-      expect(html).not.toContain('Pinjaman Khusus');
+      expect(html).toContain('Pinjaman Khusus');
       expect(html).toContain('PJ-2026-002');
     });
 
@@ -1205,6 +1206,112 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('bg-rose-100 text-rose-700');
       expect(html).toContain('>0%<');
       expect(html).not.toContain('Belum ada angsuran jatuh tempo');
+    });
+  });
+
+  describe('URL Query Parameter Filter (?search= / ?loan=) for Deep-Linking Paid-Off Contracts', () => {
+    const deepLinkSummary: LoanMatrixSummary = {
+      year: 2026,
+      complianceYTD: 100,
+      totalCollectedYTD: 2100000,
+      projectedNextMonth: 0,
+      unpaidMembersCount: 0,
+      members: [
+        {
+          id: 'loan-1795083121561',
+          loanId: 'loan-1795083121561',
+          loanNumber: 'LOAN-1795083121561',
+          status: 'completed',
+          memberId: 'mem-surya',
+          nrp: '87010011',
+          nama: 'Surya Pratama',
+          loanTypeName: 'Pembiayaan Barang',
+          agreedTenorMonths: 1,
+          tenor: 1,
+          principalAmount: 2100000,
+          totalPaidAllTime: 2100000,
+          paidInstallmentsCount: 1,
+          totalInstallmentsCount: 1,
+          repaymentProgressPct: 100,
+          isLoanActive: false,
+          totalLoans: 1,
+          complianceYTD: 100,
+          months: {
+            ...Array.from({ length: 12 }, (_, idx) => ({
+              month: idx + 1,
+              year: 2026,
+              status: 'NONE' as const,
+              targetAmount: 0,
+              paidAmount: 0,
+            })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+            11: {
+              month: 11,
+              year: 2026,
+              status: 'PAID',
+              targetAmount: 2100000,
+              paidAmount: 2100000,
+              loanId: 'loan-1795083121561',
+              loanNumber: 'LOAN-1795083121561',
+              periodNumber: 1,
+              tenor: 1,
+              dueDate: '2026-11-19',
+            },
+          },
+        },
+        {
+          id: 'loan-other-999',
+          loanId: 'loan-other-999',
+          loanNumber: 'LOAN-OTHER-999',
+          status: 'active',
+          memberId: 'mem-other',
+          nrp: '99990000',
+          nama: 'Anggota Lain Tidak Cocok',
+          loanTypeName: 'Pinjaman Reguler',
+          agreedTenorMonths: 12,
+          tenor: 12,
+          principalAmount: 12000000,
+          isLoanActive: true,
+          totalLoans: 1,
+          complianceYTD: 100,
+          months: Array.from({ length: 12 }, (_, idx) => ({
+            month: idx + 1,
+            year: 2026,
+            status: 'UNPAID' as const,
+            targetAmount: 1000000,
+            paidAmount: 0,
+          })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+        },
+      ],
+    };
+
+    it('pre-fills search input, displays URL filter banner, and filters matching paid-off contract via ?search=LOAN-...', () => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/admin/loan-matrix?search=LOAN-1795083121561']}>
+          <LoanMatrix initialData={deepLinkSummary} initialYear={2026} />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('value="LOAN-1795083121561"');
+      expect(html).toContain('data-testid="loan-matrix-url-filter-banner"');
+      expect(html).toContain('Filter aktif dari referensi pinjaman:');
+      expect(html).toContain('data-testid="reset-loan-matrix-url-filter-btn"');
+      expect(html).toContain('Surya Pratama');
+      expect(html).toContain('LOAN-1795083121561');
+      expect(html).toContain('Selesai');
+      expect(html).not.toContain('Anggota Lain Tidak Cocok');
+    });
+
+    it('also supports ?loan=LOAN-... query parameter alias', () => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/admin/loan-matrix?loan=LOAN-1795083121561']}>
+          <LoanMatrix initialData={deepLinkSummary} initialYear={2026} />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('value="LOAN-1795083121561"');
+      expect(html).toContain('data-testid="loan-matrix-url-filter-banner"');
+      expect(html).toContain('Surya Pratama');
+      expect(html).not.toContain('Anggota Lain Tidak Cocok');
     });
   });
 });

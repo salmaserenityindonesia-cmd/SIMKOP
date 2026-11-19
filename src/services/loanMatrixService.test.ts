@@ -3347,6 +3347,101 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
     expect(cfRow.description).toContain('Pokok: Rp 400.000');
     expect(cfRow.description).toContain('Margin: Rp 60.000');
   });
+
+  it('getLoanMatrix(year, { includeLoanSearch }) includes matching completed/paid_off loans while default getLoanMatrix excludes them', async () => {
+    const completedLoan = {
+      id: 'loan-1795083121561',
+      loan_number: 'LOAN-1795083121561',
+      member_id: 'mem-surya',
+      principal_amount: 2100000,
+      amount: 2100000,
+      cost_price: 2000000,
+      markup_amount: 100000,
+      item_description: 'TV 43 Inch',
+      tenor: 1,
+      agreed_tenor_months: 1,
+      monthly_target: 2100000,
+      disbursed_at: '2026-10-19',
+      status: 'completed',
+      member: { id: 'mem-surya', nrp: '87010011', nama: 'Surya Pratama', pangkat: 'BRIPKA' },
+      loan_types: { id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang', financing_scheme: 'GOODS_MARKUP' },
+    };
+
+    const schedulesForCompleted = [
+      {
+        id: 'sg-1795083121561',
+        loan_id: 'loan-1795083121561',
+        period_number: 1,
+        due_date: '2026-11-19',
+        target_amount: 2100000,
+        paid_amount: 2100000,
+        status: 'paid',
+        loan: completedLoan,
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('loan_number')) {
+              return {
+                ilike: vi.fn().mockResolvedValue({
+                  data: [{ id: 'loan-1795083121561', loan_number: 'LOAN-1795083121561', status: 'completed' }],
+                  error: null,
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-1795083121561' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: schedulesForCompleted,
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const defaultMatrix = await getLoanMatrix(2026);
+    expect(defaultMatrix.members).toHaveLength(0);
+
+    const searchedMatrix = await getLoanMatrix(2026, {
+      includeLoanSearch: 'LOAN-1795083121561',
+    });
+    expect(searchedMatrix.members).toHaveLength(1);
+    expect(searchedMatrix.members[0]).toMatchObject({
+      loanId: 'loan-1795083121561',
+      loanNumber: 'LOAN-1795083121561',
+      isLoanActive: false,
+      status: 'completed',
+      complianceYTD: 100,
+      totalPaidAllTime: 2100000,
+      repaymentProgressPct: 100,
+    });
+  });
 });
 
 

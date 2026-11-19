@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   consolidateBulkLebaranCashFlow,
   enrichDepositCashFlowDescriptions,
+  enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
+  syncPosCashSalesToCashFlow,
 } from './cashFlowAuditService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -1683,5 +1685,321 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
     expect(enriched[0].deskripsi).toBe(
       'Pelunasan Bon Toko (Tunai Kasir • BYR-LEG-01) — 88010001 - Budi Santoso | Piutang -Rp 100.000 (Sisa Piutang: Rp 0)'
     );
+  });
+
+  it('syncPosCashSalesToCashFlow backfills dash/null rows including CF-6D78C2A5, inserts missing paid_cash sales, and skips populated rows across Penjualan POS variants', async () => {
+    const cfRows: any[] = [
+      {
+        id: '6d78c2a5-c33f-4ada-a9e1-022ca199e11e',
+        category: 'penjualan_tunai',
+        direction: 'in',
+        amount: 100000,
+        reference_id: 'sale-alif-1',
+        description: null,
+        created_at: '2026-11-19T08:54:02.742Z',
+      },
+      {
+        id: 'cf-pos-dash-1',
+        category: 'Penjualan POS',
+        direction: 'in',
+        amount: 45000,
+        reference_id: 'sale-siti-2',
+        description: '-',
+        created_at: '2026-11-19T09:10:00.000Z',
+      },
+      {
+        id: 'cf-pos-populated-1',
+        category: 'PENJUALAN_POS',
+        direction: 'in',
+        amount: 25000,
+        reference_id: 'sale-done-3',
+        description: 'Penjualan Tunai (INV-DONE-003) — Pelanggan Umum (Rp 25.000)',
+        created_at: '2026-11-19T09:20:00.000Z',
+      },
+    ];
+
+    const salesRows = [
+      {
+        id: 'sale-alif-1',
+        sale_number: 'INV-1795078441001',
+        member_id: 'mem-alif',
+        paid_cash: 100000,
+        total_amount: 100000,
+        payment_scheme: 'cash',
+        sale_status: 'completed',
+        created_at: '2026-11-19T08:54:01.438Z',
+      },
+      {
+        id: 'sale-siti-2',
+        sale_number: 'INV-1795078441002',
+        member_id: 'mem-siti',
+        paid_cash: 45000,
+        total_amount: 45000,
+        payment_scheme: 'cash',
+        sale_status: 'completed',
+        created_at: '2026-11-19T09:10:00.000Z',
+      },
+      {
+        id: 'sale-done-3',
+        sale_number: 'INV-DONE-003',
+        member_id: null,
+        paid_cash: 25000,
+        total_amount: 25000,
+        payment_scheme: 'cash',
+        sale_status: 'completed',
+        created_at: '2026-11-19T09:20:00.000Z',
+      },
+      {
+        id: 'sale-missing-4',
+        sale_number: 'INV-1795078441004',
+        member_id: null,
+        paid_cash: 30000,
+        total_amount: 30000,
+        payment_scheme: 'cash',
+        sale_status: 'completed',
+        created_at: '2026-11-19T09:30:00.000Z',
+      },
+    ];
+
+    const members = [
+      { id: 'mem-alif', nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN' },
+      { id: 'mem-siti', nrp: '88010002', nama: 'Siti Aminah' },
+    ];
+
+    const updateSpy = vi.fn((payload: any) => ({
+      eq: vi.fn(async (_col: string, id: string) => {
+        const idx = cfRows.findIndex((r) => r.id === id);
+        if (idx >= 0) cfRows[idx] = { ...cfRows[idx], ...payload };
+        return { error: null };
+      }),
+    }));
+    const insertSpy = vi.fn(async (payload: any) => {
+      cfRows.push({ id: `cf-ins-${cfRows.length + 1}`, ...payload });
+      return { error: null };
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn(async (from: number, to: number) => ({
+              data: salesRows.slice(from, to + 1),
+              error: null,
+            })),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn(async (from: number, to: number) => ({
+              data: cfRows.slice(from, to + 1),
+              error: null,
+            })),
+          }),
+          update: updateSpy,
+          insert: insertSpy,
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn(async (_col: string, ids: string[]) => ({
+              data: members.filter((m) => ids.includes(m.id)),
+              error: null,
+            })),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const result = await syncPosCashSalesToCashFlow();
+
+    expect(result).toEqual({
+      insertedCount: 1,
+      updatedCount: 2,
+      skippedCount: 3,
+    });
+    expect(updateSpy).toHaveBeenCalledTimes(2);
+    expect(cfRows[0].description).toBe(
+      'Penjualan Tunai (INV-1795078441001) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)'
+    );
+    expect(cfRows[1].description).toBe(
+      'Penjualan Tunai (INV-1795078441002) — 88010002 - Siti Aminah (Rp 45.000)'
+    );
+    expect(cfRows[2].description).toBe(
+      'Penjualan Tunai (INV-DONE-003) — Pelanggan Umum (Rp 25.000)'
+    );
+    expect(insertSpy).toHaveBeenCalledWith({
+      direction: 'in',
+      category: 'penjualan_tunai',
+      amount: 30000,
+      reference_id: 'sale-missing-4',
+      description: 'Penjualan Tunai (INV-1795078441004) — Pelanggan Umum (Rp 30.000)',
+      created_at: '2026-11-19T09:30:00.000Z',
+    });
+  });
+
+  it('enrichPosCashFlowDescriptions enriches dash descriptions and skips DB when all POS rows already have valid descriptions', async () => {
+    const alreadyValid = await enrichPosCashFlowDescriptions([
+      {
+        id: 'cf-ok',
+        kategori: 'penjualan_tunai',
+        deskripsi: 'Penjualan Tunai (INV-001) — Pelanggan Umum (Rp 20.000)',
+        kas_masuk: 20000,
+        reference_id: 's-ok',
+      },
+    ]);
+    expect(alreadyValid[0].deskripsi).toBe(
+      'Penjualan Tunai (INV-001) — Pelanggan Umum (Rp 20.000)'
+    );
+    expect(supabase.from).not.toHaveBeenCalled();
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+                  sale_number: 'INV-1795078441001',
+                  member_id: 'mem-alif',
+                  paid_cash: 100000,
+                  total_amount: 100000,
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'mem-alif', nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const enriched = await enrichPosCashFlowDescriptions([
+      {
+        id: '6d78c2a5-c33f-4ada-a9e1-022ca199e11e',
+        kategori: 'penjualan_tunai',
+        deskripsi: '-',
+        kas_masuk: 100000,
+        reference_id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+      },
+    ]);
+
+    expect(enriched[0].deskripsi).toBe(
+      'Penjualan Tunai (INV-1795078441001) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)'
+    );
+  });
+
+  it('getCashFlowReferenceBreakdown returns Penjualan Tunai and Penjualan Campuran paymentSchemeLabel and enriches blank journal description', async () => {
+    let schemeMode: 'cash' | 'split' = 'cash';
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  schemeMode === 'cash'
+                    ? {
+                        id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+                        sale_number: 'INV-1795078441001',
+                        member_id: 'mem-alif',
+                        subtotal: 100000,
+                        discount: 0,
+                        total_amount: 100000,
+                        paid_cash: 100000,
+                        paid_deposit: 0,
+                        paid_credit: 0,
+                        payment_scheme: 'cash',
+                        created_at: '2026-11-19T08:54:01.438Z',
+                      }
+                    : {
+                        id: 'sale-split-1',
+                        sale_number: 'INV-1795078449999',
+                        member_id: 'mem-alif',
+                        subtotal: 100000,
+                        discount: 0,
+                        total_amount: 100000,
+                        paid_cash: 40000,
+                        paid_deposit: 60000,
+                        paid_credit: 0,
+                        payment_scheme: 'split',
+                        created_at: '2026-11-19T09:00:00.000Z',
+                      },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'sale_items') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'mem-alif', nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN', pangkat: 'BRIPTU' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const cashBreakdown = await getCashFlowReferenceBreakdown({
+      id: '6d78c2a5-c33f-4ada-a9e1-022ca199e11e',
+      category: 'penjualan_tunai',
+      amount: 100000,
+      description: '-',
+      reference_id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+      created_at: '2026-11-19T08:54:02.742Z',
+    });
+
+    expect(cashBreakdown.kind).toBe('pos_sale');
+    if (cashBreakdown.kind === 'pos_sale') {
+      expect(cashBreakdown.posSale.paymentSchemeLabel).toBe('Penjualan Tunai');
+      expect(cashBreakdown.journal.description).toBe(
+        'Penjualan Tunai (INV-1795078441001) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)'
+      );
+    }
+
+    schemeMode = 'split';
+    const splitBreakdown = await getCashFlowReferenceBreakdown({
+      id: 'cf-split-1',
+      category: 'Penjualan POS',
+      amount: 40000,
+      description: 'Pembelian Tunai (INV-1795078449999)',
+      reference_id: 'sale-split-1',
+      created_at: '2026-11-19T09:00:00.000Z',
+    });
+
+    expect(splitBreakdown.kind).toBe('pos_sale');
+    if (splitBreakdown.kind === 'pos_sale') {
+      expect(splitBreakdown.posSale.paymentSchemeLabel).toBe('Penjualan Campuran');
+      expect(splitBreakdown.journal.description).toBe(
+        'Penjualan Tunai (INV-1795078449999) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 40.000)'
+      );
+    }
   });
 });

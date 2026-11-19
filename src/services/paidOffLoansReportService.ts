@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
+import { calculateRepaymentPortions } from './loanService';
 import type { KoperasiProfile } from './settingsService';
 
 export interface LoanTypeOption {
@@ -16,8 +17,23 @@ export interface PaidOffLoanScheduleItem {
   dueDate: string;
   targetAmount: number;
   paidAmount: number;
+  principalPortion?: number;
+  marginPortion?: number;
   status: string;
   paymentDate?: string | null;
+  paymentMethod?: string | null;
+  receiptNumber?: string | null;
+  notes?: string | null;
+}
+
+export interface PaidOffLoanRepaymentItem {
+  id: string;
+  scheduleId: string | null;
+  periodNumber?: number | null;
+  amountPaid: number;
+  principalPortion?: number;
+  marginPortion?: number;
+  paymentDate: string | null;
   paymentMethod?: string | null;
   receiptNumber?: string | null;
   notes?: string | null;
@@ -34,6 +50,11 @@ export interface PaidOffLoanReportRow {
   loanTypeId: string;
   loanTypeCode: string;
   loanTypeName: string;
+  financingScheme?: 'CASH_ZERO_INTEREST' | 'GOODS_MARKUP' | string | null;
+  itemDescription?: string | null;
+  costPrice?: number;
+  markupAmount?: number;
+  notes?: string | null;
   principalAmount: number;
   tenor: number;
   monthlyInstallment: number;
@@ -44,6 +65,7 @@ export interface PaidOffLoanReportRow {
   status: 'completed' | 'paid_off';
   paidPeriodsCount: number;
   schedules: PaidOffLoanScheduleItem[];
+  repayments?: PaidOffLoanRepaymentItem[];
 }
 
 export interface PaidOffLoansSummary {
@@ -163,22 +185,35 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       .from('loans')
       .select(`
         *,
-        loan_types ( id, code, name ),
+        loan_types ( id, code, name, financing_scheme ),
         member:anggota ( id, nrp, nama, pangkat )
       `);
 
     if (!joinErr && Array.isArray(joinedLoans)) {
       rawLoans = joinedLoans;
     } else {
-      console.warn('Fallback query loans tanpa relasi bersarang:', joinErr?.message);
-      const { data: plainLoans, error: plainErr } = await supabase
+      console.warn('Fallback query loans tanpa kolom financing_scheme:', joinErr?.message);
+      const { data: fallbackJoinedLoans, error: fallbackJoinErr } = await supabase
         .from('loans')
-        .select('*');
-      if (plainErr) {
-        console.error('Gagal mengambil data loans:', plainErr.message);
-        throw plainErr;
+        .select(`
+          *,
+          loan_types ( id, code, name ),
+          member:anggota ( id, nrp, nama, pangkat )
+        `);
+
+      if (!fallbackJoinErr && Array.isArray(fallbackJoinedLoans)) {
+        rawLoans = fallbackJoinedLoans;
+      } else {
+        console.warn('Fallback query loans tanpa relasi bersarang:', fallbackJoinErr?.message);
+        const { data: plainLoans, error: plainErr } = await supabase
+          .from('loans')
+          .select('*');
+        if (plainErr) {
+          console.error('Gagal mengambil data loans:', plainErr.message);
+          throw plainErr;
+        }
+        rawLoans = plainLoans || [];
       }
-      rawLoans = plainLoans || [];
     }
   } catch (err) {
     console.error('Error fetching loans for paid-off report:', err);
@@ -352,6 +387,28 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       loanTypeMap.get(loan.loan_type_id) ||
       null;
 
+    const costPrice = Math.max(0, Math.round(Number(loan.cost_price || 0)));
+    const markupAmount = Math.max(0, Math.round(Number(loan.markup_amount || 0)));
+    const itemDescription =
+      typeof loan.item_description === 'string' && loan.item_description.trim()
+        ? loan.item_description.trim()
+        : null;
+    const loanTypeCodeUpper = String(relLoanType?.code || '').trim().toUpperCase();
+    const financingScheme =
+      relLoanType?.financing_scheme ||
+      (costPrice > 0 ||
+      markupAmount > 0 ||
+      Boolean(itemDescription) ||
+      loanTypeCodeUpper === 'PEMBIAYAAN_BARANG' ||
+      loanTypeCodeUpper === 'GOODS_MARKUP'
+        ? 'GOODS_MARKUP'
+        : 'CASH_ZERO_INTEREST');
+
+    const scheduleById = new Map<string, any>();
+    loanSchedules.forEach((s) => {
+      if (s?.id) scheduleById.set(s.id, s);
+    });
+
     const repaymentsBySchedule = new Map<string, any[]>();
     loanRepayments.forEach((r) => {
       if (!r?.schedule_id) return;
@@ -368,17 +425,82 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
         .filter(Boolean)
         .join(', ');
 
+      const schedPaid = Number(s.paid_amount || 0);
+      const schedTarget = Number(s.target_amount || 0);
+      const rawPrincipalPortion =
+        s.principal_portion != null ? Math.round(Number(s.principal_portion || 0)) : null;
+      const rawMarginPortion =
+        s.margin_portion != null ? Math.round(Number(s.margin_portion || 0)) : null;
+      const hasExplicitPortions =
+        (rawPrincipalPortion !== null || rawMarginPortion !== null) &&
+        ((rawPrincipalPortion || 0) + (rawMarginPortion || 0) > 0 || schedPaid <= 0);
+
+      const computedSchedPortions = hasExplicitPortions
+        ? {
+            principalPortion: rawPrincipalPortion ?? 0,
+            marginPortion: rawMarginPortion ?? 0,
+          }
+        : calculateRepaymentPortions({
+            amountPaid: schedPaid > 0 ? schedPaid : schedTarget,
+            targetAmount: schedTarget,
+            loanCostPrice: costPrice,
+            loanMarkupAmount: markupAmount,
+            loanTotalAmount: principalAmount,
+          });
+
       return {
         id: s.id,
         periodNumber: Number(s.period_number || 0),
         dueDate: s.due_date || '',
-        targetAmount: Number(s.target_amount || 0),
-        paidAmount: Number(s.paid_amount || 0),
+        targetAmount: schedTarget,
+        paidAmount: schedPaid,
+        principalPortion: computedSchedPortions.principalPortion,
+        marginPortion: computedSchedPortions.marginPortion,
         status: isScheduleSettled(s) ? 'paid' : String(s.status || 'unpaid'),
         paymentDate: latestRepay?.payment_date || null,
         paymentMethod: latestRepay?.payment_method || null,
         receiptNumber: receiptNumbers || latestRepay?.receipt_number || null,
         notes: latestRepay?.notes || null,
+      };
+    });
+
+    const mappedRepayments: PaidOffLoanRepaymentItem[] = loanRepayments.map((r) => {
+      const linkedSched = r.schedule_id ? scheduleById.get(r.schedule_id) : undefined;
+      const amountPaid = Number(r.amount_paid || 0);
+      const rawRepayPrincipal =
+        r.principal_portion != null ? Math.round(Number(r.principal_portion || 0)) : null;
+      const rawRepayMargin =
+        r.margin_portion != null ? Math.round(Number(r.margin_portion || 0)) : null;
+      const hasExplicitRepayPortions =
+        (rawRepayPrincipal !== null || rawRepayMargin !== null) &&
+        (rawRepayPrincipal || 0) + (rawRepayMargin || 0) > 0;
+
+      const computedRepayPortions = hasExplicitRepayPortions
+        ? {
+            principalPortion: rawRepayPrincipal ?? 0,
+            marginPortion: rawRepayMargin ?? 0,
+          }
+        : calculateRepaymentPortions({
+            amountPaid,
+            targetAmount: Number(linkedSched?.target_amount || amountPaid),
+            schedulePrincipalPortion: linkedSched?.principal_portion,
+            scheduleMarginPortion: linkedSched?.margin_portion,
+            loanCostPrice: costPrice,
+            loanMarkupAmount: markupAmount,
+            loanTotalAmount: principalAmount,
+          });
+
+      return {
+        id: r.id,
+        scheduleId: r.schedule_id || null,
+        periodNumber: linkedSched ? Number(linkedSched.period_number || 0) : null,
+        amountPaid,
+        principalPortion: computedRepayPortions.principalPortion,
+        marginPortion: computedRepayPortions.marginPortion,
+        paymentDate: r.payment_date || null,
+        paymentMethod: r.payment_method || null,
+        receiptNumber: r.receipt_number || null,
+        notes: r.notes || null,
       };
     });
 
@@ -428,6 +550,11 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       loanTypeId: relLoanType?.id || loan.loan_type_id || '',
       loanTypeCode: relLoanType?.code || '',
       loanTypeName: relLoanType?.name || loan.loanTypeName || 'Pinjaman Reguler',
+      financingScheme,
+      itemDescription,
+      costPrice,
+      markupAmount,
+      notes: loan.notes || null,
       principalAmount,
       tenor,
       monthlyInstallment,
@@ -438,6 +565,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       status: resolvedStatus,
       paidPeriodsCount: mappedSchedules.filter((s) => s.status === 'paid').length || tenor,
       schedules: mappedSchedules,
+      repayments: mappedRepayments,
     });
   }
 

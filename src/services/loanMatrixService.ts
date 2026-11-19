@@ -297,7 +297,20 @@ export interface LoanMatrixSummary {
   members: LoanMatrixMember[];
 }
 
-export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> => {
+export interface GetLoanMatrixOptions {
+  includeLoanSearch?: string;
+  includePaidOff?: boolean;
+}
+
+export const getLoanMatrix = async (
+  year: number,
+  options?: GetLoanMatrixOptions
+): Promise<LoanMatrixSummary> => {
+  const rawSearch = (options?.includeLoanSearch || '').trim();
+  const includeSearchNorm = rawSearch.toLowerCase();
+  const includePaidOff = Boolean(options?.includePaidOff);
+  const explicitlyIncludedLoanIds = new Set<string>();
+
   // First, get all schedules for the given year
   const startOfYear = `${year}-01-01`;
   const endOfYear = `${year}-12-31`;
@@ -327,6 +340,52 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     }
   } catch {
     // Graceful fallback jika tabel loans tidak distub pada lingkungan test
+  }
+
+  // Sertakan pinjaman lunas/selesai bila diminta lewat pencarian URL (?search=LOAN-...) atau filter Status Lunas
+  if (includeSearchNorm) {
+    try {
+      const searchQuery: any = supabase.from('loans')?.select('id, loan_number, status');
+      if (searchQuery) {
+        let matchedRes: any = null;
+        if (typeof searchQuery.ilike === 'function') {
+          matchedRes = await searchQuery.ilike('loan_number', `%${rawSearch}%`);
+        } else if (typeof searchQuery.in === 'function') {
+          matchedRes = await searchQuery.in('status', ['completed', 'paid_off', 'active', 'approved']);
+        } else if (typeof searchQuery.then === 'function') {
+          matchedRes = await searchQuery;
+        }
+        const matchedRows = Array.isArray(matchedRes?.data) ? matchedRes.data : [];
+        matchedRows.forEach((l: any) => {
+          const st = String(l?.status || '').toLowerCase();
+          if (['rejected', 'draft', 'cancelled'].includes(st)) return;
+          if (String(l?.loan_number || '').toLowerCase().includes(includeSearchNorm) && l?.id) {
+            explicitlyIncludedLoanIds.add(l.id);
+          }
+        });
+        if (explicitlyIncludedLoanIds.size > 0) {
+          loanIds = Array.from(new Set([...loanIds, ...explicitlyIncludedLoanIds]));
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
+  }
+
+  if (includePaidOff) {
+    try {
+      const paidQuery: any = supabase.from('loans')?.select('id');
+      if (paidQuery && typeof paidQuery.in === 'function') {
+        const { data: paidLoans } = await paidQuery.in('status', ['completed', 'paid_off']);
+        if (paidLoans && paidLoans.length > 0) {
+          const paidIds = paidLoans.map((l: any) => l.id).filter(Boolean);
+          paidIds.forEach((id: string) => explicitlyIncludedLoanIds.add(id));
+          loanIds = Array.from(new Set([...loanIds, ...paidIds]));
+        }
+      }
+    } catch {
+      // Non-fatal fallback
+    }
   }
 
   if (loanIds.length === 0) {
@@ -451,7 +510,22 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     if (!loan) return;
 
     const statusLower = String(loan.status || '').toLowerCase();
-    if (['paid_off', 'completed', 'rejected', 'draft'].includes(statusLower)) {
+    if (['rejected', 'draft', 'cancelled'].includes(statusLower)) {
+      return;
+    }
+
+    const isExplicitlyIncluded =
+      includePaidOff ||
+      (Boolean(includeSearchNorm) &&
+        (explicitlyIncludedLoanIds.has(loanId) ||
+          String(loan.loan_number || '').toLowerCase().includes(includeSearchNorm)));
+
+    if (isExplicitlyIncluded) {
+      activeLoanIdsSet.add(loanId);
+      return;
+    }
+
+    if (['paid_off', 'completed'].includes(statusLower)) {
       return;
     }
 
@@ -756,6 +830,107 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
     row.repaymentProgressPct = repaymentProgressPct;
     row.cutoffDate = null;
   });
+
+  // Fallback untuk pinjaman lunas yang dicari via URL namun belum memiliki baris di loan_schedules
+  if (explicitlyIncludedLoanIds.size > 0) {
+    const missingIds = Array.from(explicitlyIncludedLoanIds).filter((id) => !loansMap[id]);
+    if (missingIds.length > 0) {
+      try {
+        const missingQ: any = supabase
+          .from('loans')
+          ?.select(`
+            id,
+            loan_number,
+            member_id,
+            principal_amount,
+            amount,
+            tenor,
+            agreed_tenor_months,
+            monthly_target,
+            planned_installment_amount,
+            disbursed_at,
+            status,
+            loan_types ( id, code, name ),
+            member:anggota ( id, nrp, nama, pangkat, status, membership_status, suspended_at, suspension_reason )
+          `);
+        if (missingQ && typeof missingQ.in === 'function') {
+          const { data: missingLoans } = await missingQ.in('id', missingIds);
+          (missingLoans || []).forEach((loan: any) => {
+            const member = loan.member || loan.anggota;
+            if (!loan?.id || !member) return;
+            const loanType = loan.loan_types || loan.loanType || loan.loan_type;
+            const principalAmt = Number(loan.principal_amount || loan.amount || 0);
+            const tenorVal = Number(loan.agreed_tenor_months || loan.tenor || 0);
+            const isLoanActive = loan.status === 'active' || loan.status === 'approved';
+            const emptyMonths: Record<number, LoanMatrixMonth> = {};
+            for (let i = 1; i <= 12; i++) {
+              emptyMonths[i] = {
+                month: i,
+                year,
+                status: 'NONE',
+                targetAmount: 0,
+                paidAmount: 0,
+                loanId: loan.id,
+                loanNumber: loan.loan_number,
+                tenor: loan.tenor,
+              };
+            }
+            loansMap[loan.id] = {
+              id: loan.id,
+              loanId: loan.id,
+              loanNumber: loan.loan_number || '',
+              status: loan.status || 'completed',
+              memberId: member.id,
+              nrp: member.nrp,
+              nama: member.nama,
+              pangkat: member.pangkat || loan.pangkat || '',
+              loanTypeName: loanType?.name || 'Pinjaman Reguler',
+              loanTypeCode: loanType?.code || 'REGULER',
+              agreedTenorMonths: tenorVal,
+              tenor: Number(loan.tenor || tenorVal || 0),
+              monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
+              principalAmount: principalAmt,
+              disbursedAt: loan.disbursed_at || null,
+              isLoanActive,
+              totalLoans: 1,
+              months: emptyMonths,
+              complianceYTD: isLoanActive ? 0 : 100,
+              ytdCompliance: isLoanActive ? 0 : 100,
+              hasDueSchedulesYTD: !isLoanActive,
+              dueInstallmentsYTD: tenorVal,
+              paidInstallmentsYTD: isLoanActive ? 0 : tenorVal,
+              firstInstallmentLabel: null,
+              priorYearPaid: isLoanActive ? 0 : principalAmt,
+              priorYearRemaining: isLoanActive ? principalAmt : 0,
+              openingPaid: isLoanActive ? 0 : principalAmt,
+              openingRemaining: isLoanActive ? principalAmt : 0,
+              totalPaidAllTime: isLoanActive ? 0 : principalAmt,
+              paidInstallmentsCount: isLoanActive ? 0 : tenorVal,
+              totalInstallmentsCount: tenorVal,
+              remainingPrincipalAllTime: isLoanActive ? principalAmt : 0,
+              repaymentProgressPct: isLoanActive ? 0 : 100,
+              cutoffDate: null,
+              membershipStatus: member.membership_status,
+              suspendedAt: member.suspended_at ?? null,
+              suspensionReason: member.suspension_reason ?? null,
+              anggota: member,
+              loan_types: loanType,
+            };
+          });
+
+          const updatedCounts: Record<string, number> = {};
+          Object.values(loansMap).forEach((r) => {
+            updatedCounts[r.memberId] = (updatedCounts[r.memberId] || 0) + 1;
+          });
+          Object.values(loansMap).forEach((r) => {
+            r.totalLoans = updatedCounts[r.memberId] || 1;
+          });
+        }
+      } catch {
+        // Non-fatal fallback for schedule-less loans
+      }
+    }
+  }
 
   const overallComplianceYTD = totalTargetYTD > 0 ? (totalCollectedYTD / totalTargetYTD) * 100 : 0;
 

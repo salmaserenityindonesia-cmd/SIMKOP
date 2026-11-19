@@ -1635,4 +1635,146 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('Kertas HVS A4 70gr');
     expect(html).toContain('ATK/HVS WARNA');
   });
+
+  it('renders Penjualan POS badge cleanly across penjualan_tunai, PENJUALAN_POS, and Penjualan POS variants', () => {
+    for (const key of ['penjualan_tunai', 'PENJUALAN_TUNAI', 'PENJUALAN_POS', 'Penjualan POS']) {
+      const badgeHtml = renderToStaticMarkup(<KategoriBadge kategori={key} />);
+      expect(badgeHtml).toContain('Penjualan POS');
+      expect(badgeHtml).toContain('bg-emerald-50');
+      expect(badgeHtml).toContain('text-emerald-800');
+    }
+  });
+
+  it('getCashFlowReport calls syncPosCashSalesToCashFlow and enriches CF-6D78C2A5 with "Penjualan Tunai (INV-...) — NRP - Nama (Rp ...)"', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows: any[] = [
+        {
+          id: '6d78c2a5-c33f-4ada-a9e1-022ca199e11e',
+          created_at: '2026-11-19T08:54:02.742888+00:00',
+          category: 'penjualan_tunai',
+          direction: 'in',
+          amount: 100000,
+          description: null,
+          reference_id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+        },
+      ];
+
+      const salesRows = [
+        {
+          id: 'f9dec14d-7519-4195-a98d-41cc559ef386',
+          sale_number: 'INV-1795078441001',
+          member_id: 'a6f5448c-e539-4426-aeaa-4e804054b894',
+          paid_cash: 100000,
+          total_amount: 100000,
+          payment_scheme: 'cash',
+          sale_status: 'completed',
+          created_at: '2026-11-19T08:54:01.438882+00:00',
+        },
+      ];
+
+      const members = [
+        {
+          id: 'a6f5448c-e539-4426-aeaa-4e804054b894',
+          nrp: '00010062',
+          nama: 'MOCH. ALIF NURSYARIFUDDIN',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions' || table === 'member_deposits' || table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn(async (_col: string, ids: string[]) => ({
+                data: members.filter((m) => ids.includes(m.id)),
+                error: null,
+              })),
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              range: vi.fn(async (from: number, to: number) => ({
+                data: salesRows.slice(from, to + 1),
+                error: null,
+              })),
+              in: vi.fn(async (_col: string, ids: string[]) => ({
+                data: salesRows.filter((s) => ids.includes(s.id)),
+                error: null,
+              })),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: salesRows, error: null }),
+                  }),
+                }),
+              }),
+            })),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return { eq: vi.fn().mockResolvedValue({ data: [], error: null }) };
+              }
+              return {
+                range: vi.fn(async (from: number, to: number) => ({
+                  data: cfRows.slice(from, to + 1),
+                  error: null,
+                })),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn(async () => ({ data: [...cfRows], error: null })),
+                  }),
+                }),
+              };
+            }),
+            update: vi.fn((payload: any) => ({
+              eq: vi.fn(async (_col: string, id: string) => {
+                const idx = cfRows.findIndex((r) => r.id === id);
+                if (idx >= 0) cfRows[idx] = { ...cfRows[idx], ...payload };
+                return { error: null };
+              }),
+            })),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+
+      expect(report.inflowTotal).toBe(100000);
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0]).toMatchObject({
+        referensi: 'CF-6D78C2A5',
+        kategori: 'penjualan_tunai',
+        kas_masuk: 100000,
+        deskripsi:
+          'Penjualan Tunai (INV-1795078441001) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)',
+      });
+      expect(cfRows[0].description).toBe(
+        'Penjualan Tunai (INV-1795078441001) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)'
+      );
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

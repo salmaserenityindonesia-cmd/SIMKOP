@@ -21,6 +21,11 @@ import {
   getCashFlowReferenceBreakdown,
   type CashFlowReferenceBreakdown,
 } from '../../services/cashFlowAuditService';
+import {
+  formatPosPaymentSchemeLabel,
+  isPosCashSaleCategory,
+  sanitizePosTerminology,
+} from '../../utils/posCashFlowFormat';
 
 export interface CashFlowReferenceModalItem {
   id: string;
@@ -88,6 +93,14 @@ const formatPaymentMethodLabel = (method?: string | null): string => {
   if (m === 'tunai') return 'Tunai Kasir';
   if (m === 'potong_gaji') return 'Potong Gaji';
   return String(method);
+};
+
+const formatHeaderCategoryLabel = (category?: string | null): string => {
+  if (isPosCashSaleCategory(category)) {
+    return 'Penjualan POS';
+  }
+  const clean = String(category || '').trim();
+  return clean ? sanitizePosTerminology(clean) : '-';
 };
 
 export default function CashFlowReferenceModal({
@@ -268,7 +281,7 @@ export default function CashFlowReferenceModal({
               <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span>Tanggal: {cashFlowItem.tanggal}</span>
                 <span className="text-slate-500">•</span>
-                <span>Kategori: {cashFlowItem.kategori}</span>
+                <span>Kategori: {formatHeaderCategoryLabel(cashFlowItem.kategori)}</span>
                 <span className="text-slate-500">•</span>
                 <span className={isOutflow ? 'text-rose-300 font-semibold' : 'text-emerald-300 font-semibold'}>
                   {isOutflow ? 'Kas Keluar' : 'Kas Masuk'}: {formatRp(nominal)}
@@ -554,7 +567,17 @@ export default function CashFlowReferenceModal({
           )}
 
           {/* ── KONTEN B: PENJUALAN POS ── */}
-          {!loading && !error && breakdown?.kind === 'pos_sale' && (
+          {!loading && !error && breakdown?.kind === 'pos_sale' && (() => {
+            const posSchemeLabel =
+              breakdown.posSale.paymentSchemeLabel ||
+              formatPosPaymentSchemeLabel({
+                paymentScheme: breakdown.posSale.paymentScheme,
+                paidCash: breakdown.posSale.paidCash,
+                paidDeposit: breakdown.posSale.paidDeposit,
+                paidCredit: breakdown.posSale.paidCredit,
+              });
+
+            return (
             <div className="space-y-4">
               <div className="bg-white rounded-xl border border-emerald-200 p-4 shadow-xs space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
@@ -565,7 +588,7 @@ export default function CashFlowReferenceModal({
                     </span>
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                    Skema: {breakdown.posSale.paymentScheme}
+                    Skema: {posSchemeLabel}
                   </span>
                 </div>
 
@@ -575,7 +598,7 @@ export default function CashFlowReferenceModal({
                     <p className="font-semibold text-slate-800 mt-0.5">
                       {breakdown.posSale.member
                         ? `${breakdown.posSale.member.nama} (${breakdown.posSale.member.nrp})`
-                        : 'Pembeli Umum / Tunai'}
+                        : 'Pelanggan Umum'}
                     </p>
                   </div>
                   <div>
@@ -650,7 +673,8 @@ export default function CashFlowReferenceModal({
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ── KONTEN C: PELUNASAN BON TOKO ── */}
           {!loading && !error && breakdown?.kind === 'store_credit_payment' && (() => {
@@ -1428,7 +1452,7 @@ export default function CashFlowReferenceModal({
                 <div className="sm:col-span-2">
                   <p className="text-slate-500">Uraian Deskripsi Lengkap</p>
                   <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-3 border border-slate-200/70">
-                    {breakdown.journal.description}
+                    {sanitizePosTerminology(breakdown.journal.description)}
                   </p>
                 </div>
               </div>

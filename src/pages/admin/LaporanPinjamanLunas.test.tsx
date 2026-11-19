@@ -1,7 +1,11 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import LaporanPinjamanLunas from './LaporanPinjamanLunas';
+import LoanSubsidiaryLedgerModal, {
+  buildLoanSubsidiaryLedger,
+} from '../../components/loans/LoanSubsidiaryLedgerModal';
 import {
   getPaidOffLoansReport,
   getLoanTypesForFilter,
@@ -383,5 +387,300 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
 
     const certDoc = exportPaidOffLoanCertificatePdf(prabowoRow, null, false);
     expect(certDoc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('extracts costPrice, markupAmount, itemDescription, financingScheme, and repayments in getPaidOffLoansReport', async () => {
+    const goodsLoan = {
+      id: 'loan-goods-1',
+      loan_number: 'LOAN-1795083121561',
+      member_id: 'mem-goods',
+      loan_type_id: 'lt-brg',
+      principal_amount: 2100000,
+      cost_price: 2000000,
+      markup_amount: 100000,
+      item_description: 'Laptop Kerja Asus VivoBook',
+      tenor: 1,
+      agreed_tenor_months: 1,
+      monthly_target: 2100000,
+      disbursed_at: '2026-10-19',
+      status: 'completed',
+      loan_types: {
+        id: 'lt-brg',
+        code: 'PEMBIAYAAN_BARANG',
+        name: 'Pembiayaan Barang',
+        financing_scheme: 'GOODS_MARKUP',
+      },
+      member: { id: 'mem-goods', nrp: '87010011', nama: 'Surya Pratama', pangkat: 'BRIPKA' },
+    };
+
+    const goodsSchedules = [
+      {
+        id: 'sg-1',
+        loan_id: 'loan-goods-1',
+        period_number: 1,
+        due_date: '2026-11-19',
+        target_amount: 2100000,
+        principal_portion: 2000000,
+        margin_portion: 100000,
+        paid_amount: 2100000,
+        status: 'paid',
+      },
+    ];
+
+    const goodsRepayments = [
+      {
+        id: 'rg-1',
+        loan_id: 'loan-goods-1',
+        schedule_id: 'sg-1',
+        amount_paid: 2100000,
+        principal_portion: 2000000,
+        margin_portion: 100000,
+        payment_date: '2026-11-19T08:00:00.000Z',
+        payment_method: 'potong_gaji',
+        receipt_number: 'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD',
+        notes: 'Pelunasan pembiayaan barang',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockResolvedValue({ data: [goodsLoan], error: null }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: goodsSchedules, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: goodsRepayments, error: null }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getPaidOffLoansReport();
+    expect(summary.rows).toHaveLength(1);
+    const row = summary.rows[0];
+    expect(row.financingScheme).toBe('GOODS_MARKUP');
+    expect(row.costPrice).toBe(2000000);
+    expect(row.markupAmount).toBe(100000);
+    expect(row.itemDescription).toBe('Laptop Kerja Asus VivoBook');
+    expect(row.repayments).toHaveLength(1);
+    expect(row.repayments?.[0]).toMatchObject({
+      receiptNumber: 'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD',
+      principalPortion: 2000000,
+      marginPortion: 100000,
+      paymentMethod: 'potong_gaji',
+    });
+  });
+});
+
+describe('Clickable LOAN-... Reference & LoanSubsidiaryLedgerModal', () => {
+  const goodsMarkupRow: PaidOffLoanReportRow = {
+    id: 'loan-goods-1795083121561',
+    loanId: 'loan-goods-1795083121561',
+    loanNumber: 'LOAN-1795083121561',
+    memberId: 'mem-surya',
+    memberName: 'Surya Pratama',
+    nrp: '87010011',
+    pangkat: 'BRIPKA',
+    loanTypeId: 'lt-brg',
+    loanTypeCode: 'PEMBIAYAAN_BARANG',
+    loanTypeName: 'Pembiayaan Barang',
+    financingScheme: 'GOODS_MARKUP',
+    itemDescription: 'Pengadaan Unit Elektronik TV 43 Inch',
+    costPrice: 2000000,
+    markupAmount: 100000,
+    principalAmount: 2100000,
+    tenor: 1,
+    monthlyInstallment: 2100000,
+    totalPaid: 2100000,
+    disbursedAt: '2026-10-19',
+    paidOffDate: '2026-11-19T08:00:00.000Z',
+    paidOffYear: 2026,
+    status: 'completed',
+    paidPeriodsCount: 1,
+    schedules: [
+      {
+        id: 'sg-1',
+        periodNumber: 1,
+        dueDate: '2026-11-19',
+        targetAmount: 2100000,
+        paidAmount: 2100000,
+        principalPortion: 2000000,
+        marginPortion: 100000,
+        status: 'paid',
+        paymentDate: '2026-11-19T08:00:00.000Z',
+        paymentMethod: 'potong_gaji',
+        receiptNumber: 'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD',
+      },
+    ],
+    repayments: [
+      {
+        id: 'rep-g-1',
+        scheduleId: 'sg-1',
+        periodNumber: 1,
+        amountPaid: 2100000,
+        principalPortion: 2000000,
+        marginPortion: 100000,
+        paymentDate: '2026-11-19T08:00:00.000Z',
+        paymentMethod: 'potong_gaji',
+        receiptNumber: 'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD',
+        notes: 'Pelunasan ke-1',
+      },
+    ],
+  };
+
+  it('renders NO. PINJAMAN column as an interactive button opening subsidiary ledger and renders modal via initialSelectedLedgerRow', () => {
+    const summaryWithGoods: PaidOffLoansSummary = {
+      totalPaidOffLoans: 1,
+      uniqueMembersCount: 1,
+      totalPrincipalAmount: 2100000,
+      totalPaidAmount: 2100000,
+      rows: [goodsMarkupRow],
+    };
+
+    const html = renderToStaticMarkup(
+      <LaporanPinjamanLunas
+        initialData={summaryWithGoods}
+        initialLoanTypes={sampleLoanTypes}
+        initialSelectedLedgerRow={goodsMarkupRow}
+      />
+    );
+
+    expect(html).toContain('data-testid="open-ledger-loan-goods-1795083121561"');
+    expect(html).toContain('title="Klik untuk membuka Buku Pembantu Piutang &amp; Rincian Angsuran"');
+    expect(html).toContain('data-testid="loan-subsidiary-ledger-modal"');
+    expect(html).toContain('Buku Pembantu Piutang &amp; Mutasi Angsuran');
+    expect(html).toContain('LOAN-1795083121561');
+  });
+
+  it('renders LoanSubsidiaryLedgerModal for GOODS_MARKUP inside MemoryRouter with supplier cost, markup, kwitansi, Rp 0 balance, and matrix shortcut', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LoanSubsidiaryLedgerModal loanRecord={goodsMarkupRow} onClose={() => {}} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Pembiayaan Barang (Markup Margin)');
+    expect(html).toContain('Pengadaan Unit Elektronik TV 43 Inch');
+    expect(html).toContain('Harga Modal Supplier');
+    expect(html).toContain('Rp 2.000.000');
+    expect(html).toContain('Margin Markup');
+    expect(html).toContain('Rp 100.000');
+    expect(html).toContain('Total Akad Piutang');
+    expect(html).toContain('Rp 2.100.000');
+    expect(html).toContain('Realisasi Akad Pembiayaan Barang / Pencairan Pinjaman');
+    expect(html).toContain('+Rp 2.100.000');
+    expect(html).toContain('Angsuran Ke-1');
+    expect(html).toContain('KW-PINJ/LOAN-1795083121561/B1/20261119-TCD');
+    expect(html).toContain('POTONG_GAJI');
+    expect(html).toContain('Pokok: Rp 2.000.000 • Margin: Rp 100.000');
+    expect(html).toContain('Rp 0 (Lunas)');
+    expect(html).toContain('data-testid="open-in-loan-matrix-btn"');
+    expect(html).toContain('Buka di Matriks Pinjaman');
+    expect(html).toContain('(/admin/loan-matrix)');
+  });
+
+  it('renders LoanSubsidiaryLedgerModal for 0% cash loan (Prabowo Hadi) with Plafon Pokok, 0% interest, and 24-month ledger', () => {
+    const html = renderToStaticMarkup(
+      <LoanSubsidiaryLedgerModal loanRecord={prabowoRow} onClose={() => {}} />
+    );
+
+    expect(html).toContain('Pinjaman Tunai 0%');
+    expect(html).toContain('Plafon Pokok');
+    expect(html).toContain('Rp 24.000.000');
+    expect(html).toContain('>0%<');
+    expect(html).toContain('24 Bulan');
+    expect(html).toContain('Angsuran Ke-1');
+    expect(html).toContain('Angsuran Ke-24');
+    expect(html).toContain('KW-PINJ/PINJ-MIGRASI-97109810/B24');
+    expect(html).toContain('Rp 0 (Lunas)');
+  });
+
+  it('buildLoanSubsidiaryLedger accurately computes running balance across partial repayments and schedule-less loans', () => {
+    const partialLoan: PaidOffLoanReportRow = {
+      ...goodsMarkupRow,
+      tenor: 2,
+      principalAmount: 2100000,
+      schedules: [
+        {
+          id: 's-1',
+          periodNumber: 1,
+          dueDate: '2026-10-19',
+          targetAmount: 1050000,
+          paidAmount: 1050000,
+          principalPortion: 1000000,
+          marginPortion: 50000,
+          status: 'paid',
+          receiptNumber: 'KW-1',
+        },
+        {
+          id: 's-2',
+          periodNumber: 2,
+          dueDate: '2026-11-19',
+          targetAmount: 1050000,
+          paidAmount: 1050000,
+          principalPortion: 1000000,
+          marginPortion: 50000,
+          status: 'paid',
+          receiptNumber: 'KW-2',
+        },
+      ],
+      repayments: [
+        {
+          id: 'r-1a',
+          scheduleId: 's-1',
+          amountPaid: 500000,
+          paymentDate: '2026-10-10',
+          paymentMethod: 'tunai',
+          receiptNumber: 'KW-1A',
+        },
+        {
+          id: 'r-1b',
+          scheduleId: 's-1',
+          amountPaid: 550000,
+          paymentDate: '2026-10-19',
+          paymentMethod: 'transfer',
+          receiptNumber: 'KW-1B',
+        },
+        {
+          id: 'r-2',
+          scheduleId: 's-2',
+          amountPaid: 1050000,
+          paymentDate: '2026-11-19',
+          paymentMethod: 'potong_gaji',
+          receiptNumber: 'KW-2',
+        },
+      ],
+    };
+
+    const ledger = buildLoanSubsidiaryLedger(partialLoan);
+    expect(ledger.entries).toHaveLength(4);
+    expect(ledger.entries[0].runningBalance).toBe(2100000);
+    expect(ledger.entries[1].runningBalance).toBe(1600000);
+    expect(ledger.entries[2].runningBalance).toBe(1050000);
+    expect(ledger.entries[3].runningBalance).toBe(0);
+    expect(ledger.totalDebit).toBe(2100000);
+    expect(ledger.totalCredit).toBe(2100000);
+    expect(ledger.endingBalance).toBe(0);
+
+    // Fallback for schedule-less loan (budiRow)
+    const fallbackLedger = buildLoanSubsidiaryLedger(budiRow);
+    expect(fallbackLedger.entries).toHaveLength(2);
+    expect(fallbackLedger.entries[0].debit).toBe(12000000);
+    expect(fallbackLedger.entries[1].credit).toBe(12000000);
+    expect(fallbackLedger.endingBalance).toBe(0);
   });
 });

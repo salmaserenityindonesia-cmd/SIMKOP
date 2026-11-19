@@ -17,6 +17,13 @@ import {
   formatStoreCreditCashFlowDescription,
   inferStoreCreditPaymentMethod,
 } from './storeCreditLedgerService';
+import {
+  formatPosCashFlowDescription,
+  formatPosPaymentSchemeLabel,
+  isPosCashSaleCategory,
+  needsPosDescriptionEnrichment,
+  sanitizePosTerminology,
+} from '../utils/posCashFlowFormat';
 
 export interface CashFlowAuditInput {
   id: string;
@@ -57,6 +64,7 @@ export interface PosSaleBreakdown {
   saleNumber: string;
   createdAt: string;
   paymentScheme: string;
+  paymentSchemeLabel?: string;
   subtotal: number;
   discount: number;
   totalAmount: number;
@@ -932,7 +940,7 @@ export async function getCashFlowReferenceBreakdown(
   }
 
   // ── Cabang B: Penjualan POS ──────────────────────────────────────────────────
-  if (catUpper === 'PENJUALAN_TUNAI' || catUpper === 'PENJUALAN_POS' || catUpper === 'PENJUALAN POS') {
+  if (isPosCashSaleCategory(cashFlowRow.category)) {
     const saleId =
       cashFlowRow.reference_id || (refCode.startsWith('POS-') ? cashFlowRow.id : null);
 
@@ -995,27 +1003,53 @@ export async function getCashFlowReferenceBreakdown(
           };
         });
 
+        const resolvedSaleNumber = String(
+          sale.sale_number || `POS-${String(saleId).slice(0, 8).toUpperCase()}`
+        );
+        const memberSummary = formatMemberSummary(memberRes.data);
+        const paymentSchemeLabel = formatPosPaymentSchemeLabel({
+          paymentScheme: sale.payment_scheme,
+          paidCash: Number(sale.paid_cash ?? 0),
+          paidDeposit: Number(sale.paid_deposit ?? 0),
+          paidCredit: Number(sale.paid_credit ?? 0),
+        });
+
+        if (needsPosDescriptionEnrichment(journal.description)) {
+          journal.description = formatPosCashFlowDescription({
+            saleNumber: resolvedSaleNumber,
+            memberNrp: memberSummary?.nrp,
+            memberName: memberSummary?.nama,
+            amount: Math.round(
+              Number(journal.amount || sale.paid_cash || sale.total_amount || 0)
+            ),
+          });
+        } else {
+          journal.description = sanitizePosTerminology(journal.description);
+        }
+
         return {
           kind: 'pos_sale',
           journal,
           posSale: {
             saleId: String(sale.id || saleId),
-            saleNumber: String(sale.sale_number || `POS-${String(saleId).slice(0, 8).toUpperCase()}`),
+            saleNumber: resolvedSaleNumber,
             createdAt: String(sale.created_at || journal.createdAt),
             paymentScheme: String(sale.payment_scheme || 'cash'),
+            paymentSchemeLabel,
             subtotal: Number(sale.subtotal ?? sale.total_amount ?? 0),
             discount: Number(sale.discount ?? 0),
             totalAmount: Number(sale.total_amount ?? 0),
             paidCash: Number(sale.paid_cash ?? 0),
             paidDeposit: Number(sale.paid_deposit ?? 0),
             paidCredit: Number(sale.paid_credit ?? 0),
-            member: formatMemberSummary(memberRes.data),
+            member: memberSummary,
             items,
           },
         };
       }
     }
 
+    journal.description = sanitizePosTerminology(journal.description);
     return { kind: 'journal_only', journal };
   }
 
@@ -2643,5 +2677,292 @@ export async function consolidateBulkLebaranCashFlow(): Promise<ConsolidateBulkL
   } catch (err) {
     console.warn('Warning consolidateBulkLebaranCashFlow:', err);
     return emptyResult;
+  }
+}
+
+export interface SyncPosCashSalesResult {
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+}
+
+/**
+ * Menyinkronkan (backfill idempoten) transaksi penjualan POS tunai (`sales.paid_cash > 0`)
+ * ke `public.cash_flow` sekaligus melengkapi baris penjualan POS lama yang kolom `description`-nya
+ * masih kosong, `'-'`, `'Penjualan Kasir Tunai'`, atau memakai istilah lama `"Pembelian Tunai"`.
+ */
+export async function syncPosCashSalesToCashFlow(): Promise<SyncPosCashSalesResult> {
+  const emptyResult: SyncPosCashSalesResult = {
+    insertedCount: 0,
+    updatedCount: 0,
+    skippedCount: 0,
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return emptyResult;
+    }
+
+    let salesRes = await safeFetchAllPaged<any>(
+      'sales',
+      'id, sale_number, member_id, paid_cash, total_amount, payment_scheme, sale_status, created_at'
+    );
+    if (salesRes.error && isPostgrestColumnError(salesRes.error)) {
+      salesRes = await safeFetchAllPaged<any>(
+        'sales',
+        'id, sale_number, member_id, paid_cash, total_amount, created_at'
+      );
+    }
+    if (salesRes.error) {
+      return emptyResult;
+    }
+
+    let hasDescriptionCol = true;
+    let cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, category, direction, amount, reference_id, description, created_at'
+    );
+    if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+      hasDescriptionCol = false;
+      cfRes = await safeFetchAllPaged<any>(
+        'cash_flow',
+        'id, category, direction, amount, reference_id, created_at'
+      );
+    }
+    if (cfRes.error) {
+      return emptyResult;
+    }
+
+    const validSales = (salesRes.data || []).filter((sale: any) => {
+      if (!sale?.id) return false;
+      const st = String(sale?.sale_status || '').trim().toLowerCase();
+      return !st || st === 'completed' || st === 'success';
+    });
+
+    if (validSales.length === 0) {
+      return emptyResult;
+    }
+
+    const existingRowsByRef = new Map<string, any[]>();
+    for (const r of cfRes.data || []) {
+      if (!isPosCashSaleCategory(r?.category) || !r?.reference_id) continue;
+      const refKey = String(r.reference_id);
+      const list = existingRowsByRef.get(refKey) || [];
+      list.push(r);
+      existingRowsByRef.set(refKey, list);
+    }
+
+    const rowsToUpdate: Array<{ cfRow: any; sale: any }> = [];
+    if (hasDescriptionCol) {
+      for (const sale of validSales) {
+        const existingRows = existingRowsByRef.get(String(sale.id)) || [];
+        for (const cfRow of existingRows) {
+          if (needsPosDescriptionEnrichment(cfRow?.description)) {
+            rowsToUpdate.push({ cfRow, sale });
+          }
+        }
+      }
+    }
+
+    const salesToInsert = validSales.filter(
+      (sale: any) =>
+        Math.round(Number(sale?.paid_cash || 0)) > 0 &&
+        !existingRowsByRef.has(String(sale.id))
+    );
+
+    const skippedCount = Math.max(0, validSales.length - salesToInsert.length);
+    if (rowsToUpdate.length === 0 && salesToInsert.length === 0) {
+      return { insertedCount: 0, updatedCount: 0, skippedCount };
+    }
+
+    const memberIds = Array.from(
+      new Set(
+        [...rowsToUpdate.map((entry) => entry.sale), ...salesToInsert]
+          .filter((sale: any) => sale?.member_id && !sale?.anggota)
+          .map((sale: any) => String(sale.member_id))
+          .filter(Boolean)
+      )
+    );
+    const memberRows =
+      memberIds.length > 0
+        ? await safeFetchByIds<any>('anggota', 'id, nrp, nama', memberIds)
+        : [];
+    const memberMap = new Map<string, any>();
+    for (const m of memberRows) {
+      if (m?.id) memberMap.set(String(m.id), m);
+    }
+
+    const getSaleMember = (sale: any) => {
+      if (sale?.anggota && (sale.anggota.nrp || sale.anggota.nama)) {
+        return sale.anggota;
+      }
+      return sale?.member_id ? memberMap.get(String(sale.member_id)) : undefined;
+    };
+
+    const cfTable: any = supabase?.from?.('cash_flow');
+    let updatedCount = 0;
+    let insertedCount = 0;
+
+    if (cfTable && typeof cfTable.update === 'function') {
+      for (const { cfRow, sale } of rowsToUpdate) {
+        if (!cfRow?.id) continue;
+        const member = getSaleMember(sale);
+        const fullDescription = formatPosCashFlowDescription({
+          saleNumber:
+            sale?.sale_number || `POS-${String(sale.id).slice(0, 8).toUpperCase()}`,
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          amount: Math.round(
+            Number(cfRow?.amount || sale?.paid_cash || sale?.total_amount || 0)
+          ),
+        });
+        const updQ: any = cfTable.update({ description: fullDescription });
+        if (updQ && typeof updQ.eq === 'function') {
+          const updRes: any = await updQ.eq('id', cfRow.id);
+          if (!updRes?.error) {
+            updatedCount += 1;
+          }
+        }
+      }
+    }
+
+    if (cfTable && typeof cfTable.insert === 'function' && salesToInsert.length > 0) {
+      for (const sale of salesToInsert) {
+        const member = getSaleMember(sale);
+        const paidCash = Math.round(Number(sale?.paid_cash || 0));
+        if (paidCash <= 0) continue;
+        const fullDescription = formatPosCashFlowDescription({
+          saleNumber:
+            sale?.sale_number || `POS-${String(sale.id).slice(0, 8).toUpperCase()}`,
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          amount: paidCash,
+        });
+        let insRes: any = await cfTable.insert({
+          direction: 'in',
+          category: 'penjualan_tunai',
+          amount: paidCash,
+          reference_id: sale.id,
+          description: fullDescription,
+          created_at: sale?.created_at || new Date().toISOString(),
+        });
+        if (insRes?.error && isPostgrestColumnError(insRes.error)) {
+          insRes = await cfTable.insert({
+            direction: 'in',
+            category: 'penjualan_tunai',
+            amount: paidCash,
+            reference_id: sale.id,
+            created_at: sale?.created_at || new Date().toISOString(),
+          });
+        }
+        if (!insRes?.error) {
+          insertedCount += 1;
+        }
+      }
+    }
+
+    return { insertedCount, updatedCount, skippedCount };
+  } catch (err) {
+    console.warn('Warning syncPosCashSalesToCashFlow:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Melengkapi deskripsi baris mutasi `cash_flow` berkategori Penjualan POS yang
+ * kolom `description`-nya masih kosong, bernilai `'-'`, `'Penjualan Kasir Tunai'`,
+ * atau menggunakan istilah lama `"Pembelian Tunai"`.
+ */
+export async function enrichPosCashFlowDescriptions<
+  T extends {
+    id?: string;
+    kategori?: string;
+    category?: string;
+    deskripsi?: string;
+    description?: string | null;
+    reference_id?: string | null;
+    kas_masuk?: number;
+    amount?: number;
+  }
+>(rows: T[]): Promise<T[]> {
+  const needsEnrichment = (row: T): boolean => {
+    const category = row.kategori ?? row.category;
+    if (!isPosCashSaleCategory(category)) return false;
+    const rawDesc = row.deskripsi ?? row.description;
+    return needsPosDescriptionEnrichment(rawDesc);
+  };
+
+  const targetRows = rows.filter(needsEnrichment);
+  if (targetRows.length === 0) return rows;
+
+  try {
+    const saleIds = Array.from(
+      new Set(
+        targetRows
+          .map((r) => r.reference_id || r.id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+
+    const saleRows =
+      saleIds.length > 0
+        ? await safeFetchByIds<any>(
+            'sales',
+            'id, sale_number, member_id, paid_cash, total_amount',
+            saleIds
+          )
+        : [];
+    const saleMap = new Map<string, any>();
+    for (const s of saleRows) {
+      if (s?.id) saleMap.set(String(s.id), s);
+    }
+
+    const memberIds = Array.from(
+      new Set(saleRows.map((s: any) => String(s?.member_id || '')).filter(Boolean))
+    );
+    const memberRows =
+      memberIds.length > 0
+        ? await safeFetchByIds<any>('anggota', 'id, nrp, nama', memberIds)
+        : [];
+    const memberMap = new Map<string, any>();
+    for (const m of memberRows) {
+      if (m?.id) memberMap.set(String(m.id), m);
+    }
+
+    return rows.map((row) => {
+      if (!needsEnrichment(row)) return row;
+      const lookupId = String(row.reference_id || row.id || '');
+      const sale = lookupId ? saleMap.get(lookupId) : undefined;
+      const rawDesc = String(row.deskripsi ?? row.description ?? '').trim();
+      const rowAmount = Math.round(
+        Number(row.kas_masuk ?? row.amount ?? sale?.paid_cash ?? sale?.total_amount ?? 0)
+      );
+
+      let enrichedDesc: string;
+      if (sale) {
+        const member = sale.member_id ? memberMap.get(String(sale.member_id)) : undefined;
+        enrichedDesc = formatPosCashFlowDescription({
+          saleNumber:
+            sale.sale_number || `POS-${String(sale.id).slice(0, 8).toUpperCase()}`,
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          amount: rowAmount,
+        });
+      } else if (/pembelian[\s_]+tunai/i.test(rawDesc)) {
+        enrichedDesc = sanitizePosTerminology(rawDesc);
+      } else {
+        const fmtCash = new Intl.NumberFormat('id-ID').format(rowAmount);
+        enrichedDesc = `Penjualan Tunai (Rp ${fmtCash})`;
+      }
+
+      return {
+        ...row,
+        ...(row.deskripsi !== undefined ? { deskripsi: enrichedDesc } : {}),
+        ...(row.description !== undefined ? { description: enrichedDesc } : {}),
+      };
+    });
+  } catch (err) {
+    console.warn('Warning enrichPosCashFlowDescriptions:', err);
+    return rows;
   }
 }

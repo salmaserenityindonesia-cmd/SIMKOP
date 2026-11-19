@@ -802,5 +802,151 @@ describe('posCheckoutService', () => {
       expect(preSummarySpy).not.toHaveBeenCalled();
       expect(planSpy).not.toHaveBeenCalled();
     });
+
+    it('should write formatted "Penjualan Tunai (INV-...)" description on fallback client cash_flow insert for member and non-member', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function' },
+      });
+
+      const mockCashFlowInsert = vi.fn().mockResolvedValue({ error: null });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { id: 'sale-fb-desc-1' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sale_items') return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: { stock: 10 }, error: null }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'cash_flow') return { insert: mockCashFlowInsert };
+        return {};
+      });
+
+      const memberRes = await processCheckout({
+        memberId: 'mem-alif',
+        memberNrp: '00010062',
+        memberName: 'MOCH. ALIF NURSYARIFUDDIN',
+        cashierId: 'cashier-1',
+        cart: [{ id: 'prod-1', name: 'Barang A', qty: 1, price: 100000 }],
+        subtotal: 100000,
+        discount: 0,
+        totalAmount: 100000,
+        paidCash: 100000,
+        paidDeposit: 0,
+        paidCredit: 0,
+        paymentScheme: 'cash',
+      });
+
+      expect(memberRes.success).toBe(true);
+      expect(mockCashFlowInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          direction: 'in',
+          amount: 100000,
+          category: 'penjualan_tunai',
+          reference_id: 'sale-fb-desc-1',
+          description: expect.stringMatching(
+            /^Penjualan Tunai \(INV-\d+\) — 00010062 - MOCH\. ALIF NURSYARIFUDDIN \(Rp 100\.000\)$/
+          ),
+        })
+      );
+
+      mockCashFlowInsert.mockClear();
+      const guestRes = await processCheckout({
+        memberId: null,
+        cashierId: 'cashier-1',
+        cart: [{ id: 'prod-1', name: 'Barang B', qty: 1, price: 35000 }],
+        subtotal: 35000,
+        discount: 0,
+        totalAmount: 35000,
+        paidCash: 35000,
+        paidDeposit: 0,
+        paidCredit: 0,
+        paymentScheme: 'cash',
+      });
+
+      expect(guestRes.success).toBe(true);
+      expect(mockCashFlowInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          direction: 'in',
+          amount: 35000,
+          category: 'penjualan_tunai',
+          description: expect.stringMatching(
+            /^Penjualan Tunai \(INV-\d+\) — Pelanggan Umum \(Rp 35\.000\)$/
+          ),
+        })
+      );
+    });
+
+    it('should defensively update cash_flow description after RPC success when member lookup is resolved', async () => {
+      (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+        if (funcName === 'process_pos_checkout') {
+          return Promise.resolve({
+            data: {
+              success: true,
+              sale_id: 'sale-rpc-desc-1',
+              sale_number: params.p_sale_number,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const eqCategoryMock = vi.fn().mockResolvedValue({ error: null });
+      const eqRefMock = vi.fn().mockReturnValue({ eq: eqCategoryMock });
+      const cfUpdateMock = vi.fn().mockReturnValue({ eq: eqRefMock });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return { update: cfUpdateMock };
+        }
+        return {};
+      });
+
+      const res = await processCheckout({
+        memberId: 'mem-alif',
+        cashierId: 'cashier-1',
+        cart: [{ id: 'prod-1', name: 'Barang A', qty: 1, price: 100000 }],
+        subtotal: 100000,
+        discount: 0,
+        totalAmount: 100000,
+        paidCash: 100000,
+        paidDeposit: 0,
+        paidCredit: 0,
+        paymentScheme: 'cash',
+      });
+
+      expect(res.success).toBe(true);
+      expect(cfUpdateMock).toHaveBeenCalledWith({
+        description: `Penjualan Tunai (${res.saleNumber}) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 100.000)`,
+      });
+      expect(eqRefMock).toHaveBeenCalledWith('reference_id', 'sale-rpc-desc-1');
+      expect(eqCategoryMock).toHaveBeenCalledWith('category', 'penjualan_tunai');
+    });
   });
 });

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useContext } from 'react';
+import { useInRouterContext, useSearchParams } from 'react-router-dom';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
   Search,
@@ -13,6 +14,7 @@ import {
   X,
   Loader2,
   AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
 import {
@@ -22,6 +24,7 @@ import {
   bulkCheckAllLoansUpToCurrentMonth,
   BulkLoanProgress,
   BulkLoanResult,
+  GetLoanMatrixOptions,
   LoanMatrixMember,
   LoanMatrixSummary,
   MonthLoanCell,
@@ -129,6 +132,7 @@ export interface LoanMatrixProps {
   initialData?: LoanMatrixSummary | null;
   initialSelectedLoan?: { loanId: string; nrp: string; nama: string } | null;
   initialCutoffDate?: string | null;
+  initialSearch?: string;
   onYearChange?: (year: number) => void;
 }
 
@@ -152,11 +156,15 @@ export const loadAvailableYearsData = async (
 export const fetchLoanMatrixData = async (
   targetYear: number,
   setLoading: (l: boolean) => void,
-  setData: (d: LoanMatrixSummary | null) => void
+  setData: (d: LoanMatrixSummary | null) => void,
+  options?: GetLoanMatrixOptions
 ): Promise<LoanMatrixSummary | null> => {
   setLoading(true);
   try {
-    const result = await getLoanMatrix(targetYear);
+    const hasOptions = Boolean(options?.includeLoanSearch?.trim() || options?.includePaidOff);
+    const result = hasOptions
+      ? await getLoanMatrix(targetYear, options)
+      : await getLoanMatrix(targetYear);
     setData(result);
     return result;
   } catch (error) {
@@ -167,19 +175,27 @@ export const fetchLoanMatrixData = async (
   }
 };
 
-export const LoanMatrix: React.FC<LoanMatrixProps> = ({
+interface LoanMatrixInternalProps extends LoanMatrixProps {
+  urlSearchQuery?: string;
+  onClearUrlSearch?: () => void;
+}
+
+const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   initialYear,
   initialAvailableYears,
   initialData,
   initialSelectedLoan,
   initialCutoffDate,
+  initialSearch,
   onYearChange,
+  urlSearchQuery = '',
+  onClearUrlSearch,
 }) => {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState<number>(initialYear ?? currentYear);
   const [availableYears, setAvailableYears] = useState<number[]>(initialAvailableYears ?? [currentYear]);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID' | 'FROZEN'>('ALL');
+  const [search, setSearch] = useState(initialSearch ?? urlSearchQuery ?? '');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID' | 'FROZEN' | 'PAID'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
@@ -203,6 +219,23 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
   const visibleMonths = useMemo(() => {
     return MONTHS.map((label, idx) => ({ label, monthNum: idx + 1 }));
   }, []);
+
+  const matrixFetchOptions = useMemo<GetLoanMatrixOptions | undefined>(() => {
+    const trimmedUrlSearch = (urlSearchQuery || '').trim();
+    const includePaidOff = statusFilter === 'PAID';
+    if (!trimmedUrlSearch && !includePaidOff) return undefined;
+    return {
+      includeLoanSearch: trimmedUrlSearch || undefined,
+      includePaidOff: includePaidOff || undefined,
+    };
+  }, [urlSearchQuery, statusFilter]);
+
+  useEffect(() => {
+    if (urlSearchQuery) {
+      setSearch(urlSearchQuery);
+      setStatusFilter('ALL');
+    }
+  }, [urlSearchQuery]);
 
   const handleBulkCheckAll = async () => {
     setIsProcessingBulk(true);
@@ -239,7 +272,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         }
       }
 
-      await fetchLoanMatrixData(year, setLoading, setData);
+      await fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
     } catch (err: any) {
       console.error('Error during bulk check all loans:', err);
       if (feedback?.showToast) {
@@ -268,8 +301,8 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       skipInitialFetch.current = false;
       return;
     }
-    fetchLoanMatrixData(year, setLoading, setData);
-  }, [year]);
+    fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
+  }, [year, matrixFetchOptions]);
 
   const handleYearChange = (newYear: number) => {
     setYear(newYear);
@@ -289,6 +322,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
       const matchStatus = 
         statusFilter === 'ALL' ? true :
         statusFilter === 'ACTIVE' ? m.isLoanActive :
+        statusFilter === 'PAID' ? (!m.isLoanActive || m.status === 'completed' || m.status === 'paid_off') :
         statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
         statusFilter === 'FROZEN' ? (
           (m.membershipStatus || '').toUpperCase() === 'SUSPENDED' ||
@@ -419,6 +453,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             <input 
               type="text" 
               placeholder="Cari NRP atau Nama..."
+              title="Cari NRP, Nama, atau No. Pinjaman (LOAN-...)"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="pl-9 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
@@ -433,6 +468,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
             >
               <option value="ALL">Semua Status</option>
               <option value="ACTIVE">Pinjaman Aktif</option>
+              <option value="PAID">Lunas / Selesai</option>
               <option value="UNPAID">Ada Tunggakan</option>
               <option value="FROZEN">Dibekukan Sementara</option>
             </select>
@@ -528,6 +564,38 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
         </div>
       </div>
 
+      {/* Active URL Query Filter Banner */}
+      {urlSearchQuery && (
+        <div
+          data-testid="loan-matrix-url-filter-banner"
+          className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-indigo-900"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Search className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>Filter aktif dari referensi pinjaman:</span>
+            <span className="px-2 py-0.5 rounded-md bg-white border border-indigo-200 font-mono font-bold text-indigo-700">
+              {urlSearchQuery}
+            </span>
+            <span className="text-indigo-700/90">
+              (termasuk kontrak berstatus Lunas / Selesai)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch('');
+              setStatusFilter('ALL');
+              onClearUrlSearch?.();
+            }}
+            data-testid="reset-loan-matrix-url-filter-btn"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-semibold transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset Filter</span>
+          </button>
+        </div>
+      )}
+
       {/* Matrix Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto max-h-[600px]">
@@ -570,6 +638,10 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   const rowKey = row.id || row.loanId || `${row.memberId}-${row.loanNumber || row.loan_number || ''}`;
                   const targetLoanId = row.loanId || row.id || Object.values(row.months).find(m => m.loanId)?.loanId;
                   const tenorDisplay = row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || 0;
+                  const rowLoanNumber = row.loan_number || row.loanNumber || '';
+                  const isUrlMatchedRow =
+                    Boolean(urlSearchQuery) &&
+                    rowLoanNumber.toLowerCase().includes(urlSearchQuery.toLowerCase());
                   const {
                     isLoanCompleted,
                     hasDueSchedulesYTD,
@@ -578,8 +650,17 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                   } = getRowComplianceInfo(row, year);
 
                   return (
-                    <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-3 py-3 sticky left-0 bg-white group-hover:bg-slate-50 z-10 min-w-[185px] max-w-[205px] w-[195px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                    <tr
+                      key={rowKey}
+                      className={`border-b border-slate-100 transition-colors ${
+                        isUrlMatchedRow ? 'bg-indigo-50/40 hover:bg-indigo-50/60' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <td
+                        className={`px-3 py-3 sticky left-0 z-10 min-w-[185px] max-w-[205px] w-[195px] shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] ${
+                          isUrlMatchedRow ? 'bg-indigo-50' : 'bg-white group-hover:bg-slate-50'
+                        }`}
+                      >
                         <div className="font-semibold text-slate-800 truncate" title={row.anggota?.nama || row.nama}>
                           {row.anggota?.nama || row.nama}
                         </div>
@@ -607,12 +688,16 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
                             {row.loanTypeName || row.loan_types?.name || 'Pinjaman Reguler'}
                           </span>
-                          {(row.loan_number || row.loanNumber) && (
+                          {rowLoanNumber && (
                             <span
-                              className="text-[10px] font-mono text-slate-400 truncate"
-                              title={row.loan_number || row.loanNumber}
+                              className={
+                                isUrlMatchedRow
+                                  ? 'text-[10px] font-mono bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-bold truncate'
+                                  : 'text-[10px] font-mono text-slate-400 truncate'
+                              }
+                              title={rowLoanNumber}
                             >
-                              {row.loan_number || row.loanNumber}
+                              {rowLoanNumber}
                             </span>
                           )}
                         </div>
@@ -842,7 +927,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
           memberNrp={selectedLoan.nrp}
           memberName={selectedLoan.nama}
           onClose={() => setSelectedLoan(null)}
-          onSuccess={() => fetchLoanMatrixData(year, setLoading, setData)}
+          onSuccess={() => fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions)}
         />
       )}
 
@@ -969,7 +1054,7 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
                       onClick={async () => {
                         setShowCheckAllConfirmModal(false);
                         setBulkCheckSummary(null);
-                        await fetchLoanMatrixData(year, setLoading, setData);
+                        await fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
                       }}
                       className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-xl shadow-xs transition-colors cursor-pointer"
                       data-testid="finish-check-all-btn"
@@ -1030,4 +1115,32 @@ export const LoanMatrix: React.FC<LoanMatrixProps> = ({
     </div>
     </AdminLayout>
   );
+};
+
+const LoanMatrixWithRouter: React.FC<LoanMatrixProps> = (props) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSearchQuery = (searchParams.get('search') || searchParams.get('loan') || '').trim();
+
+  const handleClearUrlSearch = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('search');
+    next.delete('loan');
+    setSearchParams(next, { replace: true });
+  };
+
+  return (
+    <LoanMatrixContent
+      {...props}
+      urlSearchQuery={urlSearchQuery}
+      onClearUrlSearch={handleClearUrlSearch}
+    />
+  );
+};
+
+export const LoanMatrix: React.FC<LoanMatrixProps> = (props) => {
+  const inRouter = useInRouterContext();
+  if (inRouter) {
+    return <LoanMatrixWithRouter {...props} />;
+  }
+  return <LoanMatrixContent {...props} />;
 };

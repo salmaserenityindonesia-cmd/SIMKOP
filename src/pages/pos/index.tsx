@@ -355,6 +355,8 @@ export default function POSPage() {
     const cashierId = activeShift.cashier_id || currentCashier?.id || null;
     const res = await processCheckout({
       memberId: selectedMember?.id || null,
+      memberNrp: selectedMember?.nrp || null,
+      memberName: selectedMember?.nama || null,
       cashierId,
       shiftId: activeShift.id,
       cart,

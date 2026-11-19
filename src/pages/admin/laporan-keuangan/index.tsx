@@ -17,9 +17,15 @@ import {
 import {
   consolidateBulkLebaranCashFlow,
   enrichDepositCashFlowDescriptions,
+  enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   enrichWithdrawalCashFlowDescriptions,
+  syncPosCashSalesToCashFlow,
 } from '../../../services/cashFlowAuditService';
+import {
+  formatPosCashFlowDescription,
+  isPosCashSaleCategory,
+} from '../../../utils/posCashFlowFormat';
 import { syncMatrixDepositsToCashFlow } from '../../../services/savingsMatrixService';
 import {
   getOutstandingStoreCreditSummary,
@@ -92,6 +98,9 @@ const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   penjualan_tunai:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  PENJUALAN_TUNAI:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  PENJUALAN_POS:       { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  'Penjualan POS':     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
   SALDO_AWAL_SIMPANAN: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
   saldo_awal_simpanan: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
   PELUNASAN_BON_TOKO:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
@@ -125,16 +134,28 @@ export const KategoriBadge = ({ kategori }: { kategori: string }) => {
 
 // ─── Service Layer (Wave 2) ───────────────────────────────────────────────────
 
+const isMissingColumnErr = (err: any): boolean => {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    err.code === '42703' ||
+    err.code === 'PGRST204' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+};
+
 export async function getCashFlowReport(
   startDate: string,
   endDate: string,
   _unit: string
 ): Promise<CashFlowData> {
-  // Sinkronkan pelunasan bon toko historis, saldo awal cut-off, konsolidasi pencairan massal Lebaran, dan setoran matriks (idempoten)
+  // Sinkronkan pelunasan bon toko historis, saldo awal cut-off, konsolidasi pencairan massal Lebaran, setoran matriks, dan penjualan tunai POS (idempoten)
   await syncStoreCreditPaymentsToCashFlow().catch(() => {});
   await syncOpeningSavingsBalanceToCashFlow().catch(() => {});
   await consolidateBulkLebaranCashFlow().catch(() => {});
   await syncMatrixDepositsToCashFlow().catch(() => {});
+  await syncPosCashSalesToCashFlow().catch(() => {});
 
   // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
@@ -162,14 +183,25 @@ export async function getCashFlowReport(
 
   // Cross-check: also fetch sales.paid_cash for the period (retail inflow)
   // NOTE: actual column is 'sale_status' (enum), not 'status'
-  const { data: salesRows, error: salesErr } = await supabase
+  let salesQueryRes: any = await supabase
     .from('sales')
-    .select('id, created_at, paid_cash, total_amount')
+    .select('id, sale_number, member_id, created_at, paid_cash, total_amount')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
     .eq('sale_status', 'completed')
     .gt('paid_cash', 0);
-  if (salesErr) console.error('sales query error:', salesErr);
+
+  if (salesQueryRes?.error && isMissingColumnErr(salesQueryRes.error)) {
+    salesQueryRes = await supabase
+      .from('sales')
+      .select('id, created_at, paid_cash, total_amount')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate + 'T23:59:59')
+      .eq('sale_status', 'completed')
+      .gt('paid_cash', 0);
+  }
+  if (salesQueryRes?.error) console.error('sales query error:', salesQueryRes.error);
+  const salesRows = salesQueryRes?.data;
 
   const parseTimestamp = (raw?: string | null): number => {
     if (!raw) return 0;
@@ -213,18 +245,28 @@ export async function getCashFlowReport(
 
   // Add sales paid_cash if not already in cash_flow
   // (some systems record via POS directly into sales, not cash_flow)
-  const cfCategories = new Set((cfRows ?? []).map((r: any) => r.category));
-  if (!cfCategories.has('penjualan_tunai')) {
+  const posCfRows = (cfRows ?? []).filter((r: any) => isPosCashSaleCategory(r.category));
+  const hasPosCfWithoutRef = posCfRows.some((r: any) => !r.reference_id);
+  const existingPosRefIds = new Set(
+    posCfRows.map((r: any) => r.reference_id).filter(Boolean).map(String)
+  );
+  if (!hasPosCfWithoutRef) {
     for (const s of (salesRows ?? [])) {
       const masuk = Number(s.paid_cash ?? 0);
-      if (masuk > 0) {
+      if (masuk > 0 && !existingPosRefIds.has(String(s.id))) {
         taggedRows.push({
           ts: parseTimestamp(s.created_at),
           row: {
             id: s.id,
             tanggal: new Date(s.created_at).toLocaleDateString('id-ID'),
             referensi: `POS-${s.id.slice(0, 8).toUpperCase()}`,
-            deskripsi: 'Penjualan Kasir Tunai',
+            deskripsi:
+              !s.member_id && s.sale_number
+                ? formatPosCashFlowDescription({
+                    saleNumber: s.sale_number,
+                    amount: masuk,
+                  })
+                : '-',
             kategori: 'penjualan_tunai',
             unit_usaha: 'Retail Toko',
             kas_masuk: masuk,
@@ -254,8 +296,11 @@ export async function getCashFlowReport(
   const enrichedDeposits = await enrichDepositCashFlowDescriptions(enrichedWithdrawals).catch(
     () => enrichedWithdrawals
   );
-  const enrichedRows = await enrichStoreCreditCashFlowDescriptions(enrichedDeposits).catch(
+  const enrichedStoreCredits = await enrichStoreCreditCashFlowDescriptions(enrichedDeposits).catch(
     () => enrichedDeposits
+  );
+  const enrichedRows = await enrichPosCashFlowDescriptions(enrichedStoreCredits).catch(
+    () => enrichedStoreCredits
   );
 
   const inflowTotal  = enrichedRows.reduce((s, r) => s + r.kas_masuk, 0);
@@ -263,17 +308,6 @@ export async function getCashFlowReport(
 
   return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: enrichedRows };
 }
-
-const isMissingColumnErr = (err: any): boolean => {
-  if (!err) return false;
-  const msg = String(err.message || '').toLowerCase();
-  return (
-    err.code === '42703' ||
-    err.code === 'PGRST204' ||
-    msg.includes('column') ||
-    msg.includes('schema cache')
-  );
-};
 
 const classifyPosPaymentSource = (
   sale: any

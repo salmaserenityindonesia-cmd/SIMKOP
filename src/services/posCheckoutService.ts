@@ -5,6 +5,7 @@ import {
   getMemberUnpaidStoreCreditSummary,
   createOrTakeoverStoreCreditPlan
 } from './storeCreditLedgerService';
+import { formatPosCashFlowDescription } from '../utils/posCashFlowFormat';
 import {
   PosCheckoutItem,
   PosCheckoutRpcPayload,
@@ -14,6 +15,8 @@ import {
 
 export interface CheckoutPayload {
   memberId: string | null;
+  memberNrp?: string | null;
+  memberName?: string | null;
   cashierId: string | null;
   shiftId?: string | null;
   cart: any[];
@@ -25,6 +28,59 @@ export interface CheckoutPayload {
   paidCredit: number;
   paymentScheme: string; // 'cash' | 'split' | 'store_credit'
   storeCreditTenor?: number;
+}
+
+function isPostgrestColumnError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.code === 'PGRST204' ||
+    err?.code === '42703' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+}
+
+async function resolveBuyerIdentity(
+  memberId: string | null,
+  memberNrp?: string | null,
+  memberName?: string | null
+): Promise<{ nrp: string | null; nama: string | null }> {
+  if (!memberId) {
+    return { nrp: null, nama: null };
+  }
+  const cleanNrp = memberNrp ? String(memberNrp).trim() : '';
+  const cleanNama = memberName ? String(memberName).trim() : '';
+  if (cleanNrp && cleanNama) {
+    return { nrp: cleanNrp, nama: cleanNama };
+  }
+
+  try {
+    const anggotaTable: any = supabase?.from?.('anggota');
+    if (anggotaTable && typeof anggotaTable.select === 'function') {
+      const selQ: any = anggotaTable.select('nrp, nama');
+      if (selQ && typeof selQ.eq === 'function') {
+        const eqQ: any = selQ.eq('id', memberId);
+        const res: any =
+          eqQ && typeof eqQ.maybeSingle === 'function'
+            ? await eqQ.maybeSingle()
+            : eqQ && typeof eqQ.single === 'function'
+            ? await eqQ.single()
+            : await eqQ;
+        const row = Array.isArray(res?.data) ? res.data[0] : res?.data;
+        return {
+          nrp: cleanNrp || (row?.nrp ? String(row.nrp).trim() : null),
+          nama: cleanNama || (row?.nama ? String(row.nama).trim() : null),
+        };
+      }
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+
+  return {
+    nrp: cleanNrp || null,
+    nama: cleanNama || null,
+  };
 }
 
 export const processCheckout = async (payload: CheckoutPayload): Promise<CheckoutResult> => {
@@ -161,6 +217,35 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
     if (rpcExecuted && rpcResult) {
       resolvedSaleId = rpcResult.sale_id || '';
       resolvedSaleNumber = rpcResult.sale_number || saleNumber;
+
+      if (effectivePaidCash > 0 && resolvedSaleId) {
+        try {
+          const cfTable: any = supabase?.from?.('cash_flow');
+          if (cfTable && typeof cfTable.update === 'function') {
+            const buyer = await resolveBuyerIdentity(
+              payload.memberId,
+              payload.memberNrp,
+              payload.memberName
+            );
+            const cashFlowDescription = formatPosCashFlowDescription({
+              saleNumber: resolvedSaleNumber,
+              memberNrp: buyer.nrp,
+              memberName: buyer.nama,
+              amount: effectivePaidCash
+            });
+            let updQ: any = cfTable.update({ description: cashFlowDescription });
+            if (updQ && typeof updQ.eq === 'function') {
+              updQ = updQ.eq('reference_id', resolvedSaleId);
+              if (updQ && typeof updQ.eq === 'function') {
+                updQ = updQ.eq('category', 'penjualan_tunai');
+              }
+              await updQ;
+            }
+          }
+        } catch {
+          // Non-blocking enrichment sync for DBs without migration 054
+        }
+      }
     } else {
       // 4. Fallback: Sequential client-side mutations (for environments without process_pos_checkout RPC)
       const { data: saleData, error: saleError } = await supabase
@@ -296,13 +381,36 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
 
       // Insert into cash_flow if cash used
       if (effectivePaidCash > 0) {
-         const { error: cfError } = await supabase.from('cash_flow').insert({
+        const cfTable: any = supabase?.from?.('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          const buyer = await resolveBuyerIdentity(
+            payload.memberId,
+            payload.memberNrp,
+            payload.memberName
+          );
+          const cashFlowDescription = formatPosCashFlowDescription({
+            saleNumber,
+            memberNrp: buyer.nrp,
+            memberName: buyer.nama,
+            amount: effectivePaidCash
+          });
+          let cfRes = await cfTable.insert({
             direction: 'in',
             amount: effectivePaidCash,
             category: 'penjualan_tunai',
-            reference_id: saleId
-         });
-         if (cfError) console.error('cash_flow insert error:', cfError);
+            reference_id: saleId,
+            description: cashFlowDescription
+          });
+          if (cfRes?.error && isPostgrestColumnError(cfRes.error)) {
+            cfRes = await cfTable.insert({
+              direction: 'in',
+              amount: effectivePaidCash,
+              category: 'penjualan_tunai',
+              reference_id: saleId
+            });
+          }
+          if (cfRes?.error) console.error('cash_flow insert error:', cfRes.error);
+        }
       }
     }
 

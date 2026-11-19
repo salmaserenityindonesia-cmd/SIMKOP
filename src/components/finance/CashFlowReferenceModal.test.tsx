@@ -146,6 +146,55 @@ describe('CashFlowReferenceModal Component', () => {
     expect(posHtml).toContain('POS-20261119-077');
     expect(posHtml).toContain('Minyak Goreng 2L');
     expect(posHtml).toContain('Budi Santoso');
+    expect(posHtml).toContain('Kategori: Penjualan POS');
+    expect(posHtml).toContain('Skema: Penjualan Tunai');
+    expect(posHtml).not.toMatch(/pembelian tunai/i);
+
+    const splitGuestBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'pos_sale',
+      journal: {
+        id: 'cf-pos-split',
+        refCode: 'CF-POS22222',
+        category: 'penjualan_tunai',
+        direction: 'in',
+        amount: 40000,
+        description: 'Penjualan Tunai (INV-1795078449999) — Pelanggan Umum (Rp 40.000)',
+        unitUsaha: 'Retail Toko',
+        referenceId: 'sale-split',
+        createdAt: '2026-11-19T09:00:00.000Z',
+      },
+      posSale: {
+        saleId: 'sale-split',
+        saleNumber: 'INV-1795078449999',
+        createdAt: '2026-11-19T09:00:00.000Z',
+        paymentScheme: 'split',
+        paidCash: 40000,
+        paidDeposit: 60000,
+        paidCredit: 0,
+        subtotal: 100000,
+        discount: 0,
+        totalAmount: 100000,
+        member: null,
+        items: [],
+      },
+    };
+    const splitGuestHtml = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={{
+          ...baseOpeningItem,
+          id: 'cf-pos-split',
+          referensi: 'CF-POS22222',
+          kategori: 'penjualan_tunai',
+          kas_masuk: 40000,
+        }}
+        onClose={() => {}}
+        initialBreakdown={splitGuestBreakdown}
+      />
+    );
+    expect(splitGuestHtml).toContain('Skema: Penjualan Campuran');
+    expect(splitGuestHtml).toContain('Pelanggan Umum');
+    expect(splitGuestHtml).not.toContain('Pembeli Umum / Tunai');
+    expect(splitGuestHtml).not.toMatch(/pembelian tunai/i);
 
     const bonBreakdown: CashFlowReferenceBreakdown = {
       kind: 'store_credit_payment',
