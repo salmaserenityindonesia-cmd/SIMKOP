@@ -144,5 +144,133 @@ describe('savingsWithdrawalService', () => {
       })
     ).rejects.toThrow('Saldo tidak mencukupi untuk penarikan');
   });
+
+  it('writes rich individual withdrawal description to cash_flow on RPC path and resolves missing NRP/type from DB', async () => {
+    (supabase.rpc as any).mockResolvedValue({
+      data: { success: true, transaction_id: 'tx-atomic-leb' },
+      error: null
+    });
+
+    let updatedCashFlowPayload: any = null;
+    let updatedCashFlowEqVal: string | null = null;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'member_deposits') {
+        return createChainMock({
+          id: 'md-leb-01',
+          member_id: 'mem-1',
+          deposit_type_id: 'dt-leb'
+        });
+      }
+      if (table === 'anggota') {
+        return createChainMock({ id: 'mem-1', nrp: '88010001', nama: 'Wawan Gunawan' });
+      }
+      if (table === 'deposit_types') {
+        return createChainMock({
+          id: 'dt-leb',
+          code: 'LEBARAN',
+          name: 'Simpanan Hari Raya (Lebaran)'
+        });
+      }
+      if (table === 'cash_flow') {
+        return {
+          update: vi.fn((payload: any) => {
+            updatedCashFlowPayload = payload;
+            return {
+              eq: vi.fn((_col: string, val: string) => {
+                updatedCashFlowEqVal = val;
+                return Promise.resolve({ data: [], error: null });
+              })
+            };
+          })
+        };
+      }
+      return createChainMock([]);
+    });
+
+    await withdrawSavings({
+      member_deposit_id: 'md-leb-01',
+      amount: 1500000,
+      payment_method: 'transfer',
+      reference_no: 'KW-WD-WAWAN-03'
+    });
+
+    expect(updatedCashFlowEqVal).toBe('tx-atomic-leb');
+    expect(updatedCashFlowPayload).toEqual({
+      description:
+        'Pencairan Simpanan Hari Raya (Lebaran) (Personal) — 88010001 - Wawan Gunawan (Rp 1.500.000)'
+    });
+  });
+
+  it('writes formatted description on manual fallback and retries without description on PGRST204 error', async () => {
+    (supabase.rpc as any).mockResolvedValue({
+      data: null,
+      error: { message: 'RPC not found' }
+    });
+
+    const cashFlowInserts: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() =>
+              Promise.resolve({
+                data: [{ amount: 2000000, transaction_type: 'deposit' }],
+                error: null
+              })
+            )
+          })),
+          insert: vi.fn((rows: any[]) => ({
+            select: vi.fn(() => ({
+              single: vi.fn(() =>
+                Promise.resolve({ data: { id: 'tx-manual-wajib', ...rows[0] }, error: null })
+              )
+            }))
+          }))
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          insert: vi.fn((rows: any[]) => {
+            cashFlowInserts.push(rows[0]);
+            if (cashFlowInserts.length === 1) {
+              return Promise.resolve({
+                data: null,
+                error: { code: 'PGRST204', message: "Could not find the 'description' column" }
+              });
+            }
+            return Promise.resolve({ data: rows, error: null });
+          })
+        };
+      }
+      return createChainMock([]);
+    });
+
+    await withdrawSavings({
+      member_deposit_id: 'md-wajib-01',
+      amount: 500000,
+      payment_method: 'tunai',
+      jenisSimpananLabel: 'Simpanan Wajib',
+      depositTypeCode: 'SW',
+      namaAnggota: 'Budi Santoso',
+      nrpAnggota: '88010001'
+    });
+
+    expect(cashFlowInserts).toHaveLength(2);
+    expect(cashFlowInserts[0]).toMatchObject({
+      direction: 'out',
+      category: 'penarikan_simpanan',
+      amount: 500000,
+      reference_id: 'tx-manual-wajib',
+      description: 'Pencairan Simpanan Wajib — 88010001 - Budi Santoso (Rp 500.000)'
+    });
+    expect(cashFlowInserts[1]).toEqual({
+      direction: 'out',
+      category: 'penarikan_simpanan',
+      amount: 500000,
+      reference_id: 'tx-manual-wajib'
+    });
+  });
 });
 

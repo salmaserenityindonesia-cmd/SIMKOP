@@ -455,6 +455,271 @@ describe('bulkWithdrawalService', () => {
         approveAndExecuteDisbursement('cycle-02', 'admin-id')
       ).rejects.toThrow('tidak dapat dieksekusi karena berstatus COMPLETED');
     });
+
+    it('inserts exactly 1 aggregate cash_flow row with descriptive summary in client-side fallback for multiple members', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: null,
+        error: { message: 'function execute_bulk_lebaran_disbursement does not exist' }
+      });
+
+      const mockCycle = {
+        id: 'cycle-bulk-2',
+        cycle_name: 'Pencairan THR 2026',
+        cut_off_date: '2026-03-20T00:00:00Z',
+        status: 'DRAFT'
+      };
+
+      const mockDepositTypes = [{ id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' }];
+      const mockMemberDeposits = [
+        { id: 'md-01', member_id: 'mem-01', deposit_type_id: 'dt-lebaran' },
+        { id: 'md-02', member_id: 'mem-02', deposit_type_id: 'dt-lebaran' }
+      ];
+      const mockAnggota = [
+        { id: 'mem-01', nrp: '111111', nama: 'Agus', pangkat: 'Serka', bank_account_number: '111', status: 'aktif' },
+        { id: 'mem-02', nrp: '222222', nama: 'Budi', pangkat: 'Kopda', bank_account_number: '222', status: 'aktif' }
+      ];
+      const mockTxs = [
+        { member_deposit_id: 'md-01', amount: 1000000, transaction_type: 'deposit' },
+        { member_deposit_id: 'md-02', amount: 2000000, transaction_type: 'deposit' }
+      ];
+
+      const cashFlowInserts: any[] = [];
+      let txCounter = 0;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(() => Promise.resolve({ data: mockCycle, error: null })),
+                single: vi.fn(() => Promise.resolve({ data: mockCycle, error: null }))
+              }))
+            })),
+            update: vi.fn((payload: any) => ({
+              eq: vi.fn(() => Promise.resolve({ data: { ...mockCycle, ...payload }, error: null }))
+            }))
+          };
+        }
+        if (table === 'deposit_types') return createMockChain(mockDepositTypes);
+        if (table === 'member_deposits') return createMockChain(mockMemberDeposits);
+        if (table === 'anggota') return createMockChain(mockAnggota);
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => Promise.resolve({ data: mockTxs, error: null }))
+            })),
+            insert: vi.fn((rows: any[]) => ({
+              select: vi.fn(() => ({
+                single: vi.fn(() =>
+                  Promise.resolve({ data: { id: `tx-bulk-${++txCounter}`, ...rows[0] }, error: null })
+                )
+              }))
+            }))
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              cashFlowInserts.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            })
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-bulk-2', 'admin-1');
+      expect(res.executionMode).toBe('client_fallback');
+      expect(res.totalMembers).toBe(2);
+      expect(res.totalAmount).toBe(3000000);
+
+      // Must insert exactly ONE aggregate cash_flow row, not 2
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toMatchObject({
+        direction: 'out',
+        category: 'penarikan_simpanan',
+        amount: 3000000,
+        reference_id: 'cycle-bulk-2',
+        description: 'Pencairan Massal Simpanan Lebaran (Pencairan THR 2026) — 2 Anggota (Rp 3.000.000)'
+      });
+    });
+
+    it('consolidates legacy per-member cash_flow rows into 1 aggregate row on RPC success without double counting', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: {
+          success: true,
+          cycle_id: 'cycle-rpc-1',
+          cycle_name: 'THR Idul Fitri 2026',
+          total_members: 2,
+          total_amount: 3500000
+        },
+        error: null
+      });
+
+      const deletedRefIds: string[] = [];
+      const cashFlowInserts: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(() =>
+                  Promise.resolve({ data: { id: 'cycle-rpc-1', cycle_name: 'THR Idul Fitri 2026' }, error: null })
+                )
+              }))
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ data: null, error: null }))
+            }))
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn(() => {
+              const chain: any = {
+                eq: vi.fn(() => chain),
+                then: (onRes: any, onRej: any) =>
+                  Promise.resolve({
+                    data: [
+                      { id: 'tx-m1', description: 'Pencairan Massal Simpanan Lebaran - THR Idul Fitri 2026' },
+                      { id: 'tx-m2', description: 'Pencairan Massal Simpanan Lebaran - THR Idul Fitri 2026' }
+                    ],
+                    error: null
+                  }).then(onRes, onRej)
+              };
+              return chain;
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ data: [], error: null })),
+              in: vi.fn((_col: string, ids: string[]) =>
+                Promise.resolve({
+                  data: ids.map((id) => ({ id: `cf-${id}`, reference_id: id })),
+                  error: null
+                })
+              )
+            })),
+            delete: vi.fn(() => ({
+              in: vi.fn((_col: string, ids: string[]) => {
+                deletedRefIds.push(...ids);
+                return Promise.resolve({ data: null, error: null });
+              })
+            })),
+            insert: vi.fn((rows: any[]) => {
+              cashFlowInserts.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            })
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-rpc-1', 'admin-1');
+      expect(res.executionMode).toBe('rpc');
+      expect(deletedRefIds).toEqual(['tx-m1', 'tx-m2']);
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toMatchObject({
+        direction: 'out',
+        category: 'penarikan_simpanan',
+        amount: 3500000,
+        reference_id: 'cycle-rpc-1',
+        description: 'Pencairan Massal Simpanan Lebaran (THR Idul Fitri 2026) — 2 Anggota (Rp 3.500.000)'
+      });
+    });
+
+    it('falls back to deposit_transactions query without transaction_date when UTC date filter returns empty on RPC success', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: {
+          success: true,
+          cycle_id: 'cycle-rpc-tz',
+          cycle_name: 'Pencairan THR Idul Fitri 2026',
+          total_members: 2,
+          total_amount: 4800000
+        },
+        error: null
+      });
+
+      const deletedRefIds: string[] = [];
+      const cashFlowInserts: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(() =>
+                  Promise.resolve({ data: { id: 'cycle-rpc-tz', cycle_name: 'Pencairan THR Idul Fitri 2026' }, error: null })
+                )
+              }))
+            })),
+            update: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ data: null, error: null }))
+            }))
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn(() => {
+              let hasDateFilter = false;
+              const chain: any = {
+                eq: vi.fn((col: string) => {
+                  if (col === 'transaction_date') hasDateFilter = true;
+                  return chain;
+                }),
+                then: (onRes: any, onRej: any) =>
+                  Promise.resolve({
+                    data: hasDateFilter
+                      ? []
+                      : [
+                          { id: 'tx-tz-1', description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026' },
+                          { id: 'tx-tz-2', description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026' }
+                        ],
+                    error: null
+                  }).then(onRes, onRej)
+              };
+              return chain;
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ data: [], error: null })),
+              in: vi.fn((_col: string, ids: string[]) =>
+                Promise.resolve({
+                  data: ids.map((id) => ({ id: `cf-${id}`, reference_id: id })),
+                  error: null
+                })
+              )
+            })),
+            delete: vi.fn(() => ({
+              in: vi.fn((_col: string, ids: string[]) => {
+                deletedRefIds.push(...ids);
+                return Promise.resolve({ data: null, error: null });
+              })
+            })),
+            insert: vi.fn((rows: any[]) => {
+              cashFlowInserts.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            })
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-rpc-tz', 'admin-1');
+      expect(res.executionMode).toBe('rpc');
+      expect(deletedRefIds).toEqual(['tx-tz-1', 'tx-tz-2']);
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toMatchObject({
+        amount: 4800000,
+        reference_id: 'cycle-rpc-tz'
+      });
+    });
   });
 
   describe('rejectDisbursementDraft', () => {

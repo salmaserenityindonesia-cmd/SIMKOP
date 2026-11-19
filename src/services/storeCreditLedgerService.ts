@@ -122,21 +122,112 @@ export const sanitizeNumber = (val: any, fallback = 0): number => {
   return isNaN(num) ? fallback : num;
 };
 
+export interface OutstandingStoreCreditSummary {
+  totalOutstandingReceivable: number;
+  activeDebtorsCount: number;
+  totalCreditSales: number;
+  totalRepaid: number;
+}
+
+export function formatStoreCreditPaymentMethodLabel(method?: string | null): string {
+  const raw = String(method || '').trim();
+  const norm = raw.toUpperCase().replace(/[\s-]+/g, '_');
+  if (norm === 'PAYROLL_DEDUCTION' || norm === 'POTONG_GAJI') return 'Potong Gaji';
+  if (norm === 'TRANSFER' || norm === 'TRANSFER_BANK') return 'Transfer Bank';
+  if (norm === 'TUNAI' || norm === 'CASH' || norm === 'TUNAI_KASIR') return 'Tunai Kasir';
+  return raw || 'Potong Gaji';
+}
+
+export function inferStoreCreditPaymentMethod(
+  method?: string | null,
+  notes?: string | null
+): 'potong_gaji' | 'tunai' | 'transfer' {
+  const raw = String(method || '').trim().toLowerCase();
+  if (raw === 'tunai' || raw === 'cash' || raw.includes('tunai')) return 'tunai';
+  if (raw === 'transfer' || raw === 'transfer_bank' || raw.includes('transfer')) return 'transfer';
+  if (raw === 'potong_gaji' || raw === 'payroll_deduction' || raw.includes('potong')) {
+    return 'potong_gaji';
+  }
+
+  const noteLower = String(notes || '').toLowerCase();
+  if (noteLower.includes('[tunai]') || noteLower.includes('tunai')) return 'tunai';
+  if (noteLower.includes('[transfer]') || noteLower.includes('transfer')) return 'transfer';
+  return 'potong_gaji';
+}
+
+export function formatStoreCreditCashFlowDescription(params: {
+  paymentMethod?: string | null;
+  receiptNumber?: string | null;
+  memberNrp?: string | null;
+  memberName?: string | null;
+  paidAmount: number;
+  remainingDebt?: number | null;
+}): string {
+  const fmtPaid = new Intl.NumberFormat('id-ID').format(Math.round(params.paidAmount));
+  const methodLabel = formatStoreCreditPaymentMethodLabel(params.paymentMethod);
+  const receiptTag = params.receiptNumber ? ` • ${params.receiptNumber}` : '';
+  const nrp = String(params.memberNrp || '').trim();
+  const nama = String(params.memberName || '').trim();
+  const hasNrp = nrp !== '' && nrp !== '-';
+  const hasNama = nama !== '' && nama !== '-';
+  const memberSegment =
+    hasNrp && hasNama
+      ? ` — ${nrp} - ${nama}`
+      : hasNama
+      ? ` — ${nama}`
+      : hasNrp
+      ? ` — ${nrp}`
+      : '';
+  const remSegment =
+    typeof params.remainingDebt === 'number' && !isNaN(params.remainingDebt)
+      ? ` (Sisa Piutang: Rp ${new Intl.NumberFormat('id-ID').format(Math.max(0, Math.round(params.remainingDebt)))})`
+      : '';
+  return `Pelunasan Bon Toko (${methodLabel}${receiptTag})${memberSegment} | Piutang -Rp ${fmtPaid}${remSegment}`;
+}
+
+async function fetchPagedWithBuilder<T = any>(
+  buildQuery: () => any
+): Promise<{ data: T[]; error: any }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let offset = 0;
+
+  while (true) {
+    const q = buildQuery();
+    if (!q) return { data: [], error: null };
+
+    if (typeof q.range === 'function') {
+      const res = await q.range(offset, offset + PAGE_SIZE - 1);
+      if (res?.error) return { data: allRows, error: res.error };
+      const batch = Array.isArray(res?.data) ? res.data : [];
+      allRows.push(...batch);
+      if (batch.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    } else {
+      const res = await q;
+      if (res?.error) return { data: [], error: res.error };
+      return { data: Array.isArray(res?.data) ? res.data : [], error: null };
+    }
+  }
+  return { data: allRows, error: null };
+}
+
 /**
  * 1. Mengambil ringkasan metrik global Piutang Bon Toko
  */
 export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
   try {
     // 1. Kueri penjualan dengan paid_credit > 0
-    let salesQuery: any = supabase
-      .from('sales')
-      .select('id, member_id, paid_credit, sale_status');
+    const { data: rawSales, error: salesError } = await fetchPagedWithBuilder<any>(() => {
+      const salesTable: any = supabase.from('sales');
+      if (!salesTable || typeof salesTable.select !== 'function') return null;
+      let salesQuery: any = salesTable.select('id, member_id, paid_credit, sale_status');
+      if (salesQuery && typeof salesQuery.gt === 'function') {
+        salesQuery = salesQuery.gt('paid_credit', 0);
+      }
+      return salesQuery;
+    });
 
-    if (salesQuery && typeof salesQuery.gt === 'function') {
-      salesQuery = salesQuery.gt('paid_credit', 0);
-    }
-
-    const { data: rawSales, error: salesError } = await salesQuery;
     if (salesError) {
       console.warn('Gagal memuat data sales untuk summary bon:', salesError.message);
     }
@@ -149,9 +240,11 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
     // 2. Kueri riwayat pelunasan dari store_credit_payments
     let payments: any[] = [];
     try {
-      const { data: rawPayments, error: payError } = await supabase
-        .from('store_credit_payments')
-        .select('id, sale_id, amount');
+      const { data: rawPayments, error: payError } = await fetchPagedWithBuilder<any>(() => {
+        const payTable: any = supabase.from('store_credit_payments');
+        if (!payTable || typeof payTable.select !== 'function') return null;
+        return payTable.select('id, sale_id, amount');
+      });
 
       if (!payError && rawPayments) {
         payments = rawPayments;
@@ -207,6 +300,16 @@ export async function getStoreCreditSummary(): Promise<StoreCreditSummary> {
       totalTransactions: 0
     };
   }
+}
+
+export async function getOutstandingStoreCreditSummary(): Promise<OutstandingStoreCreditSummary> {
+  const summary = await getStoreCreditSummary();
+  return {
+    totalOutstandingReceivable: summary.outstandingDebt,
+    activeDebtorsCount: summary.activeDebtorCount,
+    totalCreditSales: summary.totalCreditSales,
+    totalRepaid: summary.totalPaid,
+  };
 }
 
 /**
@@ -562,6 +665,18 @@ export async function getStoreCreditLedger(
   }
 }
 
+function isStoreCreditPostgrestColumnError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+}
+
 /**
  * Helper internal untuk mencatat Kas Masuk (`direction = 'in'`) ke `public.cash_flow`
  * secara idempoten berdasarkan `reference_id = paymentId`.
@@ -574,6 +689,8 @@ async function recordStoreCreditCashIn(params: {
   receiptNumber: string;
   paymentMethod?: string;
   notes?: string;
+  previousDebt?: number | null;
+  remainingDebt?: number | null;
   userId?: string | null;
   createdAt?: string;
 }) {
@@ -593,23 +710,52 @@ async function recordStoreCreditCashIn(params: {
     if (existingCf) return;
   }
 
-  const memberInfo = params.memberName
-    ? ` [${params.memberName}${params.memberNrp ? ' - ' + params.memberNrp : ''}]`
-    : '';
-  const methodLabel = params.paymentMethod ? ` (${params.paymentMethod})` : '';
-  const desc = `Pelunasan Bon Toko ${params.receiptNumber}${methodLabel}${memberInfo}${
-    params.notes ? ' - ' + params.notes : ''
-  }`;
+  const desc = formatStoreCreditCashFlowDescription({
+    paymentMethod: params.paymentMethod,
+    receiptNumber: params.receiptNumber,
+    memberNrp: params.memberNrp,
+    memberName: params.memberName,
+    paidAmount: nominal,
+    remainingDebt: params.remainingDebt,
+  });
 
-  const { error: cfError } = await cfTable.insert({
+  const createdAt = params.createdAt || new Date().toISOString();
+  const fullPayload = {
     direction: 'in',
     category: 'PELUNASAN_BON_TOKO',
     amount: nominal,
     description: desc,
     reference_id: params.paymentId,
     created_by: params.userId || null,
-    created_at: params.createdAt || new Date().toISOString(),
-  });
+    created_at: createdAt,
+  };
+
+  let { error: cfError } = await cfTable.insert(fullPayload);
+
+  if (cfError && isStoreCreditPostgrestColumnError(cfError)) {
+    const fallback1 = {
+      direction: 'in',
+      category: 'PELUNASAN_BON_TOKO',
+      amount: nominal,
+      description: desc,
+      reference_id: params.paymentId,
+      created_at: createdAt,
+    };
+    const res1 = await cfTable.insert(fallback1);
+    cfError = res1?.error ?? null;
+
+    if (cfError && isStoreCreditPostgrestColumnError(cfError)) {
+      const fallback2 = {
+        direction: 'in',
+        category: 'PELUNASAN_BON_TOKO',
+        amount: nominal,
+        reference_id: params.paymentId,
+        created_at: createdAt,
+      };
+      const res2 = await cfTable.insert(fallback2);
+      cfError = res2?.error ?? null;
+    }
+  }
 
   if (cfError) {
     console.error('Gagal mencatat pelunasan bon ke cash_flow:', cfError);
@@ -661,17 +807,19 @@ export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ s
     );
     if (unrecorded.length === 0) return { syncedCount: 0 };
 
-    // Ambil relasi sales -> anggota untuk memperkaya deskripsi kas masuk
-    const saleIds = Array.from(new Set(unrecorded.map((p: any) => p.sale_id).filter(Boolean)));
+    // Ambil relasi sales -> anggota untuk memperkaya deskripsi kas masuk & estimasi sisa piutang
+    const allSaleIds = Array.from(new Set(payments.map((p: any) => p.sale_id).filter(Boolean)));
     const saleMemberMap = new Map<string, string>();
+    const memberSalesCreditMap = new Map<string, number>();
+    const memberHasCreditAmounts = new Set<string>();
     const memberMap = new Map<string, { nama?: string; nrp?: string }>();
 
-    if (saleIds.length > 0) {
+    if (allSaleIds.length > 0) {
       const salesTable: any = supabase.from('sales');
       if (salesTable && typeof salesTable.select === 'function') {
-        let sQuery = salesTable.select('id, member_id');
+        let sQuery = salesTable.select('id, member_id, paid_credit, created_at, sale_status');
         if (typeof sQuery?.in === 'function') {
-          sQuery = sQuery.in('id', saleIds);
+          sQuery = sQuery.in('id', allSaleIds);
         }
         const { data: salesRows } = await sQuery;
         const memberIds = new Set<string>();
@@ -679,6 +827,13 @@ export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ s
           if (s.id && s.member_id) {
             saleMemberMap.set(s.id, s.member_id);
             memberIds.add(s.member_id);
+            if (s.paid_credit !== undefined && s.paid_credit !== null) {
+              memberHasCreditAmounts.add(s.member_id);
+              memberSalesCreditMap.set(
+                s.member_id,
+                (memberSalesCreditMap.get(s.member_id) || 0) + sanitizeNumber(s.paid_credit)
+              );
+            }
           }
         });
 
@@ -698,11 +853,35 @@ export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ s
       }
     }
 
+    // Hitung sisa piutang berjalan per anggota secara kronologis untuk pembayaran yang belum tercatat
+    const sortedPayments = [...payments].sort((a: any, b: any) => {
+      const ta = new Date(a.created_at || a.payment_date || 0).getTime();
+      const tb = new Date(b.created_at || b.payment_date || 0).getTime();
+      return ta - tb;
+    });
+    const runningPaidByMember = new Map<string, number>();
+    const remainingDebtByPaymentId = new Map<string, number | null>();
+
+    for (const p of sortedPayments) {
+      const memberId = p.sale_id ? saleMemberMap.get(p.sale_id) : undefined;
+      if (!memberId || !memberHasCreditAmounts.has(memberId)) {
+        if (p.id) remainingDebtByPaymentId.set(p.id, null);
+        continue;
+      }
+      const nextPaid = (runningPaidByMember.get(memberId) || 0) + sanitizeNumber(p.amount);
+      runningPaidByMember.set(memberId, nextPaid);
+      const totalCredit = memberSalesCreditMap.get(memberId) || 0;
+      if (p.id) {
+        remainingDebtByPaymentId.set(p.id, Math.max(0, totalCredit - nextPaid));
+      }
+    }
+
     let syncedCount = 0;
     for (const p of unrecorded) {
       const memberId = p.sale_id ? saleMemberMap.get(p.sale_id) : undefined;
       const member = memberId ? memberMap.get(memberId) : undefined;
       const receiptNo = p.receipt_number || `BYR-${String(p.id).slice(0, 6).toUpperCase()}`;
+      const inferredMethod = inferStoreCreditPaymentMethod(p.payment_method, p.notes);
       const createdAt =
         p.created_at ||
         (p.payment_date
@@ -716,7 +895,9 @@ export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ s
           memberNrp: member?.nrp,
           amount: Number(p.amount),
           receiptNumber: receiptNo,
+          paymentMethod: inferredMethod,
           notes: p.notes || undefined,
+          remainingDebt: p.id ? (remainingDebtByPaymentId.get(p.id) ?? null) : null,
           userId: p.created_by || null,
           createdAt,
         });
@@ -732,6 +913,8 @@ export async function syncUnrecordedStoreCreditPaymentsToCashFlow(): Promise<{ s
     return { syncedCount: 0 };
   }
 }
+
+export const syncStoreCreditPaymentsToCashFlow = syncUnrecordedStoreCreditPaymentsToCashFlow;
 
 /**
  * 3. Catat Pelunasan Bon Toko (Bayar Tunai Kasir / Potong Gaji)
@@ -771,11 +954,58 @@ export async function settleStoreCredit(
       }
     }
 
-    // Tentukan alokasi nota sales (spesifik atau FIFO)
+    // Tentukan alokasi nota sales (spesifik atau FIFO) & hitung total piutang anggota sebelum bayar
     let allocations: { saleId: string; amount: number }[] = [];
+    let runningDebtBeforePayment = amount;
 
     if (payload.saleId) {
       allocations = [{ saleId: payload.saleId, amount }];
+      try {
+        const salesTable: any = supabase.from('sales');
+        if (salesTable && typeof salesTable.select === 'function') {
+          let sQuery: any = salesTable.select('id, paid_credit, created_at, sale_status');
+          if (sQuery && typeof sQuery.eq === 'function') {
+            sQuery = sQuery.eq('member_id', payload.memberId);
+          }
+          if (sQuery && typeof sQuery.gt === 'function') {
+            sQuery = sQuery.gt('paid_credit', 0);
+          }
+          if (sQuery && typeof sQuery.order === 'function') {
+            sQuery = sQuery.order('created_at', { ascending: true });
+          }
+          const { data: memberSales } = await sQuery;
+          const validSales = (memberSales || []).filter(
+            (s: any) =>
+              Number(s.paid_credit) > 0 &&
+              (!s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')
+          );
+          if (validSales.length > 0) {
+            const totalCredit = validSales.reduce(
+              (sum: number, s: any) => sum + sanitizeNumber(s.paid_credit),
+              0
+            );
+            const saleIds = validSales.map((s: any) => s.id).filter(Boolean);
+            let existingPaid = 0;
+            if (saleIds.length > 0) {
+              const payTable: any = supabase.from('store_credit_payments');
+              if (payTable && typeof payTable.select === 'function') {
+                let pQuery: any = payTable.select('sale_id, amount');
+                if (pQuery && typeof pQuery.in === 'function') {
+                  pQuery = pQuery.in('sale_id', saleIds);
+                }
+                const { data: pData } = await pQuery;
+                existingPaid = (pData || []).reduce(
+                  (sum: number, p: any) => sum + sanitizeNumber(p.amount),
+                  0
+                );
+              }
+            }
+            runningDebtBeforePayment = Math.max(amount, totalCredit - existingPaid);
+          }
+        }
+      } catch {
+        runningDebtBeforePayment = amount;
+      }
     } else {
       // Pelunasan global: cari nota sales milik anggota dengan paid_credit > 0 urut FIFO (terlama)
       let salesQuery: any = supabase
@@ -824,12 +1054,21 @@ export async function settleStoreCredit(
       }
 
       const salePaidMap = new Map<string, number>();
+      let totalExistingPaid = 0;
       existingPayments.forEach((p: any) => {
+        const amt = sanitizeNumber(p.amount);
+        totalExistingPaid += amt;
         if (p.sale_id) {
           const cur = salePaidMap.get(p.sale_id) || 0;
-          salePaidMap.set(p.sale_id, cur + sanitizeNumber(p.amount));
+          salePaidMap.set(p.sale_id, cur + amt);
         }
       });
+
+      const totalMemberCredit = validSales.reduce(
+        (sum: number, s: any) => sum + sanitizeNumber(s.paid_credit),
+        0
+      );
+      runningDebtBeforePayment = Math.max(amount, totalMemberCredit - totalExistingPaid);
 
       // Hitung sisa utang per nota yang terbuka
       const openSales: { id: string; remainingDebt: number }[] = [];
@@ -880,6 +1119,7 @@ export async function settleStoreCredit(
 
     // 1. Simpan ke tabel store_credit_payments (HANYA kolom yang sah sesuai skema: sale_id, amount, payment_date, receipt_number, notes, created_by, created_at)
     let firstPaymentId: string | undefined;
+    let runningDebt = runningDebtBeforePayment;
 
     for (let i = 0; i < allocations.length; i++) {
       const alloc = allocations[i];
@@ -912,15 +1152,22 @@ export async function settleStoreCredit(
           firstPaymentId = newPayment.id;
         }
 
+        const paidAmt = Math.round(Number(alloc.amount || 0));
+        const previousDebt = Math.max(paidAmt, Math.round(runningDebt));
+        const remainingDebt = Math.max(0, previousDebt - paidAmt);
+        runningDebt = remainingDebt;
+
         // 2. Catat arus kas masuk (direction = 'in') ke public.cash_flow untuk setiap pelunasan bon
         await recordStoreCreditCashIn({
           paymentId: newPayment.id,
           memberName,
           memberNrp,
-          amount: Number(alloc.amount),
+          amount: paidAmt,
           receiptNumber: itemRefNo,
           paymentMethod: methodLabel,
           notes: payload.notes,
+          previousDebt,
+          remainingDebt,
           userId: currentUserId,
           createdAt: nowIso
         });

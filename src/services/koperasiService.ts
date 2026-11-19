@@ -13,6 +13,7 @@ export * from './memberService';
 export * from './purchaseInvoiceService';
 export * from './depositManagementService';
 export * from './setoranService';
+export * from './savingsBillingService';
 export {
   bulkSetAllProductStock,
   updateProductSellPriceFromPos,

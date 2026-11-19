@@ -1,12 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
+import { ExternalLink, Receipt } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
+import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
 import {
   resetFinancialTransactions,
   syncOpeningSavingsBalanceToCashFlow,
 } from '../../../services/cashFlowService';
-import { syncUnrecordedStoreCreditPaymentsToCashFlow } from '../../../services/storeCreditLedgerService';
+import {
+  consolidateBulkLebaranCashFlow,
+  enrichDepositCashFlowDescriptions,
+  enrichStoreCreditCashFlowDescriptions,
+  enrichWithdrawalCashFlowDescriptions,
+} from '../../../services/cashFlowAuditService';
+import { syncMatrixDepositsToCashFlow } from '../../../services/savingsMatrixService';
+import {
+  getOutstandingStoreCreditSummary,
+  syncStoreCreditPaymentsToCashFlow,
+  type OutstandingStoreCreditSummary,
+} from '../../../services/storeCreditLedgerService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -20,6 +34,9 @@ export interface CashFlowTransaction {
   kas_masuk: number;
   kas_keluar: number;
   saldo_berjalan: number;
+  reference_id?: string | null;
+  direction?: 'in' | 'out';
+  created_at?: string;
 }
 
 export interface CashFlowData {
@@ -69,13 +86,19 @@ const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }
   saldo_awal_simpanan: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
   PELUNASAN_BON_TOKO:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
   pelunasan_bon_toko:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  'Pelunasan Bon Toko': { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
   SETORAN_ANGGOTA:     { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
+  'Setoran Simpanan':  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
+  SETORAN_SIMPANAN:    { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
+  setoran_simpanan:    { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
   simpanan:            { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Simpanan' },
   angsuran_pinjaman:   { bg: 'bg-amber-50',    text: 'text-amber-800',   label: 'Angsuran Pinjaman' },
   restock_supplier:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
   pembelian_barang:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Pembelian Barang' },
   pencairan_pinjaman:  { bg: 'bg-purple-50',   text: 'text-purple-800',  label: 'Pencairan Pinjaman' },
   penarikan_simpanan:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
+  PENARIKAN_SIMPANAN:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
+  'Penarikan Simpanan':{ bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
   beban_operasional:   { bg: 'bg-red-50',      text: 'text-red-800',     label: 'Beban Operasional' },
 };
 
@@ -95,9 +118,11 @@ export async function getCashFlowReport(
   endDate: string,
   _unit: string
 ): Promise<CashFlowData> {
-  // Sinkronkan pelunasan bon toko historis & saldo awal simpanan cut-off ke cash_flow (idempoten)
-  await syncUnrecordedStoreCreditPaymentsToCashFlow().catch(() => {});
+  // Sinkronkan pelunasan bon toko historis, saldo awal cut-off, konsolidasi pencairan massal Lebaran, dan setoran matriks (idempoten)
+  await syncStoreCreditPaymentsToCashFlow().catch(() => {});
   await syncOpeningSavingsBalanceToCashFlow().catch(() => {});
+  await consolidateBulkLebaranCashFlow().catch(() => {});
+  await syncMatrixDepositsToCashFlow().catch(() => {});
 
   // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
@@ -149,6 +174,7 @@ export async function getCashFlowReport(
     const keluar = dir === 'out' ? Number(r.amount) : 0;
     const isOpeningSavings =
       r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
+    const rawDescription = typeof r.description === 'string' ? r.description.trim() : '';
     taggedRows.push({
       ts: parseTimestamp(r.created_at),
       row: {
@@ -156,15 +182,19 @@ export async function getCashFlowReport(
         tanggal: new Date(r.created_at).toLocaleDateString('id-ID'),
         referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
         deskripsi:
-          r.description ??
-          (isOpeningSavings
+          rawDescription !== ''
+            ? rawDescription
+            : isOpeningSavings
             ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
-            : '-'),
+            : '-',
         kategori: r.category ?? 'lainnya',
         unit_usaha: 'Umum', // cash_flow table has no 'unit' column
         kas_masuk: masuk,
         kas_keluar: keluar,
         saldo_berjalan: 0,
+        reference_id: r.reference_id ?? null,
+        direction: dir === 'out' ? 'out' : 'in',
+        created_at: r.created_at,
       },
     });
   }
@@ -188,6 +218,9 @@ export async function getCashFlowReport(
             kas_masuk: masuk,
             kas_keluar: 0,
             saldo_berjalan: 0,
+            reference_id: s.id,
+            direction: 'in',
+            created_at: s.created_at,
           },
         });
       }
@@ -205,10 +238,18 @@ export async function getCashFlowReport(
     r.saldo_berjalan = saldo;
   }
 
-  const inflowTotal  = rows.reduce((s, r) => s + r.kas_masuk, 0);
-  const outflowTotal = rows.reduce((s, r) => s + r.kas_keluar, 0);
+  const enrichedWithdrawals = await enrichWithdrawalCashFlowDescriptions(rows).catch(() => rows);
+  const enrichedDeposits = await enrichDepositCashFlowDescriptions(enrichedWithdrawals).catch(
+    () => enrichedWithdrawals
+  );
+  const enrichedRows = await enrichStoreCreditCashFlowDescriptions(enrichedDeposits).catch(
+    () => enrichedDeposits
+  );
 
-  return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: rows };
+  const inflowTotal  = enrichedRows.reduce((s, r) => s + r.kas_masuk, 0);
+  const outflowTotal = enrichedRows.reduce((s, r) => s + r.kas_keluar, 0);
+
+  return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: enrichedRows };
 }
 
 export async function getShuEstimation(
@@ -299,6 +340,9 @@ export async function getShuEstimation(
     'saldo_awal_simpanan',
     'SETORAN_ANGGOTA',
     'setoran_anggota',
+    'Setoran Simpanan',
+    'SETORAN_SIMPANAN',
+    'setoran_simpanan',
     'simpanan',
   ]);
 
@@ -333,13 +377,18 @@ export async function getShuEstimation(
 export interface LaporanKeuanganProps {
   initialResetModalOpen?: boolean;
   initialConfirmText?: string;
+  initialSelectedCashFlowRef?: CashFlowTransaction | null;
+  initialStoreCreditSummary?: OutstandingStoreCreditSummary | null;
 }
 
 export default function LaporanKeuangan({
   initialResetModalOpen = false,
   initialConfirmText = '',
+  initialSelectedCashFlowRef = null,
+  initialStoreCreditSummary = null,
 }: LaporanKeuanganProps = {}) {
   const { showToast } = useFeedback();
+  const inRouter = useInRouterContext();
   const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>('cashflow');
   const [startDate, setStartDate] = useState(startOfMonth);
   const [endDate, setEndDate]     = useState(todayStr);
@@ -348,8 +397,19 @@ export default function LaporanKeuangan({
 
   const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(null);
   const [shuData, setShuData]           = useState<ShuEstimationData | null>(null);
+  const [storeCreditSummary, setStoreCreditSummary] = useState<OutstandingStoreCreditSummary>(
+    initialStoreCreditSummary ?? {
+      totalOutstandingReceivable: 0,
+      activeDebtorsCount: 0,
+      totalCreditSales: 0,
+      totalRepaid: 0,
+    }
+  );
   const [cashFlowPage, setCashFlowPage] = useState<number>(1);
   const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
+  const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
+    initialSelectedCashFlowRef ?? null
+  );
 
   // State Modal Konfirmasi Reset Kas
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
@@ -360,12 +420,19 @@ export default function LaporanKeuangan({
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [cf, shu] = await Promise.all([
+      const [cf, shu, creditSummary] = await Promise.all([
         getCashFlowReport(startDate, endDate, unit),
         getShuEstimation(startDate, endDate),
+        getOutstandingStoreCreditSummary().catch(() => ({
+          totalOutstandingReceivable: 0,
+          activeDebtorsCount: 0,
+          totalCreditSales: 0,
+          totalRepaid: 0,
+        })),
       ]);
       setCashFlowData(cf);
       setShuData(shu);
+      setStoreCreditSummary(creditSummary);
     } catch (e) {
       console.error('fetchData error:', e);
     } finally {
@@ -639,7 +706,7 @@ export default function LaporanKeuangan({
       {!loading && activeTab === 'cashflow' && (
         <div className="space-y-6">
           {/* Metric Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             {/* Kas Masuk */}
             <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-sm relative overflow-hidden">
               <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500 rounded-t-xl" />
@@ -693,6 +760,47 @@ export default function LaporanKeuangan({
                 </div>
               </div>
             </div>
+
+            {/* Sisa Piutang Bon Toko (Potong Gaji) */}
+            <div className="bg-white rounded-xl border border-amber-200/80 p-5 shadow-sm relative overflow-hidden flex flex-col justify-between">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500 rounded-t-xl" />
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    SISA PIUTANG BON TOKO (POTONG GAJI)
+                  </p>
+                  <p
+                    className="text-2xl font-extrabold text-amber-600 mt-1.5 tabular-nums"
+                    style={{ fontFamily: "'IBM Plex Serif', serif" }}
+                  >
+                    {formatRp(storeCreditSummary.totalOutstandingReceivable)}
+                  </p>
+                </div>
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 shrink-0">
+                  <Receipt className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs gap-2">
+                <span className="text-amber-700 font-medium">
+                  {storeCreditSummary.activeDebtorsCount} anggota berutang aktif
+                </span>
+                {inRouter ? (
+                  <Link
+                    className="font-semibold text-indigo-600 hover:text-indigo-700 hover:underline whitespace-nowrap"
+                    to="/admin/buku-besar-bon-toko"
+                  >
+                    Lihat Buku Bon →
+                  </Link>
+                ) : (
+                  <a
+                    className="font-semibold text-indigo-600 hover:text-indigo-700 hover:underline whitespace-nowrap"
+                    href="/admin/buku-besar-bon-toko"
+                  >
+                    Lihat Buku Bon →
+                  </a>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Transaction Table */}
@@ -729,8 +837,20 @@ export default function LaporanKeuangan({
                     paginatedCashFlow.map((t, i) => (
                       <tr key={t.id} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`}>
                         <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
-                        <td className="px-4 py-3 font-mono text-[12px] text-on-surface-variant">{t.referensi}</td>
-                        <td className="px-4 py-3 text-on-surface max-w-[200px] truncate">{t.deskripsi}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCashFlowRef(t)}
+                            title="Klik untuk melihat rincian sumber buku pembantu"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold hover:underline transition-colors cursor-pointer group"
+                          >
+                            <span>{t.referensi}</span>
+                            <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
+                          {t.deskripsi}
+                        </td>
                         <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
                         <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
                         <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums whitespace-nowrap">
@@ -1092,6 +1212,12 @@ export default function LaporanKeuangan({
           </div>
         </div>
       )}
+
+      {/* ── MODAL DRILL-DOWN BUKTI JURNAL & BUKU PEMBANTU REFERENSI ── */}
+      <CashFlowReferenceModal
+        cashFlowItem={selectedCashFlowRef}
+        onClose={() => setSelectedCashFlowRef(null)}
+      />
     </AdminLayout>
   );
 }

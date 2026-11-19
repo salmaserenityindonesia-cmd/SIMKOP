@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 import { DepositType } from './depositManagementService';
 import { insertAuditLog } from './auditService';
+import { formatIndividualWithdrawalCashFlowDescription } from '../utils/withdrawalCashFlowFormat';
 
 export interface AdditionalDepositProduct extends DepositType {
   frequency_label: string;
@@ -582,12 +583,19 @@ export async function recordVoluntaryWithdrawal(
   const txId = String(txData?.id || finalRef);
 
   // Langkah B — Catat Pengeluaran Kas ke public.cash_flow
+  const cashFlowDescription = formatIndividualWithdrawalCashFlowDescription({
+    depositTypeName: payload.depositTypeName,
+    memberNrp: payload.memberNrp,
+    memberName: payload.memberName,
+    amount,
+  });
+
   try {
     const { error: cfErr } = await supabase.from('cash_flow').insert({
       direction: 'out',
       category: 'PENARIKAN_SIMPANAN',
       amount,
-      description: `${fullDescription} [${payload.memberName} - ${payload.memberNrp}]`,
+      description: cashFlowDescription,
       reference_id: txId,
       created_by: payload.userId || null,
       created_at: nowIso,

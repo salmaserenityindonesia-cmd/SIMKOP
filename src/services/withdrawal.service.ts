@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { formatIndividualWithdrawalCashFlowDescription } from '../utils/withdrawalCashFlowFormat';
 
 export interface WithdrawableDeposit {
   member_deposit_id: string;
@@ -128,7 +129,99 @@ export interface WithdrawalPayload {
   notes?: string;
   created_by?: string | null;
   jenisSimpananLabel?: string;
+  depositTypeCode?: string;
   namaAnggota?: string;
+  nrpAnggota?: string;
+}
+
+function isPostgrestColumnError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.code === 'PGRST204' ||
+    err?.code === '42703' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+}
+
+async function safeSelectSingleById(
+  table: string,
+  columns: string,
+  id: string
+): Promise<any | null> {
+  try {
+    const tableRef: any = supabase?.from?.(table);
+    if (!tableRef || typeof tableRef.select !== 'function') return null;
+    const q: any = tableRef.select(columns);
+    if (!q || typeof q.eq !== 'function') return null;
+    const eqQ: any = q.eq('id', id);
+    const res =
+      typeof eqQ?.maybeSingle === 'function'
+        ? await eqQ.maybeSingle()
+        : typeof eqQ?.single === 'function'
+        ? await eqQ.single()
+        : await eqQ;
+    if (res?.error) return null;
+    const row = Array.isArray(res?.data) ? res.data[0] : res?.data;
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveWithdrawalCashFlowDescription(
+  payload: WithdrawalPayload
+): Promise<string> {
+  let depositTypeName = payload.jenisSimpananLabel;
+  let depositTypeCode = payload.depositTypeCode;
+  let memberName = payload.namaAnggota;
+  let memberNrp = payload.nrpAnggota;
+
+  if (
+    (!depositTypeName || !depositTypeCode || !memberName || !memberNrp) &&
+    payload.member_deposit_id
+  ) {
+    const md = await safeSelectSingleById(
+      'member_deposits',
+      'id, member_id, deposit_type_id',
+      payload.member_deposit_id
+    );
+    if (md) {
+      const [memberRow, typeRow] = await Promise.all([
+        (!memberName || !memberNrp) && md.member_id
+          ? safeSelectSingleById('anggota', 'id, nrp, nama', String(md.member_id))
+          : Promise.resolve(null),
+        (!depositTypeName || !depositTypeCode) && md.deposit_type_id
+          ? safeSelectSingleById(
+              'deposit_types',
+              'id, code, name',
+              String(md.deposit_type_id)
+            )
+          : Promise.resolve(null),
+      ]);
+
+      if (memberRow) {
+        if (!memberName && memberRow.nama) memberName = String(memberRow.nama);
+        if (!memberNrp && memberRow.nrp) memberNrp = String(memberRow.nrp);
+      }
+      if (typeRow) {
+        if (!depositTypeName && typeRow.name) {
+          depositTypeName = String(typeRow.name);
+        }
+        if (!depositTypeCode && typeRow.code) {
+          depositTypeCode = String(typeRow.code);
+        }
+      }
+    }
+  }
+
+  return formatIndividualWithdrawalCashFlowDescription({
+    depositTypeName,
+    depositTypeCode,
+    memberNrp,
+    memberName,
+    amount: payload.amount,
+  });
 }
 
 export async function withdrawSavings(payload: WithdrawalPayload) {
@@ -139,6 +232,7 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
       ? `Penarikan Simpanan ${payload.jenisSimpananLabel} - ${payload.namaAnggota}`
       : 'Penarikan Simpanan'
   );
+  const cashFlowDescription = await resolveWithdrawalCashFlowDescription(payload);
 
   // Try RPC first for atomic transaction
   const { data: rpcData, error: rpcError } = await supabase.rpc('withdraw_savings_atomic', {
@@ -164,6 +258,23 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
     } catch (e) {
       console.warn('Gagal update metadata transaksi penarikan:', e);
     }
+
+    // Perbarui deskripsi cash_flow untuk transaksi penarikan dari RPC
+    try {
+      const cfTable: any = supabase.from('cash_flow');
+      if (cfTable && typeof cfTable.update === 'function') {
+        const updQ = cfTable.update({ description: cashFlowDescription });
+        if (updQ && typeof updQ.eq === 'function') {
+          const { error: cfUpdErr } = await updQ.eq('reference_id', txId);
+          if (cfUpdErr && !isPostgrestColumnError(cfUpdErr)) {
+            console.warn('Gagal memperbarui deskripsi cash_flow penarikan:', cfUpdErr);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal update deskripsi cash_flow:', e);
+    }
+
     return { id: txId, reference_no: receiptNumber };
   }
 
@@ -212,12 +323,22 @@ export async function withdrawSavings(payload: WithdrawalPayload) {
 
   // 3. Insert cash flow (optional fallback, since table might not exist in fallback scenario)
   try {
-    await supabase.from('cash_flow').insert([{
+    const cfRes: any = await supabase.from('cash_flow').insert([{
       direction: 'out',
-      amount: Number(payload.amount),
+      amount: Math.round(Number(payload.amount)),
       category: 'penarikan_simpanan',
-      reference_id: insertData.id
+      reference_id: insertData.id,
+      description: cashFlowDescription,
+      created_at: new Date().toISOString(),
     }]);
+    if (cfRes?.error && isPostgrestColumnError(cfRes.error)) {
+      await supabase.from('cash_flow').insert([{
+        direction: 'out',
+        amount: Math.round(Number(payload.amount)),
+        category: 'penarikan_simpanan',
+        reference_id: insertData.id,
+      }]);
+    }
   } catch(e) {
     console.warn('Cash flow table might not exist yet', e);
   }

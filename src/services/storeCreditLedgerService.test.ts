@@ -10,7 +10,10 @@ import {
   createOrTakeoverStoreCreditPlan,
   getActiveStoreCreditPlans,
   payStoreCreditSchedule,
-  syncUnrecordedStoreCreditPaymentsToCashFlow
+  syncUnrecordedStoreCreditPaymentsToCashFlow,
+  syncStoreCreditPaymentsToCashFlow,
+  getOutstandingStoreCreditSummary,
+  formatStoreCreditCashFlowDescription
 } from './storeCreditLedgerService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -1250,9 +1253,11 @@ describe('storeCreditLedgerService', () => {
           category: 'PELUNASAN_BON_TOKO',
           amount: 30000,
           reference_id: 'pay-cf-1',
-          description: expect.stringContaining('Budi Santoso - 123456')
+          description: expect.stringContaining('123456 - Budi Santoso')
         })
       );
+      expect(cashFlowInserts[0].description).toContain('Piutang -Rp 30.000');
+      expect(cashFlowInserts[0].description).toContain('Sisa Piutang: Rp 0');
     });
   });
 
@@ -1301,7 +1306,7 @@ describe('storeCreditLedgerService', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({
-                data: [{ id: 'sale-2', member_id: 'm-2' }],
+                data: [{ id: 'sale-2', member_id: 'm-2', paid_credit: 30000 }],
                 error: null
               })
             })
@@ -1320,7 +1325,7 @@ describe('storeCreditLedgerService', () => {
         return {};
       });
 
-      const res = await syncUnrecordedStoreCreditPaymentsToCashFlow();
+      const res = await syncStoreCreditPaymentsToCashFlow();
 
       expect(res.syncedCount).toBe(1);
       expect(cashFlowInserts).toHaveLength(1);
@@ -1331,9 +1336,165 @@ describe('storeCreditLedgerService', () => {
           amount: 30000,
           reference_id: 'pay-old-2',
           created_at: '2026-11-02T10:00:00Z',
-          description: expect.stringContaining('Siti Aminah - 654321')
+          description: expect.stringContaining('654321 - Siti Aminah')
         })
       );
+      expect(cashFlowInserts[0].description).toContain('Piutang -Rp 30.000');
+      expect(cashFlowInserts[0].description).toContain('Sisa Piutang: Rp 0');
+    });
+  });
+
+  describe('formatStoreCreditCashFlowDescription & getOutstandingStoreCreditSummary', () => {
+    it('formats explicit cash flow descriptions for Potong Gaji, Tunai Kasir, and Transfer Bank', () => {
+      expect(
+        formatStoreCreditCashFlowDescription({
+          paymentMethod: 'PAYROLL_DEDUCTION',
+          receiptNumber: 'BYR-001',
+          memberNrp: '88010001',
+          memberName: 'Budi Santoso',
+          paidAmount: 100000,
+          remainingDebt: 50000,
+        })
+      ).toBe(
+        'Pelunasan Bon Toko (Potong Gaji • BYR-001) — 88010001 - Budi Santoso | Piutang -Rp 100.000 (Sisa Piutang: Rp 50.000)'
+      );
+
+      expect(
+        formatStoreCreditCashFlowDescription({
+          paymentMethod: 'tunai',
+          receiptNumber: 'BYR-002',
+          memberNrp: '88010002',
+          memberName: 'Siti Aminah',
+          paidAmount: 75000,
+          remainingDebt: 0,
+        })
+      ).toBe(
+        'Pelunasan Bon Toko (Tunai Kasir • BYR-002) — 88010002 - Siti Aminah | Piutang -Rp 75.000 (Sisa Piutang: Rp 0)'
+      );
+
+      expect(
+        formatStoreCreditCashFlowDescription({
+          paymentMethod: 'TRANSFER',
+          paidAmount: 40000,
+          remainingDebt: null,
+        })
+      ).toBe('Pelunasan Bon Toko (Transfer Bank) | Piutang -Rp 40.000');
+    });
+
+    it('getOutstandingStoreCreditSummary returns totalOutstandingReceivable and activeDebtorsCount', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gt: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 's-1', member_id: 'm-1', paid_credit: 200000, sale_status: 'completed' },
+                  { id: 's-2', member_id: 'm-2', paid_credit: 100000, sale_status: 'completed' },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'p-1', sale_id: 's-1', amount: 50000 }],
+              error: null,
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const summary = await getOutstandingStoreCreditSummary();
+      expect(summary).toEqual({
+        totalOutstandingReceivable: 250000,
+        activeDebtorsCount: 2,
+        totalCreditSales: 300000,
+        totalRepaid: 50000,
+      });
+    });
+
+    it('settleStoreCredit records Piutang -Rp and remaining Sisa Piutang across partial payment and full payoff', async () => {
+      const cashFlowInserts: any[] = [];
+      let paymentSeq = 0;
+      const existingPayments: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [{ id: 'sale-1', paid_credit: 100000, sale_status: 'completed', created_at: '2026-11-10' }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation(async () => ({ data: [...existingPayments], error: null })),
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              paymentSeq += 1;
+              const row = { id: `pay-seq-${paymentSeq}`, ...payload };
+              existingPayments.push(row);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: row, error: null }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: { nama: 'Budi', nrp: '112233' }, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              cashFlowInserts.push(payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res1 = await settleStoreCredit({
+        memberId: 'm-1',
+        amount: 40000,
+        paymentMethod: 'potong_gaji',
+        referenceNo: 'BYR-P1',
+      });
+      expect(res1.success).toBe(true);
+      expect(cashFlowInserts[0].description).toContain('Piutang -Rp 40.000 (Sisa Piutang: Rp 60.000)');
+
+      const res2 = await settleStoreCredit({
+        memberId: 'm-1',
+        amount: 60000,
+        paymentMethod: 'tunai',
+        referenceNo: 'BYR-P2',
+      });
+      expect(res2.success).toBe(true);
+      expect(cashFlowInserts[1].description).toContain('Piutang -Rp 60.000 (Sisa Piutang: Rp 0)');
     });
   });
 });

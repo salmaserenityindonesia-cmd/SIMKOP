@@ -41,6 +41,8 @@ import {
   isSystemDefaultDescription,
   isMonthBeforeCutOff,
   getInitialSavingsCutOffDate,
+  deleteMatrixDepositCashFlowByTxIds,
+  syncMatrixDepositsToCashFlow,
   CheckMonthPayload,
   MonthAuditHistoryItem
 } from '../../services/savingsMatrixService';
@@ -775,6 +777,20 @@ export default function SavingsLedgerMatrixModal({
     setSavingEvidence(true);
     try {
       const amt = Number(evidenceAmount) > 0 ? Number(evidenceAmount) : selectedCellForEvidence.rate;
+      const matchingDepositType = depositTypes.find((dt) => {
+        const c = String(dt.code || '').toUpperCase();
+        const n = String(dt.name || '').toLowerCase();
+        if (activeTab === 'WAJIB') return c === 'WAJIB' || c === 'SW' || n.includes('wajib');
+        if (activeTab === 'BELANJA') return c === 'BELANJA' || c === 'SB' || n.includes('belanja');
+        return c === 'LEBARAN' || c === 'SL' || n.includes('lebaran') || n.includes('hari raya');
+      });
+      const fallbackTypeName =
+        activeTab === 'WAJIB'
+          ? 'Simpanan Wajib'
+          : activeTab === 'BELANJA'
+          ? 'Simpanan Belanja Bulanan'
+          : 'Simpanan Hari Raya (Lebaran)';
+
       await saveMonthDepositWithEvidence({
         memberDepositId,
         year,
@@ -783,7 +799,10 @@ export default function SavingsLedgerMatrixModal({
         referenceNo: evidenceReferenceNo.trim() || undefined,
         paymentMethod: evidencePaymentMethod,
         notes: evidenceNotes.trim() || undefined,
-        description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[month - 1]} ${year}`
+        description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[month - 1]} ${year}`,
+        memberNrp,
+        memberName,
+        depositTypeName: matchingDepositType?.name || fallbackTypeName
       });
 
       setCheckedMonths(prev => {
@@ -887,6 +906,35 @@ export default function SavingsLedgerMatrixModal({
     }
   };
 
+  const cleanupRoutineCashFlowForAccount = async (memberDepositId: string) => {
+    try {
+      const dtTable: any = supabase?.from?.('deposit_transactions');
+      if (!dtTable || typeof dtTable.select !== 'function') return;
+      const selQ: any = dtTable.select('id, for_year, for_month, transaction_type');
+      if (!selQ || typeof selQ.eq !== 'function') return;
+      const res: any = await selQ.eq('member_deposit_id', memberDepositId);
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      const routineTxIds = rows
+        .filter((t: any) => {
+          if (t?.transaction_type !== 'deposit') return false;
+          const fm = Number(t?.for_month || 0);
+          const fy = Number(t?.for_year || 0);
+          if (!fm || !fy) return false;
+          if (hasCutoffMode && cutoffDate && isMonthBeforeCutOff(fy, fm, cutoffDate)) {
+            return false;
+          }
+          return fy >= startYear && fy <= endYear;
+        })
+        .map((t: any) => String(t?.id || ''))
+        .filter(Boolean);
+      if (routineTxIds.length > 0) {
+        await deleteMatrixDepositCashFlowByTxIds(routineTxIds);
+      }
+    } catch {
+      // non-blocking cleanup
+    }
+  };
+
   // Helper sinkronisasi batch ke Supabase
   const syncBatchToDatabase = async (newCheckedKeys: string[], customAmounts?: Map<string, number>) => {
     const memberDepositId = memberDepositMap[activeTab];
@@ -901,6 +949,8 @@ export default function SavingsLedgerMatrixModal({
             return !isMonthBeforeCutOff(parseInt(yStr, 10), parseInt(mStr, 10), cutoffDate);
           })
         : newCheckedKeys;
+
+      await cleanupRoutineCashFlowForAccount(memberDepositId);
 
       // 1. Hapus transaksi rutin bulanan lama pada rentang tahun grid (lindungi Saldo Awal & pra cut-off)
       if (hasCutoffMode) {
@@ -980,6 +1030,7 @@ export default function SavingsLedgerMatrixModal({
 
       if (txsToInsert.length > 0) {
         await supabase.from('deposit_transactions').insert(txsToInsert);
+        await syncMatrixDepositsToCashFlow().catch(() => {});
       }
 
       onSuccess?.();
@@ -1049,6 +1100,8 @@ export default function SavingsLedgerMatrixModal({
 
     setSyncing(true);
     try {
+      await cleanupRoutineCashFlowForAccount(memberDepositId);
+
       // 3. Pada database: Hapus HANYA mutasi bulanan pasca saldo awal (for_month IS NOT NULL)
       const delRoutineQuery: any = supabase
         .from('deposit_transactions')

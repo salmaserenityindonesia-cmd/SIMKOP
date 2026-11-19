@@ -156,7 +156,9 @@ export default function PenarikanSimpanan() {
         notes: `Pencairan ${selectedDeposit.deposit_name} (${methodText})`,
         created_by: currentUserId,
         jenisSimpananLabel: selectedDeposit.deposit_name,
-        namaAnggota: selectedAnggota.nama
+        depositTypeCode: selectedDeposit.deposit_code,
+        namaAnggota: selectedAnggota.nama,
+        nrpAnggota: selectedAnggota.nrp
       });
 
       // Jika penarikan simpanan lebaran, auto-sync ke siklus & item historis

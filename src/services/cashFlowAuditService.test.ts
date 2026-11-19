@@ -1,0 +1,1687 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  consolidateBulkLebaranCashFlow,
+  enrichDepositCashFlowDescriptions,
+  enrichStoreCreditCashFlowDescriptions,
+  getCashFlowReferenceBreakdown,
+  enrichWithdrawalCashFlowDescriptions,
+} from './cashFlowAuditService';
+import { supabase } from '../lib/supabaseClient';
+
+vi.mock('../lib/supabaseClient', () => ({
+  supabase: {
+    from: vi.fn(),
+  },
+}));
+
+describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('aggregates SALDO_AWAL_SIMPANAN across Pokok, Wajib, Belanja, Lebaran, excludes post-cutoff txs, and checks journal parity', async () => {
+    const depositTypes = [
+      { id: 'dt-p', code: 'SP', name: 'Simpanan Pokok' },
+      { id: 'dt-w', code: 'SW', name: 'Simpanan Wajib' },
+      { id: 'dt-b', code: 'SB', name: 'Simpanan Belanja' },
+      { id: 'dt-l', code: 'SL', name: 'Simpanan Lebaran' },
+    ];
+    const members = [
+      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', pangkat: 'Bripka' },
+    ];
+    const memberDeposits = [
+      { id: 'md-1p', member_id: 'm-1', deposit_type_id: 'dt-p' },
+      { id: 'md-1w', member_id: 'm-1', deposit_type_id: 'dt-w' },
+      { id: 'md-1b', member_id: 'm-1', deposit_type_id: 'dt-b' },
+      { id: 'md-1l', member_id: 'm-1', deposit_type_id: 'dt-l' },
+      { id: 'md-2p', member_id: 'm-2', deposit_type_id: 'dt-p' },
+      { id: 'md-2w', member_id: 'm-2', deposit_type_id: 'dt-w' },
+    ];
+    const depositTransactions = [
+      // Opening m-1: 100k + 500k + 250k + 150k = 1.000.000
+      { id: 'tx-1', member_deposit_id: 'md-1p', transaction_type: 'deposit', amount: 100000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      { id: 'tx-2', member_deposit_id: 'md-1w', transaction_type: 'deposit', amount: 500000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      { id: 'tx-3', member_deposit_id: 'md-1b', transaction_type: 'deposit', amount: 250000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      { id: 'tx-4', member_deposit_id: 'md-1l', transaction_type: 'deposit', amount: 150000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      // Opening m-2: 100k + 400k = 500.000
+      { id: 'tx-5', member_deposit_id: 'md-2p', transaction_type: 'deposit', amount: 100000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      { id: 'tx-6', member_deposit_id: 'md-2w', transaction_type: 'deposit', amount: 400000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)' },
+      // Excluded: post-cutoff monthly deposit
+      { id: 'tx-7', member_deposit_id: 'md-1w', transaction_type: 'deposit', amount: 50000, for_year: 2026, for_month: 3, description: 'Setoran Rutin Bulanan' },
+      // Excluded: post-cutoff Setoran Simpanan Pokok
+      { id: 'tx-8', member_deposit_id: 'md-2p', transaction_type: 'deposit', amount: 100000, for_year: null, for_month: null, description: 'Setoran Simpanan Pokok' },
+    ];
+
+    const tables: Record<string, any[]> = {
+      deposit_transactions: depositTransactions,
+      member_deposits: memberDeposits,
+      deposit_types: depositTypes,
+      anggota: members,
+    };
+
+    (supabase.from as any).mockImplementation((table: string) => ({
+      select: vi.fn().mockReturnValue({
+        range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+          data: (tables[table] || []).slice(from, to + 1),
+          error: null,
+        })),
+      }),
+    }));
+
+    const matchedRes = await getCashFlowReferenceBreakdown({
+      id: 'b27310a3-0000-0000-0000-000000000001',
+      category: 'SALDO_AWAL_SIMPANAN',
+      amount: 1500000,
+      direction: 'in',
+      description: 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)',
+      created_at: '2026-03-01T00:00:00.000Z',
+    });
+
+    expect(matchedRes.kind).toBe('opening_savings');
+    if (matchedRes.kind === 'opening_savings') {
+      expect(matchedRes.journal.refCode).toBe('CF-B27310A3');
+      expect(matchedRes.openingSavings.byDepositType).toMatchObject({
+        pokok: 200000,
+        wajib: 900000,
+        belanja: 250000,
+        lebaran: 150000,
+        lainnya: 0,
+      });
+      expect(matchedRes.openingSavings.calculatedTotal).toBe(1500000);
+      expect(matchedRes.openingSavings.journalAmount).toBe(1500000);
+      expect(matchedRes.openingSavings.difference).toBe(0);
+      expect(matchedRes.openingSavings.isMatched).toBe(true);
+      expect(matchedRes.openingSavings.transactionCount).toBe(6);
+      expect(matchedRes.openingSavings.memberRows).toHaveLength(2);
+      expect(matchedRes.openingSavings.memberRows[0]).toMatchObject({
+        nrp: '88010001',
+        nama: 'Budi Santoso',
+        pokok: 100000,
+        wajib: 500000,
+        belanja: 250000,
+        lebaran: 150000,
+        total: 1000000,
+      });
+      expect(matchedRes.openingSavings.memberRows[1]).toMatchObject({
+        nrp: '88010002',
+        nama: 'Siti Aminah',
+        pokok: 100000,
+        wajib: 400000,
+        belanja: 0,
+        lebaran: 0,
+        total: 500000,
+      });
+    }
+
+    // Mismatch detection
+    const mismatchRes = await getCashFlowReferenceBreakdown({
+      id: 'b27310a3-0000-0000-0000-000000000001',
+      category: 'SALDO_AWAL_SIMPANAN',
+      amount: 1400000,
+      direction: 'in',
+      created_at: '2026-03-01T00:00:00.000Z',
+    });
+    expect(mismatchRes.kind).toBe('opening_savings');
+    if (mismatchRes.kind === 'opening_savings') {
+      expect(mismatchRes.openingSavings.isMatched).toBe(false);
+      expect(mismatchRes.openingSavings.difference).toBe(100000);
+    }
+  });
+
+  it('supports paged fetching beyond 1,000 rows for SALDO_AWAL_SIMPANAN', async () => {
+    const dtRows = Array.from({ length: 1250 }, (_, idx) => ({
+      id: `tx-${idx + 1}`,
+      member_deposit_id: `md-${idx + 1}`,
+      transaction_type: 'deposit',
+      amount: 10000,
+      for_year: 2026,
+      for_month: 2,
+      description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+    }));
+    const mdRows = Array.from({ length: 1250 }, (_, idx) => ({
+      id: `md-${idx + 1}`,
+      member_id: `m-${idx + 1}`,
+      deposit_type_id: 'dt-w',
+    }));
+    const members = Array.from({ length: 1250 }, (_, idx) => ({
+      id: `m-${idx + 1}`,
+      nrp: String(10000 + idx + 1),
+      nama: `Anggota ${idx + 1}`,
+      pangkat: 'Briptu',
+    }));
+    const tables: Record<string, any[]> = {
+      deposit_transactions: dtRows,
+      member_deposits: mdRows,
+      deposit_types: [{ id: 'dt-w', code: 'SW', name: 'Simpanan Wajib' }],
+      anggota: members,
+    };
+
+    (supabase.from as any).mockImplementation((table: string) => ({
+      select: vi.fn().mockReturnValue({
+        range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+          data: (tables[table] || []).slice(from, to + 1),
+          error: null,
+        })),
+      }),
+    }));
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-paged-1',
+      category: 'SALDO_AWAL_SIMPANAN',
+      amount: 12500000,
+      created_at: '2026-03-01T00:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('opening_savings');
+    if (res.kind === 'opening_savings') {
+      expect(res.openingSavings.transactionCount).toBe(1250);
+      expect(res.openingSavings.memberRows).toHaveLength(1250);
+      expect(res.openingSavings.calculatedTotal).toBe(12500000);
+      expect(res.openingSavings.isMatched).toBe(true);
+    }
+  });
+
+  it('loads POS sale details and normalizes both qty/price and quantity/unit_price sale_items', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'sale-uuid-1',
+                  sale_number: 'POS-20261119-001',
+                  member_id: 'm-1',
+                  subtotal: 45000,
+                  discount: 0,
+                  total_amount: 45000,
+                  paid_cash: 45000,
+                  paid_deposit: 0,
+                  paid_credit: 0,
+                  payment_scheme: 'cash',
+                  created_at: '2026-11-19T08:00:00.000Z',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'sale_items') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'si-1', product_name: 'Beras 5kg', qty: 1, price: 35000, subtotal: 35000 },
+                { id: 'si-2', product_name: 'Gula 1kg', quantity: 1, unit_price: 10000 },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-pos-1111',
+      category: 'penjualan_tunai',
+      amount: 45000,
+      reference_id: 'sale-uuid-1',
+      created_at: '2026-11-19T08:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('pos_sale');
+    if (res.kind === 'pos_sale') {
+      expect(res.posSale.saleNumber).toBe('POS-20261119-001');
+      expect(res.posSale.member?.nama).toBe('Budi Santoso');
+      expect(res.posSale.items).toEqual([
+        { id: 'si-1', productName: 'Beras 5kg', qty: 1, price: 35000, subtotal: 35000 },
+        { id: 'si-2', productName: 'Gula 1kg', qty: 1, price: 10000, subtotal: 10000 },
+      ]);
+    }
+  });
+
+  it('loads PELUNASAN_BON_TOKO details with linked sales and member info', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'store_credit_payments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'scp-1',
+                  sale_id: 'sale-credit-1',
+                  amount: 150000,
+                  payment_date: '2026-11-18',
+                  receipt_number: 'KW-BON-001',
+                  notes: 'Lunas tunai',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'sale-credit-1', sale_number: 'POS-BON-99', member_id: 'm-1', total_amount: 150000 },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-bon-1111',
+      category: 'PELUNASAN_BON_TOKO',
+      amount: 150000,
+      reference_id: 'scp-1',
+      created_at: '2026-11-18T10:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('store_credit_payment');
+    if (res.kind === 'store_credit_payment') {
+      expect(res.storeCreditPayment.receiptNumber).toBe('KW-BON-001');
+      expect(res.storeCreditPayment.saleNumber).toBe('POS-BON-99');
+      expect(res.storeCreditPayment.member?.nrp).toBe('88010001');
+    }
+  });
+
+  it('loads PENARIKAN_SIMPANAN details with member and deposit type info', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'dtx-w-1',
+                  member_deposit_id: 'md-1b',
+                  transaction_type: 'withdrawal',
+                  amount: 200000,
+                  description: 'Penarikan Simpanan Belanja',
+                  reference_no: 'KW-WD-10',
+                  payment_method: 'tunai',
+                  notes: 'Keperluan keluarga',
+                  created_at: '2026-11-15T09:00:00.000Z',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'md-1b', member_id: 'm-1', deposit_type_id: 'dt-b' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'dt-b', code: 'SB', name: 'Simpanan Belanja' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-wd-1111',
+      category: 'penarikan_simpanan',
+      amount: 200000,
+      direction: 'out',
+      reference_id: 'dtx-w-1',
+      created_at: '2026-11-15T09:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('deposit_withdrawal');
+    if (res.kind === 'deposit_withdrawal') {
+      expect(res.depositWithdrawal.depositTypeName).toBe('Simpanan Belanja');
+      expect(res.depositWithdrawal.depositTypeCode).toBe('SB');
+      expect(res.depositWithdrawal.member?.nama).toBe('Budi Santoso');
+      expect(res.depositWithdrawal.referenceNo).toBe('KW-WD-10');
+    }
+  });
+
+  it('loads MODAL_KASIR_AWAL shift details with cashier name', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cashier_shifts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'shift-1',
+                  shift_number: 'SHIFT-20261119-01',
+                  cashier_id: 'staff-1',
+                  opened_at: '2026-11-19T07:00:00.000Z',
+                  closed_at: null,
+                  initial_cash: 500000,
+                  cash_sales: 0,
+                  expected_cash: 500000,
+                  actual_cash: 500000,
+                  difference: 0,
+                  status: 'open',
+                  notes: 'Modal awal pagi',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'pengelola') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'staff-1', nama: 'Kasir Dewi' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-shift-1',
+      category: 'MODAL_KASIR_AWAL',
+      amount: 500000,
+      direction: 'out',
+      reference_id: 'shift-1',
+      created_at: '2026-11-19T07:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('cashier_shift');
+    if (res.kind === 'cashier_shift') {
+      expect(res.cashierShift.shiftNumber).toBe('SHIFT-20261119-01');
+      expect(res.cashierShift.cashierName).toBe('Kasir Dewi');
+      expect(res.cashierShift.initialCash).toBe(500000);
+    }
+  });
+
+  it('returns journal_only metadata cleanly for generic categories or missing reference_id', async () => {
+    const res = await getCashFlowReferenceBreakdown({
+      id: '99887766-1111-2222-3333-444455556666',
+      category: 'beban_operasional',
+      amount: 120000,
+      direction: 'out',
+      description: 'Pembayaran listrik kantor koperasi',
+      reference_id: null,
+      created_at: '2026-11-10T11:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('journal_only');
+    expect(res.journal).toMatchObject({
+      id: '99887766-1111-2222-3333-444455556666',
+      refCode: 'CF-99887766',
+      category: 'beban_operasional',
+      direction: 'out',
+      amount: 120000,
+      description: 'Pembayaran listrik kantor koperasi',
+    });
+  });
+
+  it('loads bulk_lebaran_withdrawal breakdown by cycle reference_id with bank details and mismatch check', async () => {
+    const cycleRow = {
+      id: 'cycle-thr-2026',
+      cycle_name: 'Pencairan THR Idul Fitri 2026',
+      disbursement_date: '2026-03-20',
+      source_type: 'MASSAL',
+      total_members: 2,
+      total_amount: 3000000,
+      status: 'COMPLETED',
+    };
+    const itemRows = [
+      {
+        id: 'item-2',
+        cycle_id: 'cycle-thr-2026',
+        member_id: 'm-2',
+        nrp: '88010002',
+        member_name: 'Siti Aminah',
+        bank_account: '222333444',
+        amount_disbursed: 1800000,
+      },
+      {
+        id: 'item-1',
+        cycle_id: 'cycle-thr-2026',
+        member_id: 'm-1',
+        nrp: '88010001',
+        member_name: 'Budi Santoso',
+        bank_account: '111222333',
+        amount_disbursed: 1200000,
+      },
+    ];
+    const anggotaRows = [
+      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda', bank_account_number: '111222333' },
+      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', pangkat: 'Bripka', bank_account_number: '222333444' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: cycleRow, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'lebaran_disbursement_items') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: itemRows, error: null }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => ({
+            in: vi.fn().mockImplementation(async () => {
+              if (cols.includes('bank_name')) {
+                return {
+                  data: null,
+                  error: { code: '42703', message: 'column anggota.bank_name does not exist' },
+                };
+              }
+              return { data: anggotaRows, error: null };
+            }),
+          })),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-bulk-1',
+      category: 'penarikan_simpanan',
+      amount: 3000000,
+      direction: 'out',
+      description: 'Pencairan Massal Simpanan Lebaran (Pencairan THR Idul Fitri 2026) — 2 Anggota (Rp 3.000.000)',
+      reference_id: 'cycle-thr-2026',
+      created_at: '2026-03-20T10:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('bulk_lebaran_withdrawal');
+    if (res.kind === 'bulk_lebaran_withdrawal') {
+      expect(res.bulkLebaranWithdrawal.cycleName).toBe('Pencairan THR Idul Fitri 2026');
+      expect(res.bulkLebaranWithdrawal.recipientCount).toBe(2);
+      expect(res.bulkLebaranWithdrawal.calculatedTotal).toBe(3000000);
+      expect(res.bulkLebaranWithdrawal.isMatched).toBe(true);
+      expect(res.bulkLebaranWithdrawal.recipients[0]).toMatchObject({
+        nrp: '88010001',
+        nama: 'Budi Santoso',
+        pangkat: 'Aipda',
+        bankAccountNumber: '111222333',
+        amount: 1200000,
+      });
+    }
+  });
+
+  it('resolves individual deposit_withdrawal bank info with bank_name column fallback and legacy missing reference_id', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'dtx-legacy-1',
+                  member_deposit_id: 'md-leb-1',
+                  transaction_type: 'withdrawal',
+                  amount: 750000,
+                  description: 'Penarikan Simpanan Lebaran - Budi Santoso',
+                  reference_no: 'KW-WD-99',
+                  payment_method: 'transfer',
+                  created_at: '2026-11-15T09:05:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'md-leb-1', member_id: 'm-1', deposit_type_id: 'dt-leb' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => ({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockImplementation(async () => {
+                if (cols.includes('bank_name')) {
+                  return {
+                    data: null,
+                    error: { code: '42703', message: 'column bank_name does not exist' },
+                  };
+                }
+                return {
+                  data: {
+                    id: 'm-1',
+                    nrp: '88010001',
+                    nama: 'Budi Santoso',
+                    pangkat: 'Aipda',
+                    bank_account_number: '0099887766',
+                  },
+                  error: null,
+                };
+              }),
+            }),
+          })),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'dt-leb', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-legacy-1',
+      category: 'penarikan_simpanan',
+      amount: 750000,
+      direction: 'out',
+      description: '-',
+      reference_id: null,
+      created_at: '2026-11-15T09:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('deposit_withdrawal');
+    if (res.kind === 'deposit_withdrawal') {
+      expect(res.journal.description).toBe(
+        'Pencairan Simpanan Lebaran (Personal) — 88010001 - Budi Santoso (Rp 750.000)'
+      );
+      expect(res.depositWithdrawal.isLebaranPersonal).toBe(true);
+      expect(res.depositWithdrawal.member?.bankAccountNumber).toBe('0099887766');
+    }
+  });
+
+  it('enrichWithdrawalCashFlowDescriptions resolves dash descriptions for individual and bulk rows and skips DB when unnecessary', async () => {
+    // 1. No queries if no withdrawal row has blank/dash description
+    const alreadyRich = [
+      {
+        id: 'cf-1',
+        kategori: 'penarikan_simpanan',
+        deskripsi: 'Pencairan Simpanan Wajib — 88010001 - Budi Santoso (Rp 200.000)',
+        kas_keluar: 200000,
+        reference_id: 'tx-1',
+        created_at: '2026-11-10T00:00:00Z',
+      },
+    ];
+    const untouched = await enrichWithdrawalCashFlowDescriptions(alreadyRich);
+    expect(untouched).toBe(alreadyRich);
+    expect(supabase.from).not.toHaveBeenCalled();
+
+    // 2. Batch enrichment for legacy '-' rows
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'cycle-1',
+                  cycle_name: 'THR 2026',
+                  total_members: 15,
+                  total_amount: 15000000,
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'tx-ind-1',
+                  member_deposit_id: 'md-1',
+                  transaction_type: 'withdrawal',
+                  amount: 350000,
+                  description: 'Penarikan Simpanan Belanja',
+                  created_at: '2026-11-12T10:00:00Z',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-b' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-1', nrp: '88010001', nama: 'Budi Santoso' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-b', code: 'SB', name: 'Simpanan Belanja' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const enriched = await enrichWithdrawalCashFlowDescriptions([
+      {
+        id: 'cf-ind',
+        kategori: 'penarikan_simpanan',
+        deskripsi: '-',
+        kas_keluar: 350000,
+        reference_id: 'tx-ind-1',
+        created_at: '2026-11-12T10:00:00Z',
+      },
+      {
+        id: 'cf-bulk',
+        kategori: 'Penarikan Simpanan',
+        deskripsi: '',
+        kas_keluar: 15000000,
+        reference_id: 'cycle-1',
+        created_at: '2026-03-20T10:00:00Z',
+      },
+    ]);
+
+    expect(enriched[0].deskripsi).toBe(
+      'Pencairan Simpanan Belanja — 88010001 - Budi Santoso (Rp 350.000)'
+    );
+    expect(enriched[1].deskripsi).toBe(
+      'Pencairan Massal Simpanan Lebaran (THR 2026) — 15 Anggota (Rp 15.000.000)'
+    );
+  });
+
+  it('consolidateBulkLebaranCashFlow merges 4 split legacy bulk rows into 1 aggregate row and preserves individual withdrawals', async () => {
+    const cfRows: any[] = [
+      {
+        id: 'cf-split-1',
+        created_at: '2026-11-19T02:00:00.000Z',
+        description: null,
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 2400000,
+        reference_id: 'tx-bulk-1',
+      },
+      {
+        id: 'cf-split-2',
+        created_at: '2026-11-19T02:00:01.000Z',
+        description: null,
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 2400000,
+        reference_id: 'tx-bulk-2',
+      },
+      {
+        id: 'cf-ind-same-day',
+        created_at: '2026-11-19T03:00:00.000Z',
+        description: 'Pencairan Simpanan Wajib — 88010099 - Hendra (Rp 500.000)',
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 500000,
+        reference_id: 'tx-ind-same-day',
+      },
+      {
+        id: 'cf-split-3',
+        created_at: '2026-11-19T02:00:02.000Z',
+        description: null,
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 2400000,
+        reference_id: 'tx-bulk-3',
+      },
+      {
+        id: 'cf-split-4',
+        created_at: '2026-11-19T02:00:03.000Z',
+        description: null,
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 3600000,
+        reference_id: 'tx-bulk-4',
+      },
+    ];
+
+    const cycleRow = {
+      id: 'cycle-thr-2026',
+      cycle_name: 'Pencairan THR Idul Fitri 2026',
+      disbursement_date: '2026-11-19',
+      cut_off_date: '2026-11-19T00:00:00.000Z',
+      source_type: 'MASSAL',
+      total_members: 4,
+      total_amount: 10800000,
+      status: 'COMPLETED',
+    };
+
+    const depositTxs = [
+      {
+        id: 'tx-bulk-1',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026',
+        reference_no: 'KW-THR-2026-001',
+        notes: 'Pencairan Massal Simpanan Lebaran',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T02:00:00.000Z',
+      },
+      {
+        id: 'tx-bulk-2',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026',
+        reference_no: 'KW-THR-2026-002',
+        notes: 'Pencairan Massal Simpanan Lebaran',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T02:00:01.000Z',
+      },
+      {
+        id: 'tx-bulk-3',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026',
+        reference_no: 'KW-THR-2026-003',
+        notes: 'Pencairan Massal Simpanan Lebaran',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T02:00:02.000Z',
+      },
+      {
+        id: 'tx-bulk-4',
+        transaction_type: 'withdrawal',
+        amount: 3600000,
+        description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026',
+        reference_no: 'KW-THR-2026-004',
+        notes: 'Pencairan Massal Simpanan Lebaran',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T02:00:03.000Z',
+      },
+      {
+        id: 'tx-ind-same-day',
+        transaction_type: 'withdrawal',
+        amount: 500000,
+        description: 'Penarikan Simpanan Wajib - Hendra',
+        reference_no: 'KW-WD-099',
+        notes: 'Keperluan pribadi',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T03:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+              data: cfRows.slice(from, to + 1),
+              error: null,
+            })),
+          }),
+          update: vi.fn((payload: any) => ({
+            eq: vi.fn(async (_col: string, id: string) => {
+              const idx = cfRows.findIndex((r) => r.id === id);
+              if (idx >= 0) cfRows[idx] = { ...cfRows[idx], ...payload };
+              return { data: null, error: null };
+            }),
+          })),
+          delete: vi.fn(() => ({
+            in: vi.fn(async (_col: string, ids: string[]) => {
+              for (const id of ids) {
+                const idx = cfRows.findIndex((r) => r.id === id);
+                if (idx >= 0) cfRows.splice(idx, 1);
+              }
+              return { data: null, error: null };
+            }),
+          })),
+        };
+      }
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [cycleRow], error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn(async (_col: string, ids: string[]) => ({
+              data: depositTxs.filter((tx) => ids.includes(tx.id)),
+              error: null,
+            })),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const firstRun = await consolidateBulkLebaranCashFlow();
+    expect(firstRun).toEqual({
+      consolidatedGroups: 1,
+      mergedRows: 3,
+      updatedRows: 1,
+    });
+    expect(cfRows).toHaveLength(2);
+
+    const consolidated = cfRows.find((r) => r.id === 'cf-split-1');
+    expect(consolidated).toMatchObject({
+      amount: 10800000,
+      reference_id: 'cycle-thr-2026',
+      description:
+        'Pencairan Massal Simpanan Lebaran (Pencairan THR Idul Fitri 2026) — 4 Anggota (Rp 10.800.000)',
+    });
+
+    const individual = cfRows.find((r) => r.id === 'cf-ind-same-day');
+    expect(individual).toMatchObject({
+      amount: 500000,
+      reference_id: 'tx-ind-same-day',
+    });
+
+    // Second run must be a no-op (idempotent)
+    const secondRun = await consolidateBulkLebaranCashFlow();
+    expect(secondRun).toEqual({
+      consolidatedGroups: 0,
+      mergedRows: 0,
+      updatedRows: 0,
+    });
+  });
+
+  it('consolidateBulkLebaranCashFlow handles (Massal) descriptions without reference_id, 42703 column fallback, and rollback guard when delete fails', async () => {
+    // Part A: legacy "(Massal)" description rows + 42703 description column fallback
+    const noDescRows: any[] = [
+      {
+        id: 'cf-m-1',
+        created_at: '2026-11-19T08:00:00.000Z',
+        description: 'Pencairan Simpanan Hari Raya (Lebaran) (Massal)',
+        category: 'Penarikan Simpanan',
+        direction: 'out',
+        amount: 2400000,
+        reference_id: null,
+      },
+      {
+        id: 'cf-m-2',
+        created_at: '2026-11-19T08:01:00.000Z',
+        description: 'Pencairan Simpanan Hari Raya (Lebaran) (Massal)',
+        category: 'Penarikan Simpanan',
+        direction: 'out',
+        amount: 3600000,
+        reference_id: null,
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+              data: noDescRows.slice(from, to + 1),
+              error: null,
+            })),
+          }),
+          update: vi.fn((payload: any) => ({
+            eq: vi.fn(async (_col: string, id: string) => {
+              if (payload.description !== undefined) {
+                return {
+                  data: null,
+                  error: { code: '42703', message: 'column cash_flow.description does not exist' },
+                };
+              }
+              const idx = noDescRows.findIndex((r) => r.id === id);
+              if (idx >= 0) noDescRows[idx] = { ...noDescRows[idx], ...payload };
+              return { data: null, error: null };
+            }),
+          })),
+          delete: vi.fn(() => ({
+            in: vi.fn(async (_col: string, ids: string[]) => {
+              for (const id of ids) {
+                const idx = noDescRows.findIndex((r) => r.id === id);
+                if (idx >= 0) noDescRows.splice(idx, 1);
+              }
+              return { data: null, error: null };
+            }),
+          })),
+        };
+      }
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'cycle-nov',
+                  cycle_name: 'Pencairan THR Idul Fitri 2026',
+                  disbursement_date: '2026-11-19',
+                  source_type: 'MASSAL',
+                  total_members: 2,
+                  total_amount: 6000000,
+                  status: 'COMPLETED',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const fallbackRes = await consolidateBulkLebaranCashFlow();
+    expect(fallbackRes).toEqual({
+      consolidatedGroups: 1,
+      mergedRows: 1,
+      updatedRows: 1,
+    });
+    expect(noDescRows).toHaveLength(1);
+    expect(noDescRows[0].amount).toBe(6000000);
+    expect(noDescRows[0].reference_id).toBe('cycle-nov');
+
+    // Part B: Rollback guard when delete fails
+    const rollbackRows: any[] = [
+      {
+        id: 'cf-rb-1',
+        created_at: '2026-11-19T08:00:00.000Z',
+        description: 'Pencairan Simpanan Hari Raya (Lebaran) (Massal)',
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 2400000,
+        reference_id: 'tx-1',
+      },
+      {
+        id: 'cf-rb-2',
+        created_at: '2026-11-19T08:01:00.000Z',
+        description: 'Pencairan Simpanan Hari Raya (Lebaran) (Massal)',
+        category: 'penarikan_simpanan',
+        direction: 'out',
+        amount: 3600000,
+        reference_id: 'tx-2',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+              data: rollbackRows.slice(from, to + 1),
+              error: null,
+            })),
+          }),
+          update: vi.fn((payload: any) => ({
+            eq: vi.fn(async (_col: string, id: string) => {
+              const idx = rollbackRows.findIndex((r) => r.id === id);
+              if (idx >= 0) rollbackRows[idx] = { ...rollbackRows[idx], ...payload };
+              return { data: null, error: null };
+            }),
+          })),
+          delete: vi.fn(() => ({
+            in: vi.fn(async () => ({
+              data: null,
+              error: { message: 'RLS denied delete' },
+            })),
+          })),
+        };
+      }
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const rbRes = await consolidateBulkLebaranCashFlow();
+    expect(rbRes).toEqual({
+      consolidatedGroups: 0,
+      mergedRows: 0,
+      updatedRows: 0,
+    });
+    expect(rollbackRows).toHaveLength(2);
+    expect(rollbackRows[0]).toMatchObject({
+      amount: 2400000,
+      reference_id: 'tx-1',
+      description: 'Pencairan Simpanan Hari Raya (Lebaran) (Massal)',
+    });
+  });
+
+  it('getCashFlowReferenceBreakdown falls back to LEBARAN deposit_transactions on the same date when lebaran_disbursement_items is empty', async () => {
+    const cycleRow = {
+      id: 'cycle-nov-19',
+      cycle_name: 'Pencairan THR Idul Fitri 2026',
+      disbursement_date: '2026-11-19',
+      source_type: 'MASSAL',
+      total_members: 4,
+      total_amount: 10800000,
+      status: 'COMPLETED',
+    };
+
+    const depositTypes = [
+      { id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' },
+      { id: 'dt-wjb', code: 'SW', name: 'Simpanan Wajib' },
+    ];
+    const memberDeposits = [
+      { id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-leb' },
+      { id: 'md-2', member_id: 'm-2', deposit_type_id: 'dt-leb' },
+      { id: 'md-3', member_id: 'm-3', deposit_type_id: 'dt-leb' },
+      { id: 'md-4', member_id: 'm-4', deposit_type_id: 'dt-leb' },
+      { id: 'md-wjb', member_id: 'm-1', deposit_type_id: 'dt-wjb' },
+    ];
+    const depositTxs = [
+      {
+        id: 'tx-1',
+        member_deposit_id: 'md-1',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan THR',
+        reference_no: null,
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T09:00:00.000Z',
+      },
+      {
+        id: 'tx-2',
+        member_deposit_id: 'md-2',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan THR',
+        reference_no: null,
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T09:00:01.000Z',
+      },
+      {
+        id: 'tx-3',
+        member_deposit_id: 'md-3',
+        transaction_type: 'withdrawal',
+        amount: 2400000,
+        description: 'Pencairan THR',
+        reference_no: null,
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T09:00:02.000Z',
+      },
+      {
+        id: 'tx-4',
+        member_deposit_id: 'md-4',
+        transaction_type: 'withdrawal',
+        amount: 3600000,
+        description: 'Pencairan THR',
+        reference_no: null,
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T09:00:03.000Z',
+      },
+      // Non-Lebaran withdrawal on same date must be excluded
+      {
+        id: 'tx-wjb',
+        member_deposit_id: 'md-wjb',
+        transaction_type: 'withdrawal',
+        amount: 500000,
+        description: 'Penarikan Simpanan Wajib',
+        reference_no: 'KW-WD-1',
+        transaction_date: '2026-11-19',
+        created_at: '2026-11-19T10:00:00.000Z',
+      },
+    ];
+    const anggotaRows = [
+      { id: 'm-1', nrp: '88010001', nama: 'Anggota 1', pangkat: 'Aipda', bank_name: 'BRI', bank_account_number: '111001' },
+      { id: 'm-2', nrp: '88010002', nama: 'Anggota 2', pangkat: 'Bripka', bank_name: 'BRI', bank_account_number: '111002' },
+      { id: 'm-3', nrp: '88010003', nama: 'Anggota 3', pangkat: 'Briptu', bank_name: 'BRI', bank_account_number: '111003' },
+      { id: 'm-4', nrp: '88010004', nama: 'Anggota 4', pangkat: 'Bripda', bank_name: 'Mandiri', bank_account_number: '222004' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: cycleRow, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'lebaran_disbursement_items') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: depositTxs, error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: depositTypes, error: null }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: memberDeposits, error: null }),
+            in: vi.fn(async (_col: string, ids: string[]) => ({
+              data: memberDeposits.filter((md) => ids.includes(md.id)),
+              error: null,
+            })),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn(async (_col: string, ids: string[]) => ({
+              data: anggotaRows.filter((a) => ids.includes(a.id)),
+              error: null,
+            })),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-nov-19',
+      category: 'Penarikan Simpanan',
+      amount: 10800000,
+      direction: 'out',
+      description:
+        'Pencairan Massal Simpanan Lebaran (Pencairan THR Idul Fitri 2026) — 4 Anggota (Rp 10.800.000)',
+      reference_id: 'cycle-nov-19',
+      created_at: '2026-11-19T09:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('bulk_lebaran_withdrawal');
+    if (res.kind === 'bulk_lebaran_withdrawal') {
+      expect(res.bulkLebaranWithdrawal.recipientCount).toBe(4);
+      expect(res.bulkLebaranWithdrawal.calculatedTotal).toBe(10800000);
+      expect(res.bulkLebaranWithdrawal.isMatched).toBe(true);
+      expect(res.bulkLebaranWithdrawal.recipients.map((r) => r.nrp)).toEqual([
+        '88010001',
+        '88010002',
+        '88010003',
+        '88010004',
+      ]);
+      expect(res.bulkLebaranWithdrawal.recipients[3]).toMatchObject({
+        bankName: 'Mandiri',
+        bankAccountNumber: '222004',
+        amount: 3600000,
+      });
+    }
+  });
+
+  it('loads Setoran Simpanan (individual_deposit) breakdown with receipt KW-2026/03/00050543, period, payment method, and member details', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'tx-bagus-mar26',
+                  member_deposit_id: 'md-bagus',
+                  transaction_type: 'deposit',
+                  amount: 200000,
+                  for_month: 3,
+                  for_year: 2026,
+                  description: 'Setoran Matriks WAJIB Mar 2026',
+                  reference_no: 'KW-2026/03/00050543',
+                  payment_method: 'tunai',
+                  notes: 'Lunas via bendahara',
+                  created_at: '2026-11-19T09:15:00.000Z',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'md-bagus', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'm-bagus',
+                  nrp: '00050543',
+                  nama: 'BAGUS BUDI PRASETYO',
+                  pangkat: 'Serka',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-setoran-1',
+      category: 'Setoran Simpanan',
+      amount: 200000,
+      direction: 'in',
+      description:
+        'Setoran Simpanan Wajib [Mar 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/03/00050543)',
+      reference_id: 'tx-bagus-mar26',
+      created_at: '2026-11-19T09:15:00.000Z',
+    });
+
+    expect(res.kind).toBe('individual_deposit');
+    if (res.kind === 'individual_deposit') {
+      expect(res.individualDeposit).toMatchObject({
+        transactionId: 'tx-bagus-mar26',
+        nrp: '00050543',
+        nama: 'BAGUS BUDI PRASETYO',
+        pangkat: 'Serka',
+        depositTypeCode: 'WAJIB',
+        depositTypeName: 'Simpanan Wajib',
+        forMonth: 3,
+        forYear: 2026,
+        periodLabel: 'Mar 2026',
+        shortPeriodLabel: 'Mar-26',
+        referenceNo: 'KW-2026/03/00050543',
+        paymentMethod: 'tunai',
+        notes: 'Lunas via bendahara',
+        amount: 200000,
+      });
+    }
+  });
+
+  it('enrichDepositCashFlowDescriptions enriches dash descriptions for Setoran Simpanan and skips DB when already populated', async () => {
+    const richRows = [
+      {
+        id: 'cf-1',
+        kategori: 'Setoran Simpanan',
+        deskripsi:
+          'Setoran Simpanan Wajib [Mar 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/03/00050543)',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        reference_id: 'tx-bagus-mar26',
+      },
+    ];
+    const untouched = await enrichDepositCashFlowDescriptions(richRows);
+    expect(untouched).toBe(richRows);
+    expect(supabase.from).not.toHaveBeenCalled();
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'tx-bagus-mar26',
+                  member_deposit_id: 'md-bagus',
+                  amount: 200000,
+                  for_month: 3,
+                  for_year: 2026,
+                  reference_no: 'KW-2026/03/00050543',
+                  description: 'Setoran Matriks WAJIB Mar 2026',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'md-bagus', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const enriched = await enrichDepositCashFlowDescriptions([
+      {
+        id: 'cf-dash',
+        kategori: 'Setoran Simpanan',
+        deskripsi: '-',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        reference_id: 'tx-bagus-mar26',
+      },
+    ]);
+
+    expect(enriched[0].deskripsi).toBe(
+      'Setoran Simpanan Wajib [Mar 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/03/00050543)'
+    );
+  });
+
+  it('computes beforeBalance, afterBalance, paymentMethod, and relatedSales for PELUNASAN_BON_TOKO breakdown', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'store_credit_payments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'scp-2',
+                  sale_id: 'sale-2',
+                  amount: 100000,
+                  payment_date: '2026-11-19',
+                  receipt_number: 'BYR-9901',
+                  notes: '[Potong Gaji] Potong gaji Nov',
+                  created_at: '2026-11-19T08:00:00.000Z',
+                },
+                error: null,
+              }),
+            }),
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'scp-1',
+                  sale_id: 'sale-1',
+                  amount: 50000,
+                  created_at: '2026-11-10T08:00:00.000Z',
+                },
+                {
+                  id: 'scp-2',
+                  sale_id: 'sale-2',
+                  amount: 100000,
+                  created_at: '2026-11-19T08:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              if (col === 'member_id') {
+                return Promise.resolve({
+                  data: [
+                    {
+                      id: 'sale-1',
+                      sale_number: 'INV-20261101-01',
+                      member_id: 'm-1',
+                      total_amount: 150000,
+                      paid_credit: 150000,
+                      sale_status: 'completed',
+                      created_at: '2026-11-01T08:00:00.000Z',
+                    },
+                    {
+                      id: 'sale-2',
+                      sale_number: 'INV-20261112-02',
+                      member_id: 'm-1',
+                      total_amount: 80000,
+                      paid_credit: 50000,
+                      sale_status: 'completed',
+                      created_at: '2026-11-12T08:00:00.000Z',
+                    },
+                  ],
+                  error: null,
+                });
+              }
+              return {
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: val,
+                    sale_number: 'INV-20261112-02',
+                    member_id: 'm-1',
+                    total_amount: 80000,
+                    paid_credit: 50000,
+                    created_at: '2026-11-12T08:00:00.000Z',
+                  },
+                  error: null,
+                }),
+              };
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-bon-adv',
+      category: 'PELUNASAN_BON_TOKO',
+      amount: 100000,
+      direction: 'in',
+      reference_id: 'scp-2',
+      created_at: '2026-11-19T08:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('store_credit_payment');
+    if (res.kind === 'store_credit_payment') {
+      // Total credit = 150k + 50k = 200k; prior paid = 50k -> beforeBalance = 150k, afterBalance = 50k
+      expect(res.storeCreditPayment.beforeBalance).toBe(150000);
+      expect(res.storeCreditPayment.afterBalance).toBe(50000);
+      expect(res.storeCreditPayment.paymentMethod).toBe('potong_gaji');
+      expect(res.storeCreditPayment.relatedSales).toHaveLength(2);
+      expect(res.storeCreditPayment.relatedSales?.[0].saleNumber).toBe('INV-20261112-02');
+      expect(res.storeCreditPayment.relatedSales?.[1].saleNumber).toBe('INV-20261101-01');
+    }
+  });
+
+  it('enrichStoreCreditCashFlowDescriptions enriches legacy PELUNASAN_BON_TOKO rows with receivable reduction details', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'store_credit_payments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'scp-leg-1',
+                  sale_id: 'sale-leg-1',
+                  amount: 100000,
+                  receipt_number: 'BYR-LEG-01',
+                  notes: '[Tunai] Pelunasan kasir',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'sale-leg-1', member_id: 'm-1', paid_credit: 100000 }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-1', nrp: '88010001', nama: 'Budi Santoso' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const enriched = await enrichStoreCreditCashFlowDescriptions([
+      {
+        id: 'cf-leg-1',
+        kategori: 'PELUNASAN_BON_TOKO',
+        deskripsi: 'Pelunasan Bon Toko BYR-LEG-01 (Tunai) [Budi Santoso]',
+        kas_masuk: 100000,
+        reference_id: 'scp-leg-1',
+      },
+    ]);
+
+    expect(enriched[0].deskripsi).toBe(
+      'Pelunasan Bon Toko (Tunai Kasir • BYR-LEG-01) — 88010001 - Budi Santoso | Piutang -Rp 100.000 (Sisa Piutang: Rp 0)'
+    );
+  });
+});
