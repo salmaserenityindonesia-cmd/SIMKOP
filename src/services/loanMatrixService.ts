@@ -1,4 +1,28 @@
 import { supabase } from '../lib/supabaseClient';
+import { calculateRepaymentPortions } from './loanService';
+
+function isMissingMatrixColumnError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('column') ||
+    msg.includes('schema cache') ||
+    msg.includes('financing_scheme') ||
+    msg.includes('item_description') ||
+    msg.includes('cost_price') ||
+    msg.includes('markup_amount') ||
+    msg.includes('principal_portion') ||
+    msg.includes('margin_portion') ||
+    msg.includes('description')
+  );
+}
+
+function formatMatrixRp(val: number): string {
+  return Math.round(Number(val) || 0).toLocaleString('id-ID');
+}
 
 export const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
@@ -321,16 +345,27 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
   }
 
   // Fetch ALL schedules for those loans so we can calculate running balance properly
-  const { data: schedules, error: scheduleError } = await supabase
-    .from('loan_schedules')
-    .select(`
-      id,
-      period_number,
-      due_date,
-      target_amount,
-      paid_amount,
-      status,
-      loan:loans (
+  const runSchedulesQuery = async (withGoodsCols: boolean) => {
+    const loanCols = withGoodsCols
+      ? `
+        id,
+        loan_number,
+        member_id,
+        principal_amount,
+        amount,
+        item_description,
+        cost_price,
+        markup_amount,
+        tenor,
+        agreed_tenor_months,
+        monthly_target,
+        planned_installment_amount,
+        disbursed_at,
+        status,
+        notes,
+        loan_types ( id, code, name, financing_scheme ),
+      `
+      : `
         id,
         loan_number,
         member_id,
@@ -343,6 +378,18 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         status,
         notes,
         loan_types ( id, code, name ),
+      `;
+    return await supabase
+      .from('loan_schedules')
+      .select(`
+      id,
+      period_number,
+      due_date,
+      target_amount,
+      paid_amount,
+      status,
+      loan:loans (
+        ${loanCols}
         member:anggota (
           id,
           nrp,
@@ -355,8 +402,16 @@ export const getLoanMatrix = async (year: number): Promise<LoanMatrixSummary> =>
         )
       )
     `)
-    .in('loan_id', loanIds)
-    .order('due_date', { ascending: true });
+      .in('loan_id', loanIds)
+      .order('due_date', { ascending: true });
+  };
+
+  let { data: schedules, error: scheduleError } = await runSchedulesQuery(true);
+  if (scheduleError && isMissingMatrixColumnError(scheduleError)) {
+    const fallbackRes = await runSchedulesQuery(false);
+    schedules = fallbackRes.data;
+    scheduleError = fallbackRes.error;
+  }
 
   if (scheduleError) {
     console.error('Error fetching full loan matrix schedules:', scheduleError);
@@ -806,6 +861,8 @@ export interface LoanGridPeriod {
   periodNumber: number;
   dueDate: string;
   targetAmount: number;
+  principalPortion?: number;
+  marginPortion?: number;
   paidAmount: number;
   status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED';
   label: string; // e.g. "Bulan 1 [Jul-26]"
@@ -813,6 +870,8 @@ export interface LoanGridPeriod {
   repayments: Array<{
     id: string;
     amountPaid: number;
+    principalPortion?: number;
+    marginPortion?: number;
     paymentDate: string;
     paymentMethod: string;
     notes: string | null;
@@ -827,6 +886,9 @@ export interface LoanInteractiveGridSummary {
   memberName: string;
   memberNrp: string;
   principalAmount: number;
+  itemDescription?: string | null;
+  costPrice?: number;
+  markupAmount?: number;
   tenor: number;
   monthlyTarget: number;
   disbursedAt: string | null;
@@ -846,9 +908,29 @@ export interface LoanInteractiveGridSummary {
 }
 
 export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanInteractiveGridSummary> => {
-  const { data: loan, error: loanErr } = await supabase
-    .from('loans')
-    .select(`
+  const runLoanFetch = async (withGoodsCols: boolean) => {
+    const selectStr = withGoodsCols
+      ? `
+      id,
+      loan_number,
+      principal_amount,
+      amount,
+      item_description,
+      cost_price,
+      markup_amount,
+      tenor,
+      monthly_target,
+      disbursed_at,
+      status,
+      notes,
+      loan_types ( id, code, name, financing_scheme ),
+      member:anggota (
+        id,
+        nama,
+        nrp
+      )
+    `
+      : `
       id,
       loan_number,
       principal_amount,
@@ -863,9 +945,19 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
         nama,
         nrp
       )
-    `)
-    .eq('id', loanId)
-    .single();
+    `;
+    return await (supabase.from('loans') as any)
+      .select(selectStr)
+      .eq('id', loanId)
+      .single();
+  };
+
+  let { data: loan, error: loanErr }: { data: any; error: any } = await runLoanFetch(true);
+  if (loanErr && isMissingMatrixColumnError(loanErr)) {
+    const fb = await runLoanFetch(false);
+    loan = fb.data;
+    loanErr = fb.error;
+  }
 
   if (loanErr || !loan) {
     console.error('Error fetching loan for interactive grid:', loanErr);
@@ -954,6 +1046,8 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
       .map((r: any) => ({
         id: r.id,
         amountPaid: Number(r.amount_paid || 0),
+        principalPortion: r.principal_portion !== undefined ? Number(r.principal_portion) : undefined,
+        marginPortion: r.margin_portion !== undefined ? Number(r.margin_portion) : undefined,
         paymentDate: r.payment_date,
         paymentMethod: r.payment_method || 'transfer',
         notes: r.notes || null,
@@ -966,6 +1060,8 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
       periodNumber: Number(sched.period_number),
       dueDate: sched.due_date,
       targetAmount,
+      principalPortion: sched.principal_portion !== undefined ? Number(sched.principal_portion) : undefined,
+      marginPortion: sched.margin_portion !== undefined ? Number(sched.margin_portion) : undefined,
       paidAmount,
       status,
       label,
@@ -983,6 +1079,9 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     memberName: member?.nama || '',
     memberNrp: member?.nrp || '',
     principalAmount,
+    itemDescription: loan.item_description ?? null,
+    costPrice: loan.cost_price !== undefined ? Number(loan.cost_price) : undefined,
+    markupAmount: loan.markup_amount !== undefined ? Number(loan.markup_amount) : undefined,
     tenor,
     monthlyTarget,
     disbursedAt: loan.disbursed_at || null,
@@ -1019,11 +1118,23 @@ export const toggleLoanSchedulePaid = async (
     paymentMethod?: string;
   }
 ): Promise<void> => {
-  const { data: schedule, error: schedErr } = await supabase
-    .from('loan_schedules')
-    .select('*, loan:loans(id, status, principal_amount, amount)')
-    .eq('id', scheduleId)
-    .single();
+  const runScheduleSelect = async (withGoodsCols: boolean) => {
+    const selectStr = withGoodsCols
+      ? '*, loan:loans(id, loan_number, status, principal_amount, amount, cost_price, markup_amount, item_description, member:anggota(nrp, nama))'
+      : '*, loan:loans(id, status, principal_amount, amount)';
+    return await supabase
+      .from('loan_schedules')
+      .select(selectStr)
+      .eq('id', scheduleId)
+      .single();
+  };
+
+  let { data: schedule, error: schedErr } = await runScheduleSelect(true);
+  if (schedErr && isMissingMatrixColumnError(schedErr)) {
+    const fb = await runScheduleSelect(false);
+    schedule = fb.data;
+    schedErr = fb.error;
+  }
 
   if (schedErr || !schedule) {
     console.error('Error fetching schedule to toggle:', schedErr);
@@ -1040,7 +1151,23 @@ export const toggleLoanSchedulePaid = async (
       payload?.notes || ''
     ].filter(Boolean).join(' - ') || 'Pelunasan Angsuran Pinjaman';
 
-    const { error: repayErr } = await supabase.from('loan_repayments').insert({
+    const loanObj: any = Array.isArray(schedule.loan) ? schedule.loan[0] : schedule.loan;
+    const targetAmount = Math.round(Number(schedule.target_amount || 0));
+    const portions = calculateRepaymentPortions({
+      amountPaid: payAmount,
+      targetAmount,
+      schedulePrincipalPortion: schedule.principal_portion,
+      scheduleMarginPortion: schedule.margin_portion,
+      loanCostPrice: loanObj?.cost_price,
+      loanMarkupAmount: loanObj?.markup_amount,
+      loanTotalAmount: loanObj?.principal_amount ?? loanObj?.amount,
+    });
+    const hasMarginSplit =
+      portions.marginPortion > 0 ||
+      Number(schedule.margin_portion || 0) > 0 ||
+      Number(loanObj?.markup_amount || 0) > 0;
+
+    const repayPayload: Record<string, any> = {
       loan_id: loanId,
       schedule_id: scheduleId,
       amount_paid: payAmount,
@@ -1048,7 +1175,18 @@ export const toggleLoanSchedulePaid = async (
       payment_method: payload?.paymentMethod || 'transfer',
       notes: notesDetail,
       receipt_number: payload?.receiptNo?.trim() || undefined
-    });
+    };
+    if (hasMarginSplit) {
+      repayPayload.principal_portion = portions.principalPortion;
+      repayPayload.margin_portion = portions.marginPortion;
+    }
+
+    let { error: repayErr } = await supabase.from('loan_repayments').insert(repayPayload);
+    if (repayErr && hasMarginSplit && isMissingMatrixColumnError(repayErr)) {
+      const { principal_portion: _pp, margin_portion: _mp, ...legacyRepayPayload } = repayPayload;
+      const retryRepay = await supabase.from('loan_repayments').insert(legacyRepayPayload);
+      repayErr = retryRepay.error;
+    }
 
     if (repayErr) {
       console.error('Error inserting loan repayment:', repayErr);
@@ -1057,7 +1195,7 @@ export const toggleLoanSchedulePaid = async (
 
     const currentPaid = Math.round(Number(schedule.paid_amount || 0));
     const newPaid = currentPaid + payAmount;
-    const target = Math.round(Number(schedule.target_amount || 0));
+    const target = targetAmount;
     // Beri toleransi pembulatan +/- 5 Rupiah untuk pelunasan akhir
     const isFullyPaid = (newPaid >= target) || (Math.abs(target - newPaid) <= 5);
     const newPaidAmount = isFullyPaid ? target : newPaid;
@@ -1090,6 +1228,42 @@ export const toggleLoanSchedulePaid = async (
 
     if (allPaid) {
       await supabase.from('loans').update({ status: 'completed' }).eq('id', loanId);
+    }
+
+    // Catat kas masuk ke cash_flow secara sinkron
+    if (payAmount > 0) {
+      try {
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          const memberObj = Array.isArray(loanObj?.member) ? loanObj.member[0] : loanObj?.member;
+          const memberSeg = [memberObj?.nrp, memberObj?.nama].filter(Boolean).join(' - ');
+          const periodNum = schedule.period_number ?? '-';
+          const cfDescription =
+            portions.marginPortion > 0
+              ? `Angsuran Pembiayaan Barang (${loanObj?.item_description || loanObj?.loan_number || 'Barang'}) Bln ke-${periodNum}${memberSeg ? ` — ${memberSeg}` : ''} | Pokok: Rp ${formatMatrixRp(portions.principalPortion)} | Margin: Rp ${formatMatrixRp(portions.marginPortion)}`
+              : `Angsuran Pinjaman (${loanObj?.loan_number || loanId}) Bln ke-${periodNum}${memberSeg ? ` — ${memberSeg}` : ''}`;
+
+          const cfRes = await cfTable.insert([{
+            direction: 'in',
+            amount: payAmount,
+            category: 'angsuran_pinjaman',
+            reference_id: scheduleId,
+            description: cfDescription,
+            created_at: new Date().toISOString(),
+          }]);
+          if (cfRes?.error && isMissingMatrixColumnError(cfRes.error)) {
+            await cfTable.insert([{
+              direction: 'in',
+              amount: payAmount,
+              category: 'angsuran_pinjaman',
+              reference_id: scheduleId,
+              created_at: new Date().toISOString(),
+            }]);
+          }
+        }
+      } catch (cfErr) {
+        console.warn('Gagal mencatat angsuran matriks ke cash_flow:', cfErr);
+      }
     }
   } else {
     // Uncheck / cancel payment
@@ -1125,6 +1299,22 @@ export const toggleLoanSchedulePaid = async (
 
     if (isCompleted) {
       await supabase.from('loans').update({ status: 'active' }).eq('id', loanId);
+    }
+
+    // Hapus entri arus kas terkait jadwal yang dibatalkan
+    try {
+      const cfTable: any = supabase.from('cash_flow');
+      if (cfTable && typeof cfTable.delete === 'function') {
+        const delQ = cfTable.delete();
+        if (delQ && typeof delQ.eq === 'function') {
+          const eqCat = delQ.eq('category', 'angsuran_pinjaman');
+          if (eqCat && typeof eqCat.eq === 'function') {
+            await eqCat.eq('reference_id', scheduleId);
+          }
+        }
+      }
+    } catch {
+      // Non-blocking cash_flow cleanup
     }
   }
 };
@@ -1243,14 +1433,32 @@ export const checkAllLoanUpToCurrentMonth = async (
     if (sched.status !== 'paid' || paidAmount < targetAmount) {
       await supabase.from('loan_repayments').delete().eq('schedule_id', sched.id);
 
-      await supabase.from('loan_repayments').insert({
+      const schedMargin = Number(sched.margin_portion || 0);
+      const portions = calculateRepaymentPortions({
+        amountPaid: targetAmount,
+        targetAmount,
+        schedulePrincipalPortion: sched.principal_portion,
+        scheduleMarginPortion: schedMargin,
+      });
+      const hasMargin = portions.marginPortion > 0 || schedMargin > 0;
+      const repayRow: Record<string, any> = {
         loan_id: loanId,
         schedule_id: sched.id,
         amount_paid: targetAmount,
         payment_date: new Date().toISOString(),
         payment_method: 'POTONG_GAJI',
         notes: `Pelunasan Otomatis Angsuran Periode ${sched.period_number} (s/d Bulan Berjalan)`
-      });
+      };
+      if (hasMargin) {
+        repayRow.principal_portion = portions.principalPortion;
+        repayRow.margin_portion = portions.marginPortion;
+      }
+
+      let repayRes: any = await supabase.from('loan_repayments').insert(repayRow);
+      if (repayRes?.error && hasMargin && isMissingMatrixColumnError(repayRes.error)) {
+        const { principal_portion: _pp, margin_portion: _mp, ...legacyRepayRow } = repayRow;
+        await supabase.from('loan_repayments').insert(legacyRepayRow);
+      }
 
       await supabase
         .from('loan_schedules')
@@ -1259,6 +1467,37 @@ export const checkAllLoanUpToCurrentMonth = async (
           status: 'paid'
         })
         .eq('id', sched.id);
+
+      if (targetAmount > 0) {
+        try {
+          const cfTable: any = supabase.from('cash_flow');
+          if (cfTable && typeof cfTable.insert === 'function') {
+            const cfDesc =
+              portions.marginPortion > 0
+                ? `Angsuran Pembiayaan Barang Bln ke-${sched.period_number} (Potong Gaji) | Pokok: Rp ${formatMatrixRp(portions.principalPortion)} | Margin: Rp ${formatMatrixRp(portions.marginPortion)}`
+                : `Angsuran Pinjaman Bln ke-${sched.period_number} (Potong Gaji)`;
+            const cfRes = await cfTable.insert([{
+              direction: 'in',
+              amount: targetAmount,
+              category: 'angsuran_pinjaman',
+              reference_id: sched.id,
+              description: cfDesc,
+              created_at: new Date().toISOString(),
+            }]);
+            if (cfRes?.error && isMissingMatrixColumnError(cfRes.error)) {
+              await cfTable.insert([{
+                direction: 'in',
+                amount: targetAmount,
+                category: 'angsuran_pinjaman',
+                reference_id: sched.id,
+                created_at: new Date().toISOString(),
+              }]);
+            }
+          }
+        } catch {
+          // Non-blocking cash_flow insert
+        }
+      }
 
       checkedCount++;
     }
@@ -1383,9 +1622,29 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
   const cutoffDateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(new Date(currentYear, currentMonth, 0).getDate()).padStart(2, '0')}`;
 
   // 2. Ambil seluruh data pinjaman aktif yang masih berjalan (status IN ('active', 'approved'))
-  let query: any = supabase
-    .from('loans')
-    .select(`
+  const runActiveLoansQuery = async (withGoodsCols: boolean) => {
+    const selectStr = withGoodsCols
+      ? `
+      id,
+      member_id,
+      loan_number,
+      principal_amount,
+      amount,
+      item_description,
+      cost_price,
+      markup_amount,
+      monthly_target,
+      status,
+      notes,
+      member:anggota (
+        id,
+        nrp,
+        nama,
+        status,
+        membership_status
+      )
+    `
+      : `
       id,
       member_id,
       loan_number,
@@ -1400,13 +1659,20 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
         status,
         membership_status
       )
-    `);
+    `;
+    let q: any = supabase.from('loans').select(selectStr);
+    if (typeof q.in === 'function') {
+      q = q.in('status', ['active', 'approved']);
+    }
+    return await q;
+  };
 
-  if (typeof query.in === 'function') {
-    query = query.in('status', ['active', 'approved']);
+  let { data: activeLoans, error: loanErr } = await runActiveLoansQuery(true);
+  if (loanErr && isMissingMatrixColumnError(loanErr)) {
+    const fb = await runActiveLoansQuery(false);
+    activeLoans = fb.data;
+    loanErr = fb.error;
   }
-
-  const { data: activeLoans, error: loanErr } = await query;
 
   if (loanErr || !activeLoans) {
     console.error('Error fetching loans for bulkCheckAllLoansUpToCurrentMonth:', loanErr);
@@ -1474,6 +1740,7 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
       });
 
       const repaymentsToInsert: any[] = [];
+      const cashFlowsToInsert: any[] = [];
 
       for (const sched of targetSchedules) {
         const targetAmount = Number(sched.target_amount || 0);
@@ -1491,7 +1758,22 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
         if (updErr) throw updErr;
 
         if (remainingAmount > 0) {
-          repaymentsToInsert.push({
+          const schedMargin = Number(sched.margin_portion || 0);
+          const portions = calculateRepaymentPortions({
+            amountPaid: remainingAmount,
+            targetAmount,
+            schedulePrincipalPortion: sched.principal_portion,
+            scheduleMarginPortion: schedMargin,
+            loanCostPrice: loan.cost_price,
+            loanMarkupAmount: loan.markup_amount,
+            loanTotalAmount: loan.principal_amount ?? loan.amount,
+          });
+          const hasMargin =
+            portions.marginPortion > 0 ||
+            schedMargin > 0 ||
+            Number(loan.markup_amount || 0) > 0;
+
+          const repayRow: Record<string, any> = {
             loan_id: loan.id,
             schedule_id: sched.id,
             amount_paid: remainingAmount,
@@ -1500,6 +1782,26 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
             receipt_number: `KW-BULK-${loan.loan_number || loan.id}-B${sched.period_number}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
             notes: `Centang Massal Angsuran s/d Bulan ${currentMonth}/${currentYear}`,
             created_by: currentUserId || null,
+            created_at: new Date().toISOString(),
+          };
+          if (hasMargin) {
+            repayRow.principal_portion = portions.principalPortion;
+            repayRow.margin_portion = portions.marginPortion;
+          }
+          repaymentsToInsert.push(repayRow);
+
+          const memberSeg = [(loan.member as any)?.nrp, (loan.member as any)?.nama]
+            .filter(Boolean)
+            .join(' - ');
+          cashFlowsToInsert.push({
+            direction: 'in',
+            amount: remainingAmount,
+            category: 'angsuran_pinjaman',
+            reference_id: sched.id,
+            description:
+              portions.marginPortion > 0
+                ? `Angsuran Pembiayaan Barang (${loan.item_description || loan.loan_number || 'Barang'}) Bln ke-${sched.period_number}${memberSeg ? ` — ${memberSeg}` : ''} | Pokok: Rp ${formatMatrixRp(portions.principalPortion)} | Margin: Rp ${formatMatrixRp(portions.marginPortion)}`
+                : `Angsuran Pinjaman (${loan.loan_number || loan.id}) Bln ke-${sched.period_number}${memberSeg ? ` — ${memberSeg}` : ''}`,
             created_at: new Date().toISOString(),
           });
         }
@@ -1512,7 +1814,7 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
           const chunk = repaymentsToInsert.slice(c, c + CHUNK_SIZE);
           let { error: insErr } = await supabase.from('loan_repayments').insert(chunk);
           if (insErr) {
-            // Fallback if schema lacks extended fields (receipt_number, created_by, created_at)
+            // Fallback if schema lacks extended fields (receipt_number, created_by, created_at, principal_portion, margin_portion)
             const fallbackChunk = chunk.map((r: any) => ({
               loan_id: r.loan_id,
               schedule_id: r.schedule_id,
@@ -1524,6 +1826,21 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
             const { error: retryErr } = await supabase.from('loan_repayments').insert(fallbackChunk);
             if (retryErr) throw retryErr;
           }
+        }
+      }
+
+      if (cashFlowsToInsert.length > 0) {
+        try {
+          const cfTable: any = supabase.from('cash_flow');
+          if (cfTable && typeof cfTable.insert === 'function') {
+            const cfRes = await cfTable.insert(cashFlowsToInsert);
+            if (cfRes?.error && isMissingMatrixColumnError(cfRes.error)) {
+              const legacyCf = cashFlowsToInsert.map(({ description: _desc, ...rest }) => rest);
+              await cfTable.insert(legacyCf);
+            }
+          }
+        } catch {
+          // Non-blocking cash_flow insert
         }
       }
 

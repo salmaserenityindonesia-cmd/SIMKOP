@@ -1,7 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { loanService, MIN_REMAINING_THP, calculateTHPEligibility, getActiveLoanTypes, getLoanSettings } from '../../services/loanService';
-import { LoanType } from '../../services/koperasiService';
+import {
+  loanService,
+  MIN_REMAINING_THP,
+  calculateTHPEligibility,
+  getActiveLoanTypes,
+  getLoanSettings,
+  isGoodsMarkupLoanType,
+  calculateGoodsMarkupScheduleSplit
+} from '../../services/loanService';
+import { LoanType, FinancingScheme } from '../../services/koperasiService';
 import { extractMemberTHP } from '../../services/memberService';
 import {
   getMemberLebaranRates,
@@ -53,6 +61,10 @@ export interface SimulationPanelProps {
   onSelectTenor?: (tenor: number) => void;
   maxTenor?: number;
   minRemainingThp?: number;
+  isGoodsMarkup?: boolean;
+  itemDescription?: string;
+  costPrice?: number;
+  markupAmount?: number;
 }
 
 export function SimulationPanel({
@@ -65,7 +77,11 @@ export function SimulationPanel({
   tenor,
   onSelectTenor,
   maxTenor,
-  minRemainingThp = MIN_REMAINING_THP
+  minRemainingThp = MIN_REMAINING_THP,
+  isGoodsMarkup = false,
+  itemDescription,
+  costPrice,
+  markupAmount
 }: SimulationPanelProps) {
   const externalInstallments = Number(thpData?.angsuran_lain_lain ?? 0);
   const sameTypeLoanIds = new Set(sameTypeActiveLoans.map((l) => l.id));
@@ -190,6 +206,30 @@ export function SimulationPanel({
           </div>
 
           <div className="pt-4">
+            {isGoodsMarkup && Number(costPrice || 0) > 0 && (
+              <div className="mb-3 p-3 rounded-lg bg-teal-50/80 border border-teal-200 text-xs space-y-1">
+                <div className="font-bold text-teal-900">
+                  Skema Pembiayaan Barang (Markup Margin)
+                </div>
+                {itemDescription && (
+                  <div className="text-teal-800 truncate">
+                    Barang: <strong>{itemDescription}</strong>
+                  </div>
+                )}
+                <div className="flex justify-between text-teal-700">
+                  <span>Harga Modal Supplier:</span>
+                  <span className="font-semibold">{formatCurrency(Number(costPrice || 0))}</span>
+                </div>
+                <div className="flex justify-between text-teal-700">
+                  <span>Margin Keuntungan:</span>
+                  <span className="font-semibold">{formatCurrency(Number(markupAmount || 0))}</span>
+                </div>
+                <div className="flex justify-between text-teal-900 font-bold pt-1 border-t border-teal-200">
+                  <span>Harga Jual Akad:</span>
+                  <span>{formatCurrency(Number(costPrice || 0) + Number(markupAmount || 0))}</span>
+                </div>
+              </div>
+            )}
             <div className="flex justify-between pb-2 border-b border-gray-200 text-orange-600 font-medium">
               <span>Estimasi Cicilan Baru</span>
               <span>- {formatCurrency(newInstallment)}</span>
@@ -307,9 +347,24 @@ export async function submitLoanApplication(
     refinancedLoanId?: string | null;
     topupSettlementAmount?: number;
     replacedMonthlyInstallment?: number;
+  },
+  goodsOptions?: {
+    financingScheme?: FinancingScheme;
+    itemDescription?: string;
+    costPrice?: number;
+    markupAmount?: number;
   }
 ) {
-  if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
+  const isGoodsMarkup = goodsOptions?.financingScheme === 'GOODS_MARKUP';
+
+  if (isGoodsMarkup) {
+    const itemDesc = String(goodsOptions?.itemDescription || '').trim();
+    const cost = Math.round(Number(goodsOptions?.costPrice || 0));
+    const margin = Math.round(Number(goodsOptions?.markupAmount ?? 0));
+    if (!selectedAnggota || !selectedLoanTypeId || !tenor || !itemDesc || cost <= 0 || margin < 0) {
+      throw new Error('Silakan lengkapi nama barang, harga modal supplier, margin, dan tenor pembiayaan barang.');
+    }
+  } else if (!selectedAnggota || !purpose || !amount || !tenor || !selectedLoanTypeId) {
     throw new Error('Silakan lengkapi seluruh kolom formulir termasuk jenis pinjaman.');
   }
 
@@ -319,6 +374,21 @@ export async function submitLoanApplication(
 
   if (Number(tenor) > maxTenor) {
     throw new Error(`Tenor yang dipilih (${tenor} bulan) melebihi batas maksimal ${maxTenor} bulan untuk jenis pinjaman ini.`);
+  }
+
+  if (isGoodsMarkup) {
+    const totalAkad = Math.round(Number(goodsOptions?.costPrice || 0)) + Math.round(Number(goodsOptions?.markupAmount ?? 0));
+    const effectivePurpose = purpose.trim() || `Pembiayaan Barang: ${String(goodsOptions?.itemDescription || '').trim()}`;
+    return await loanService.applyLoan(
+      selectedAnggota,
+      effectivePurpose,
+      totalAkad,
+      Number(tenor),
+      selectedLoanTypeId,
+      minThreshold ?? MIN_REMAINING_THP,
+      topUpOptions,
+      goodsOptions
+    );
   }
 
   if (topUpOptions) {
@@ -356,6 +426,11 @@ export interface PengajuanPinjamanProps {
   initialLoanTypes?: LoanType[];
   initialSelectedLoanTypeId?: string;
   initialMinRemainingThp?: number;
+  initialItemDescription?: string;
+  initialCostPrice?: number | '';
+  initialMarkupMode?: 'AMOUNT' | 'PERCENT';
+  initialMarkupAmount?: number | '';
+  initialMarkupPercent?: number | '';
 }
 
 export default function PengajuanPinjaman({
@@ -369,7 +444,12 @@ export default function PengajuanPinjaman({
   initialPurpose,
   initialLoanTypes,
   initialSelectedLoanTypeId,
-  initialMinRemainingThp
+  initialMinRemainingThp,
+  initialItemDescription,
+  initialCostPrice,
+  initialMarkupMode,
+  initialMarkupAmount,
+  initialMarkupPercent
 }: PengajuanPinjamanProps = {}) {
   const [loanTypes, setLoanTypes] = useState<LoanType[]>(initialLoanTypes || []);
   const [selectedLoanTypeId, setSelectedLoanTypeId] = useState<string>(initialSelectedLoanTypeId || '');
@@ -383,7 +463,14 @@ export default function PengajuanPinjaman({
   const [customTenorInput, setCustomTenorInput] = useState<string>(initialCustomTenorInput || '');
   const [minRemainingThp, setMinRemainingThp] = useState<number>(initialMinRemainingThp ?? MIN_REMAINING_THP);
 
+  const [itemDescription, setItemDescription] = useState<string>(initialItemDescription || '');
+  const [costPrice, setCostPrice] = useState<number | ''>(initialCostPrice ?? '');
+  const [markupMode, setMarkupMode] = useState<'AMOUNT' | 'PERCENT'>(initialMarkupMode || 'AMOUNT');
+  const [markupAmount, setMarkupAmount] = useState<number | ''>(initialMarkupAmount ?? '');
+  const [markupPercent, setMarkupPercent] = useState<number | ''>(initialMarkupPercent ?? '');
+
   const selectedLoanType = loanTypes.find(lt => String(lt.id) === String(selectedLoanTypeId));
+  const isGoodsMarkup = isGoodsMarkupLoanType(selectedLoanType);
   const maxTenor = Number(selectedLoanType?.max_duration_months || 12);
   const availableTenors = calculateAvailableTenors(selectedLoanType?.max_duration_months);
 
@@ -397,6 +484,20 @@ export default function PengajuanPinjaman({
     effectiveTenor >= 1 &&
     effectiveTenor <= maxTenor;
 
+  const numericCostPrice = Math.max(0, Number(costPrice || 0));
+  const computedMarkupAmount = isGoodsMarkup
+    ? markupMode === 'PERCENT'
+      ? Math.round((numericCostPrice * Math.max(0, Number(markupPercent || 0))) / 100)
+      : Math.max(0, Math.round(Number(markupAmount || 0)))
+    : 0;
+  const computedMarkupPercent =
+    numericCostPrice > 0 ? (computedMarkupAmount / numericCostPrice) * 100 : 0;
+  const totalCreditPrice = numericCostPrice + computedMarkupAmount;
+  const effectiveAmount = isGoodsMarkup ? totalCreditPrice : Number(amount || 0);
+  const isGoodsFormValid =
+    !isGoodsMarkup ||
+    (itemDescription.trim().length > 0 && numericCostPrice > 0 && computedMarkupAmount >= 0);
+
   const handleLoanTypeChange = (newTypeId: string) => {
     setSelectedLoanTypeId(newTypeId);
     if (!newTypeId) {
@@ -408,6 +509,15 @@ export default function PengajuanPinjaman({
     const newAvailableTenors = calculateAvailableTenors(newType?.max_duration_months);
     if (tenorMode === 'PRESET' && typeof tenor === 'number' && (tenor > newMaxTenor || !newAvailableTenors.includes(tenor))) {
       setTenor('');
+    }
+    if (
+      isGoodsMarkupLoanType(newType) &&
+      Number(newType?.default_markup_percent || 0) > 0 &&
+      markupAmount === '' &&
+      markupPercent === ''
+    ) {
+      setMarkupMode('PERCENT');
+      setMarkupPercent(Number(newType!.default_markup_percent));
     }
     // In CUSTOM mode, if Number(customTenorInput) > newMaxTenor, keep customTenorInput so the max-limit warning shows and submit stays locked.
   };
@@ -676,15 +786,21 @@ export default function PengajuanPinjaman({
   }
 
   const calculateCicilan = () => {
-    if (!amount || effectiveTenor <= 0) return 0;
-    return Math.round(Number(amount) / effectiveTenor);
+    if (!effectiveAmount || effectiveTenor <= 0) return 0;
+    return Math.round(Number(effectiveAmount) / effectiveTenor);
   };
 
-  const sameTypeActiveLoans = selectedLoanTypeId
-    ? activeLoanBreakdown.filter(
-        (item) => item.loanTypeId && String(item.loanTypeId) === String(selectedLoanTypeId)
-      )
-    : [];
+  const monthlySplitPreview =
+    isGoodsMarkup && effectiveTenor > 0 && numericCostPrice > 0
+      ? calculateGoodsMarkupScheduleSplit(numericCostPrice, computedMarkupAmount, effectiveTenor)[0]
+      : null;
+
+  const sameTypeActiveLoans =
+    selectedLoanTypeId && !isGoodsMarkup
+      ? activeLoanBreakdown.filter(
+          (item) => item.loanTypeId && String(item.loanTypeId) === String(selectedLoanTypeId)
+        )
+      : [];
   const sameTypeSettlementTotal = sameTypeActiveLoans.reduce(
     (sum, item) => sum + Number(item.remainingPrincipal || 0),
     0
@@ -694,7 +810,7 @@ export default function PengajuanPinjaman({
     0
   );
   const isTopUpValid =
-    sameTypeSettlementTotal === 0 || Number(amount || 0) > sameTypeSettlementTotal;
+    sameTypeSettlementTotal === 0 || Number(effectiveAmount || 0) > sameTypeSettlementTotal;
 
   const baseThpRemainingForEligibility = thpData
     ? (thpData.angsuran_lain_lain !== undefined
@@ -711,6 +827,10 @@ export default function PengajuanPinjaman({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isGoodsFormValid) {
+      setError('Silakan lengkapi Nama Barang dan Harga Beli / Modal Supplier yang valid.');
+      return;
+    }
     if (!isTenorValid) {
       setError(`Tenor pinjaman harus berada di antara 1 hingga ${maxTenor} bulan.`);
       return;
@@ -737,21 +857,37 @@ export default function PengajuanPinjaman({
       const settlementSummary = sameTypeActiveLoans
         .map((l) => `${l.loanNumber} (Rp ${Number(l.remainingPrincipal).toLocaleString('id-ID')})`)
         .join(', ');
-      const netDisbursed = Math.max(0, Number(amount || 0) - sameTypeSettlementTotal);
-      const effectivePurpose = sameTypeSettlementTotal > 0
-        ? `${purpose} [Top-Up Kompensasi: ${settlementSummary} | Cair Bersih: Rp ${netDisbursed.toLocaleString('id-ID')}]`
+      const netDisbursed = Math.max(0, Number(effectiveAmount || 0) - sameTypeSettlementTotal);
+      const basePurpose = isGoodsMarkup
+        ? (purpose.trim() || `Pembiayaan Barang: ${itemDescription.trim()}`)
         : purpose;
+      const effectivePurpose = sameTypeSettlementTotal > 0
+        ? `${basePurpose} [Top-Up Kompensasi: ${settlementSummary} | Cair Bersih: Rp ${netDisbursed.toLocaleString('id-ID')}]`
+        : basePurpose;
+      const goodsOptions = isGoodsMarkup
+        ? {
+            financingScheme: 'GOODS_MARKUP' as FinancingScheme,
+            itemDescription: itemDescription.trim(),
+            costPrice: numericCostPrice,
+            markupAmount: computedMarkupAmount,
+          }
+        : undefined;
       await submitLoanApplication(
         selectedAnggota,
         effectivePurpose,
-        amount,
+        isGoodsMarkup ? totalCreditPrice : amount,
         effectiveTenor,
         selectedLoanTypeId,
         maxTenor,
         minRemainingThp,
-        topUpOptions
+        topUpOptions,
+        goodsOptions
       );
-      setSuccess('Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.');
+      setSuccess(
+        isGoodsMarkup
+          ? 'Pengajuan pembiayaan barang berhasil dibuat dan menunggu persetujuan.'
+          : 'Pengajuan pinjaman berhasil dibuat dan menunggu persetujuan.'
+      );
       
       // Reset form
       setSelectedLoanTypeId('');
@@ -760,6 +896,11 @@ export default function PengajuanPinjaman({
       setTenor('');
       setTenorMode('PRESET');
       setCustomTenorInput('');
+      setItemDescription('');
+      setCostPrice('');
+      setMarkupMode('AMOUNT');
+      setMarkupAmount('');
+      setMarkupPercent('');
       if (selectedAnggota) checkTHP(selectedAnggota);
     } catch (err: any) {
       setError(err.message);
@@ -828,32 +969,186 @@ export default function PengajuanPinjaman({
                     </option>
                   ))}
                 </select>
+                {selectedLoanType && (
+                  <div className="mt-2">
+                    {isGoodsMarkup ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-teal-50 text-teal-800 border border-teal-200">
+                        Pembiayaan Barang (Markup Margin) — 0% Bunga (Murabahah)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        0% Bunga — Tanpa Biaya Tambahan
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Keperluan Pinjaman (Tujuan Pembelian)</label>
-                <input 
-                  type="text"
-                  required
-                  value={purpose}
-                  onChange={e => setPurpose(e.target.value)}
-                  placeholder="Contoh: Pembelian Sepeda Motor"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
+              {isGoodsMarkup ? (
+                <div className="p-4 sm:p-5 rounded-xl bg-teal-50/50 border border-teal-200 space-y-5">
+                  <div className="flex items-center justify-between border-b border-teal-200/70 pb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-teal-900">
+                        Rincian Pengadaan &amp; Markup Harga Barang
+                      </h3>
+                      <p className="text-xs text-teal-700 mt-0.5">
+                        Kas koperasi dicairkan ke supplier sebesar Harga Modal; anggota mengangsur berdasarkan Harga Jual Akad tanpa bunga.
+                      </p>
+                    </div>
+                  </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Nama / Spesifikasi Barang <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={itemDescription}
+                      onChange={e => setItemDescription(e.target.value)}
+                      placeholder="Contoh: Sepeda Motor Honda Beat / Kulkas 2 Pintu"
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Harga Beli / Modal Supplier (Rp) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        required
+                        value={costPrice}
+                        onChange={e => setCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Contoh: 2000000"
+                        className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Margin Keuntungan Koperasi
+                        </label>
+                        <div className="inline-flex rounded-lg border border-teal-200 bg-white p-0.5 text-[11px] font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setMarkupMode('AMOUNT')}
+                            className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                              markupMode === 'AMOUNT' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Rp
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMarkupMode('PERCENT')}
+                            className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                              markupMode === 'PERCENT' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            %
+                          </button>
+                        </div>
+                      </div>
+                      {markupMode === 'AMOUNT' ? (
+                        <input
+                          type="number"
+                          min="0"
+                          value={markupAmount}
+                          onChange={e => setMarkupAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="Contoh: 300000"
+                          className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                        />
+                      ) : (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={markupPercent}
+                            onChange={e => setMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                            placeholder="Contoh: 15"
+                            className="w-full px-4 py-2 pr-10 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-500">%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Kotak Ringkasan Otomatis Akad Pembiayaan Barang */}
+                  <div className="bg-white rounded-xl border border-teal-200 p-4 space-y-2 text-sm">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Harga Beli / Modal Supplier</span>
+                      <span className="font-semibold tabular-nums">{formatCurrency(numericCostPrice)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>
+                        Margin Markup Koperasi ({computedMarkupPercent.toFixed(1)}%)
+                      </span>
+                      <span className="font-semibold text-teal-700 tabular-nums">+ {formatCurrency(computedMarkupAmount)}</span>
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-slate-200 text-slate-900 font-bold">
+                      <span>Harga Jual Kredit (Total Akad)</span>
+                      <span className="text-teal-800 tabular-nums">{formatCurrency(totalCreditPrice)}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-slate-600 pt-1">
+                      <span>Angsuran Tetap per Bulan {effectiveTenor > 0 ? `(${effectiveTenor} Bln)` : ''}</span>
+                      <span className="font-bold text-slate-900 tabular-nums">
+                        {effectiveTenor > 0 ? `${formatCurrency(calculateCicilan())}/bln` : '-'}
+                      </span>
+                    </div>
+                    {monthlySplitPreview && (
+                      <div className="text-[11px] text-slate-500 flex justify-end">
+                        Rincian bln ke-1: Pokok {formatCurrency(monthlySplitPreview.principal_portion)} + Margin {formatCurrency(monthlySplitPreview.margin_portion)}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Catatan Tambahan / Supplier (Opsional)
+                    </label>
+                    <input
+                      type="text"
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="Contoh: Pengadaan via Toko Elektronik Jaya"
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    />
+                  </div>
+                </div>
+              ) : (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Plafon Pinjaman (Rp)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Keperluan Pinjaman (Tujuan Pembelian)</label>
                   <input 
-                    type="number"
-                    min="1"
+                    type="text"
                     required
-                    value={amount}
-                    onChange={e => setAmount(Number(e.target.value) || '')}
+                    value={purpose}
+                    onChange={e => setPurpose(e.target.value)}
+                    placeholder="Contoh: Pembelian Sepeda Motor"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {!isGoodsMarkup && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Plafon Pinjaman (Rp)</label>
+                    <input 
+                      type="number"
+                      min="1"
+                      required
+                      value={amount}
+                      onChange={e => setAmount(Number(e.target.value) || '')}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <label className="block text-sm font-semibold text-slate-700">
                     Tenor (Bulan) <span className="text-rose-500">*</span>
@@ -933,7 +1228,7 @@ export default function PengajuanPinjaman({
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isTenorValid || !isTopUpValid || (thpData !== null && !isTHPEligible())}
+                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isGoodsFormValid || !isTenorValid || !isTopUpValid || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
@@ -951,7 +1246,7 @@ export default function PengajuanPinjaman({
             sameTypeActiveLoans={sameTypeActiveLoans}
             selectedLoanTypeName={selectedLoanType?.name}
             newInstallment={calculateCicilan()}
-            amount={amount}
+            amount={isGoodsMarkup ? totalCreditPrice : amount}
             tenor={effectiveTenor || ''}
             onSelectTenor={(t) => {
               setTenorMode('PRESET');
@@ -959,6 +1254,10 @@ export default function PengajuanPinjaman({
             }}
             maxTenor={selectedLoanType ? selectedLoanType.max_duration_months : undefined}
             minRemainingThp={minRemainingThp}
+            isGoodsMarkup={isGoodsMarkup}
+            itemDescription={itemDescription}
+            costPrice={numericCostPrice}
+            markupAmount={computedMarkupAmount}
           />
         </div>
       </div>

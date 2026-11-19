@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { loanService } from '../../services/loanService';
+import { loanService, isGoodsMarkupLoan } from '../../services/loanService';
 import { X, Loader2, DollarSign } from 'lucide-react';
 import StatusBadge from '../ui/StatusBadge';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -251,6 +251,44 @@ export default function LoanDetailModal({
                 </div>
               </div>
 
+              {/* Ringkasan Pembiayaan Barang (Murabahah) jika berlaku */}
+              {isGoodsMarkupLoan(pinjaman) && (
+                <div className="bg-teal-50/70 rounded-xl border border-teal-200 p-4 space-y-2 text-xs sm:text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-teal-900">
+                      Rincian Pembiayaan Barang (Markup Margin — 0% Bunga)
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 text-[11px] font-semibold border border-teal-200">
+                      Murabahah
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-1">
+                    <div>
+                      <p className="text-teal-700 text-xs">Nama Barang</p>
+                      <p className="font-semibold text-teal-950">{pinjaman.item_description || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-teal-700 text-xs">Harga Modal Supplier</p>
+                      <p className="font-semibold text-teal-950">
+                        Rp {Number(pinjaman.cost_price || 0).toLocaleString('id-ID')}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-teal-700 text-xs">Margin Markup</p>
+                      <p className="font-semibold text-teal-950">
+                        Rp {Number(pinjaman.markup_amount || 0).toLocaleString('id-ID')}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-teal-700 text-xs">Harga Jual Akad</p>
+                      <p className="font-bold text-teal-950">
+                        Rp {principalAmount.toLocaleString('id-ID')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Jadwal Angsuran Table */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="px-5 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
@@ -282,7 +320,12 @@ export default function LoanDetailModal({
                             {item.due_date}
                           </td>
                           <td className="px-4 py-3 text-gray-600">
-                            Rp {Number(item.target_amount).toLocaleString('id-ID')}
+                            <div>Rp {Number(item.target_amount).toLocaleString('id-ID')}</div>
+                            {Number(item.margin_portion || 0) > 0 && (
+                              <div className="text-[11px] text-teal-700">
+                                Pokok Rp {Number(item.principal_portion || 0).toLocaleString('id-ID')} + Margin Rp {Number(item.margin_portion || 0).toLocaleString('id-ID')}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-green-600 font-medium">
                             Rp {Number(item.paid_amount).toLocaleString('id-ID')}

@@ -284,6 +284,7 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
         grossSales: 0,
         cogs: 0,
         grossProfit: 0,
+        goodsFinancingMargin: 0,
         opex: 0,
         estimatedShu: 0,
         marginPercentage: 0,
@@ -950,5 +951,107 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
         (supabase.from as any).mockImplementation(defaultFromImpl);
       }
     }
+  });
+
+  it('getShuEstimation recognizes ONLY margin_portion from goods financing repayments and excludes principal', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockResolvedValue({
+                  data: [
+                    // 1x angsuran pembiayaan barang Rp 460.000 (Pokok Rp 400.000 + Margin Rp 60.000)
+                    {
+                      id: 'rep-brg-1',
+                      loan_id: 'loan-brg-1',
+                      schedule_id: 'sch-brg-1',
+                      amount_paid: 460000,
+                      principal_portion: 400000,
+                      margin_portion: 60000,
+                      payment_date: '2026-11-19T09:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                    },
+                    // 1x angsuran pinjaman tunai 0% bunga Rp 500.000 (Margin Rp 0)
+                    {
+                      id: 'rep-cash-1',
+                      loan_id: 'loan-cash-1',
+                      schedule_id: 'sch-cash-1',
+                      amount_paid: 500000,
+                      principal_portion: 500000,
+                      margin_portion: 0,
+                      payment_date: '2026-11-19T10:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.goodsFinancingMargin).toBe(60000);
+      expect(shu.estimatedShu).toBe(60000);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('renders Pendapatan Margin Pembiayaan Barang card on Estimasi SHU tab and pembiayaan_barang badge', () => {
+    const badgeHtml = renderToStaticMarkup(<KategoriBadge kategori="pembiayaan_barang" />);
+    expect(badgeHtml).toContain('Pembiayaan Barang');
+    expect(badgeHtml).toContain('bg-teal-50');
+
+    const html = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuData={{
+          grossSales: 1000000,
+          cogs: 700000,
+          grossProfit: 300000,
+          goodsFinancingMargin: 60000,
+          opex: 50000,
+          estimatedShu: 310000,
+          marginPercentage: 29.2,
+          marginPerKategori: [],
+        }}
+      />
+    );
+
+    expect(html).toContain('Pendapatan Margin Pembiayaan Barang');
+    expect(html).toContain('60.000');
+    expect(html).toContain('310.000');
   });
 });

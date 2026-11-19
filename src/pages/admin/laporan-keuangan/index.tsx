@@ -21,6 +21,7 @@ import {
   syncStoreCreditPaymentsToCashFlow,
   type OutstandingStoreCreditSummary,
 } from '../../../services/storeCreditLedgerService';
+import { calculateRepaymentPortions } from '../../../services/loanService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -58,6 +59,7 @@ export interface ShuEstimationData {
   grossSales: number;
   cogs: number;
   grossProfit: number;
+  goodsFinancingMargin: number;
   opex: number;
   estimatedShu: number;
   marginPercentage: number;
@@ -96,6 +98,8 @@ const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }
   restock_supplier:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
   pembelian_barang:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Pembelian Barang' },
   pencairan_pinjaman:  { bg: 'bg-purple-50',   text: 'text-purple-800',  label: 'Pencairan Pinjaman' },
+  pembiayaan_barang:   { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
+  PEMBIAYAAN_BARANG:   { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
   penarikan_simpanan:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
   PENARIKAN_SIMPANAN:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
   'Penarikan Simpanan':{ bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
@@ -357,9 +361,135 @@ export async function getShuEstimation(
       return true;
     })
     .reduce((s: number, r: any) => s + Number(r?.amount ?? 0), 0);
+
+  // 3b. Pendapatan Margin Pembiayaan Barang (hanya porsi margin dari angsuran barang yang masuk pada periode ini)
+  let goodsFinancingMargin = 0;
+  try {
+    const repayTable: any = supabase.from('loan_repayments');
+    if (repayTable && typeof repayTable.select === 'function') {
+      const runRepayQuery = async (withPortionCols: boolean) => {
+        const cols = withPortionCols
+          ? 'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_date, payment_method'
+          : 'id, loan_id, schedule_id, amount_paid, payment_date, payment_method';
+        const q: any = repayTable.select(cols);
+        if (q && typeof q.gte === 'function') {
+          const gteQ = q.gte('payment_date', startDate);
+          if (gteQ && typeof gteQ.lte === 'function') {
+            return await gteQ.lte('payment_date', endDate + 'T23:59:59');
+          }
+          return await gteQ;
+        }
+        if (q && typeof q.then === 'function') {
+          return await q;
+        }
+        return { data: [], error: null };
+      };
+
+      let repayRes = await runRepayQuery(true);
+      if (repayRes?.error) {
+        const msg = String(repayRes.error.message || '').toLowerCase();
+        if (
+          repayRes.error.code === '42703' ||
+          repayRes.error.code === 'PGRST204' ||
+          msg.includes('margin_portion') ||
+          msg.includes('principal_portion') ||
+          msg.includes('column') ||
+          msg.includes('schema cache')
+        ) {
+          repayRes = await runRepayQuery(false);
+        }
+      }
+
+      const rawRepayments = Array.isArray(repayRes?.data) ? repayRes.data : [];
+      const validRepayments = rawRepayments.filter((r: any) => {
+        const method = String(r?.payment_method || '').toUpperCase();
+        if (method === 'SALDO_AWAL' || method === 'TOPUP_COMPENSATION') return false;
+        if (r?.payment_date) {
+          const pDate = String(r.payment_date).slice(0, 10);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(pDate) && (pDate < startDate || pDate > endDate)) {
+            return false;
+          }
+        }
+        return Number(r?.amount_paid || 0) > 0;
+      });
+
+      const missingMarginRows = validRepayments.filter(
+        (r: any) => Number(r?.margin_portion || 0) <= 0
+      );
+
+      const scheduleLookup = new Map<string, any>();
+      const loanLookup = new Map<string, any>();
+
+      if (missingMarginRows.length > 0) {
+        const schedIds = Array.from(
+          new Set(missingMarginRows.map((r: any) => r.schedule_id).filter(Boolean).map(String))
+        );
+        const loanIds = Array.from(
+          new Set(missingMarginRows.map((r: any) => r.loan_id).filter(Boolean).map(String))
+        );
+
+        if (schedIds.length > 0) {
+          try {
+            const schedQ: any = supabase
+              .from('loan_schedules')
+              ?.select?.('id, target_amount, principal_portion, margin_portion');
+            if (schedQ && typeof schedQ.in === 'function') {
+              const sRes = await schedQ.in('id', schedIds);
+              for (const s of sRes?.data || []) {
+                if (s?.id) scheduleLookup.set(String(s.id), s);
+              }
+            }
+          } catch {
+            // Non-blocking fallback
+          }
+        }
+
+        if (loanIds.length > 0) {
+          try {
+            const loanQ: any = supabase
+              .from('loans')
+              ?.select?.('id, amount, principal_amount, cost_price, markup_amount');
+            if (loanQ && typeof loanQ.in === 'function') {
+              const lRes = await loanQ.in('id', loanIds);
+              for (const l of lRes?.data || []) {
+                if (l?.id) loanLookup.set(String(l.id), l);
+              }
+            }
+          } catch {
+            // Non-blocking fallback
+          }
+        }
+      }
+
+      for (const r of validRepayments) {
+        const explicitMargin = Math.round(Number(r?.margin_portion || 0));
+        if (explicitMargin > 0) {
+          goodsFinancingMargin += explicitMargin;
+          continue;
+        }
+
+        const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
+        const loan = r?.loan_id ? loanLookup.get(String(r.loan_id)) : null;
+        const portions = calculateRepaymentPortions({
+          amountPaid: Number(r?.amount_paid || 0),
+          targetAmount: Number(sched?.target_amount || r?.amount_paid || 0),
+          schedulePrincipalPortion: sched?.principal_portion,
+          scheduleMarginPortion: sched?.margin_portion,
+          loanCostPrice: loan?.cost_price,
+          loanMarkupAmount: loan?.markup_amount,
+          loanTotalAmount: loan?.principal_amount ?? loan?.amount,
+        });
+        goodsFinancingMargin += portions.marginPortion;
+      }
+    }
+  } catch (goodsMarginErr) {
+    console.warn('Gagal menghitung pendapatan margin pembiayaan barang:', goodsMarginErr);
+  }
+
   const grossProfit  = grossSales - cogs;
-  const estimatedShu = grossProfit - opex;
-  const marginPct    = grossSales > 0 ? (estimatedShu / grossSales) * 100 : 0;
+  const estimatedShu = grossProfit + goodsFinancingMargin - opex;
+  const totalRevenue = grossSales + goodsFinancingMargin;
+  const marginPct    = totalRevenue > 0 ? (estimatedShu / totalRevenue) * 100 : 0;
 
   const marginPerKategori: MarginKategori[] = Object.values(marginMap).map(m => ({
     kategori: m.kategori,
@@ -369,7 +499,16 @@ export async function getShuEstimation(
     gross_margin_pct: m.omzet > 0 ? ((m.omzet - m.hpp) / m.omzet) * 100 : 0,
   }));
 
-  return { grossSales, cogs, grossProfit, opex, estimatedShu, marginPercentage: marginPct, marginPerKategori };
+  return {
+    grossSales,
+    cogs,
+    grossProfit,
+    goodsFinancingMargin,
+    opex,
+    estimatedShu,
+    marginPercentage: marginPct,
+    marginPerKategori,
+  };
 }
 
 // ─── Main Page Component ──────────────────────────────────────────────────────
@@ -379,6 +518,8 @@ export interface LaporanKeuanganProps {
   initialConfirmText?: string;
   initialSelectedCashFlowRef?: CashFlowTransaction | null;
   initialStoreCreditSummary?: OutstandingStoreCreditSummary | null;
+  initialActiveTab?: 'cashflow' | 'shu';
+  initialShuData?: ShuEstimationData | null;
 }
 
 export default function LaporanKeuangan({
@@ -386,17 +527,19 @@ export default function LaporanKeuangan({
   initialConfirmText = '',
   initialSelectedCashFlowRef = null,
   initialStoreCreditSummary = null,
+  initialActiveTab = 'cashflow',
+  initialShuData = null,
 }: LaporanKeuanganProps = {}) {
   const { showToast } = useFeedback();
   const inRouter = useInRouterContext();
-  const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>('cashflow');
+  const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>(initialActiveTab);
   const [startDate, setStartDate] = useState(startOfMonth);
   const [endDate, setEndDate]     = useState(todayStr);
   const [unit, setUnit]           = useState('all');
   const [loading, setLoading]     = useState(false);
 
   const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(null);
-  const [shuData, setShuData]           = useState<ShuEstimationData | null>(null);
+  const [shuData, setShuData]           = useState<ShuEstimationData | null>(initialShuData);
   const [storeCreditSummary, setStoreCreditSummary] = useState<OutstandingStoreCreditSummary>(
     initialStoreCreditSummary ?? {
       totalOutstandingReceivable: 0,
@@ -496,6 +639,7 @@ export default function LaporanKeuangan({
         wsShu.addRow(['Total Omzet Penjualan', shuData.grossSales]);
         wsShu.addRow(['HPP / Modal Barang', shuData.cogs]);
         wsShu.addRow(['Laba Kotor', shuData.grossProfit]);
+        wsShu.addRow(['Pendapatan Margin Pembiayaan Barang', shuData.goodsFinancingMargin]);
         wsShu.addRow(['Beban Operasional', shuData.opex]);
         wsShu.addRow(['Estimasi SHU Bersih', shuData.estimatedShu]);
         wsShu.addRow([]);
@@ -941,11 +1085,12 @@ export default function LaporanKeuangan({
       {!loading && activeTab === 'shu' && shuData && (
         <div className="space-y-6">
           {/* Waterfall Metric Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
             {[
               { label: 'Total Omzet', value: shuData.grossSales,  color: 'blue',   icon: 'storefront',    sub: 'Pendapatan kotor penjualan' },
               { label: 'HPP / Modal', value: shuData.cogs,        color: 'orange', icon: 'inventory_2',   sub: 'SUM(qty × buy_price)' },
               { label: 'Laba Kotor',  value: shuData.grossProfit, color: 'emerald',icon: 'trending_up',   sub: 'Omzet − HPP' },
+              { label: 'Pendapatan Margin Pembiayaan Barang', value: shuData.goodsFinancingMargin, color: 'teal', icon: 'shopping_bag', sub: 'Realisasi margin angsuran barang (non-pokok)' },
               { label: 'Beban Operasional', value: shuData.opex,  color: 'rose',   icon: 'payments',      sub: 'Listrik, gaji, depresiasi' },
               { label: 'Estimasi SHU Bersih', value: shuData.estimatedShu, color: 'purple', icon: 'stars', sub: `Margin ${shuData.marginPercentage.toFixed(1)}%` },
             ].map((m, i) => {
@@ -953,6 +1098,7 @@ export default function LaporanKeuangan({
                 blue:   { border: 'border-blue-200',   bg: 'bg-blue-50',   text: 'text-blue-800',   accent: 'bg-blue-500',   badge: 'bg-blue-100 text-blue-800' },
                 orange: { border: 'border-orange-200', bg: 'bg-orange-50', text: 'text-orange-800', accent: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
                 emerald:{ border: 'border-emerald-200',bg: 'bg-emerald-50',text: 'text-emerald-800',accent: 'bg-emerald-500',badge: 'bg-emerald-100 text-emerald-800' },
+                teal:   { border: 'border-teal-200',   bg: 'bg-teal-50',   text: 'text-teal-800',   accent: 'bg-teal-500',   badge: 'bg-teal-100 text-teal-800' },
                 rose:   { border: 'border-rose-200',   bg: 'bg-rose-50',   text: 'text-rose-800',   accent: 'bg-rose-500',   badge: 'bg-rose-100 text-rose-800' },
                 purple: { border: 'border-purple-300', bg: 'bg-purple-50', text: 'text-purple-900', accent: 'bg-purple-600', badge: 'bg-purple-100 text-purple-800' },
               };

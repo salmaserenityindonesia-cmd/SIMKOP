@@ -166,6 +166,9 @@ export interface LoanDisbursementBreakdown {
   tenor: number;
   status: string;
   disbursedAt?: string | null;
+  itemDescription?: string | null;
+  costPrice?: number;
+  markupAmount?: number;
   member?: { nrp: string; nama: string; pangkat?: string | null } | null;
 }
 
@@ -1721,13 +1724,25 @@ export async function getCashFlowReferenceBreakdown(
     }
   }
 
-  // ── Cabang E2: Pencairan Pinjaman ────────────────────────────────────────────
-  if (catUpper === 'PENCAIRAN_PINJAMAN' && cashFlowRow.reference_id) {
-    const { data: loan } = await safeFetchSingleById<any>(
+  // ── Cabang E2: Pencairan Pinjaman & Pembiayaan Barang ────────────────────────
+  if (
+    (catUpper === 'PENCAIRAN_PINJAMAN' || catUpper === 'PEMBIAYAAN_BARANG') &&
+    cashFlowRow.reference_id
+  ) {
+    let { data: loan, error: loanLookupErr } = await safeFetchSingleById<any>(
       'loans',
-      'id, member_id, amount, principal_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at',
+      'id, member_id, amount, principal_amount, item_description, cost_price, markup_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at',
       cashFlowRow.reference_id
     );
+
+    if (!loan && loanLookupErr) {
+      const fbLoan = await safeFetchSingleById<any>(
+        'loans',
+        'id, member_id, amount, principal_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at',
+        cashFlowRow.reference_id
+      );
+      loan = fbLoan.data;
+    }
 
     if (loan) {
       let member: { nrp: string; nama: string; pangkat?: string | null } | null = null;
@@ -1740,15 +1755,26 @@ export async function getCashFlowReferenceBreakdown(
         member = formatMemberSummary(m);
       }
 
+      const isGoodsDisbursement =
+        catUpper === 'PEMBIAYAAN_BARANG' ||
+        Number(loan.markup_amount ?? 0) > 0 ||
+        Boolean(String(loan.item_description || '').trim());
+      const disbursedAmount = isGoodsDisbursement
+        ? Math.round(Number(loan.cost_price ?? journal.amount ?? 0))
+        : Math.round(Number(loan.principal_amount ?? loan.amount ?? journal.amount));
+
       return {
         kind: 'loan_disbursement',
         journal,
         loanDisbursement: {
           loanId: String(loan.id || cashFlowRow.reference_id),
-          amount: Math.round(Number(loan.principal_amount ?? loan.amount ?? journal.amount)),
+          amount: disbursedAmount,
           tenor: Number(loan.agreed_tenor_months ?? loan.tenor ?? 0),
           status: String(loan.status || 'active'),
           disbursedAt: loan.disbursed_at ?? loan.created_at ?? null,
+          itemDescription: loan.item_description ?? null,
+          costPrice: loan.cost_price !== undefined ? Math.round(Number(loan.cost_price)) : undefined,
+          markupAmount: loan.markup_amount !== undefined ? Math.round(Number(loan.markup_amount)) : undefined,
           member,
         },
       };

@@ -3258,6 +3258,95 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
     expect(row2027.remainingPrincipalAllTime).toBe(625000);
     expect(row2027.repaymentProgressPct).toBe(38);
   });
+
+  it('toggleLoanSchedulePaid records principal_portion & margin_portion and cash_flow inflow for GOODS_MARKUP loan installments', async () => {
+    const insertRepayMock = vi.fn().mockResolvedValue({ error: null });
+    const insertCashFlowMock = vi.fn().mockResolvedValue({ error: null });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('loan:loans')) {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: {
+                      id: 'sched-brg-1',
+                      loan_id: 'loan-brg-1',
+                      period_number: 1,
+                      target_amount: 460000,
+                      principal_portion: 400000,
+                      margin_portion: 60000,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      loan: {
+                        id: 'loan-brg-1',
+                        loan_number: 'LOAN-BRG-01',
+                        status: 'active',
+                        principal_amount: 2300000,
+                        amount: 2300000,
+                        cost_price: 2000000,
+                        markup_amount: 300000,
+                        item_description: 'Kulkas 2 Pintu',
+                        member: { nrp: '88010001', nama: 'Budi Santoso' },
+                      },
+                    },
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'sched-brg-1', status: 'paid', paid_amount: 460000, target_amount: 460000 },
+                  { id: 'sched-brg-2', status: 'unpaid', paid_amount: 0, target_amount: 460000 },
+                ],
+                error: null,
+              }),
+            };
+          }),
+          update: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return { insert: insertRepayMock };
+      }
+      if (table === 'cash_flow') {
+        return { insert: insertCashFlowMock };
+      }
+      return {};
+    });
+
+    await toggleLoanSchedulePaid('sched-brg-1', true, {
+      amount: 460000,
+      paymentMethod: 'potong_gaji',
+      receiptNo: 'KW-BRG-01',
+    });
+
+    expect(insertRepayMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loan_id: 'loan-brg-1',
+        schedule_id: 'sched-brg-1',
+        amount_paid: 460000,
+        principal_portion: 400000,
+        margin_portion: 60000,
+      })
+    );
+    expect(insertCashFlowMock).toHaveBeenCalledTimes(1);
+    const cfRow = insertCashFlowMock.mock.calls[0][0][0];
+    expect(cfRow).toMatchObject({
+      direction: 'in',
+      amount: 460000,
+      category: 'angsuran_pinjaman',
+      reference_id: 'sched-brg-1',
+    });
+    expect(cfRow.description).toContain('Pokok: Rp 400.000');
+    expect(cfRow.description).toContain('Margin: Rp 60.000');
+  });
 });
 
 

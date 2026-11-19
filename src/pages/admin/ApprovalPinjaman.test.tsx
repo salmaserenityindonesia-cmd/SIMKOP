@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import ApprovalPinjaman from './ApprovalPinjaman';
+import ApprovalPinjaman, { buildApprovalConfirmMessage } from './ApprovalPinjaman';
 import { loanService } from '../../services/loanService';
 import * as exportUtils from '../../lib/exportUtils';
 
@@ -375,6 +375,50 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(html).toContain('1-10');
       expect(html).toContain('12');
       expect(html).toContain('Halaman 1 / 2');
+    });
+
+    it('renders goods markup breakdown (Nama Barang, Modal Supplier, Margin, Harga Jual Akad) and builds detailed approval confirmation message', () => {
+      const goodsLoan = {
+        id: 'loan-brg-app-1',
+        loan_number: 'LOAN-BRG-001',
+        status: 'draft',
+        item_description: 'Kulkas 2 Pintu',
+        cost_price: 2000000,
+        markup_amount: 300000,
+        amount: 2300000,
+        principal_amount: 2300000,
+        tenor: 5,
+        created_at: '2026-11-19T08:00:00Z',
+        loan_types: {
+          id: 'lt-brg',
+          code: 'PEMBIAYAAN_BARANG',
+          name: 'Pembiayaan Barang (Markup Margin)',
+          financing_scheme: 'GOODS_MARKUP',
+        },
+        anggota: { nama: 'Budi Santoso', nrp: '88010001' },
+      };
+
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="PENDING"
+          initialPinjamanList={[goodsLoan]}
+        />
+      );
+
+      expect(html).toContain('Pembiayaan Barang (Markup)');
+      expect(html).toContain('Barang: Kulkas 2 Pintu');
+      expect(html).toContain('Modal Supplier:');
+      expect(html).toContain('2.000.000');
+      expect(html).toContain('Margin:');
+      expect(html).toContain('300.000');
+      expect(html).toContain('Harga Jual Akad:');
+      expect(html).toContain('2.300.000');
+
+      const confirmMsg = buildApprovalConfirmMessage(goodsLoan, 'approved');
+      expect(confirmMsg).toContain('Kulkas 2 Pintu');
+      expect(confirmMsg).toContain('2.000.000');
+      expect(confirmMsg).toContain('300.000');
+      expect(confirmMsg).toContain('2.300.000');
     });
   });
 });

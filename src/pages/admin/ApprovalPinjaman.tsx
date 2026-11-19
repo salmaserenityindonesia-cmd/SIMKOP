@@ -1,11 +1,43 @@
 import { useState, useEffect, useMemo } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
-import { loanService, LoanApplicationStatusTab, LoanType } from '../../services/loanService';
+import { loanService, LoanApplicationStatusTab, LoanType, isGoodsMarkupLoan } from '../../services/loanService';
 import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import StatusBadge, { StatusType } from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 import LoanDetailModal from '../../components/loans/LoanDetailModal';
+
+const defaultFormatRupiah = (amount: number) =>
+  new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0
+  }).format(amount);
+
+export function buildApprovalConfirmMessage(
+  loan: any,
+  action: 'approved' | 'rejected',
+  formatRupiahFn: (n: number) => string = defaultFormatRupiah
+): string {
+  const isApprove = action === 'approved';
+  if (isApprove && isGoodsMarkupLoan(loan)) {
+    const totalAkad = Number(loan?.amount || loan?.principal_amount || 0);
+    const markupAmt = Number(loan?.markup_amount || 0);
+    const costPrice = Number(loan?.cost_price || Math.max(0, totalAkad - markupAmt));
+    const itemDesc = String(loan?.item_description || loan?.notes || 'Barang').trim();
+    return `Apakah Anda yakin ingin MENYETUJUI pembiayaan barang ini? Barang: ${itemDesc} | Harga Modal Supplier: ${formatRupiahFn(costPrice)} | Margin Markup: ${formatRupiahFn(markupAmt)} | Harga Jual Akad: ${formatRupiahFn(totalAkad)}. Kas keluar koperasi akan dicatat sebesar Harga Modal Supplier (${formatRupiahFn(costPrice)}).`;
+  }
+
+  const settlementAmt = Number(loan?.topup_settlement_amount || 0);
+  const principalAmt = Number(loan?.amount || loan?.principal_amount || 0);
+  const netDisbursedAmt = Math.max(0, principalAmt - settlementAmt);
+  const topupConfirmDetail =
+    isApprove && settlementAmt > 0
+      ? ` Pinjaman lama akan otomatis dilunasi sebesar ${formatRupiahFn(settlementAmt)} (Cair Bersih ke Anggota: ${formatRupiahFn(netDisbursedAmt)}).`
+      : '';
+
+  return `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?${topupConfirmDetail}`;
+}
 
 interface ApprovalPinjamanProps {
   initialTab?: LoanApplicationStatusTab;
@@ -86,17 +118,11 @@ export default function ApprovalPinjaman({
   const handleAction = async (id: string, action: 'approved' | 'rejected') => {
     const isApprove = action === 'approved';
     const targetLoan = pinjamanList.find((item) => String(item.id) === String(id));
-    const settlementAmt = Number(targetLoan?.topup_settlement_amount || 0);
-    const principalAmt = Number(targetLoan?.amount || targetLoan?.principal_amount || 0);
-    const netDisbursedAmt = Math.max(0, principalAmt - settlementAmt);
-    const topupConfirmDetail =
-      isApprove && settlementAmt > 0
-        ? ` Pinjaman lama akan otomatis dilunasi sebesar ${formatRupiah(settlementAmt)} (Cair Bersih ke Anggota: ${formatRupiah(netDisbursedAmt)}).`
-        : '';
+    const confirmMessage = buildApprovalConfirmMessage(targetLoan, action, formatRupiah);
 
     const confirmed = await showConfirm({
       title: isApprove ? 'Setujui Pinjaman' : 'Tolak Pinjaman',
-      message: `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?${topupConfirmDetail}`,
+      message: confirmMessage,
       confirmText: isApprove ? 'Setujui' : 'Tolak',
       variant: isApprove ? 'primary' : 'danger',
     });
@@ -524,16 +550,35 @@ export default function ApprovalPinjaman({
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700">
                         <div className="font-medium text-gray-900">{p.anggota?.nama || '-'}</div>
-                        {p.loan_types?.name && (
-                          <span className="mt-1 inline-block rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                            {p.loan_types.name}
-                          </span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {p.loan_types?.name && (
+                            <span className="inline-block rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                              {p.loan_types.name}
+                            </span>
+                          )}
+                          {isGoodsMarkupLoan(p) && (
+                            <span className="inline-block rounded-md bg-teal-50 border border-teal-200 px-2 py-0.5 text-[11px] font-semibold text-teal-800">
+                              Pembiayaan Barang (Markup)
+                            </span>
+                          )}
+                        </div>
+                        {isGoodsMarkupLoan(p) && p.item_description && (
+                          <div className="mt-1 text-xs font-medium text-teal-800">
+                            Barang: {p.item_description}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-600">{formatDate(p.created_at)}</td>
                       <td className="py-3 px-4 text-sm text-gray-600">{formatDate(p.disbursed_at)}</td>
                       <td className="py-3 px-4 text-sm font-medium text-gray-900 text-right">
                         <div>{formatRupiah(p.amount || p.principal_amount || 0)}</div>
+                        {isGoodsMarkupLoan(p) && (
+                          <div className="mt-1 inline-block rounded-md bg-teal-50 border border-teal-200 px-2 py-0.5 text-[11px] font-medium text-teal-800 text-right">
+                            Modal Supplier: {formatRupiah(Number(p.cost_price || 0))} • Margin:{' '}
+                            {formatRupiah(Number(p.markup_amount || 0))} • Harga Jual Akad:{' '}
+                            {formatRupiah(Number(p.amount || p.principal_amount || 0))}
+                          </div>
+                        )}
                         {Number(p.topup_settlement_amount || 0) > 0 && (
                           <div className="mt-1 inline-block rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-medium text-indigo-800 text-right">
                             Top-Up • Potong Lama: {formatRupiah(Number(p.topup_settlement_amount))} • Cair Bersih:{' '}

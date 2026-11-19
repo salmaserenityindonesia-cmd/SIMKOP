@@ -138,11 +138,17 @@ export default function ManajemenProdukSimpanPinjam({
   // Loan Handlers
   const openLoanModal = (type?: LoanType) => {
     if (type) {
-      setLoanForm(type);
+      setLoanForm({
+        ...type,
+        financing_scheme: type.financing_scheme || 'CASH_ZERO_INTEREST',
+        default_markup_percent: type.default_markup_percent ?? 0,
+      });
     } else {
       setLoanForm({
         max_duration_months: 12,
-        is_active: true
+        is_active: true,
+        financing_scheme: 'CASH_ZERO_INTEREST',
+        default_markup_percent: 0,
       });
     }
     setLoanModalOpen(true);
@@ -151,11 +157,22 @@ export default function ManajemenProdukSimpanPinjam({
   const handleSaveLoan = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const scheme = loanForm.financing_scheme || 'CASH_ZERO_INTEREST';
+      const payload: Omit<LoanType, 'id'> = {
+        code: String(loanForm.code || '').trim(),
+        name: String(loanForm.name || '').trim(),
+        max_duration_months: Number(loanForm.max_duration_months || 12),
+        is_active: loanForm.is_active !== false,
+        financing_scheme: scheme,
+        default_markup_percent:
+          scheme === 'GOODS_MARKUP' ? Math.max(0, Number(loanForm.default_markup_percent || 0)) : 0,
+        interest_rate: 0,
+      };
       if (loanForm.id) {
-        await updateLoanType(loanForm.id, loanForm as Omit<LoanType, 'id'>);
+        await updateLoanType(loanForm.id, payload);
         showToast('Jenis pinjaman berhasil diperbarui', 'success');
       } else {
-        await addLoanType(loanForm as Omit<LoanType, 'id'>);
+        await addLoanType(payload);
         showToast('Jenis pinjaman berhasil ditambahkan', 'success');
       }
       setLoanModalOpen(false);
@@ -329,16 +346,32 @@ export default function ManajemenProdukSimpanPinjam({
                 <tr className="bg-surface-container-low text-on-surface font-title-sm">
                   <th className="p-4 border-b border-outline-variant/20">Kode</th>
                   <th className="p-4 border-b border-outline-variant/20">Nama</th>
+                  <th className="p-4 border-b border-outline-variant/20">Skema</th>
                   <th className="p-4 border-b border-outline-variant/20">Max Tenor (Bulan)</th>
                   <th className="p-4 border-b border-outline-variant/20">Status</th>
                   <th className="p-4 border-b border-outline-variant/20 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
-                {loanTypes.map(type => (
+                {loanTypes.map(type => {
+                  const isGoods =
+                    type.financing_scheme === 'GOODS_MARKUP' ||
+                    String(type.code || '').toUpperCase() === 'PEMBIAYAAN_BARANG';
+                  return (
                   <tr key={type.id} className="hover:bg-surface-container-lowest transition-colors border-b border-outline-variant/10">
                     <td className="p-4 text-body-md font-medium">{type.code}</td>
                     <td className="p-4 text-body-md">{type.name}</td>
+                    <td className="p-4 text-body-md">
+                      {isGoods ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 text-xs font-semibold">
+                          Pembiayaan Barang (Markup{Number(type.default_markup_percent || 0) > 0 ? ` ${type.default_markup_percent}%` : ''})
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+                          Tunai 0% Bunga
+                        </span>
+                      )}
+                    </td>
                     <td className="p-4 text-body-md">{type.max_duration_months} Bulan</td>
                     <td className="p-4 text-body-md">
                       {type.is_active ? <span className="px-2.5 py-1 rounded-full bg-secondary-container text-on-secondary-container text-label-sm">Aktif</span> : <span className="px-2.5 py-1 rounded-full bg-surface-variant text-on-surface-variant text-label-sm">Non-Aktif</span>}
@@ -352,10 +385,11 @@ export default function ManajemenProdukSimpanPinjam({
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {loanTypes.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-8 text-center text-on-surface-variant text-body-md">Belum ada data jenis pinjaman.</td>
+                    <td colSpan={6} className="p-8 text-center text-on-surface-variant text-body-md">Belum ada data jenis pinjaman.</td>
                   </tr>
                 )}
               </tbody>
@@ -452,6 +486,30 @@ export default function ManajemenProdukSimpanPinjam({
                 <label className="text-label-md font-label-md text-on-surface">Nama Pinjaman</label>
                 <input required type="text" value={loanForm.name || ''} onChange={e => setLoanForm({...loanForm, name: e.target.value})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" placeholder="Misal: Pinjaman Normal" />
               </div>
+              <div className="space-y-1.5">
+                <label className="text-label-md font-label-md text-on-surface">Skema Pembiayaan</label>
+                <select
+                  value={loanForm.financing_scheme || 'CASH_ZERO_INTEREST'}
+                  onChange={e => setLoanForm({ ...loanForm, financing_scheme: e.target.value as any })}
+                  className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                >
+                  <option value="CASH_ZERO_INTEREST">Pinjaman Tunai (0% Bunga)</option>
+                  <option value="GOODS_MARKUP">Pembiayaan Barang (Markup Margin)</option>
+                </select>
+              </div>
+              {loanForm.financing_scheme === 'GOODS_MARKUP' && (
+                <div className="space-y-1.5">
+                  <label className="text-label-md font-label-md text-on-surface">Default Margin Markup (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={loanForm.default_markup_percent ?? 0}
+                    onChange={e => setLoanForm({ ...loanForm, default_markup_percent: Number(e.target.value) })}
+                    className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                  />
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="text-label-md font-label-md text-on-surface">Maksimal Tenor (Bulan)</label>
                 <input required type="number" min="1" value={loanForm.max_duration_months || 12} onChange={e => setLoanForm({...loanForm, max_duration_months: Number(e.target.value)})} className="w-full px-4 py-2.5 rounded-xl border border-outline-variant bg-surface-container-lowest text-body-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all" />

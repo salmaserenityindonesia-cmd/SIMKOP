@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loanService, calculateTHPEligibility, MIN_REMAINING_THP, getActiveLoanTypes, computeRealRemainingPrincipal } from './loanService';
+import {
+  loanService,
+  calculateTHPEligibility,
+  MIN_REMAINING_THP,
+  getActiveLoanTypes,
+  computeRealRemainingPrincipal,
+  calculateGoodsMarkupScheduleSplit,
+  calculateRepaymentPortions
+} from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
 vi.mock('../lib/supabaseClient', () => {
@@ -930,7 +938,7 @@ describe('loanService', () => {
       const result = await loanService.getActiveLoanTypes();
 
       expect(supabase.from).toHaveBeenCalledWith('loan_types');
-      expect(mockSelect).toHaveBeenCalledWith('id, code, name, max_duration_months, is_active');
+      expect(mockSelect).toHaveBeenCalledWith('id, code, name, max_duration_months, is_active, financing_scheme, default_markup_percent');
       expect(mockEq).toHaveBeenCalledWith('is_active', true);
       expect(mockOrder).toHaveBeenCalledWith('code', { ascending: true });
       expect(result).toEqual(mockTypes);
@@ -1618,6 +1626,329 @@ describe('loanService', () => {
       ).toBe(true);
       expect(insertedCashFlows).toHaveLength(1);
       expect(insertedCashFlows[0].amount).toBe(875000);
+    });
+  });
+
+  describe('Goods Markup Financing (Murabahah) - Zero Interest Cash vs Goods Markup', () => {
+    it('calculateGoodsMarkupScheduleSplit splits cost price and margin accurately across even and odd tenors', () => {
+      const evenSplit = calculateGoodsMarkupScheduleSplit(2000000, 300000, 5);
+      expect(evenSplit).toHaveLength(5);
+      expect(evenSplit[0]).toEqual({
+        period_number: 1,
+        principal_portion: 400000,
+        margin_portion: 60000,
+        target_amount: 460000,
+      });
+      const sumCostEven = evenSplit.reduce((s, r) => s + r.principal_portion, 0);
+      const sumMarginEven = evenSplit.reduce((s, r) => s + r.margin_portion, 0);
+      expect(sumCostEven).toBe(2000000);
+      expect(sumMarginEven).toBe(300000);
+
+      const oddSplit = calculateGoodsMarkupScheduleSplit(1000000, 100000, 3);
+      expect(oddSplit).toHaveLength(3);
+      expect(oddSplit.reduce((s, r) => s + r.principal_portion, 0)).toBe(1000000);
+      expect(oddSplit.reduce((s, r) => s + r.margin_portion, 0)).toBe(100000);
+      expect(oddSplit.reduce((s, r) => s + r.target_amount, 0)).toBe(1100000);
+
+      const cashPortions = calculateRepaymentPortions({
+        amountPaid: 500000,
+        targetAmount: 500000,
+        scheduleMarginPortion: 0,
+      });
+      expect(cashPortions).toEqual({ principalPortion: 500000, marginPortion: 0 });
+    });
+
+    it('createLoanApplication validates goods inputs, computes Harga Jual Kredit (cost + margin), and checks THP', async () => {
+      await expect(
+        loanService.createLoanApplication({
+          memberId: 'm-1',
+          purpose: 'Kredit Kulkas',
+          amount: 2300000,
+          tenor: 5,
+          loanTypeId: 'lt-barang',
+          financingScheme: 'GOODS_MARKUP',
+          itemDescription: '   ',
+          costPrice: 2000000,
+          markupAmount: 300000,
+        })
+      ).rejects.toThrow(/Nama \/ spesifikasi barang wajib diisi/);
+
+      await expect(
+        loanService.createLoanApplication({
+          memberId: 'm-1',
+          purpose: 'Kredit Kulkas',
+          amount: 2300000,
+          tenor: 5,
+          loanTypeId: 'lt-barang',
+          financingScheme: 'GOODS_MARKUP',
+          itemDescription: 'Kulkas 2 Pintu',
+          costPrice: 0,
+          markupAmount: 300000,
+        })
+      ).rejects.toThrow(/Harga beli \/ modal supplier harus lebih besar dari Rp 0/);
+
+      const mockSupabase = supabase.from as any;
+      // 1. Anggota
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({ data: { master_thp: 5000000 }, error: null }),
+          }),
+        }),
+      }));
+      // 2. Active loans
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      }));
+      // 3. Member deposits
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      }));
+      // 4. Insert loan
+      let insertedPayload: any = null;
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: (payload: any[]) => {
+          insertedPayload = payload[0];
+          return {
+            select: () => ({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'loan-barang-1', ...payload[0] },
+                error: null,
+              }),
+            }),
+          };
+        },
+      }));
+
+      const res = await loanService.createLoanApplication({
+        memberId: 'm-1',
+        purpose: '',
+        amount: 2300000,
+        tenor: 5,
+        loanTypeId: 'lt-barang',
+        financingScheme: 'GOODS_MARKUP',
+        itemDescription: 'Kulkas 2 Pintu',
+        costPrice: 2000000,
+        markupAmount: 300000,
+      });
+
+      expect(res.id).toBe('loan-barang-1');
+      expect(insertedPayload.item_description).toBe('Kulkas 2 Pintu');
+      expect(insertedPayload.cost_price).toBe(2000000);
+      expect(insertedPayload.markup_amount).toBe(300000);
+      expect(insertedPayload.principal_amount).toBe(2300000);
+      expect(insertedPayload.amount).toBe(2300000);
+      expect(insertedPayload.monthly_target).toBe(460000);
+      expect(insertedPayload.notes).toBe('Pembiayaan Barang: Kulkas 2 Pintu');
+    });
+
+    it('approveLoan for GOODS_MARKUP splits schedules into principal & margin portions and records cash_flow out for cost_price only', async () => {
+      const goodsLoan = {
+        id: 'loan-barang-2',
+        loan_number: 'LOAN-BRG-002',
+        member_id: 'mem-budi',
+        loan_type_id: 'lt-barang',
+        item_description: 'Kulkas 2 Pintu',
+        cost_price: 2000000,
+        markup_amount: 300000,
+        principal_amount: 2300000,
+        amount: 2300000,
+        tenor: 5,
+        agreed_tenor_months: 5,
+        monthly_target: 460000,
+        planned_installment_amount: 460000,
+        status: 'draft',
+        loan_types: { id: 'lt-barang', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang', financing_scheme: 'GOODS_MARKUP' },
+        anggota: { nrp: '88010001', nama: 'Budi Santoso' },
+      };
+
+      let insertedSchedules: any[] = [];
+      let insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: vi.fn().mockResolvedValue({ data: goodsLoan, error: null }),
+              }),
+            }),
+            update: (payload: any) => ({
+              eq: () => ({
+                select: () => ({
+                  single: vi.fn().mockResolvedValue({ data: { ...goodsLoan, ...payload }, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: () => ({
+              eq: () => ({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedSchedules = rows;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedCashFlows.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        return {};
+      });
+
+      const approved = await loanService.approveLoanApplication('loan-barang-2', '2026-11-19');
+      expect(approved.status).toBe('active');
+      expect(insertedSchedules).toHaveLength(5);
+      expect(insertedSchedules[0]).toMatchObject({
+        loan_id: 'loan-barang-2',
+        period_number: 1,
+        target_amount: 460000,
+        principal_portion: 400000,
+        margin_portion: 60000,
+        status: 'unpaid',
+      });
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0]).toMatchObject({
+        direction: 'out',
+        amount: 2000000,
+        category: 'pembiayaan_barang',
+        reference_id: 'loan-barang-2',
+        description:
+          'Pembiayaan Barang (Kulkas 2 Pintu) — 88010001 - Budi Santoso | Modal Supplier: Rp 2.000.000 (Harga Jual Akad: Rp 2.300.000)',
+      });
+    });
+
+    it('recordLoanRepayment splits principal_portion (400k) and margin_portion (60k) and inserts cash_flow in (460k)', async () => {
+      (supabase.rpc as any).mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST202', message: 'Could not find the function' },
+      });
+
+      const insertedRepayments: any[] = [];
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loan_schedules') {
+          return {
+            select: () => ({
+              eq: (col: string) => {
+                if (col === 'id') {
+                  return {
+                    single: vi.fn().mockResolvedValue({
+                      data: {
+                        id: 'sch-brg-1',
+                        period_number: 1,
+                        target_amount: 460000,
+                        paid_amount: 0,
+                        status: 'unpaid',
+                        principal_portion: 400000,
+                        margin_portion: 60000,
+                      },
+                      error: null,
+                    }),
+                  };
+                }
+                return Promise.resolve({
+                  data: [
+                    { id: 'sch-brg-1', target_amount: 460000, paid_amount: 460000, status: 'paid' },
+                    { id: 'sch-brg-2', target_amount: 460000, paid_amount: 0, status: 'unpaid' },
+                  ],
+                  error: null,
+                });
+              },
+            }),
+            update: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedRepayments.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: () => ({
+              eq: () => ({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'loan-barang-2',
+                    loan_number: 'LOAN-BRG-002',
+                    amount: 2300000,
+                    principal_amount: 2300000,
+                    cost_price: 2000000,
+                    markup_amount: 300000,
+                    item_description: 'Kulkas 2 Pintu',
+                    status: 'active',
+                    member_id: 'mem-budi',
+                    anggota: { nrp: '88010001', nama: 'Budi Santoso' },
+                  },
+                  error: null,
+                }),
+              }),
+            }),
+            update: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedCashFlows.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await loanService.recordLoanRepayment({
+        loanId: 'loan-barang-2',
+        scheduleId: 'sch-brg-1',
+        amountPaid: 460000,
+        paymentMethod: 'POTONG_GAJI',
+      });
+
+      expect(res.success).toBe(true);
+      expect(insertedRepayments).toHaveLength(1);
+      expect(insertedRepayments[0]).toMatchObject({
+        loan_id: 'loan-barang-2',
+        schedule_id: 'sch-brg-1',
+        amount_paid: 460000,
+        principal_portion: 400000,
+        margin_portion: 60000,
+      });
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0]).toMatchObject({
+        direction: 'in',
+        amount: 460000,
+        category: 'angsuran_pinjaman',
+        reference_id: 'loan-barang-2',
+      });
+      expect(insertedCashFlows[0].description).toContain('Pokok: Rp 400.000');
+      expect(insertedCashFlows[0].description).toContain('Margin: Rp 60.000');
     });
   });
 });

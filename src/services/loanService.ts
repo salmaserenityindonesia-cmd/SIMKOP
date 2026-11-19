@@ -5,7 +5,7 @@ import {
   resolveMemberSavingsRate,
   normalizeDepositTypeCode
 } from './savingsRateService';
-import { LoanType } from './koperasiService';
+import { LoanType, FinancingScheme } from './koperasiService';
 import { normalizeName, type InitialLoanRow } from '../utils/initialLoansParser';
 import {
   RecordLoanRepaymentRpcResponse,
@@ -27,10 +27,11 @@ export {
   DEFAULT_RAT_NOTES,
   type LoanSettings
 };
-export type { LoanType };
+export type { LoanType, FinancingScheme };
 
 export interface Loan {
   id: string;
+  loan_number?: string;
   member_id: string;
   loan_type_id?: string;
   refinanced_loan_id?: string | null;
@@ -38,6 +39,9 @@ export interface Loan {
   notes: string;
   amount: number;
   principal_amount?: number;
+  item_description?: string | null;
+  cost_price?: number;
+  markup_amount?: number;
   agreed_tenor_months?: number;
   planned_installment_amount?: number;
   tenor: number;
@@ -47,6 +51,7 @@ export interface Loan {
   disbursed_at: string | null;
   created_at: string;
   updated_at?: string;
+  loan_types?: Partial<LoanType> | null;
 }
 
 export interface LoanSchedule {
@@ -55,6 +60,8 @@ export interface LoanSchedule {
   period_number: number;
   due_date: string;
   target_amount: number;
+  principal_portion?: number;
+  margin_portion?: number;
   paid_amount: number;
   status: 'unpaid' | 'partial' | 'paid';
 }
@@ -64,9 +71,153 @@ export interface LoanRepayment {
   loan_id: string;
   schedule_id: string | null;
   amount_paid: number;
+  principal_portion?: number;
+  margin_portion?: number;
   payment_date: string;
   payment_method: string;
   notes: string | null;
+}
+
+export interface GoodsMarkupScheduleItem {
+  period_number: number;
+  principal_portion: number;
+  margin_portion: number;
+  target_amount: number;
+}
+
+export function isGoodsMarkupLoanType(loanType?: Partial<LoanType> | null): boolean {
+  if (!loanType) return false;
+  if (loanType.financing_scheme === 'GOODS_MARKUP') return true;
+  const code = String(loanType.code || '').trim().toUpperCase();
+  return code === 'PEMBIAYAAN_BARANG' || code === 'GOODS_MARKUP';
+}
+
+export function isGoodsMarkupLoan(loan: any): boolean {
+  if (!loan) return false;
+  const lt = Array.isArray(loan.loan_types) ? loan.loan_types[0] : loan.loan_types;
+  if (isGoodsMarkupLoanType(lt)) return true;
+  if (Number(loan.markup_amount || 0) > 0) return true;
+  if (typeof loan.item_description === 'string' && loan.item_description.trim().length > 0) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Membagi Harga Beli/Modal Supplier (costPrice) dan Margin Keuntungan (markupAmount)
+ * secara proporsional per bulan untuk jadwal angsuran pembiayaan barang, dengan periode
+ * terakhir menyerap selisih pembulatan agar total pokok & total margin tetap presisi.
+ */
+export function calculateGoodsMarkupScheduleSplit(
+  costPrice: number,
+  markupAmount: number,
+  tenor: number
+): GoodsMarkupScheduleItem[] {
+  const safeTenor = Math.max(1, Math.floor(Number(tenor) || 1));
+  const totalCost = Math.max(0, Math.round(Number(costPrice) || 0));
+  const totalMargin = Math.max(0, Math.round(Number(markupAmount) || 0));
+
+  const items: GoodsMarkupScheduleItem[] = [];
+  let accPrincipal = 0;
+  let accMargin = 0;
+
+  for (let period = 1; period <= safeTenor; period++) {
+    let principalPortion: number;
+    let marginPortion: number;
+
+    if (period < safeTenor) {
+      principalPortion = Math.round(totalCost / safeTenor);
+      marginPortion = Math.round(totalMargin / safeTenor);
+      accPrincipal += principalPortion;
+      accMargin += marginPortion;
+    } else {
+      principalPortion = Math.max(0, totalCost - accPrincipal);
+      marginPortion = Math.max(0, totalMargin - accMargin);
+    }
+
+    items.push({
+      period_number: period,
+      principal_portion: principalPortion,
+      margin_portion: marginPortion,
+      target_amount: principalPortion + marginPortion,
+    });
+  }
+
+  return items;
+}
+
+/**
+ * Menghitung pemisahan porsi pokok vs porsi margin keuntungan pada pembayaran angsuran.
+ * Untuk pinjaman tunai 0% bunga, porsi margin selalu 0.
+ */
+export function calculateRepaymentPortions(params: {
+  amountPaid: number;
+  targetAmount: number;
+  schedulePrincipalPortion?: number | null;
+  scheduleMarginPortion?: number | null;
+  loanCostPrice?: number | null;
+  loanMarkupAmount?: number | null;
+  loanTotalAmount?: number | null;
+}): { principalPortion: number; marginPortion: number } {
+  const paid = Math.max(0, Math.round(Number(params.amountPaid) || 0));
+  if (paid <= 0) {
+    return { principalPortion: 0, marginPortion: 0 };
+  }
+
+  const target = Math.max(0, Math.round(Number(params.targetAmount) || 0));
+  const schedMargin = Math.max(0, Math.round(Number(params.scheduleMarginPortion || 0)));
+
+  if (schedMargin > 0 && target > 0) {
+    const isExactOrFull = paid >= target || Math.abs(target - paid) <= 5;
+    const marginPortion = isExactOrFull
+      ? Math.min(paid, schedMargin)
+      : Math.min(paid, Math.round((paid * schedMargin) / target));
+    return {
+      principalPortion: Math.max(0, paid - marginPortion),
+      marginPortion,
+    };
+  }
+
+  const loanMarkup = Math.max(0, Math.round(Number(params.loanMarkupAmount || 0)));
+  const loanTotal = Math.max(
+    0,
+    Math.round(Number(params.loanTotalAmount || 0)) ||
+      Math.round(Number(params.loanCostPrice || 0)) + loanMarkup
+  );
+
+  if (loanMarkup > 0 && loanTotal > 0) {
+    const marginPortion = Math.min(paid, Math.round((paid * loanMarkup) / loanTotal));
+    return {
+      principalPortion: Math.max(0, paid - marginPortion),
+      marginPortion,
+    };
+  }
+
+  return { principalPortion: paid, marginPortion: 0 };
+}
+
+function isMissingColumnError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('column') ||
+    msg.includes('schema cache') ||
+    msg.includes('financing_scheme') ||
+    msg.includes('default_markup_percent') ||
+    msg.includes('item_description') ||
+    msg.includes('cost_price') ||
+    msg.includes('markup_amount') ||
+    msg.includes('principal_portion') ||
+    msg.includes('margin_portion') ||
+    msg.includes('description')
+  );
+}
+
+function formatRupiahPlain(val: number): string {
+  return Math.round(Number(val) || 0).toLocaleString('id-ID');
 }
 
 export const MIN_REMAINING_THP = 1500000;
@@ -104,9 +255,18 @@ export const calculateRemainingInstallmentDeficit = (
 export async function getActiveLoanTypes(): Promise<LoanType[]> {
   const { data, error } = await supabase
     .from('loan_types')
-    .select('id, code, name, max_duration_months, is_active')
+    .select('id, code, name, max_duration_months, is_active, financing_scheme, default_markup_percent')
     .eq('is_active', true)
     .order('code', { ascending: true });
+  if (error && isMissingColumnError(error)) {
+    const fallback = await supabase
+      .from('loan_types')
+      .select('id, code, name, max_duration_months, is_active')
+      .eq('is_active', true)
+      .order('code', { ascending: true });
+    if (fallback.error) throw fallback.error;
+    return (fallback.data || []) as LoanType[];
+  }
   if (error) throw error;
   return (data || []) as LoanType[];
 }
@@ -619,9 +779,46 @@ export const loanService = {
   getActiveLoanTypes,
   syncInitialLoanBalances,
   async getLoanApplications(statusTab: LoanApplicationStatusTab = 'PENDING') {
-    let query: any = supabase
-      .from('loans')
-      .select(`
+    const buildQuery = (withGoodsColumns: boolean) => {
+      const selectFields = withGoodsColumns
+        ? `
+        id,
+        loan_number,
+        member_id,
+        loan_type_id,
+        refinanced_loan_id,
+        topup_settlement_amount,
+        amount,
+        principal_amount,
+        item_description,
+        cost_price,
+        markup_amount,
+        agreed_tenor_months,
+        tenor,
+        planned_installment_amount,
+        monthly_target,
+        disbursed_at,
+        created_at,
+        status,
+        notes,
+        loan_types:loan_type_id (
+          id,
+          code,
+          name,
+          financing_scheme,
+          default_markup_percent
+        ),
+        anggota:member_id (
+          id,
+          nrp,
+          nama,
+          pangkat,
+          take_home_pay,
+          master_thp,
+          bank_account_number
+        )
+      `
+        : `
         id,
         loan_number,
         member_id,
@@ -652,18 +849,28 @@ export const loanService = {
           master_thp,
           bank_account_number
         )
-      `)
-      .order('created_at', { ascending: false });
+      `;
 
-    if (statusTab === 'PENDING') {
-      // Di skema database, permohonan baru yang menunggu persetujuan berstatus 'draft'
-      query = query.eq('status', 'draft');
-    } else if (statusTab === 'APPROVED') {
-      query = query.in('status', ['approved', 'active', 'paid_off']);
+      let query: any = (supabase.from('loans') as any)
+        .select(selectFields)
+        .order('created_at', { ascending: false });
+
+      if (statusTab === 'PENDING') {
+        // Di skema database, permohonan baru yang menunggu persetujuan berstatus 'draft'
+        query = query.eq('status', 'draft');
+      } else if (statusTab === 'APPROVED') {
+        query = query.in('status', ['approved', 'active', 'paid_off']);
+      }
+      // Jika 'ALL', tidak ada filter status (mengambil semua riwayat)
+      return query;
+    };
+
+    let { data, error } = await buildQuery(true);
+    if (error && isMissingColumnError(error)) {
+      const fallbackRes = await buildQuery(false);
+      data = fallbackRes.data;
+      error = fallbackRes.error;
     }
-    // Jika 'ALL', tidak ada filter status (mengambil semua riwayat)
-
-    const { data, error } = await query;
     if (error) throw new Error(error.message);
     return enrichPendingTopupSettlements(data || []);
   },
@@ -682,11 +889,20 @@ export const loanService = {
   },
 
   async getLoanById(id: string) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('loans')
-      .select('*, anggota(nama, nrp)')
+      .select('*, anggota(nama, nrp), loan_types(id, code, name, financing_scheme, default_markup_percent)')
       .eq('id', id)
       .single();
+    if (error && isMissingColumnError(error)) {
+      const fallback = await supabase
+        .from('loans')
+        .select('*, anggota(nama, nrp)')
+        .eq('id', id)
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
     if (error) throw new Error(error.message);
     return data;
   },
@@ -872,15 +1088,49 @@ export const loanService = {
       refinancedLoanId?: string | null;
       topupSettlementAmount?: number;
       replacedMonthlyInstallment?: number;
+    },
+    goodsOptions?: {
+      financingScheme?: FinancingScheme;
+      itemDescription?: string;
+      costPrice?: number;
+      markupAmount?: number;
     }
   ) {
-    const monthlyTarget = amount / tenor;
+    const isGoodsMarkup = goodsOptions?.financingScheme === 'GOODS_MARKUP';
+    let effectiveAmount = Number(amount || 0);
+    let costPrice = effectiveAmount;
+    let markupAmount = 0;
+    let itemDescription: string | undefined;
+
+    if (isGoodsMarkup) {
+      itemDescription = String(goodsOptions?.itemDescription || '').trim();
+      if (!itemDescription) {
+        throw new Error('Nama / spesifikasi barang wajib diisi untuk skema pembiayaan barang.');
+      }
+      costPrice = Math.round(Number(goodsOptions?.costPrice || 0));
+      if (costPrice <= 0) {
+        throw new Error('Harga beli / modal supplier harus lebih besar dari Rp 0.');
+      }
+      markupAmount = Math.round(Number(goodsOptions?.markupAmount ?? 0));
+      if (markupAmount < 0) {
+        throw new Error('Margin keuntungan koperasi tidak boleh bernilai negatif.');
+      }
+      effectiveAmount = costPrice + markupAmount;
+    } else {
+      // Pinjaman tunai selalu 0% bunga & 0 markup
+      markupAmount = 0;
+      costPrice = effectiveAmount;
+    }
+
+    const monthlyTarget = isGoodsMarkup
+      ? Math.round(effectiveAmount / tenor)
+      : effectiveAmount / tenor;
     const settlementAmount = Math.max(0, Number(topUpOptions?.topupSettlementAmount || 0));
     const replacedInstallment = Math.max(0, Number(topUpOptions?.replacedMonthlyInstallment || 0));
 
-    if (settlementAmount > 0 && amount <= settlementAmount) {
+    if (settlementAmount > 0 && effectiveAmount <= settlementAmount) {
       throw new Error(
-        `Plafon pinjaman baru (Rp ${amount.toLocaleString('id-ID')}) harus lebih besar dari sisa pinjaman lama yang dilunasi (Rp ${settlementAmount.toLocaleString('id-ID')}).`
+        `Plafon pinjaman baru (Rp ${effectiveAmount.toLocaleString('id-ID')}) harus lebih besar dari sisa pinjaman lama yang dilunasi (Rp ${settlementAmount.toLocaleString('id-ID')}).`
       );
     }
 
@@ -903,19 +1153,32 @@ export const loanService = {
       targetLoanTypeId = loanTypes[0].id;
     }
 
+    const effectiveNotes = isGoodsMarkup
+      ? (purpose && purpose.trim() ? purpose.trim() : `Pembiayaan Barang: ${itemDescription}`)
+      : purpose;
+
     const insertPayload: Record<string, any> = {
       loan_number: `LOAN-${Date.now()}`,
       member_id: memberId,
       loan_type_id: targetLoanTypeId,
-      principal_amount: amount,
+      principal_amount: effectiveAmount,
       agreed_tenor_months: tenor,
       planned_installment_amount: monthlyTarget,
-      amount: amount,
+      amount: effectiveAmount,
       tenor: tenor,
       monthly_target: monthlyTarget,
-      notes: purpose,
+      notes: effectiveNotes,
       status: 'draft'
     };
+
+    if (isGoodsMarkup) {
+      insertPayload.item_description = itemDescription;
+      insertPayload.cost_price = costPrice;
+      insertPayload.markup_amount = markupAmount;
+    } else if (goodsOptions) {
+      insertPayload.cost_price = costPrice;
+      insertPayload.markup_amount = 0;
+    }
 
     if (topUpOptions?.refinancedLoanId) {
       insertPayload.refinanced_loan_id = topUpOptions.refinancedLoanId;
@@ -924,14 +1187,66 @@ export const loanService = {
       insertPayload.topup_settlement_amount = settlementAmount;
     }
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('loans')
       .insert([insertPayload])
       .select()
       .single();
 
+    if (error && isMissingColumnError(error)) {
+      const {
+        item_description: _id,
+        cost_price: _cp,
+        markup_amount: _ma,
+        ...legacyPayload
+      } = insertPayload;
+      const fallbackRes = await supabase
+        .from('loans')
+        .insert([legacyPayload])
+        .select()
+        .single();
+      data = fallbackRes.data;
+      error = fallbackRes.error;
+    }
+
     if (error) throw new Error(error.message);
     return data as Loan;
+  },
+
+  async createLoanApplication(params: {
+    memberId: string;
+    purpose: string;
+    amount: number;
+    tenor: number;
+    loanTypeId?: string;
+    minThreshold?: number;
+    topUpOptions?: {
+      refinancedLoanId?: string | null;
+      topupSettlementAmount?: number;
+      replacedMonthlyInstallment?: number;
+    };
+    financingScheme?: FinancingScheme;
+    itemDescription?: string;
+    costPrice?: number;
+    markupAmount?: number;
+  }) {
+    return this.applyLoan(
+      params.memberId,
+      params.purpose,
+      params.amount,
+      params.tenor,
+      params.loanTypeId,
+      params.minThreshold ?? MIN_REMAINING_THP,
+      params.topUpOptions,
+      params.financingScheme
+        ? {
+            financingScheme: params.financingScheme,
+            itemDescription: params.itemDescription,
+            costPrice: params.costPrice,
+            markupAmount: params.markupAmount,
+          }
+        : undefined
+    );
   },
 
   async approveLoan(loanId: string, disbursedDate?: string): Promise<Loan> {
@@ -945,14 +1260,22 @@ export const loanService = {
     try {
       const loansFetchTable: any = supabase.from('loans');
       if (loansFetchTable && typeof loansFetchTable.select === 'function') {
-        const fetchQuery = loansFetchTable
-          .select('id, loan_number, member_id, loan_type_id, refinanced_loan_id, topup_settlement_amount, principal_amount, amount, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status')
-          .eq('id', loanId);
-        const fetchRes = typeof fetchQuery?.maybeSingle === 'function'
-          ? await fetchQuery.maybeSingle()
-          : typeof fetchQuery?.single === 'function'
-            ? await fetchQuery.single()
-            : await fetchQuery;
+        const runLoanFetch = async (withGoodsCols: boolean) => {
+          const cols = withGoodsCols
+            ? 'id, loan_number, member_id, loan_type_id, refinanced_loan_id, topup_settlement_amount, principal_amount, amount, item_description, cost_price, markup_amount, notes, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status, loan_types:loan_type_id ( id, code, name, financing_scheme ), anggota:member_id ( nrp, nama )'
+            : 'id, loan_number, member_id, loan_type_id, refinanced_loan_id, topup_settlement_amount, principal_amount, amount, tenor, agreed_tenor_months, monthly_target, planned_installment_amount, status';
+          const fetchQuery = loansFetchTable.select(cols).eq('id', loanId);
+          return typeof fetchQuery?.maybeSingle === 'function'
+            ? await fetchQuery.maybeSingle()
+            : typeof fetchQuery?.single === 'function'
+              ? await fetchQuery.single()
+              : await fetchQuery;
+        };
+
+        let fetchRes = await runLoanFetch(true);
+        if (fetchRes?.error && isMissingColumnError(fetchRes.error)) {
+          fetchRes = await runLoanFetch(false);
+        }
         if (fetchRes?.data) {
           existingLoan = Array.isArray(fetchRes.data) ? fetchRes.data[0] : fetchRes.data;
         }
@@ -993,6 +1316,23 @@ export const loanService = {
         ? Math.round(rawMonthlyTarget)
         : Math.round(finalPrincipal / tenor);
 
+    const isGoodsMarkup = isGoodsMarkupLoan(loanRecord) || isGoodsMarkupLoan(existingLoan);
+    const markupAmount = isGoodsMarkup
+      ? Math.max(0, Math.round(Number(loanRecord.markup_amount ?? existingLoan?.markup_amount ?? 0)))
+      : 0;
+    const costPrice = isGoodsMarkup
+      ? Math.max(
+          0,
+          Math.round(
+            Number(
+              loanRecord.cost_price ??
+                existingLoan?.cost_price ??
+                Math.max(0, finalPrincipal - markupAmount)
+            )
+          )
+        )
+      : finalPrincipal;
+
     // 3. Periksa apakah jadwal angsuran di loan_schedules sudah tersedia
     let hasExistingSchedules = false;
     try {
@@ -1014,38 +1354,60 @@ export const loanService = {
 
     // 4. Bangkitkan jadwal angsuran 1..tenor mulai bulan berikutnya setelah disbursed_at
     if (!hasExistingSchedules) {
-      const schedules = [];
-      for (let period = 1; period <= tenor; period++) {
-        schedules.push({
+      let schedules: any[] = [];
+      if (isGoodsMarkup) {
+        const splitItems = calculateGoodsMarkupScheduleSplit(costPrice, markupAmount, tenor);
+        schedules = splitItems.map((item) => ({
           loan_id: targetLoanId,
-          period_number: period,
-          due_date: buildMonthlyDueDate(todayDate, period),
-          target_amount: monthlyInstallment,
+          period_number: item.period_number,
+          due_date: buildMonthlyDueDate(todayDate, item.period_number),
+          target_amount: item.target_amount,
+          principal_portion: item.principal_portion,
+          margin_portion: item.margin_portion,
           paid_amount: 0,
           status: 'unpaid',
-        });
+        }));
+      } else {
+        for (let period = 1; period <= tenor; period++) {
+          schedules.push({
+            loan_id: targetLoanId,
+            period_number: period,
+            due_date: buildMonthlyDueDate(todayDate, period),
+            target_amount: monthlyInstallment,
+            paid_amount: 0,
+            status: 'unpaid',
+          });
+        }
       }
 
       if (schedules.length > 0) {
-        const { error: scheduleError } = await supabase
+        let { error: scheduleError } = await supabase
           .from('loan_schedules')
           .insert(schedules);
+
+        if (scheduleError && isMissingColumnError(scheduleError) && isGoodsMarkup) {
+          const legacySchedules = schedules.map(({ principal_portion: _pp, margin_portion: _mp, ...rest }) => rest);
+          const retrySched = await supabase
+            .from('loan_schedules')
+            .insert(legacySchedules);
+          scheduleError = retrySched.error;
+        }
 
         if (scheduleError) throw new Error(scheduleError.message);
       }
     }
 
-    // 4b. Pelunasan otomatis kontrak pinjaman lama sejenis jika ini adalah pengajuan Top-Up
+    // 4b. Pelunasan otomatis kontrak pinjaman lama sejenis jika ini adalah pengajuan Top-Up (hanya untuk pinjaman tunai / refinanced explicit)
     let totalSettlementAmt = 0;
     const memberIdForTopup = loanRecord.member_id || existingLoan?.member_id;
     const loanTypeIdForTopup = loanRecord.loan_type_id || existingLoan?.loan_type_id;
     const refinancedLoanId = loanRecord.refinanced_loan_id || existingLoan?.refinanced_loan_id || null;
 
-    if (memberIdForTopup && (loanTypeIdForTopup || refinancedLoanId)) {
+    if ((!isGoodsMarkup || Boolean(refinancedLoanId)) && memberIdForTopup && (loanTypeIdForTopup || refinancedLoanId)) {
       try {
         const oldLoansMap = new Map<string, any>();
 
-        if (loanTypeIdForTopup) {
+        if (loanTypeIdForTopup && !isGoodsMarkup) {
           const sameTypeRes: any = await supabase
             .from('loans')
             .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
@@ -1131,25 +1493,90 @@ export const loanService = {
       }
     }
 
-    // 4c. Catat pengeluaran kas riil (dana bersih diterima anggota) ke public.cash_flow
-    const effectiveSettlement = totalSettlementAmt > 0
-      ? totalSettlementAmt
-      : Math.max(0, Number(loanRecord.topup_settlement_amount ?? existingLoan?.topup_settlement_amount ?? 0));
-    const netDisbursedAmount = Math.max(0, finalPrincipal - effectiveSettlement);
-    if (netDisbursedAmount > 0) {
-      try {
-        const cfTable: any = supabase.from('cash_flow');
-        if (cfTable && typeof cfTable.insert === 'function') {
-          await cfTable.insert([{
-            direction: 'out',
-            amount: netDisbursedAmount,
-            category: 'pencairan_pinjaman',
-            reference_id: targetLoanId,
-            created_at: new Date().toISOString(),
-          }]);
+    // 4c. Catat pengeluaran kas riil ke public.cash_flow
+    // Untuk Pembiayaan Barang: kas keluar dicatat sebesar Harga Beli/Modal ke Supplier (cost_price)
+    if (isGoodsMarkup) {
+      if (costPrice > 0) {
+        try {
+          let memberInfo: any = Array.isArray(existingLoan?.anggota)
+            ? existingLoan.anggota[0]
+            : existingLoan?.anggota || (Array.isArray(loanRecord?.anggota) ? loanRecord.anggota[0] : loanRecord?.anggota);
+
+          if (!memberInfo && memberIdForTopup) {
+            try {
+              const memberTable: any = supabase.from('anggota');
+              if (memberTable && typeof memberTable.select === 'function') {
+                const mQ = memberTable.select('nrp, nama').eq('id', memberIdForTopup);
+                const mRes = typeof mQ?.maybeSingle === 'function'
+                  ? await mQ.maybeSingle()
+                  : typeof mQ?.single === 'function'
+                    ? await mQ.single()
+                    : await mQ;
+                if (mRes?.data) {
+                  memberInfo = Array.isArray(mRes.data) ? mRes.data[0] : mRes.data;
+                }
+              }
+            } catch {
+              // Non-blocking member lookup
+            }
+          }
+
+          const nrpStr = String(memberInfo?.nrp || '').trim();
+          const namaStr = String(memberInfo?.nama || '').trim();
+          const memberSegment = [nrpStr, namaStr].filter(Boolean).join(' - ') || 'Anggota';
+          const itemDesc = String(
+            loanRecord.item_description ||
+              existingLoan?.item_description ||
+              loanRecord.notes ||
+              existingLoan?.notes ||
+              'Barang'
+          ).trim();
+          const cfDescription = `Pembiayaan Barang (${itemDesc}) — ${memberSegment} | Modal Supplier: Rp ${formatRupiahPlain(costPrice)} (Harga Jual Akad: Rp ${formatRupiahPlain(finalPrincipal)})`;
+
+          const cfTable: any = supabase.from('cash_flow');
+          if (cfTable && typeof cfTable.insert === 'function') {
+            const cfRes = await cfTable.insert([{
+              direction: 'out',
+              amount: costPrice,
+              category: 'pembiayaan_barang',
+              reference_id: targetLoanId,
+              description: cfDescription,
+              created_at: new Date().toISOString(),
+            }]);
+            if (cfRes?.error && isMissingColumnError(cfRes.error)) {
+              await cfTable.insert([{
+                direction: 'out',
+                amount: costPrice,
+                category: 'pembiayaan_barang',
+                reference_id: targetLoanId,
+                created_at: new Date().toISOString(),
+              }]);
+            }
+          }
+        } catch (cfErr) {
+          console.warn('Gagal mencatat pencairan pembiayaan barang ke cash_flow:', cfErr);
         }
-      } catch (cfErr) {
-        console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
+      }
+    } else {
+      const effectiveSettlement = totalSettlementAmt > 0
+        ? totalSettlementAmt
+        : Math.max(0, Number(loanRecord.topup_settlement_amount ?? existingLoan?.topup_settlement_amount ?? 0));
+      const netDisbursedAmount = Math.max(0, finalPrincipal - effectiveSettlement);
+      if (netDisbursedAmount > 0) {
+        try {
+          const cfTable: any = supabase.from('cash_flow');
+          if (cfTable && typeof cfTable.insert === 'function') {
+            await cfTable.insert([{
+              direction: 'out',
+              amount: netDisbursedAmount,
+              category: 'pencairan_pinjaman',
+              reference_id: targetLoanId,
+              created_at: new Date().toISOString(),
+            }]);
+          }
+        } catch (cfErr) {
+          console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
+        }
       }
     }
 
@@ -1170,6 +1597,13 @@ export const loanService = {
             sisa_pinjaman: finalPrincipal,
             tenor,
             monthly_target: monthlyInstallment,
+            ...(isGoodsMarkup
+              ? {
+                  cost_price: costPrice,
+                  markup_amount: markupAmount,
+                  item_description: loanRecord.item_description ?? existingLoan?.item_description ?? null,
+                }
+              : {}),
           },
           notes: `Pengajuan pinjaman disetujui dan diaktifkan (${todayDate})`,
         });
@@ -1253,11 +1687,21 @@ export const loanService = {
 
     // Fallback: sequential client-side execution (for environments without record_loan_repayment_atomic RPC)
     // 1. Ambil data baris loan_schedules yang sedang aktif berdasarkan id = scheduleId
-    const { data: schedule, error: schErr } = await supabase
+    let { data: schedule, error: schErr } = await supabase
       .from('loan_schedules')
-      .select('id, target_amount, paid_amount, status')
+      .select('id, period_number, target_amount, paid_amount, status, principal_portion, margin_portion')
       .eq('id', scheduleId)
       .single();
+
+    if (schErr && isMissingColumnError(schErr)) {
+      const fbSched = await supabase
+        .from('loan_schedules')
+        .select('id, target_amount, paid_amount, status')
+        .eq('id', scheduleId)
+        .single();
+      schedule = fbSched.data as any;
+      schErr = fbSched.error;
+    }
 
     if (schErr || !schedule) throw schErr || new Error('Jadwal angsuran tidak ditemukan');
 
@@ -1271,6 +1715,15 @@ export const loanService = {
     const newPaidTotal = isFullyPaid ? target : newPaid;
     const newStatus: 'paid' | 'partial' | 'unpaid' = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
 
+    const scheduleMarginPortion = Number((schedule as any).margin_portion || 0);
+    const portions = calculateRepaymentPortions({
+      amountPaid: paymentAmountClean,
+      targetAmount: target,
+      schedulePrincipalPortion: (schedule as any).principal_portion,
+      scheduleMarginPortion,
+    });
+    const hasMarginSplit = portions.marginPortion > 0 || scheduleMarginPortion > 0;
+
     // 3. Lakukan UPDATE HANYA pada satu baris jadwal tersebut (ISOLASI KETAT)
     const { error: updateErr } = await supabase
       .from('loan_schedules')
@@ -1283,16 +1736,30 @@ export const loanService = {
     if (updateErr) throw new Error(updateErr.message || 'Gagal memperbarui jadwal angsuran');
 
     // 4. Catat mutasi di tabel loan_repayments dengan mengaitkan schedule_id: selectedScheduleId
-    const { error: repayErr } = await supabase
+    const repaymentInsertPayload: Record<string, any> = {
+      loan_id: loanId,
+      schedule_id: scheduleId,
+      amount_paid: paymentAmountClean,
+      payment_method: paymentMethod || 'CASH',
+      notes: notes || 'Pelunasan parsial jadwal periode terkait',
+      receipt_number: receiptNumber?.trim() || undefined
+    };
+    if (hasMarginSplit) {
+      repaymentInsertPayload.principal_portion = portions.principalPortion;
+      repaymentInsertPayload.margin_portion = portions.marginPortion;
+    }
+
+    let { error: repayErr } = await supabase
       .from('loan_repayments')
-      .insert([{
-        loan_id: loanId,
-        schedule_id: scheduleId,
-        amount_paid: paymentAmountClean,
-        payment_method: paymentMethod || 'CASH',
-        notes: notes || 'Pelunasan parsial jadwal periode terkait',
-        receipt_number: receiptNumber?.trim() || undefined
-      }]);
+      .insert([repaymentInsertPayload]);
+
+    if (repayErr && hasMarginSplit && isMissingColumnError(repayErr)) {
+      const { principal_portion: _pp, margin_portion: _mp, ...legacyRepayPayload } = repaymentInsertPayload;
+      const retryRepay = await supabase
+        .from('loan_repayments')
+        .insert([legacyRepayPayload]);
+      repayErr = retryRepay.error;
+    }
 
     if (repayErr) throw new Error(repayErr.message || 'Gagal mencatat mutasi pembayaran');
 
@@ -1303,11 +1770,20 @@ export const loanService = {
       .eq('loan_id', loanId);
 
     if (!allSchedulesErr && allSchedules) {
-      const { data: loanData } = await supabase
+      let { data: loanData, error: loanFetchErr } = await supabase
         .from('loans')
-        .select('id, amount, principal_amount, status, member_id')
+        .select('id, loan_number, amount, principal_amount, cost_price, markup_amount, item_description, status, member_id, anggota:member_id(nrp, nama)')
         .eq('id', loanId)
         .single();
+
+      if (loanFetchErr && isMissingColumnError(loanFetchErr)) {
+        const fbLoan = await supabase
+          .from('loans')
+          .select('id, amount, principal_amount, status, member_id')
+          .eq('id', loanId)
+          .single();
+        loanData = fbLoan.data as any;
+      }
 
       const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
       const totalPaidAll = allSchedules.reduce((sum, s) => {
@@ -1355,6 +1831,53 @@ export const loanService = {
           if (memberData && memberData.membership_status === 'PENDING_RESIGNED') {
             await supabase.from('anggota').update({ membership_status: 'READY_TO_RESIGN' }).eq('id', loanData.member_id);
           }
+        }
+      }
+
+      // Catat kas masuk ke cash_flow (dengan metadata pemisahan pokok vs margin bila pembiayaan barang)
+      if (paymentAmountClean > 0) {
+        try {
+          const finalPortions = hasMarginSplit
+            ? portions
+            : calculateRepaymentPortions({
+                amountPaid: paymentAmountClean,
+                targetAmount: target,
+                loanCostPrice: (loanData as any)?.cost_price,
+                loanMarkupAmount: (loanData as any)?.markup_amount,
+                loanTotalAmount: principalAmount,
+              });
+          const memberObj = Array.isArray((loanData as any)?.anggota)
+            ? (loanData as any).anggota[0]
+            : (loanData as any)?.anggota;
+          const memberSeg = [memberObj?.nrp, memberObj?.nama].filter(Boolean).join(' - ');
+          const periodNum = (schedule as any).period_number ?? '-';
+          const cfDescription =
+            finalPortions.marginPortion > 0
+              ? `Angsuran Pembiayaan Barang (${(loanData as any)?.item_description || (loanData as any)?.loan_number || 'Barang'}) Bln ke-${periodNum}${memberSeg ? ` — ${memberSeg}` : ''} | Pokok: Rp ${formatRupiahPlain(finalPortions.principalPortion)} | Margin: Rp ${formatRupiahPlain(finalPortions.marginPortion)}`
+              : `Angsuran Pinjaman (${(loanData as any)?.loan_number || loanId}) Bln ke-${periodNum}${memberSeg ? ` — ${memberSeg}` : ''}`;
+
+          const cfTable: any = supabase.from('cash_flow');
+          if (cfTable && typeof cfTable.insert === 'function') {
+            const cfRes = await cfTable.insert([{
+              direction: 'in',
+              amount: paymentAmountClean,
+              category: 'angsuran_pinjaman',
+              reference_id: loanId,
+              description: cfDescription,
+              created_at: new Date().toISOString(),
+            }]);
+            if (cfRes?.error && isMissingColumnError(cfRes.error)) {
+              await cfTable.insert([{
+                direction: 'in',
+                amount: paymentAmountClean,
+                category: 'angsuran_pinjaman',
+                reference_id: loanId,
+                created_at: new Date().toISOString(),
+              }]);
+            }
+          }
+        } catch (cfErr) {
+          console.warn('Gagal mencatat angsuran pinjaman ke cash_flow:', cfErr);
         }
       }
 
@@ -1423,6 +1946,9 @@ export const loanService = {
 
     // Fallback: sequential client-side execution (for environments without record_loan_repayment_atomic RPC)
     let remainingPayment = amountPaid;
+    let totalPaidNow = 0;
+    let totalPrincipalPortion = 0;
+    let totalMarginPortion = 0;
     
     // Get all unpaid/partial schedules ordered by period_number (FIFO)
     const { data: schedules, error: scheduleError } = await supabase
@@ -1443,6 +1969,15 @@ export const loanService = {
       const newPaidAmount = Number(schedule.paid_amount) + paymentForSchedule;
       const newStatus: 'paid' | 'partial' = newPaidAmount >= Number(schedule.target_amount) ? 'paid' : 'partial';
 
+      const schedMarginPortion = Number(schedule.margin_portion || 0);
+      const portions = calculateRepaymentPortions({
+        amountPaid: paymentForSchedule,
+        targetAmount: Number(schedule.target_amount || 0),
+        schedulePrincipalPortion: schedule.principal_portion,
+        scheduleMarginPortion: schedMarginPortion,
+      });
+      const hasMarginSplit = portions.marginPortion > 0 || schedMarginPortion > 0;
+
       // Update schedule
       const { error: updateError } = await supabase
         .from('loan_schedules')
@@ -1455,18 +1990,35 @@ export const loanService = {
       if (updateError) throw new Error(updateError.message);
 
       // Record repayment
-      const { error: repayError } = await supabase
+      const repayPayload: Record<string, any> = {
+        loan_id: loanId,
+        schedule_id: schedule.id,
+        amount_paid: paymentForSchedule,
+        payment_method: paymentMethod,
+        notes: notes
+      };
+      if (hasMarginSplit) {
+        repayPayload.principal_portion = portions.principalPortion;
+        repayPayload.margin_portion = portions.marginPortion;
+      }
+
+      let { error: repayError } = await supabase
         .from('loan_repayments')
-        .insert([{
-          loan_id: loanId,
-          schedule_id: schedule.id,
-          amount_paid: paymentForSchedule,
-          payment_method: paymentMethod,
-          notes: notes
-        }]);
+        .insert([repayPayload]);
+
+      if (repayError && hasMarginSplit && isMissingColumnError(repayError)) {
+        const { principal_portion: _pp, margin_portion: _mp, ...legacyRepayPayload } = repayPayload;
+        const retryRepay = await supabase
+          .from('loan_repayments')
+          .insert([legacyRepayPayload]);
+        repayError = retryRepay.error;
+      }
 
       if (repayError) throw new Error(repayError.message);
 
+      totalPaidNow += paymentForSchedule;
+      totalPrincipalPortion += portions.principalPortion;
+      totalMarginPortion += portions.marginPortion;
       remainingPayment -= paymentForSchedule;
     }
 
@@ -1478,11 +2030,20 @@ export const loanService = {
 
     const isAllPaid = !allSchedulesError && (allSchedules || []).length > 0 && allSchedules.every(s => s.status === 'paid');
 
-    const { data: loanData } = await supabase
+    let { data: loanData, error: loanFetchErr } = await supabase
       .from('loans')
-      .select('id, amount, principal_amount, status, member_id')
+      .select('id, loan_number, amount, principal_amount, cost_price, markup_amount, item_description, status, member_id')
       .eq('id', loanId)
       .single();
+
+    if (loanFetchErr && isMissingColumnError(loanFetchErr)) {
+      const fbLoan = await supabase
+        .from('loans')
+        .select('id, amount, principal_amount, status, member_id')
+        .eq('id', loanId)
+        .single();
+      loanData = fbLoan.data as any;
+    }
 
     const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
     const totalPaidAll = (allSchedules || []).reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
@@ -1520,8 +2081,77 @@ export const loanService = {
         }
       }
     }
+
+    if (totalPaidNow > 0) {
+      try {
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          const fallbackPortions = totalMarginPortion > 0
+            ? { principalPortion: totalPrincipalPortion, marginPortion: totalMarginPortion }
+            : calculateRepaymentPortions({
+                amountPaid: totalPaidNow,
+                targetAmount: totalPaidNow,
+                loanCostPrice: (loanData as any)?.cost_price,
+                loanMarkupAmount: (loanData as any)?.markup_amount,
+                loanTotalAmount: principalAmount,
+              });
+          const cfDescription =
+            fallbackPortions.marginPortion > 0
+              ? `Angsuran Pembiayaan Barang (${(loanData as any)?.item_description || (loanData as any)?.loan_number || 'Barang'}) | Pokok: Rp ${formatRupiahPlain(fallbackPortions.principalPortion)} | Margin: Rp ${formatRupiahPlain(fallbackPortions.marginPortion)}`
+              : `Angsuran Pinjaman (${(loanData as any)?.loan_number || loanId})`;
+          const cfRes = await cfTable.insert([{
+            direction: 'in',
+            amount: totalPaidNow,
+            category: 'angsuran_pinjaman',
+            reference_id: loanId,
+            description: cfDescription,
+            created_at: new Date().toISOString(),
+          }]);
+          if (cfRes?.error && isMissingColumnError(cfRes.error)) {
+            await cfTable.insert([{
+              direction: 'in',
+              amount: totalPaidNow,
+              category: 'angsuran_pinjaman',
+              reference_id: loanId,
+              created_at: new Date().toISOString(),
+            }]);
+          }
+        }
+      } catch (cfErr) {
+        console.warn('Gagal mencatat angsuran FIFO ke cash_flow:', cfErr);
+      }
+    }
     
     return { success: true, excess_amount: remainingPayment };
+  },
+
+  async recordLoanRepayment(params: {
+    loanId: string;
+    amountPaid: number;
+    paymentMethod?: string;
+    scheduleId?: string;
+    notes?: string;
+    receiptNumber?: string;
+  }) {
+    const method = params.paymentMethod || 'CASH';
+    if (params.scheduleId) {
+      return this.paySchedule(
+        params.loanId,
+        params.scheduleId,
+        params.amountPaid,
+        method,
+        params.notes,
+        params.receiptNumber
+      );
+    }
+    return this.makePayment(
+      params.loanId,
+      params.amountPaid,
+      method,
+      params.notes,
+      undefined,
+      params.receiptNumber
+    );
   },
   
   async fullPayoff(loanId: string, paymentMethod: string, notes?: string) {

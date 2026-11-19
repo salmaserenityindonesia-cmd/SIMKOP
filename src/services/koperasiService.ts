@@ -374,12 +374,17 @@ export async function deleteProduk(id: string): Promise<void> {
 // ==========================================
 // Loans Legacy & Commitments
 // ==========================================
+export type FinancingScheme = 'CASH_ZERO_INTEREST' | 'GOODS_MARKUP';
+
 export interface LoanType {
   id: string;
   code: string;
   name: string;
   max_duration_months: number;
   is_active: boolean;
+  financing_scheme?: FinancingScheme;
+  default_markup_percent?: number;
+  interest_rate?: number;
 }
 
 export interface Loan {
@@ -539,8 +544,36 @@ export async function getLoanTypes(): Promise<LoanType[]> {
   return data as LoanType[];
 }
 
+function isMissingLoanTypeColumnError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    msg.includes('financing_scheme') ||
+    msg.includes('default_markup_percent') ||
+    msg.includes('interest_rate') ||
+    msg.includes('schema cache') ||
+    msg.includes('column')
+  );
+}
+
 export async function addLoanType(loanType: Omit<LoanType, 'id'>): Promise<LoanType> {
   const { data, error } = await supabase.from('loan_types').insert([loanType]).select().single();
+  if (error && isMissingLoanTypeColumnError(error)) {
+    const {
+      financing_scheme: _fs,
+      default_markup_percent: _dmp,
+      interest_rate: _ir,
+      ...legacyPayload
+    } = loanType as any;
+    const retry = await supabase.from('loan_types').insert([legacyPayload]).select().single();
+    if (!retry.error) {
+      return retry.data as LoanType;
+    }
+    throw new Error(`Failed to add loan type: ${retry.error.message}`);
+  }
   if (error) {
     throw new Error(`Failed to add loan type: ${error.message}`);
   }
@@ -549,6 +582,19 @@ export async function addLoanType(loanType: Omit<LoanType, 'id'>): Promise<LoanT
 
 export async function updateLoanType(id: string, updates: Partial<Omit<LoanType, 'id'>>): Promise<LoanType> {
   const { data, error } = await supabase.from('loan_types').update(updates).eq('id', id).select().single();
+  if (error && isMissingLoanTypeColumnError(error)) {
+    const {
+      financing_scheme: _fs,
+      default_markup_percent: _dmp,
+      interest_rate: _ir,
+      ...legacyUpdates
+    } = updates as any;
+    const retry = await supabase.from('loan_types').update(legacyUpdates).eq('id', id).select().single();
+    if (!retry.error) {
+      return retry.data as LoanType;
+    }
+    throw new Error(`Failed to update loan type: ${retry.error.message}`);
+  }
   if (error) {
     throw new Error(`Failed to update loan type: ${error.message}`);
   }

@@ -1034,4 +1034,74 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama');
     });
   });
+
+  describe('Goods Markup Financing (Murabahah) & Zero-Interest Badge', () => {
+    const dualLoanTypes: LoanType[] = [
+      {
+        id: 'lt-tunai',
+        code: 'REGULER',
+        name: 'Pinjaman Reguler',
+        max_duration_months: 12,
+        is_active: true,
+        financing_scheme: 'CASH_ZERO_INTEREST',
+      },
+      {
+        id: 'lt-barang',
+        code: 'PEMBIAYAAN_BARANG',
+        name: 'Pembiayaan Barang (Markup Margin)',
+        max_duration_months: 24,
+        is_active: true,
+        financing_scheme: 'GOODS_MARKUP',
+        default_markup_percent: 15,
+      },
+    ];
+
+    it('renders "0% Bunga — Tanpa Biaya Tambahan" badge for CASH_ZERO_INTEREST loan types without markup panel', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialLoanTypes={dualLoanTypes}
+          initialSelectedLoanTypeId="lt-tunai"
+        />
+      );
+
+      expect(html).toContain('0% Bunga — Tanpa Biaya Tambahan');
+      expect(html).toContain('Plafon Pinjaman (Rp)');
+      expect(html).not.toContain('Harga Beli / Modal Supplier (Rp)');
+    });
+
+    it('renders goods markup fields, computes Harga Jual Kredit (2.3M) & cicilan (460k/bln), and validates remaining THP >= 1.5M', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-1"
+          initialAnggotaList={[{ id: 'm-1', nrp: '11111', nama: 'Sertu Bambang' }]}
+          initialLoanTypes={dualLoanTypes}
+          initialSelectedLoanTypeId="lt-barang"
+          initialItemDescription="Kulkas 2 Pintu"
+          initialCostPrice={2000000}
+          initialMarkupMode="AMOUNT"
+          initialMarkupAmount={300000}
+          initialTenorMode="CUSTOM"
+          initialCustomTenorInput="5"
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 4800000,
+          }}
+        />
+      );
+
+      expect(html).toContain('Pembiayaan Barang (Markup Margin) — 0% Bunga (Murabahah)');
+      expect(html).toContain('Nama / Spesifikasi Barang');
+      expect(html).toContain('Harga Beli / Modal Supplier (Rp)');
+      expect(html).toContain('Margin Keuntungan Koperasi');
+      expect(html).toContain('Kulkas 2 Pintu');
+      expect(html).toContain('2.000.000');
+      expect(html).toContain('300.000');
+      expect(html).toContain('2.300.000');
+      expect(html).toContain('460.000');
+      expect(html).toContain('Memenuhi Syarat');
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+  });
 });
