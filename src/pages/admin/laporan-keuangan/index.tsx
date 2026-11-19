@@ -17,10 +17,12 @@ import {
 import {
   consolidateBulkLebaranCashFlow,
   enrichDepositCashFlowDescriptions,
+  enrichMemberClearanceCashFlowDescriptions,
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   enrichWithdrawalCashFlowDescriptions,
   syncPosCashSalesToCashFlow,
+  syncResignedMemberClearanceToCashFlow,
 } from '../../../services/cashFlowAuditService';
 import {
   formatPosCashFlowDescription,
@@ -97,30 +99,33 @@ const startOfMonth = getLocalDateString(new Date(today.getFullYear(), today.getM
 const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  penjualan_tunai:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
-  PENJUALAN_TUNAI:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
-  PENJUALAN_POS:       { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
-  'Penjualan POS':     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
+  penjualan_tunai: { bg: 'bg-emerald-50', text: 'text-emerald-800', label: 'Penjualan POS' },
+  PENJUALAN_TUNAI: { bg: 'bg-emerald-50', text: 'text-emerald-800', label: 'Penjualan POS' },
+  PENJUALAN_POS: { bg: 'bg-emerald-50', text: 'text-emerald-800', label: 'Penjualan POS' },
+  'Penjualan POS': { bg: 'bg-emerald-50', text: 'text-emerald-800', label: 'Penjualan POS' },
   SALDO_AWAL_SIMPANAN: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
   saldo_awal_simpanan: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
-  PELUNASAN_BON_TOKO:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
-  pelunasan_bon_toko:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  PELUNASAN_BON_TOKO: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
+  pelunasan_bon_toko: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
   'Pelunasan Bon Toko': { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
-  SETORAN_ANGGOTA:     { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
-  'Setoran Simpanan':  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
-  SETORAN_SIMPANAN:    { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
-  setoran_simpanan:    { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
-  simpanan:            { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Simpanan' },
-  angsuran_pinjaman:   { bg: 'bg-amber-50',    text: 'text-amber-800',   label: 'Angsuran Pinjaman' },
-  restock_supplier:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Restock Supplier' },
-  pembelian_barang:    { bg: 'bg-orange-50',   text: 'text-orange-800',  label: 'Pembelian Barang' },
-  pencairan_pinjaman:  { bg: 'bg-purple-50',   text: 'text-purple-800',  label: 'Pencairan Pinjaman' },
-  pembiayaan_barang:   { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
-  PEMBIAYAAN_BARANG:   { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
-  penarikan_simpanan:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
-  PENARIKAN_SIMPANAN:  { bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
-  'Penarikan Simpanan':{ bg: 'bg-rose-50',     text: 'text-rose-800',    label: 'Penarikan Simpanan' },
-  beban_operasional:   { bg: 'bg-red-50',      text: 'text-red-800',     label: 'Beban Operasional' },
+  SETORAN_ANGGOTA: { bg: 'bg-blue-50', text: 'text-blue-800', label: 'Setoran Anggota' },
+  'Setoran Simpanan': { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
+  SETORAN_SIMPANAN: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
+  setoran_simpanan: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Setoran Simpanan' },
+  simpanan: { bg: 'bg-blue-50', text: 'text-blue-800', label: 'Simpanan' },
+  angsuran_pinjaman: { bg: 'bg-amber-50', text: 'text-amber-800', label: 'Angsuran Pinjaman' },
+  restock_supplier: { bg: 'bg-orange-50', text: 'text-orange-800', label: 'Restock Supplier' },
+  pembelian_barang: { bg: 'bg-orange-50', text: 'text-orange-800', label: 'Pembelian Barang' },
+  pencairan_pinjaman: { bg: 'bg-purple-50', text: 'text-purple-800', label: 'Pencairan Pinjaman' },
+  pembiayaan_barang: { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
+  PEMBIAYAAN_BARANG: { bg: 'bg-teal-50 border border-teal-200', text: 'text-teal-800', label: 'Pembiayaan Barang' },
+  penarikan_simpanan: { bg: 'bg-rose-50', text: 'text-rose-800', label: 'Penarikan Simpanan' },
+  PENARIKAN_SIMPANAN: { bg: 'bg-rose-50', text: 'text-rose-800', label: 'Penarikan Simpanan' },
+  'Penarikan Simpanan': { bg: 'bg-rose-50', text: 'text-rose-800', label: 'Penarikan Simpanan' },
+  KLIRING_ANGGOTA_KELUAR: { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
+  kliring_anggota_keluar: { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
+  'Kliring Anggota Keluar': { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
+  beban_operasional: { bg: 'bg-red-50', text: 'text-red-800', label: 'Beban Operasional' },
 };
 
 export const KategoriBadge = ({ kategori }: { kategori: string }) => {
@@ -150,12 +155,13 @@ export async function getCashFlowReport(
   endDate: string,
   _unit: string
 ): Promise<CashFlowData> {
-  // Sinkronkan pelunasan bon toko historis, saldo awal cut-off, konsolidasi pencairan massal Lebaran, setoran matriks, dan penjualan tunai POS (idempoten)
-  await syncStoreCreditPaymentsToCashFlow().catch(() => {});
-  await syncOpeningSavingsBalanceToCashFlow().catch(() => {});
-  await consolidateBulkLebaranCashFlow().catch(() => {});
-  await syncMatrixDepositsToCashFlow().catch(() => {});
-  await syncPosCashSalesToCashFlow().catch(() => {});
+  // Sinkronkan pelunasan bon toko historis, saldo awal cut-off, konsolidasi pencairan massal Lebaran, setoran matriks, penjualan tunai POS, dan kliring anggota keluar (idempoten)
+  await syncStoreCreditPaymentsToCashFlow().catch(() => { });
+  await syncOpeningSavingsBalanceToCashFlow().catch(() => { });
+  await consolidateBulkLebaranCashFlow().catch(() => { });
+  await syncMatrixDepositsToCashFlow().catch(() => { });
+  await syncPosCashSalesToCashFlow().catch(() => { });
+  await syncResignedMemberClearanceToCashFlow().catch(() => { });
 
   // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
@@ -214,7 +220,7 @@ export async function getCashFlowReport(
   // Build from cash_flow
   for (const r of (cfRows ?? [])) {
     const dir = r.direction ?? r.type;
-    const masuk  = dir === 'in'  ? Number(r.amount) : 0;
+    const masuk = dir === 'in' ? Number(r.amount) : 0;
     const keluar = dir === 'out' ? Number(r.amount) : 0;
     const isOpeningSavings =
       r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
@@ -229,8 +235,8 @@ export async function getCashFlowReport(
           rawDescription !== ''
             ? rawDescription
             : isOpeningSavings
-            ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
-            : '-',
+              ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
+              : '-',
         kategori: r.category ?? 'lainnya',
         unit_usaha: 'Umum', // cash_flow table has no 'unit' column
         kas_masuk: masuk,
@@ -263,9 +269,9 @@ export async function getCashFlowReport(
             deskripsi:
               !s.member_id && s.sale_number
                 ? formatPosCashFlowDescription({
-                    saleNumber: s.sale_number,
-                    amount: masuk,
-                  })
+                  saleNumber: s.sale_number,
+                  amount: masuk,
+                })
                 : '-',
             kategori: 'penjualan_tunai',
             unit_usaha: 'Retail Toko',
@@ -299,11 +305,14 @@ export async function getCashFlowReport(
   const enrichedStoreCredits = await enrichStoreCreditCashFlowDescriptions(enrichedDeposits).catch(
     () => enrichedDeposits
   );
-  const enrichedRows = await enrichPosCashFlowDescriptions(enrichedStoreCredits).catch(
+  const enrichedPos = await enrichPosCashFlowDescriptions(enrichedStoreCredits).catch(
     () => enrichedStoreCredits
   );
+  const enrichedRows = await enrichMemberClearanceCashFlowDescriptions(enrichedPos).catch(
+    () => enrichedPos
+  );
 
-  const inflowTotal  = enrichedRows.reduce((s, r) => s + r.kas_masuk, 0);
+  const inflowTotal = enrichedRows.reduce((s, r) => s + r.kas_masuk, 0);
   const outflowTotal = enrichedRows.reduce((s, r) => s + r.kas_keluar, 0);
 
   return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: enrichedRows };
@@ -330,11 +339,11 @@ const classifyPosPaymentSource = (
 };
 
 const SHU_SOURCE_BADGE: Record<ShuSourceType, { bg: string; text: string }> = {
-  pos_cash:        { bg: 'bg-emerald-50 border border-emerald-200/80', text: 'text-emerald-700' },
-  pos_deposit:     { bg: 'bg-blue-50 border border-blue-200/80',       text: 'text-blue-700' },
-  pos_credit:      { bg: 'bg-amber-50 border border-amber-200/80',     text: 'text-amber-800' },
-  pos_split:       { bg: 'bg-purple-50 border border-purple-200/80',   text: 'text-purple-700' },
-  goods_financing: { bg: 'bg-teal-50 border border-teal-200/80',       text: 'text-teal-800' },
+  pos_cash: { bg: 'bg-emerald-50 border border-emerald-200/80', text: 'text-emerald-700' },
+  pos_deposit: { bg: 'bg-blue-50 border border-blue-200/80', text: 'text-blue-700' },
+  pos_credit: { bg: 'bg-amber-50 border border-amber-200/80', text: 'text-amber-800' },
+  pos_split: { bg: 'bg-purple-50 border border-purple-200/80', text: 'text-purple-700' },
+  goods_financing: { bg: 'bg-teal-50 border border-teal-200/80', text: 'text-teal-800' },
 };
 
 const formatDisplayDateId = (raw?: string | null): string => {
@@ -549,6 +558,9 @@ export async function getShuEstimation(
     'SETORAN_SIMPANAN',
     'setoran_simpanan',
     'simpanan',
+    'KLIRING_ANGGOTA_KELUAR',
+    'kliring_anggota_keluar',
+    'Kliring Anggota Keluar',
   ]);
 
   const opex = (opexData ?? [])
@@ -724,8 +736,8 @@ export async function getShuEstimation(
         if (marginPortion > 0) {
           const refNo = String(
             r?.receipt_number ||
-              loan?.loan_number ||
-              `PAY-${String(r?.id || '').slice(0, 8).toUpperCase()}`
+            loan?.loan_number ||
+            `PAY-${String(r?.id || '').slice(0, 8).toUpperCase()}`
           );
           const rawDate = String(r?.payment_date || '');
           const member = loan?.member_id ? memberMap[String(loan.member_id)] : undefined;
@@ -776,10 +788,10 @@ export async function getShuEstimation(
   };
   shuReferenceRows.sort((a, b) => getSafeTime(b.rawDate) - getSafeTime(a.rawDate));
 
-  const grossProfit  = grossSales - cogs;
+  const grossProfit = grossSales - cogs;
   const estimatedShu = grossProfit + goodsFinancingMargin - opex;
   const totalRevenue = grossSales + goodsFinancingMargin;
-  const marginPct    = totalRevenue > 0 ? (estimatedShu / totalRevenue) * 100 : 0;
+  const marginPct = totalRevenue > 0 ? (estimatedShu / totalRevenue) * 100 : 0;
 
   const marginPerKategori: MarginKategori[] = Object.values(marginMap).map(m => ({
     kategori: m.kategori,
@@ -1080,12 +1092,12 @@ function LaporanKeuanganContent({
   const normalizedCashFlowQuery = cashFlowSearchQuery.trim().toLowerCase();
   const filteredCashFlowTransactions = normalizedCashFlowQuery
     ? cashFlowTransactions.filter((t) => {
-        const refMatch = String(t.referensi || '').toLowerCase().includes(normalizedCashFlowQuery);
-        const descMatch = String(t.deskripsi || '').toLowerCase().includes(normalizedCashFlowQuery);
-        const catMatch = String(t.kategori || '').toLowerCase().includes(normalizedCashFlowQuery);
-        const refIdMatch = String(t.reference_id || '').toLowerCase().includes(normalizedCashFlowQuery);
-        return refMatch || descMatch || catMatch || refIdMatch;
-      })
+      const refMatch = String(t.referensi || '').toLowerCase().includes(normalizedCashFlowQuery);
+      const descMatch = String(t.deskripsi || '').toLowerCase().includes(normalizedCashFlowQuery);
+      const catMatch = String(t.kategori || '').toLowerCase().includes(normalizedCashFlowQuery);
+      const refIdMatch = String(t.reference_id || '').toLowerCase().includes(normalizedCashFlowQuery);
+      return refMatch || descMatch || catMatch || refIdMatch;
+    })
     : cashFlowTransactions;
   const totalCashFlowItems = filteredCashFlowTransactions.length;
   const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
@@ -1117,13 +1129,13 @@ function LaporanKeuanganContent({
   const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
   const filteredShuRows = normalizedShuQuery
     ? shuReferenceRows.filter((row) => {
-        const refMatch = row.referenceNumber.toLowerCase().includes(normalizedShuQuery);
-        const loanMatch = String(row.loanNumber || '').toLowerCase().includes(normalizedShuQuery);
-        const nameMatch = row.memberName.toLowerCase().includes(normalizedShuQuery);
-        const nrpMatch = row.memberNrp.toLowerCase().includes(normalizedShuQuery);
-        const methodMatch = row.paymentMethodLabel.toLowerCase().includes(normalizedShuQuery);
-        return refMatch || loanMatch || nameMatch || nrpMatch || methodMatch;
-      })
+      const refMatch = row.referenceNumber.toLowerCase().includes(normalizedShuQuery);
+      const loanMatch = String(row.loanNumber || '').toLowerCase().includes(normalizedShuQuery);
+      const nameMatch = row.memberName.toLowerCase().includes(normalizedShuQuery);
+      const nrpMatch = row.memberNrp.toLowerCase().includes(normalizedShuQuery);
+      const methodMatch = row.paymentMethodLabel.toLowerCase().includes(normalizedShuQuery);
+      return refMatch || loanMatch || nameMatch || nrpMatch || methodMatch;
+    })
     : shuReferenceRows;
   const totalShuItems = filteredShuRows.length;
   const totalShuPages = Math.max(1, Math.ceil(totalShuItems / shuPageSize));
@@ -1264,11 +1276,11 @@ function LaporanKeuanganContent({
         wsCf.addRow(['LAPORAN ARUS KAS SIMKOP']);
         wsCf.addRow([`Periode: ${startDate} s/d ${endDate}`]);
         wsCf.addRow([]);
-        wsCf.addRow(['Tanggal','Referensi','Deskripsi','Kategori','Unit','Kas Masuk','Kas Keluar','Saldo Berjalan']);
+        wsCf.addRow(['Tanggal', 'Referensi', 'Deskripsi', 'Kategori', 'Unit', 'Kas Masuk', 'Kas Keluar', 'Saldo Berjalan']);
         for (const t of cashFlowData.transactions) {
           wsCf.addRow([t.tanggal, t.referensi, t.deskripsi, t.kategori, t.unit_usaha, t.kas_masuk, t.kas_keluar, t.saldo_berjalan]);
         }
-        wsCf.addRow(['','','','','TOTAL', cashFlowData.inflowTotal, cashFlowData.outflowTotal, cashFlowData.netCashflow]);
+        wsCf.addRow(['', '', '', '', 'TOTAL', cashFlowData.inflowTotal, cashFlowData.outflowTotal, cashFlowData.netCashflow]);
       }
 
       if (shuData) {
@@ -1276,7 +1288,7 @@ function LaporanKeuanganContent({
         wsShu.addRow(['LAPORAN ESTIMASI SHU SIMKOP']);
         wsShu.addRow([`Periode: ${startDate} s/d ${endDate}`]);
         wsShu.addRow([]);
-        wsShu.addRow(['Komponen','Jumlah (Rp)']);
+        wsShu.addRow(['Komponen', 'Jumlah (Rp)']);
         wsShu.addRow(['Total Omzet Penjualan', shuData.grossSales]);
         wsShu.addRow(['HPP / Modal Barang', shuData.cogs]);
         wsShu.addRow(['Laba Kotor', shuData.grossProfit]);
@@ -1326,18 +1338,18 @@ function LaporanKeuanganContent({
             exportMarginPct.toFixed(1) + '%',
           ]);
         } else {
-          wsShu.addRow(['Kategori Produk','Omzet','HPP','Laba Kotor','Gross Margin %']);
+          wsShu.addRow(['Kategori Produk', 'Omzet', 'HPP', 'Laba Kotor', 'Gross Margin %']);
           for (const m of shuData.marginPerKategori) {
             wsShu.addRow([m.kategori, m.omzet, m.hpp, m.laba_kotor, m.gross_margin_pct.toFixed(1) + '%']);
           }
         }
       }
 
-      const buf  = await wb.xlsx.writeBuffer();
+      const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href     = url;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
       a.download = `laporan-keuangan-${startDate}-${endDate}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
@@ -1430,7 +1442,7 @@ function LaporanKeuanganContent({
             </div>
             {/* Quick Presets */}
             <div className="flex items-center gap-1.5 pb-0.5">
-              {[['today','Hari Ini'],['thisMonth','Bulan Ini'],['year2026','Tahun 2026']] .map(([p,l]) => (
+              {[['today', 'Hari Ini'], ['thisMonth', 'Bulan Ini'], ['year2026', 'Tahun 2026']].map(([p, l]) => (
                 <button
                   key={p}
                   onClick={() => applyPreset(p as any)}
@@ -1501,17 +1513,16 @@ function LaporanKeuanganContent({
       {/* ── TAB SWITCHER ── */}
       <div className="flex items-center gap-1 border-b border-outline-variant/30 no-print">
         {[
-          { key: 'cashflow', label: 'Arus Kas (Cash Flow)',     icon: 'account_balance_wallet' },
-          { key: 'shu',      label: 'Estimasi SHU Berjalan',   icon: 'trending_up' },
+          { key: 'cashflow', label: 'Arus Kas (Cash Flow)', icon: 'account_balance_wallet' },
+          { key: 'shu', label: 'Estimasi SHU Berjalan', icon: 'trending_up' },
         ].map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === tab.key
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === tab.key
                 ? 'border-secondary text-secondary'
                 : 'border-transparent text-on-surface-variant hover:text-on-surface'
-            }`}
+              }`}
           >
             <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
             {tab.label}
@@ -1679,7 +1690,7 @@ function LaporanKeuanganContent({
               <table className="w-full text-sm">
                 <thead className="bg-surface-container-low border-b border-outline-variant/20">
                   <tr>
-                    {['Tanggal','Referensi','Deskripsi','Kategori','Unit','Kas Masuk (Rp)','Kas Keluar (Rp)','Saldo Berjalan (Rp)'].map(h => (
+                    {['Tanggal', 'Referensi', 'Deskripsi', 'Kategori', 'Unit', 'Kas Masuk (Rp)', 'Kas Keluar (Rp)', 'Saldo Berjalan (Rp)'].map(h => (
                       <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
                         {h}
                       </th>
@@ -1705,39 +1716,38 @@ function LaporanKeuanganContent({
                         <tr
                           key={t.id}
                           data-highlighted-ref={isHighlighted ? 'true' : undefined}
-                          className={`border-b border-outline-variant/10 transition-colors ${
-                            isHighlighted
+                          className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
                               ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
                               : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
-                          }`}
+                            }`}
                         >
-                        <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCashFlowRef(t)}
-                            title="Klik untuk melihat rincian sumber buku pembantu"
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold hover:underline transition-colors cursor-pointer group"
-                          >
-                            <span>{t.referensi}</span>
-                            <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
-                          </button>
-                        </td>
-                        <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
-                          {t.deskripsi}
-                        </td>
-                        <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
-                        <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums whitespace-nowrap">
-                          {t.kas_masuk > 0 ? formatRp(t.kas_masuk) : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold text-rose-700 tabular-nums whitespace-nowrap">
-                          {t.kas_keluar > 0 ? formatRp(t.kas_keluar) : '-'}
-                        </td>
-                        <td className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${t.saldo_berjalan >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
-                          {formatRp(t.saldo_berjalan)}
-                        </td>
-                      </tr>
+                          <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedCashFlowRef(t)}
+                              title="Klik untuk melihat rincian sumber buku pembantu"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold hover:underline transition-colors cursor-pointer group"
+                            >
+                              <span>{t.referensi}</span>
+                              <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
+                            {t.deskripsi}
+                          </td>
+                          <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
+                          <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums whitespace-nowrap">
+                            {t.kas_masuk > 0 ? formatRp(t.kas_masuk) : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-rose-700 tabular-nums whitespace-nowrap">
+                            {t.kas_keluar > 0 ? formatRp(t.kas_keluar) : '-'}
+                          </td>
+                          <td className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${t.saldo_berjalan >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
+                            {formatRp(t.saldo_berjalan)}
+                          </td>
+                        </tr>
                       );
                     })
                   )}
@@ -1819,19 +1829,19 @@ function LaporanKeuanganContent({
           {/* Waterfall Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
             {[
-              { label: 'Total Omzet', value: shuData.grossSales,  color: 'blue',   icon: 'storefront',    sub: 'Pendapatan kotor penjualan' },
-              { label: 'HPP / Modal', value: shuData.cogs,        color: 'orange', icon: 'inventory_2',   sub: 'SUM(qty × buy_price)' },
-              { label: 'Laba Kotor',  value: shuData.grossProfit, color: 'emerald',icon: 'trending_up',   sub: 'Omzet − HPP' },
+              { label: 'Total Omzet', value: shuData.grossSales, color: 'blue', icon: 'storefront', sub: 'Pendapatan kotor penjualan' },
+              { label: 'HPP / Modal', value: shuData.cogs, color: 'orange', icon: 'inventory_2', sub: 'SUM(qty × buy_price)' },
+              { label: 'Laba Kotor', value: shuData.grossProfit, color: 'emerald', icon: 'trending_up', sub: 'Omzet − HPP' },
               { label: 'Pendapatan Margin Pembiayaan Barang', value: shuData.goodsFinancingMargin, color: 'teal', icon: 'shopping_bag', sub: 'Realisasi margin angsuran barang (non-pokok)' },
-              { label: 'Beban Operasional', value: shuData.opex,  color: 'rose',   icon: 'payments',      sub: 'Listrik, gaji, depresiasi' },
+              { label: 'Beban Operasional', value: shuData.opex, color: 'rose', icon: 'payments', sub: 'Listrik, gaji, depresiasi' },
               { label: 'Estimasi SHU Bersih', value: shuData.estimatedShu, color: 'purple', icon: 'stars', sub: `Margin ${shuData.marginPercentage.toFixed(1)}%` },
             ].map((m, i) => {
               const cMap: Record<string, { border: string; bg: string; text: string; accent: string; badge: string }> = {
-                blue:   { border: 'border-blue-200',   bg: 'bg-blue-50',   text: 'text-blue-800',   accent: 'bg-blue-500',   badge: 'bg-blue-100 text-blue-800' },
+                blue: { border: 'border-blue-200', bg: 'bg-blue-50', text: 'text-blue-800', accent: 'bg-blue-500', badge: 'bg-blue-100 text-blue-800' },
                 orange: { border: 'border-orange-200', bg: 'bg-orange-50', text: 'text-orange-800', accent: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
-                emerald:{ border: 'border-emerald-200',bg: 'bg-emerald-50',text: 'text-emerald-800',accent: 'bg-emerald-500',badge: 'bg-emerald-100 text-emerald-800' },
-                teal:   { border: 'border-teal-200',   bg: 'bg-teal-50',   text: 'text-teal-800',   accent: 'bg-teal-500',   badge: 'bg-teal-100 text-teal-800' },
-                rose:   { border: 'border-rose-200',   bg: 'bg-rose-50',   text: 'text-rose-800',   accent: 'bg-rose-500',   badge: 'bg-rose-100 text-rose-800' },
+                emerald: { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-800', accent: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800' },
+                teal: { border: 'border-teal-200', bg: 'bg-teal-50', text: 'text-teal-800', accent: 'bg-teal-500', badge: 'bg-teal-100 text-teal-800' },
+                rose: { border: 'border-rose-200', bg: 'bg-rose-50', text: 'text-rose-800', accent: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800' },
                 purple: { border: 'border-purple-300', bg: 'bg-purple-50', text: 'text-purple-900', accent: 'bg-purple-600', badge: 'bg-purple-100 text-purple-800' },
               };
               const c = cMap[m.color];
@@ -1944,11 +1954,10 @@ function LaporanKeuanganContent({
                         <tr
                           key={row.id}
                           data-highlighted-ref={isHighlighted ? 'true' : undefined}
-                          className={`border-b border-outline-variant/10 transition-colors ${
-                            isHighlighted
+                          className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
                               ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
                               : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
-                          }`}
+                            }`}
                         >
                           <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">
                             {row.transactionDate}
@@ -1992,13 +2001,12 @@ function LaporanKeuanganContent({
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span
-                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold ${
-                                row.marginPercent >= 20
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold ${row.marginPercent >= 20
                                   ? 'bg-emerald-100 text-emerald-800'
                                   : row.marginPercent >= 10
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-rose-100 text-rose-800'
-                              }`}
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}
                             >
                               {row.marginPercent.toFixed(1)}%
                             </span>

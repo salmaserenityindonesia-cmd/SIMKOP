@@ -2017,4 +2017,221 @@ describe('Deep-Link Navigation (?tab=, ?ref=, ?receipt=, ?date=) & Highlighting'
       /data-highlighted-ref="true"[\s\S]*?CF-50196D6C/
     );
   });
+
+  it('renders KLIRING_ANGGOTA_KELUAR category badge as "Kliring Anggota Keluar" with rose styling', () => {
+    const html = renderToStaticMarkup(<KategoriBadge kategori="KLIRING_ANGGOTA_KELUAR" />);
+
+    expect(html).toContain('Kliring Anggota Keluar');
+    expect(html).toContain('bg-rose-50');
+    expect(html).toContain('text-rose-700');
+    expect(html).toContain('border-rose-200');
+  });
+
+  it('getCashFlowReport syncs resigned member clearance (MOCH. ALIF NURSYARIFUDDIN Rp 10.460.000) and maps it to kas_keluar and outflowTotal', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cashFlowStore: any[] = [];
+      const anggotaRows = [
+        {
+          id: 'mem-alif',
+          nrp: '(lama 1) 00010062',
+          nama: 'MOCH. ALIF NURSYARIFUDDIN',
+          pangkat: 'BRIPTU',
+          status: 'nonaktif',
+          membership_status: 'RESIGNED',
+          updated_at: '2026-11-19T14:20:00.000Z',
+          created_at: '2024-01-01T00:00:00.000Z',
+        },
+      ];
+      const depositTypes = [
+        { id: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib' },
+        { id: 'dt-p', code: 'POKOK', name: 'Simpanan Pokok' },
+        { id: 'dt-b', code: 'BELANJA', name: 'Simpanan Belanja' },
+        { id: 'dt-l', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+      ];
+      const memberDeposits = [
+        { id: 'md-w', member_id: 'mem-alif', deposit_type_id: 'dt-w' },
+        { id: 'md-p', member_id: 'mem-alif', deposit_type_id: 'dt-p' },
+        { id: 'md-b', member_id: 'mem-alif', deposit_type_id: 'dt-b' },
+        { id: 'md-l', member_id: 'mem-alif', deposit_type_id: 'dt-l' },
+      ];
+      const depositTransactions = [
+        { id: 'tx-w', member_deposit_id: 'md-w', transaction_type: 'deposit', amount: 5000000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)', created_at: '2026-03-01T00:00:00.000Z' },
+        { id: 'tx-p', member_deposit_id: 'md-p', transaction_type: 'deposit', amount: 10000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)', created_at: '2026-03-01T00:00:00.000Z' },
+        { id: 'tx-b', member_deposit_id: 'md-b', transaction_type: 'deposit', amount: 1250000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)', created_at: '2026-03-01T00:00:00.000Z' },
+        { id: 'tx-l', member_deposit_id: 'md-l', transaction_type: 'deposit', amount: 4200000, for_year: 2026, for_month: 2, description: 'Saldo Awal Cut-Off (s/d Feb 2026)', created_at: '2026-03-01T00:00:00.000Z' },
+      ];
+      const clearanceLogs = [
+        {
+          id: 'mcl-alif',
+          anggota_id: 'mem-alif',
+          settlement_type: 'SURPLUS_PAYOUT',
+          total_savings: 10460000,
+          total_loans: 0,
+          net_amount: 10460000,
+          payment_method: 'Transfer Bank',
+          created_at: '2026-11-19T14:20:00.000Z',
+        },
+      ];
+
+      const makePagedSelect = (rows: any[]) => ({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+            data: rows.filter((r) => vals.includes(r[col])),
+            error: null,
+          })),
+          range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+            data: rows.slice(from, to + 1),
+            error: null,
+          })),
+        }),
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') return makePagedSelect(anggotaRows);
+        if (table === 'deposit_types') return makePagedSelect(depositTypes);
+        if (table === 'member_deposits') return makePagedSelect(memberDeposits);
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+                data: depositTransactions.filter((r: any) => vals.includes(r[col])),
+                error: null,
+              })),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: depositTransactions.slice(from, to + 1),
+                error: null,
+              })),
+            }),
+          };
+        }
+        if (table === 'member_clearance_logs') return makePagedSelect(clearanceLogs);
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation(async (col: string, val: any) => ({
+                data: cashFlowStore.filter((r) => r[col] === val),
+                error: null,
+              })),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: cashFlowStore.slice(from, to + 1),
+                error: null,
+              })),
+              gte: vi.fn().mockImplementation((_col: string, sVal: string) => ({
+                lte: vi.fn().mockImplementation((_col2: string, eVal: string) => ({
+                  order: vi.fn().mockImplementation(async () => ({
+                    data: cashFlowStore.filter(
+                      (r) => String(r.created_at || '') >= sVal && String(r.created_at || '') <= eVal
+                    ),
+                    error: null,
+                  })),
+                })),
+              })),
+            }),
+            insert: vi.fn().mockImplementation(async (payload: any) => {
+              const items = Array.isArray(payload) ? payload : [payload];
+              const created: any[] = [];
+              for (const item of items) {
+                const inserted = {
+                  id: `cf-alif-clearance-${cashFlowStore.length + 1}`,
+                  ...item,
+                };
+                cashFlowStore.push(inserted);
+                created.push(inserted);
+              }
+              return { data: Array.isArray(payload) ? created : created[0], error: null };
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return makePagedSelect([]);
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+      expect(report.outflowTotal).toBe(10460000);
+      expect(report.inflowTotal).toBe(0);
+      expect(report.netCashflow).toBe(-10460000);
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0]).toMatchObject({
+        kategori: 'KLIRING_ANGGOTA_KELUAR',
+        kas_masuk: 0,
+        kas_keluar: 10460000,
+        reference_id: 'mem-alif',
+        direction: 'out',
+        deskripsi:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('getShuEstimation excludes KLIRING_ANGGOTA_KELUAR so member resignation clearance does not reduce SHU', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({
+                      data: [
+                        { amount: 10460000, category: 'KLIRING_ANGGOTA_KELUAR', direction: 'out' },
+                        { amount: 150000, category: 'beban_operasional', direction: 'out' },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.opex).toBe(150000);
+      expect(shu.estimatedShu).toBe(-150000);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

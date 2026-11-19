@@ -576,4 +576,162 @@ describe('CashFlowReferenceModal Component', () => {
     expect(html).toContain('INV-20261112-02');
     expect(html).toContain('INV-20261101-01');
   });
+
+  it('renders MEMBER_CLEARANCE breakdown with member status, 4 savings types, zero debt offset, and net payout for MOCH. ALIF NURSYARIFUDDIN', () => {
+    const clearanceBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'MEMBER_CLEARANCE',
+      journal: {
+        id: 'cf-clr-alif-1',
+        refCode: 'CF-CLR00001',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        unitUsaha: 'Umum',
+        referenceId: 'mem-alif',
+        createdAt: '2026-11-19T14:20:00.000Z',
+      },
+      memberClearance: {
+        memberId: 'mem-alif',
+        member: {
+          nrp: '00010062',
+          nama: 'MOCH. ALIF NURSYARIFUDDIN',
+          pangkat: 'BRIPTU',
+          status: 'nonaktif',
+          membershipStatus: 'RESIGNED',
+          bankName: 'BRI',
+          bankAccountNumber: '1234567890',
+        },
+        clearanceDate: '2026-11-19T14:20:00.000Z',
+        settlementType: 'SURPLUS_PAYOUT',
+        paymentMethod: 'Transfer Bank',
+        notes: 'Pengunduran diri selesai',
+        savingsItems: [
+          { depositTypeId: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib', bucket: 'wajib', amount: 5000000 },
+          { depositTypeId: 'dt-p', code: 'POKOK', name: 'Simpanan Pokok', bucket: 'pokok', amount: 10000 },
+          { depositTypeId: 'dt-b', code: 'BELANJA', name: 'Simpanan Belanja', bucket: 'belanja', amount: 1250000 },
+          { depositTypeId: 'dt-l', code: 'LEBARAN', name: 'Simpanan Lebaran', bucket: 'lebaran', amount: 4200000 },
+        ],
+        savingsByBucket: {
+          wajib: 5000000,
+          pokok: 10000,
+          belanja: 1250000,
+          lebaran: 4200000,
+          lainnya: 0,
+        },
+        totalSavings: 10460000,
+        debtItems: [],
+        totalDebtOffset: 0,
+        netSettlement: 10460000,
+        journalAmount: 10460000,
+        difference: 0,
+        isMatched: true,
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={{
+          ...baseOpeningItem,
+          id: 'cf-clr-alif-1',
+          referensi: 'CF-CLR00001',
+          kategori: 'KLIRING_ANGGOTA_KELUAR',
+          kas_masuk: 0,
+          kas_keluar: 10460000,
+          direction: 'out',
+        }}
+        onClose={() => {}}
+        initialBreakdown={clearanceBreakdown}
+      />
+    );
+
+    expect(html).toContain('Kategori: Kliring Anggota Keluar');
+    expect(html).toContain('MOCH. ALIF NURSYARIFUDDIN');
+    expect(html).toContain('00010062');
+    expect(html).toContain('RESIGNED / KELUAR');
+    expect(html).toContain('Simpanan Wajib');
+    expect(html).toContain('5.000.000');
+    expect(html).toContain('Simpanan Pokok');
+    expect(html).toContain('10.000');
+    expect(html).toContain('Simpanan Belanja');
+    expect(html).toContain('1.250.000');
+    expect(html).toContain('Simpanan Lebaran');
+    expect(html).toContain('4.200.000');
+    expect(html).toContain('10.460.000');
+    expect(html).toContain('Total Kas Bersih Diserahkan ke Anggota');
+    expect(html).toContain('Tidak ada potongan kewajiban pinjaman / bon');
+    expect(html).toContain('Cocok dengan Jurnal Kas');
+  });
+
+  it('renders MEMBER_CLEARANCE deficit + debt-offset variant cleanly', () => {
+    const deficitBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'MEMBER_CLEARANCE',
+      journal: {
+        id: 'cf-clr-def-1',
+        refCode: 'CF-CLRDEF01',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'in',
+        amount: 3500000,
+        description:
+          'Kliring Pengunduran Diri — 88010051 - Dedi Kurniawan | Hak Simpanan: Rp 2.000.000, Potong Utang: Rp 5.500.000, Kekurangan Disetor Anggota: Rp 3.500.000',
+        unitUsaha: 'Umum',
+        referenceId: 'mem-def-paid',
+        createdAt: '2026-11-19T09:00:00.000Z',
+      },
+      memberClearance: {
+        memberId: 'mem-def-paid',
+        member: {
+          nrp: '88010051',
+          nama: 'Dedi Kurniawan',
+          pangkat: 'Serda',
+          status: 'nonaktif',
+          membershipStatus: 'RESIGNED',
+        },
+        clearanceDate: '2026-11-19T09:00:00.000Z',
+        settlementType: 'INSTANT_PAYOFF',
+        paymentMethod: 'Tunai Kasir',
+        notes: 'Pelunasan defisit saat keluar',
+        savingsItems: [
+          { depositTypeId: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib', bucket: 'wajib', amount: 2000000 },
+        ],
+        savingsByBucket: { wajib: 2000000, pokok: 0, belanja: 0, lebaran: 0, lainnya: 0 },
+        totalSavings: 2000000,
+        debtItems: [
+          {
+            loanId: 'loan-dedi-1',
+            loanNumber: 'PJ-2026-77',
+            purpose: 'Pinjaman Konsumtif',
+            offsetAmount: 5500000,
+          },
+        ],
+        totalDebtOffset: 5500000,
+        netSettlement: -3500000,
+        journalAmount: 3500000,
+        difference: 0,
+        isMatched: true,
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={{
+          ...baseOpeningItem,
+          id: 'cf-clr-def-1',
+          referensi: 'CF-CLRDEF01',
+          kategori: 'KLIRING_ANGGOTA_KELUAR',
+          kas_masuk: 3500000,
+          kas_keluar: 0,
+          direction: 'in',
+        }}
+        onClose={() => {}}
+        initialBreakdown={deficitBreakdown}
+      />
+    );
+
+    expect(html).toContain('PJ-2026-77');
+    expect(html).toContain('5.500.000');
+    expect(html).toContain('Total Kekurangan Disetor Anggota ke Koperasi');
+    expect(html).toContain('3.500.000');
+  });
 });

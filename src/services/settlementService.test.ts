@@ -655,4 +655,178 @@ describe('settlementService', () => {
       expect(updatedLoans[0].status).toBe('completed');
     });
   });
+
+  describe('Pencatatan Cash Flow Kliring Anggota Keluar (Wave 1)', () => {
+    it('menyisipkan tepat 1 baris Kas Keluar KLIRING_ANGGOTA_KELUAR untuk surplus settlement (MOCH. ALIF NURSYARIFUDDIN Rp 10.460.000)', async () => {
+      (supabase.auth.getSession as any).mockResolvedValue({
+        data: { session: { user: { id: 'admin-1' } } }
+      });
+      (supabase.rpc as any).mockResolvedValue({ data: true, error: null });
+
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          const chain = createChainMock([]);
+          chain.insert = vi.fn((payload: any) => {
+            insertedCashFlows.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+        return createChainMock([]);
+      });
+
+      const ok = await settlementService.processInstantPayoff(
+        'member-alif-id',
+        'Transfer Bank',
+        'Pencairan kliring penuh',
+        {
+          member: {
+            id: 'member-alif-id',
+            nrp: '00010062',
+            nama: 'MOCH. ALIF NURSYARIFUDDIN',
+          },
+          summary: {
+            member_id: 'member-alif-id',
+            total_hak: 10460000,
+            total_kewajiban: 0,
+            net_settlement: 10460000,
+            deposit_details: [
+              { deposit_name: 'Simpanan Wajib', can_be_withdrawn: false, total_amount: 5000000 },
+              { deposit_name: 'Simpanan Pokok', can_be_withdrawn: false, total_amount: 10000 },
+              { deposit_name: 'Simpanan Belanja', can_be_withdrawn: true, total_amount: 1250000 },
+              { deposit_name: 'Simpanan Lebaran', can_be_withdrawn: true, total_amount: 4200000 },
+            ],
+            loan_details: [],
+          },
+          clearanceTimestamp: '2026-11-19T15:00:00.000Z',
+        }
+      );
+
+      expect(ok).toBe(true);
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0]).toEqual({
+        direction: 'out',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        amount: 10460000,
+        reference_id: 'member-alif-id',
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        created_at: '2026-11-19T15:00:00.000Z',
+      });
+    });
+
+    it('menyisipkan tepat 1 baris Kas Masuk (direction = in) saat instant payoff defisit', async () => {
+      (supabase.auth.getSession as any).mockResolvedValue({
+        data: { session: { user: { id: 'admin-1' } } }
+      });
+      (supabase.rpc as any).mockResolvedValue({ data: true, error: null });
+
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          const chain = createChainMock([]);
+          chain.insert = vi.fn((payload: any) => {
+            insertedCashFlows.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+        return createChainMock([]);
+      });
+
+      await settlementService.processInstantPayoff(
+        'member-def-id',
+        'Tunai Kasir',
+        'Setor kekurangan utang',
+        {
+          member: {
+            id: 'member-def-id',
+            nrp: '88010099',
+            nama: 'Budi Utomo',
+          },
+          summary: {
+            member_id: 'member-def-id',
+            total_hak: 5000000,
+            total_kewajiban: 12000000,
+            net_settlement: -7000000,
+            deposit_details: [],
+            loan_details: [],
+          },
+          clearanceTimestamp: '2026-11-19T15:30:00.000Z',
+        }
+      );
+
+      expect(insertedCashFlows).toHaveLength(1);
+      expect(insertedCashFlows[0]).toEqual({
+        direction: 'in',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        amount: 7000000,
+        reference_id: 'member-def-id',
+        description:
+          'Kliring Pengunduran Diri — 88010099 - Budi Utomo | Hak Simpanan: Rp 5.000.000, Potong Utang: Rp 12.000.000, Kekurangan Disetor Anggota: Rp 7.000.000',
+        created_at: '2026-11-19T15:30:00.000Z',
+      });
+    });
+
+    it('tidak menyisipkan cash_flow jika net_settlement bernilai 0 atau baris sudah ada (idempoten) maupun saat transisi piutang', async () => {
+      (supabase.auth.getSession as any).mockResolvedValue({
+        data: { session: { user: { id: 'admin-1' } } }
+      });
+      (supabase.rpc as any).mockResolvedValue({ data: true, error: null });
+
+      const insertedCashFlows: any[] = [];
+      let existingCfRows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          const chain = createChainMock(existingCfRows);
+          chain.insert = vi.fn((payload: any) => {
+            insertedCashFlows.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return chain;
+        }
+        return createChainMock([]);
+      });
+
+      // Net settlement = 0
+      await settlementService.processInstantPayoff('member-zero-net', 'Otomatis', '', {
+        member: { id: 'member-zero-net', nrp: '001', nama: 'Zero Net' },
+        summary: {
+          member_id: 'member-zero-net',
+          total_hak: 2000000,
+          total_kewajiban: 2000000,
+          net_settlement: 0,
+          deposit_details: [],
+          loan_details: [],
+        },
+      });
+      expect(insertedCashFlows).toHaveLength(0);
+
+      // Idempoten ketika baris KLIRING_ANGGOTA_KELUAR sudah tercatat untuk member tersebut
+      existingCfRows = [
+        { id: 'cf-exist-1', category: 'KLIRING_ANGGOTA_KELUAR', reference_id: 'member-dup' },
+      ];
+      await settlementService.processInstantPayoff('member-dup', 'Transfer Bank', '', {
+        member: { id: 'member-dup', nrp: '002', nama: 'Dup Member' },
+        summary: {
+          member_id: 'member-dup',
+          total_hak: 3000000,
+          total_kewajiban: 0,
+          net_settlement: 3000000,
+          deposit_details: [],
+          loan_details: [],
+        },
+      });
+      expect(insertedCashFlows).toHaveLength(0);
+
+      // processDebtorTransition tidak menyisipkan cash_flow
+      existingCfRows = [];
+      await settlementService.processDebtorTransition('member-debtor-1', 'Cicil sisa');
+      expect(insertedCashFlows).toHaveLength(0);
+    });
+  });
 });

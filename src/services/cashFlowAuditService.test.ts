@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   consolidateBulkLebaranCashFlow,
   enrichDepositCashFlowDescriptions,
+  enrichMemberClearanceCashFlowDescriptions,
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
   syncPosCashSalesToCashFlow,
+  syncResignedMemberClearanceToCashFlow,
 } from './cashFlowAuditService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -2001,5 +2003,364 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
         'Penjualan Tunai (INV-1795078449999) — 00010062 - MOCH. ALIF NURSYARIFUDDIN (Rp 40.000)'
       );
     }
+  });
+});
+
+describe('cashFlowAuditService - Kliring Anggota Keluar (KLIRING_ANGGOTA_KELUAR)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function buildPagedTableMock(rows: any[]) {
+    return {
+      select: vi.fn().mockReturnValue({
+        in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+          data: rows.filter((r) => vals.includes(r[col])),
+          error: null,
+        })),
+        eq: vi.fn().mockImplementation((col: string, val: any) => {
+          const filtered = rows.filter((r) => r[col] === val);
+          return {
+            maybeSingle: vi.fn().mockResolvedValue({ data: filtered[0] ?? null, error: null }),
+            single: vi.fn().mockResolvedValue({ data: filtered[0] ?? null, error: null }),
+            then: (onRes: any, onRej: any) =>
+              Promise.resolve({ data: filtered, error: null }).then(onRes, onRej),
+          };
+        }),
+        range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+          data: rows.slice(from, to + 1),
+          error: null,
+        })),
+      }),
+    };
+  }
+
+  it('syncResignedMemberClearanceToCashFlow backfills RESIGNED member (MOCH. ALIF NURSYARIFUDDIN Rp 10.460.000) idempotently and excludes SUSPENDED/BLOCKED/PENDING_RESIGNED/ACTIVE', async () => {
+    const anggotaRows = [
+      {
+        id: 'mem-alif',
+        nrp: '(lama 1) 00010062',
+        nama: 'MOCH. ALIF NURSYARIFUDDIN',
+        pangkat: 'BRIPTU',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+        updated_at: '2026-11-19T10:00:00.000Z',
+        created_at: '2024-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'mem-susp',
+        nrp: '88010010',
+        nama: 'Anggota Beku',
+        status: 'nonaktif',
+        membership_status: 'SUSPENDED',
+      },
+      {
+        id: 'mem-block',
+        nrp: '88010011',
+        nama: 'Anggota Diblokir',
+        status: 'nonaktif',
+        membership_status: 'BLOCKED',
+      },
+      {
+        id: 'mem-pending',
+        nrp: '88010012',
+        nama: 'Anggota Piutang',
+        status: 'aktif',
+        membership_status: 'PENDING_RESIGNED',
+      },
+      {
+        id: 'mem-active',
+        nrp: '88010013',
+        nama: 'Anggota Aktif',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+      },
+    ];
+
+    const depositTypes = [
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+      { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+    ];
+
+    const memberDeposits = [
+      { id: 'md-alif-w', member_id: 'mem-alif', deposit_type_id: 'dt-wajib' },
+      { id: 'md-alif-p', member_id: 'mem-alif', deposit_type_id: 'dt-pokok' },
+      { id: 'md-alif-b', member_id: 'mem-alif', deposit_type_id: 'dt-belanja' },
+      { id: 'md-alif-l', member_id: 'mem-alif', deposit_type_id: 'dt-lebaran' },
+    ];
+
+    const depositTransactions = [
+      { id: 'tx-1', member_deposit_id: 'md-alif-w', transaction_type: 'deposit', amount: 5000000, created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'tx-2', member_deposit_id: 'md-alif-p', transaction_type: 'deposit', amount: 10000, created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'tx-3', member_deposit_id: 'md-alif-b', transaction_type: 'deposit', amount: 1250000, created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'tx-4', member_deposit_id: 'md-alif-l', transaction_type: 'deposit', amount: 4200000, created_at: '2026-03-01T00:00:00.000Z' },
+    ];
+
+    const clearanceLogs = [
+      {
+        id: 'mcl-alif',
+        anggota_id: 'mem-alif',
+        settlement_type: 'SURPLUS_PAYOUT',
+        total_savings: 10460000,
+        total_loans: 0,
+        net_amount: 10460000,
+        payment_method: 'Transfer Bank',
+        notes: 'Pengunduran diri disetujui',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+
+    const cashFlowRows: any[] = [];
+    const insertedCashFlows: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildPagedTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildPagedTableMock(depositTypes);
+      if (table === 'member_deposits') return buildPagedTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildPagedTableMock(depositTransactions);
+      if (table === 'member_clearance_logs') return buildPagedTableMock(clearanceLogs);
+      if (table === 'loans' || table === 'loan_repayments') return buildPagedTableMock([]);
+      if (table === 'cash_flow') {
+        const mock = buildPagedTableMock(cashFlowRows) as any;
+        mock.insert = vi.fn().mockImplementation(async (payload: any) => {
+          const row = { id: `cf-clr-${insertedCashFlows.length + 1}`, ...payload };
+          cashFlowRows.push(row);
+          insertedCashFlows.push(row);
+          return { data: row, error: null };
+        });
+        mock.update = vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        });
+        return mock;
+      }
+      return buildPagedTableMock([]);
+    });
+
+    // Run 1: Backfill inserts exactly 1 row for MOCH. ALIF NURSYARIFUDDIN
+    const firstRun = await syncResignedMemberClearanceToCashFlow();
+    expect(firstRun.insertedCount).toBe(1);
+    expect(insertedCashFlows).toHaveLength(1);
+    expect(insertedCashFlows[0]).toMatchObject({
+      direction: 'out',
+      category: 'KLIRING_ANGGOTA_KELUAR',
+      amount: 10460000,
+      reference_id: 'mem-alif',
+      description:
+        'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+      created_at: '2026-11-19T14:20:00.000Z',
+    });
+
+    // Run 2: Idempotent — already synced, 0 new inserts
+    const secondRun = await syncResignedMemberClearanceToCashFlow();
+    expect(secondRun.insertedCount).toBe(0);
+    expect(secondRun.skippedCount).toBe(1);
+    expect(insertedCashFlows).toHaveLength(1);
+  });
+
+  it('syncResignedMemberClearanceToCashFlow handles explicit closing withdrawal rows and deficit INSTANT_PAYOFF (direction = in)', async () => {
+    const anggotaRows = [
+      {
+        id: 'mem-closed-wd',
+        nrp: '88010050',
+        nama: 'Rina Lestari',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+      },
+      {
+        id: 'mem-def-paid',
+        nrp: '88010051',
+        nama: 'Dedi Kurniawan',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+      },
+    ];
+
+    const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
+    const memberDeposits = [
+      { id: 'md-rina-w', member_id: 'mem-closed-wd', deposit_type_id: 'dt-wajib' },
+      { id: 'md-dedi-w', member_id: 'mem-def-paid', deposit_type_id: 'dt-wajib' },
+    ];
+    const depositTransactions = [
+      // Rina: ledger netted to 0 by explicit closing withdrawal
+      { id: 'tx-r1', member_deposit_id: 'md-rina-w', transaction_type: 'deposit', amount: 3000000, created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'tx-r2', member_deposit_id: 'md-rina-w', transaction_type: 'withdrawal', amount: 3000000, description: 'Pencairan Kliring Pengunduran Diri', created_at: '2026-11-18T11:00:00.000Z' },
+      // Dedi: net savings 2.000.000, loan offset 5.500.000 -> net -3.500.000 (kas masuk)
+      { id: 'tx-d1', member_deposit_id: 'md-dedi-w', transaction_type: 'deposit', amount: 2000000, created_at: '2026-03-01T00:00:00.000Z' },
+    ];
+    const loans = [
+      { id: 'loan-dedi-1', member_id: 'mem-def-paid', loan_number: 'PJ-2026-77', notes: 'Pinjaman Konsumtif', amount: 5500000, status: 'completed' },
+    ];
+    const loanRepayments = [
+      { id: 'rep-d1', loan_id: 'loan-dedi-1', amount_paid: 5500000, payment_method: 'POTONG_SIMPANAN_KLIRING', notes: 'Pelunasan otomatis melalui kliring anggota keluar', payment_date: '2026-11-19T09:00:00.000Z' },
+    ];
+    const clearanceLogs = [
+      {
+        id: 'mcl-dedi',
+        anggota_id: 'mem-def-paid',
+        settlement_type: 'INSTANT_PAYOFF',
+        total_savings: 2000000,
+        total_loans: 5500000,
+        net_amount: -3500000,
+        payment_method: 'Tunai Kasir',
+        created_at: '2026-11-19T09:00:00.000Z',
+      },
+    ];
+
+    const inserted: any[] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildPagedTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildPagedTableMock(depositTypes);
+      if (table === 'member_deposits') return buildPagedTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildPagedTableMock(depositTransactions);
+      if (table === 'loans') return buildPagedTableMock(loans);
+      if (table === 'loan_repayments') return buildPagedTableMock(loanRepayments);
+      if (table === 'member_clearance_logs') return buildPagedTableMock(clearanceLogs);
+      if (table === 'cash_flow') {
+        const mock = buildPagedTableMock([]) as any;
+        mock.insert = vi.fn().mockImplementation(async (payload: any) => {
+          inserted.push(payload);
+          return { data: payload, error: null };
+        });
+        return mock;
+      }
+      return buildPagedTableMock([]);
+    });
+
+    const res = await syncResignedMemberClearanceToCashFlow();
+    expect(res.insertedCount).toBe(2);
+
+    const rinaRow = inserted.find((r) => r.reference_id === 'mem-closed-wd');
+    expect(rinaRow).toMatchObject({
+      direction: 'out',
+      category: 'KLIRING_ANGGOTA_KELUAR',
+      amount: 3000000,
+    });
+    expect(rinaRow.description).toContain('Kas Dibayarkan: Rp 3.000.000');
+
+    const dediRow = inserted.find((r) => r.reference_id === 'mem-def-paid');
+    expect(dediRow).toMatchObject({
+      direction: 'in',
+      category: 'KLIRING_ANGGOTA_KELUAR',
+      amount: 3500000,
+    });
+    expect(dediRow.description).toContain('Hak Simpanan: Rp 2.000.000, Potong Utang: Rp 5.500.000, Kekurangan Disetor Anggota: Rp 3.500.000');
+  });
+
+  it('getCashFlowReferenceBreakdown returns MEMBER_CLEARANCE breakdown with 4 savings types and supports lookup via member_clearance_logs.id', async () => {
+    const anggotaRows = [
+      {
+        id: 'mem-alif',
+        nrp: '(lama 1) 00010062',
+        nama: 'MOCH. ALIF NURSYARIFUDDIN',
+        pangkat: 'BRIPTU',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+        bank_name: 'BRI',
+        bank_account_number: '1234567890',
+        updated_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+    const depositTypes = [
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+      { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+    ];
+    const memberDeposits = [
+      { id: 'md-w', member_id: 'mem-alif', deposit_type_id: 'dt-wajib' },
+      { id: 'md-p', member_id: 'mem-alif', deposit_type_id: 'dt-pokok' },
+      { id: 'md-b', member_id: 'mem-alif', deposit_type_id: 'dt-belanja' },
+      { id: 'md-l', member_id: 'mem-alif', deposit_type_id: 'dt-lebaran' },
+    ];
+    const depositTransactions = [
+      { id: 'tx-w', member_deposit_id: 'md-w', transaction_type: 'deposit', amount: 5000000 },
+      { id: 'tx-p', member_deposit_id: 'md-p', transaction_type: 'deposit', amount: 10000 },
+      { id: 'tx-b', member_deposit_id: 'md-b', transaction_type: 'deposit', amount: 1250000 },
+      { id: 'tx-l', member_deposit_id: 'md-l', transaction_type: 'deposit', amount: 4200000 },
+    ];
+    const clearanceLogs = [
+      {
+        id: 'mcl-alif-1',
+        anggota_id: 'mem-alif',
+        settlement_type: 'SURPLUS_PAYOUT',
+        total_savings: 10460000,
+        total_loans: 0,
+        net_amount: 10460000,
+        payment_method: 'Transfer Bank',
+        notes: 'Pengunduran diri disetujui penuh',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildPagedTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildPagedTableMock(depositTypes);
+      if (table === 'member_deposits') return buildPagedTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildPagedTableMock(depositTransactions);
+      if (table === 'member_clearance_logs') return buildPagedTableMock(clearanceLogs);
+      if (table === 'loans' || table === 'loan_repayments') return buildPagedTableMock([]);
+      return buildPagedTableMock([]);
+    });
+
+    // Lookup by member.id
+    const breakdownByMember = await getCashFlowReferenceBreakdown({
+      id: 'cf-alif-001',
+      category: 'KLIRING_ANGGOTA_KELUAR',
+      amount: 10460000,
+      direction: 'out',
+      description: '-',
+      reference_id: 'mem-alif',
+      created_at: '2026-11-19T14:20:00.000Z',
+    });
+
+    expect(breakdownByMember.kind).toBe('MEMBER_CLEARANCE');
+    if (breakdownByMember.kind === 'MEMBER_CLEARANCE') {
+      expect(breakdownByMember.memberClearance.member.nrp).toBe('00010062');
+      expect(breakdownByMember.memberClearance.member.nama).toBe('MOCH. ALIF NURSYARIFUDDIN');
+      expect(breakdownByMember.memberClearance.totalSavings).toBe(10460000);
+      expect(breakdownByMember.memberClearance.totalDebtOffset).toBe(0);
+      expect(breakdownByMember.memberClearance.netSettlement).toBe(10460000);
+      expect(breakdownByMember.memberClearance.isMatched).toBe(true);
+      expect(breakdownByMember.memberClearance.savingsItems.map((i) => [i.name, i.amount])).toEqual([
+        ['Simpanan Wajib', 5000000],
+        ['Simpanan Pokok', 10000],
+        ['Simpanan Belanja', 1250000],
+        ['Simpanan Lebaran', 4200000],
+      ]);
+      expect(breakdownByMember.journal.description).toBe(
+        'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000'
+      );
+    }
+
+    // Lookup by member_clearance_logs.id
+    const breakdownByLog = await getCashFlowReferenceBreakdown({
+      id: 'cf-alif-002',
+      category: 'KLIRING_ANGGOTA_KELUAR',
+      amount: 10460000,
+      direction: 'out',
+      reference_id: 'mcl-alif-1',
+      created_at: '2026-11-19T14:20:00.000Z',
+    });
+    expect(breakdownByLog.kind).toBe('MEMBER_CLEARANCE');
+    if (breakdownByLog.kind === 'MEMBER_CLEARANCE') {
+      expect(breakdownByLog.memberClearance.memberId).toBe('mem-alif');
+      expect(breakdownByLog.memberClearance.totalSavings).toBe(10460000);
+    }
+
+    // enrichMemberClearanceCashFlowDescriptions enriches blank descriptions
+    const enriched = await enrichMemberClearanceCashFlowDescriptions([
+      {
+        id: 'cf-alif-001',
+        kategori: 'KLIRING_ANGGOTA_KELUAR',
+        deskripsi: '-',
+        kas_keluar: 10460000,
+        reference_id: 'mem-alif',
+      },
+    ]);
+    expect(enriched[0].deskripsi).toBe(
+      'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000'
+    );
   });
 });

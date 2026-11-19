@@ -24,6 +24,15 @@ import {
   needsPosDescriptionEnrichment,
   sanitizePosTerminology,
 } from '../utils/posCashFlowFormat';
+import {
+  MEMBER_CLEARANCE_CATEGORY,
+  formatMemberClearanceCashFlowDescription,
+  isClearanceLoanRepayment,
+  isClearanceWithdrawalTx,
+  isMemberClearanceCategory,
+  isResignedMemberRecord,
+  stripResignedNrpPrefix,
+} from '../utils/clearanceCashFlowFormat';
 
 export interface CashFlowAuditInput {
   id: string;
@@ -221,6 +230,61 @@ export interface OpeningSavingsBreakdownPayload {
   transactionCount: number;
 }
 
+export interface MemberClearanceSavingsItem {
+  depositTypeId: string;
+  code: string;
+  name: string;
+  bucket: 'pokok' | 'wajib' | 'belanja' | 'lebaran' | 'lainnya';
+  amount: number;
+}
+
+export interface MemberClearanceDebtItem {
+  loanId: string;
+  loanNumber: string;
+  purpose: string;
+  offsetAmount: number;
+  paymentMethod?: string | null;
+  paymentDate?: string | null;
+}
+
+export interface MemberClearanceBreakdown {
+  memberId: string;
+  member: {
+    nrp: string;
+    nama: string;
+    pangkat?: string | null;
+    status: string;
+    membershipStatus: string;
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+  };
+  clearanceDate: string;
+  settlementType: 'SURPLUS_PAYOUT' | 'INSTANT_PAYOFF';
+  paymentMethod?: string | null;
+  notes?: string | null;
+  savingsItems: MemberClearanceSavingsItem[];
+  savingsByBucket: {
+    pokok: number;
+    wajib: number;
+    belanja: number;
+    lebaran: number;
+    lainnya: number;
+  };
+  totalSavings: number;
+  debtItems: MemberClearanceDebtItem[];
+  totalDebtOffset: number;
+  netSettlement: number;
+  journalAmount: number;
+  difference: number;
+  isMatched: boolean;
+}
+
+export interface SyncResignedMemberClearanceResult {
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+}
+
 export type CashFlowReferenceBreakdown =
   | {
       kind: 'opening_savings';
@@ -261,6 +325,11 @@ export type CashFlowReferenceBreakdown =
       kind: 'loan_disbursement';
       journal: JournalMetadata;
       loanDisbursement: LoanDisbursementBreakdown;
+    }
+  | {
+      kind: 'MEMBER_CLEARANCE';
+      journal: JournalMetadata;
+      memberClearance: MemberClearanceBreakdown;
     }
   | {
       kind: 'journal_only';
@@ -581,6 +650,595 @@ function hasCommonDate(a: string[], b: string[]): boolean {
   if (a.length === 0 || b.length === 0) return false;
   const setB = new Set(b);
   return a.some((d) => setB.has(d));
+}
+
+async function safeFetchByColumnIn<T = any>(
+  table: string,
+  columns: string,
+  columnName: string,
+  values: string[],
+  fallbackColumns?: string
+): Promise<T[]> {
+  const uniqueVals = Array.from(new Set(values.filter(Boolean)));
+  if (uniqueVals.length === 0) return [];
+
+  const runQuery = async (
+    cols: string
+  ): Promise<{ data: T[]; error: any; unsupportedIn?: boolean }> => {
+    try {
+      const tableRef: any = supabase?.from?.(table);
+      if (!tableRef || typeof tableRef.select !== 'function') {
+        return { data: [], error: null };
+      }
+      const results: T[] = [];
+      for (let i = 0; i < uniqueVals.length; i += 200) {
+        const chunk = uniqueVals.slice(i, i + 200);
+        const q: any = tableRef.select(cols);
+        if (!q || typeof q.in !== 'function') {
+          if (uniqueVals.length === 1 && q && typeof q.eq === 'function') {
+            const eqRes = await q.eq(columnName, uniqueVals[0]);
+            if (eqRes?.error) return { data: results, error: eqRes.error };
+            return { data: Array.isArray(eqRes?.data) ? eqRes.data : [], error: null };
+          }
+          return { data: [], error: null, unsupportedIn: true };
+        }
+        const res = await q.in(columnName, chunk);
+        if (res?.error) {
+          return { data: results, error: res.error };
+        }
+        if (Array.isArray(res?.data)) {
+          results.push(...res.data);
+        }
+      }
+      return { data: results, error: null };
+    } catch (err) {
+      return { data: [], error: err };
+    }
+  };
+
+  let res = await runQuery(columns);
+  if (res.unsupportedIn) {
+    const valSet = new Set(uniqueVals);
+    let paged = await safeFetchAllPaged<T>(table, columns);
+    if (paged.error && fallbackColumns && isPostgrestColumnError(paged.error)) {
+      paged = await safeFetchAllPaged<T>(table, fallbackColumns);
+    }
+    return paged.data.filter((r: any) => r?.[columnName] && valSet.has(String(r[columnName])));
+  }
+
+  if (res.error && fallbackColumns && isPostgrestColumnError(res.error)) {
+    res = await runQuery(fallbackColumns);
+  }
+  return res.data;
+}
+
+async function safeFetchAllAnggotaForClearance(): Promise<{ data: any[]; error: any }> {
+  let res = await safeFetchAllPaged<any>(
+    'anggota',
+    'id, nrp, nama, pangkat, status, membership_status, updated_at, created_at'
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>(
+      'anggota',
+      'id, nrp, nama, pangkat, status, membership_status, created_at'
+    );
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>('anggota', 'id, nrp, nama, status, created_at');
+  }
+  return res;
+}
+
+async function safeFetchMemberFullById(memberId: string): Promise<any | null> {
+  if (!memberId) return null;
+  let res = await safeFetchSingleById<any>(
+    'anggota',
+    'id, nrp, nama, pangkat, status, membership_status, bank_name, bank_account_number, updated_at',
+    memberId
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>(
+      'anggota',
+      'id, nrp, nama, pangkat, status, membership_status, bank_account_number, created_at',
+      memberId
+    );
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>(
+      'anggota',
+      'id, nrp, nama, pangkat, status, created_at',
+      memberId
+    );
+  }
+  return res.data ?? null;
+}
+
+const CLEARANCE_BUCKET_ORDER: Record<MemberClearanceSavingsItem['bucket'], number> = {
+  wajib: 1,
+  pokok: 2,
+  belanja: 3,
+  lebaran: 4,
+  lainnya: 5,
+};
+
+function computeMemberClearanceSettlement(params: {
+  member: any;
+  clearanceLog?: any | null;
+  memberDeposits: any[];
+  depositTypesMap: Map<string, { id: string; code: string; name: string }>;
+  depositTransactions: any[];
+  loans: any[];
+  loanRepayments: any[];
+}): {
+  savingsItems: MemberClearanceSavingsItem[];
+  savingsByBucket: MemberClearanceBreakdown['savingsByBucket'];
+  totalSavings: number;
+  debtItems: MemberClearanceDebtItem[];
+  totalDebtOffset: number;
+  netSettlement: number;
+  settlementType: 'SURPLUS_PAYOUT' | 'INSTANT_PAYOFF';
+  clearanceTimestamp: string;
+} {
+  const {
+    member,
+    clearanceLog = null,
+    memberDeposits,
+    depositTypesMap,
+    depositTransactions,
+    loans,
+    loanRepayments,
+  } = params;
+
+  const txsByMdId = new Map<string, any[]>();
+  for (const tx of depositTransactions) {
+    const mdId = String(tx?.member_deposit_id || '');
+    if (!mdId) continue;
+    const list = txsByMdId.get(mdId) || [];
+    list.push(tx);
+    txsByMdId.set(mdId, list);
+  }
+
+  for (const md of memberDeposits) {
+    const mdId = String(md?.id || '');
+    if (!mdId) continue;
+    if (!txsByMdId.has(mdId) && Array.isArray(md?.deposit_transactions) && md.deposit_transactions.length > 0) {
+      txsByMdId.set(mdId, md.deposit_transactions);
+    }
+  }
+
+  const allMemberTxs: any[] = [];
+  for (const md of memberDeposits) {
+    const mdId = String(md?.id || '');
+    if (!mdId) continue;
+    allMemberTxs.push(...(txsByMdId.get(mdId) || []));
+  }
+
+  const explicitClearanceTxs = allMemberTxs.filter((tx) => isClearanceWithdrawalTx(tx));
+  const clearanceLogDateCandidates = clearanceLog?.created_at
+    ? getDateCandidates(clearanceLog.created_at)
+    : [];
+
+  const mdAmountMap = new Map<string, number>();
+
+  if (explicitClearanceTxs.length > 0) {
+    for (const md of memberDeposits) {
+      const mdId = String(md?.id || '');
+      if (!mdId) continue;
+      const txs = (txsByMdId.get(mdId) || []).filter((tx) => isClearanceWithdrawalTx(tx));
+      const sum = txs.reduce((acc, tx) => acc + Math.max(0, Math.round(Number(tx?.amount || 0))), 0);
+      mdAmountMap.set(mdId, sum);
+    }
+  } else {
+    let ledgerTotal = 0;
+    for (const md of memberDeposits) {
+      const mdId = String(md?.id || '');
+      if (!mdId) continue;
+      const txs = txsByMdId.get(mdId) || [];
+      let mdAmount = 0;
+      if (txs.length > 0) {
+        let bal = 0;
+        for (const tx of txs) {
+          const amt = Number(tx?.amount || 0);
+          bal += !tx?.transaction_type || tx.transaction_type === 'deposit' ? amt : -amt;
+        }
+        mdAmount = Math.max(0, Math.round(bal));
+      } else {
+        mdAmount = Math.max(0, Math.round(Number(md?.balance || 0)));
+      }
+      mdAmountMap.set(mdId, mdAmount);
+      ledgerTotal += mdAmount;
+    }
+
+    if (ledgerTotal === 0 && clearanceLog && Math.round(Number(clearanceLog.total_savings || 0)) > 0) {
+      const allWithdrawals = allMemberTxs.filter((tx) => tx?.transaction_type === 'withdrawal');
+      let matchedWithdrawals =
+        clearanceLogDateCandidates.length > 0
+          ? allWithdrawals.filter((tx) =>
+              hasCommonDate(clearanceLogDateCandidates, [
+                ...getDateCandidates(tx?.transaction_date),
+                ...getDateCandidates(tx?.created_at),
+              ])
+            )
+          : [];
+
+      if (matchedWithdrawals.length === 0 && allWithdrawals.length > 0) {
+        let latestDate = '';
+        for (const tx of allWithdrawals) {
+          const d = getTxDateOnly(tx);
+          if (d > latestDate) latestDate = d;
+        }
+        if (latestDate) {
+          matchedWithdrawals = allWithdrawals.filter((tx) => getTxDateOnly(tx) === latestDate);
+        }
+      }
+
+      if (matchedWithdrawals.length > 0) {
+        for (const md of memberDeposits) {
+          const mdId = String(md?.id || '');
+          if (!mdId) continue;
+          const sum = matchedWithdrawals
+            .filter((tx) => String(tx?.member_deposit_id || '') === mdId)
+            .reduce((acc, tx) => acc + Math.max(0, Math.round(Number(tx?.amount || 0))), 0);
+          mdAmountMap.set(mdId, sum);
+        }
+      }
+    }
+  }
+
+  const savingsAggMap = new Map<string, MemberClearanceSavingsItem>();
+  const savingsByBucket: MemberClearanceBreakdown['savingsByBucket'] = {
+    pokok: 0,
+    wajib: 0,
+    belanja: 0,
+    lebaran: 0,
+    lainnya: 0,
+  };
+
+  const defaultBucketMeta: Record<
+    MemberClearanceSavingsItem['bucket'],
+    { code: string; name: string }
+  > = {
+    pokok: { code: 'POKOK', name: 'Simpanan Pokok' },
+    wajib: { code: 'WAJIB', name: 'Simpanan Wajib' },
+    belanja: { code: 'BELANJA', name: 'Simpanan Belanja' },
+    lebaran: { code: 'LEBARAN', name: 'Simpanan Lebaran' },
+    lainnya: { code: 'LAINNYA', name: 'Simpanan Lainnya' },
+  };
+
+  for (const md of memberDeposits) {
+    const mdId = String(md?.id || '');
+    if (!mdId) continue;
+    const amt = Math.max(0, Math.round(mdAmountMap.get(mdId) ?? 0));
+    if (amt <= 0) continue;
+
+    const embeddedDt = Array.isArray(md?.deposit_types) ? md.deposit_types[0] : md?.deposit_types;
+    const dt = (md?.deposit_type_id ? depositTypesMap.get(String(md.deposit_type_id)) : undefined) ||
+      (embeddedDt
+        ? {
+            id: String(embeddedDt.id || md.deposit_type_id || ''),
+            code: String(embeddedDt.code || ''),
+            name: String(embeddedDt.name || ''),
+          }
+        : undefined);
+    const bucket = classifyDepositTypeBucket(dt);
+    savingsByBucket[bucket] += amt;
+
+    const dtKey = dt?.id || bucket.toUpperCase();
+    const meta = dt
+      ? {
+          code: dt.code || defaultBucketMeta[bucket].code,
+          name: dt.name || defaultBucketMeta[bucket].name,
+        }
+      : defaultBucketMeta[bucket];
+
+    const existing = savingsAggMap.get(dtKey);
+    if (existing) {
+      existing.amount += amt;
+    } else {
+      savingsAggMap.set(dtKey, {
+        depositTypeId: dtKey,
+        code: meta.code,
+        name: meta.name,
+        bucket,
+        amount: amt,
+      });
+    }
+  }
+
+  const savingsItems = Array.from(savingsAggMap.values()).sort((a, b) => {
+    const orderDiff = CLEARANCE_BUCKET_ORDER[a.bucket] - CLEARANCE_BUCKET_ORDER[b.bucket];
+    return orderDiff !== 0 ? orderDiff : a.name.localeCompare(b.name, 'id');
+  });
+
+  const ledgerSavingsTotal = savingsItems.reduce((sum, item) => sum + item.amount, 0);
+  const totalSavings =
+    ledgerSavingsTotal > 0
+      ? ledgerSavingsTotal
+      : Math.max(0, Math.round(Number(clearanceLog?.total_savings || 0)));
+
+  // Hitung potongan kompensasi pinjaman saat kliring
+  const loanMap = new Map<string, any>();
+  for (const l of loans) {
+    if (l?.id) loanMap.set(String(l.id), l);
+  }
+
+  const matchedRepayments = loanRepayments.filter((r) => {
+    const lid = String(r?.loan_id || '');
+    if (!lid || !loanMap.has(lid)) return false;
+    if (isClearanceLoanRepayment(r)) return true;
+    if (
+      clearanceLogDateCandidates.length > 0 &&
+      Math.round(Number(clearanceLog?.total_loans || 0)) > 0
+    ) {
+      return hasCommonDate(clearanceLogDateCandidates, [
+        ...getDateCandidates(r?.payment_date),
+        ...getDateCandidates(r?.created_at),
+      ]);
+    }
+    return false;
+  });
+
+  const debtAggMap = new Map<string, MemberClearanceDebtItem>();
+  for (const rep of matchedRepayments) {
+    const lid = String(rep.loan_id);
+    const amt = Math.max(0, Math.round(Number(rep?.amount_paid || 0)));
+    if (amt <= 0) continue;
+    const loan = loanMap.get(lid);
+    const existing = debtAggMap.get(lid);
+    if (existing) {
+      existing.offsetAmount += amt;
+    } else {
+      debtAggMap.set(lid, {
+        loanId: lid,
+        loanNumber: String(loan?.loan_number || `PINJ-${lid.slice(0, 8).toUpperCase()}`),
+        purpose: String(loan?.notes || '-'),
+        offsetAmount: amt,
+        paymentMethod: rep?.payment_method ?? null,
+        paymentDate: rep?.payment_date ?? rep?.created_at ?? null,
+      });
+    }
+  }
+
+  const debtItems = Array.from(debtAggMap.values());
+  const repaymentOffsetTotal = debtItems.reduce((sum, d) => sum + d.offsetAmount, 0);
+  const logTotalLoans = clearanceLog
+    ? Math.max(0, Math.round(Number(clearanceLog.total_loans || 0)))
+    : 0;
+  const totalDebtOffset = repaymentOffsetTotal > 0 ? repaymentOffsetTotal : logTotalLoans;
+
+  if (debtItems.length === 0 && totalDebtOffset > 0) {
+    debtItems.push({
+      loanId: 'clearance-loan-offset',
+      loanNumber: 'Kompensasi Pinjaman',
+      purpose: 'Pelunasan Pinjaman via Kliring Anggota Keluar',
+      offsetAmount: totalDebtOffset,
+      paymentMethod: clearanceLog?.payment_method ?? 'POTONG_SIMPANAN_KLIRING',
+      paymentDate: clearanceLog?.created_at ?? null,
+    });
+  }
+
+  const netSettlement =
+    totalSavings === 0 &&
+    totalDebtOffset === 0 &&
+    clearanceLog?.net_amount !== undefined &&
+    clearanceLog?.net_amount !== null
+      ? Math.round(Number(clearanceLog.net_amount))
+      : Math.round(totalSavings - totalDebtOffset);
+
+  const settlementType: 'SURPLUS_PAYOUT' | 'INSTANT_PAYOFF' =
+    netSettlement >= 0 ? 'SURPLUS_PAYOUT' : 'INSTANT_PAYOFF';
+
+  const latestClearanceTxTs = explicitClearanceTxs
+    .map((tx) => String(tx?.created_at || tx?.transaction_date || ''))
+    .filter(Boolean)
+    .sort()
+    .pop();
+
+  const latestRepayTs = matchedRepayments
+    .map((r) => String(r?.payment_date || r?.created_at || ''))
+    .filter(Boolean)
+    .sort()
+    .pop();
+
+  const clearanceTimestamp =
+    String(
+      clearanceLog?.created_at ||
+        latestClearanceTxTs ||
+        latestRepayTs ||
+        member?.updated_at ||
+        ''
+    ).trim() || new Date().toISOString();
+
+  return {
+    savingsItems,
+    savingsByBucket,
+    totalSavings,
+    debtItems,
+    totalDebtOffset,
+    netSettlement,
+    settlementType,
+    clearanceTimestamp,
+  };
+}
+
+interface MemberClearanceContext {
+  logsByMember: Map<string, any[]>;
+  mdsByMember: Map<string, any[]>;
+  dtMap: Map<string, { id: string; code: string; name: string }>;
+  txsByMdId: Map<string, any[]>;
+  loansByMember: Map<string, any[]>;
+  repaysByLoanId: Map<string, any[]>;
+}
+
+function pickLatestSettlementClearanceLog(logs: any[]): any | null {
+  const valid = logs.filter(
+    (l) => String(l?.settlement_type || '').toUpperCase() !== 'TRANSFERRED_TO_DEBTOR'
+  );
+  if (valid.length === 0) return null;
+  const sorted = [...valid].sort((a, b) =>
+    String(b?.created_at || '').localeCompare(String(a?.created_at || ''))
+  );
+  return sorted[0] ?? null;
+}
+
+async function fetchMemberClearanceContext(
+  memberIds: string[]
+): Promise<MemberClearanceContext> {
+  const uniqueIds = Array.from(new Set(memberIds.filter(Boolean)));
+  const logsByMember = new Map<string, any[]>();
+  const mdsByMember = new Map<string, any[]>();
+  const dtMap = new Map<string, { id: string; code: string; name: string }>();
+  const txsByMdId = new Map<string, any[]>();
+  const loansByMember = new Map<string, any[]>();
+  const repaysByLoanId = new Map<string, any[]>();
+
+  if (uniqueIds.length === 0) {
+    return { logsByMember, mdsByMember, dtMap, txsByMdId, loansByMember, repaysByLoanId };
+  }
+
+  const [clearanceLogs, memberDeposits, dtRes, loans] = await Promise.all([
+    safeFetchByColumnIn<any>(
+      'member_clearance_logs',
+      'id, anggota_id, settlement_type, total_savings, total_loans, net_amount, payment_method, notes, created_at',
+      'anggota_id',
+      uniqueIds
+    ),
+    safeFetchByColumnIn<any>(
+      'member_deposits',
+      'id, member_id, deposit_type_id, balance',
+      'member_id',
+      uniqueIds,
+      'id, member_id, deposit_type_id'
+    ),
+    safeFetchAllPaged<any>('deposit_types', 'id, code, name'),
+    safeFetchByColumnIn<any>(
+      'loans',
+      'id, member_id, loan_number, amount, principal_amount, notes, status, created_at',
+      'member_id',
+      uniqueIds,
+      'id, member_id, loan_number, amount, notes, status, created_at'
+    ),
+  ]);
+
+  for (const log of clearanceLogs) {
+    const mid = String(log?.anggota_id || '');
+    if (!mid) continue;
+    const list = logsByMember.get(mid) || [];
+    list.push(log);
+    logsByMember.set(mid, list);
+  }
+
+  for (const md of memberDeposits) {
+    const mid = String(md?.member_id || '');
+    if (!mid) continue;
+    const list = mdsByMember.get(mid) || [];
+    list.push(md);
+    mdsByMember.set(mid, list);
+  }
+
+  for (const dt of dtRes.data || []) {
+    if (dt?.id) {
+      dtMap.set(String(dt.id), {
+        id: String(dt.id),
+        code: String(dt.code || ''),
+        name: String(dt.name || ''),
+      });
+    }
+  }
+
+  for (const l of loans) {
+    const mid = String(l?.member_id || '');
+    if (!mid) continue;
+    const list = loansByMember.get(mid) || [];
+    list.push(l);
+    loansByMember.set(mid, list);
+  }
+
+  const mdIds = Array.from(
+    new Set(memberDeposits.map((md: any) => String(md?.id || '')).filter(Boolean))
+  );
+  const loanIds = Array.from(
+    new Set(loans.map((l: any) => String(l?.id || '')).filter(Boolean))
+  );
+
+  const [depositTransactions, loanRepayments] = await Promise.all([
+    mdIds.length > 0
+      ? safeFetchByColumnIn<any>(
+          'deposit_transactions',
+          'id, member_deposit_id, transaction_type, amount, description, reference_no, notes, transaction_date, created_at',
+          'member_deposit_id',
+          mdIds,
+          'id, member_deposit_id, transaction_type, amount, description, created_at'
+        )
+      : Promise.resolve([]),
+    loanIds.length > 0
+      ? safeFetchByColumnIn<any>(
+          'loan_repayments',
+          'id, loan_id, amount_paid, payment_method, notes, payment_date, created_at',
+          'loan_id',
+          loanIds,
+          'id, loan_id, amount_paid, payment_method, notes, payment_date'
+        )
+      : Promise.resolve([]),
+  ]);
+
+  for (const tx of depositTransactions) {
+    const mdId = String(tx?.member_deposit_id || '');
+    if (!mdId) continue;
+    const list = txsByMdId.get(mdId) || [];
+    list.push(tx);
+    txsByMdId.set(mdId, list);
+  }
+
+  for (const rep of loanRepayments) {
+    const lid = String(rep?.loan_id || '');
+    if (!lid) continue;
+    const list = repaysByLoanId.get(lid) || [];
+    list.push(rep);
+    repaysByLoanId.set(lid, list);
+  }
+
+  return { logsByMember, mdsByMember, dtMap, txsByMdId, loansByMember, repaysByLoanId };
+}
+
+function computeMemberSettlementFromContext(
+  memberId: string,
+  member: any,
+  ctx: MemberClearanceContext,
+  extraLog?: any | null
+) {
+  const logs = [...(ctx.logsByMember.get(memberId) || [])];
+  if (extraLog && !logs.some((l) => l?.id && l.id === extraLog.id)) {
+    logs.push(extraLog);
+  }
+  const clearanceLog = pickLatestSettlementClearanceLog(logs);
+  const memberDeposits = ctx.mdsByMember.get(memberId) || [];
+  const memberTxs: any[] = [];
+  for (const md of memberDeposits) {
+    if (md?.id) {
+      memberTxs.push(...(ctx.txsByMdId.get(String(md.id)) || []));
+    }
+  }
+  const memberLoans = ctx.loansByMember.get(memberId) || [];
+  const memberRepayments: any[] = [];
+  for (const l of memberLoans) {
+    if (l?.id) {
+      memberRepayments.push(...(ctx.repaysByLoanId.get(String(l.id)) || []));
+    }
+  }
+
+  return {
+    clearanceLog,
+    ...computeMemberClearanceSettlement({
+      member,
+      clearanceLog,
+      memberDeposits,
+      depositTypesMap: ctx.dtMap,
+      depositTransactions: memberTxs,
+      loans: memberLoans,
+      loanRepayments: memberRepayments,
+    }),
+  };
 }
 
 function getCycleDateCandidates(cycle: any): string[] {
@@ -1815,6 +2473,113 @@ export async function getCashFlowReferenceBreakdown(
     }
   }
 
+  // ── Cabang E2b: Kliring Anggota Keluar (Member Clearance) ──────────────────
+  if (isMemberClearanceCategory(cashFlowRow.category)) {
+    let member: any | null = null;
+    let clearanceLogFromRef: any | null = null;
+    let resolvedMemberId = '';
+
+    if (cashFlowRow.reference_id) {
+      member = await safeFetchMemberFullById(String(cashFlowRow.reference_id));
+      if (member?.id) {
+        resolvedMemberId = String(member.id);
+      } else {
+        const logRes = await safeFetchSingleById<any>(
+          'member_clearance_logs',
+          'id, anggota_id, settlement_type, total_savings, total_loans, net_amount, payment_method, notes, created_at',
+          String(cashFlowRow.reference_id)
+        );
+        if (logRes.data?.anggota_id) {
+          clearanceLogFromRef = logRes.data;
+          resolvedMemberId = String(logRes.data.anggota_id);
+          member = await safeFetchMemberFullById(resolvedMemberId);
+        }
+      }
+    }
+
+    if (!member) {
+      const descText = String(cashFlowRow.description || '');
+      const nrpMatch = descText.match(/[—–-]\s*(?:\(lama\s*\d+\)\s*)?([0-9A-Za-z._/-]+)\s*-/);
+      const targetNrp = nrpMatch?.[1] ? stripResignedNrpPrefix(nrpMatch[1]) : '';
+      if (targetNrp) {
+        const allMembersRes = await safeFetchAllAnggotaForClearance();
+        const found = (allMembersRes.data || []).find(
+          (m: any) => stripResignedNrpPrefix(m?.nrp) === targetNrp
+        );
+        if (found?.id) {
+          member = found;
+          resolvedMemberId = String(found.id);
+        }
+      }
+    }
+
+    if (resolvedMemberId || clearanceLogFromRef) {
+      const ctx = resolvedMemberId
+        ? await fetchMemberClearanceContext([resolvedMemberId])
+        : {
+            logsByMember: new Map<string, any[]>(),
+            mdsByMember: new Map<string, any[]>(),
+            dtMap: new Map<string, { id: string; code: string; name: string }>(),
+            txsByMdId: new Map<string, any[]>(),
+            loansByMember: new Map<string, any[]>(),
+            repaysByLoanId: new Map<string, any[]>(),
+          };
+
+      const settlement = computeMemberSettlementFromContext(
+        resolvedMemberId,
+        member,
+        ctx,
+        clearanceLogFromRef
+      );
+
+      const calculatedCash = Math.round(Math.abs(settlement.netSettlement));
+      const difference = calculatedCash - journal.amount;
+      const isMatched = difference === 0;
+
+      if (isBlankOrDashDescription(journal.description)) {
+        journal.description = formatMemberClearanceCashFlowDescription({
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          totalSavings: settlement.totalSavings,
+          totalDebtOffset: settlement.totalDebtOffset,
+          netSettlement: settlement.netSettlement,
+        });
+      }
+
+      return {
+        kind: 'MEMBER_CLEARANCE',
+        journal,
+        memberClearance: {
+          memberId: resolvedMemberId || String(cashFlowRow.reference_id || ''),
+          member: {
+            nrp: stripResignedNrpPrefix(member?.nrp) || '-',
+            nama: String(member?.nama || 'Anggota Keluar'),
+            pangkat: member?.pangkat ?? null,
+            status: String(member?.status || 'nonaktif'),
+            membershipStatus: String(member?.membership_status || 'RESIGNED'),
+            bankName: member?.bank_name ?? null,
+            bankAccountNumber: member?.bank_account_number ?? null,
+          },
+          clearanceDate: settlement.clearanceTimestamp || journal.createdAt,
+          settlementType: settlement.settlementType,
+          paymentMethod: settlement.clearanceLog?.payment_method ?? null,
+          notes: settlement.clearanceLog?.notes ?? null,
+          savingsItems: settlement.savingsItems,
+          savingsByBucket: settlement.savingsByBucket,
+          totalSavings: settlement.totalSavings,
+          debtItems: settlement.debtItems,
+          totalDebtOffset: settlement.totalDebtOffset,
+          netSettlement: settlement.netSettlement,
+          journalAmount: journal.amount,
+          difference,
+          isMatched,
+        },
+      };
+    }
+
+    return { kind: 'journal_only', journal };
+  }
+
   // ── Cabang E3: Metadata Jurnal Umum ──────────────────────────────────────────
   return {
     kind: 'journal_only',
@@ -2963,6 +3728,278 @@ export async function enrichPosCashFlowDescriptions<
     });
   } catch (err) {
     console.warn('Warning enrichPosCashFlowDescriptions:', err);
+    return rows;
+  }
+}
+
+/**
+ * Menyinkronkan (backfill idempoten) pencairan/kliring simpanan anggota berstatus `RESIGNED`
+ * ke `public.cash_flow` (`category = 'KLIRING_ANGGOTA_KELUAR'`) beserta deskripsi rincian
+ * hak simpanan, potongan utang, dan kas bersih yang dibayarkan.
+ */
+export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResignedMemberClearanceResult> {
+  const emptyResult: SyncResignedMemberClearanceResult = {
+    insertedCount: 0,
+    updatedCount: 0,
+    skippedCount: 0,
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return emptyResult;
+    }
+
+    const anggotaRes = await safeFetchAllAnggotaForClearance();
+    if (anggotaRes.error) {
+      return emptyResult;
+    }
+
+    const resignedMembers = (anggotaRes.data || []).filter(
+      (m: any) => m?.id && isResignedMemberRecord(m)
+    );
+    if (resignedMembers.length === 0) {
+      return emptyResult;
+    }
+
+    let hasDescriptionCol = true;
+    let cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, category, direction, amount, reference_id, description, created_at'
+    );
+    if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+      hasDescriptionCol = false;
+      cfRes = await safeFetchAllPaged<any>(
+        'cash_flow',
+        'id, category, direction, amount, reference_id, created_at'
+      );
+    }
+    if (cfRes.error) {
+      return emptyResult;
+    }
+
+    const existingClearanceByRef = new Map<string, any>();
+    for (const r of cfRes.data || []) {
+      if (!isMemberClearanceCategory(r?.category) || !r?.reference_id) continue;
+      existingClearanceByRef.set(String(r.reference_id), r);
+    }
+
+    const memberById = new Map<string, any>();
+    for (const m of resignedMembers) {
+      memberById.set(String(m.id), m);
+    }
+
+    const rowsToUpdate: Array<{ cfRow: any; member: any }> = [];
+    if (hasDescriptionCol) {
+      for (const m of resignedMembers) {
+        const cfRow = existingClearanceByRef.get(String(m.id));
+        if (cfRow?.id && isBlankOrDashDescription(cfRow?.description)) {
+          rowsToUpdate.push({ cfRow, member: m });
+        }
+      }
+    }
+
+    const missingMembers = resignedMembers.filter(
+      (m: any) => !existingClearanceByRef.has(String(m.id))
+    );
+
+    const skippedAlreadySynced = resignedMembers.length - missingMembers.length;
+    if (missingMembers.length === 0 && rowsToUpdate.length === 0) {
+      return { insertedCount: 0, updatedCount: 0, skippedCount: skippedAlreadySynced };
+    }
+
+    const targetMemberIds = Array.from(
+      new Set([
+        ...missingMembers.map((m: any) => String(m.id)),
+        ...rowsToUpdate.map((entry) => String(entry.member.id)),
+      ])
+    );
+
+    const ctx = await fetchMemberClearanceContext(targetMemberIds);
+    const cfTable: any = supabase.from('cash_flow');
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+    let skippedZeroOrDupCount = skippedAlreadySynced;
+
+    if (cfTable && typeof cfTable.update === 'function') {
+      for (const { cfRow, member } of rowsToUpdate) {
+        const settlement = computeMemberSettlementFromContext(
+          String(member.id),
+          member,
+          ctx
+        );
+        const fullDesc = formatMemberClearanceCashFlowDescription({
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          totalSavings: settlement.totalSavings,
+          totalDebtOffset: settlement.totalDebtOffset,
+          netSettlement:
+            settlement.netSettlement !== 0
+              ? settlement.netSettlement
+              : cfRow?.direction === 'out'
+              ? Math.round(Number(cfRow?.amount || 0))
+              : -Math.round(Number(cfRow?.amount || 0)),
+        });
+
+        const updQ: any = cfTable.update({ description: fullDesc });
+        if (updQ && typeof updQ.eq === 'function') {
+          const updRes: any = await updQ.eq('id', cfRow.id);
+          if (!updRes?.error) {
+            updatedCount += 1;
+          }
+        }
+      }
+    }
+
+    if (cfTable && typeof cfTable.insert === 'function' && missingMembers.length > 0) {
+      for (const member of missingMembers) {
+        const memberId = String(member.id);
+        const memberLogs = ctx.logsByMember.get(memberId) || [];
+        const hasLogRefAlready = memberLogs.some(
+          (l: any) => l?.id && existingClearanceByRef.has(String(l.id))
+        );
+        if (hasLogRefAlready) {
+          skippedZeroOrDupCount += 1;
+          continue;
+        }
+
+        const settlement = computeMemberSettlementFromContext(memberId, member, ctx);
+        if (settlement.netSettlement === 0) {
+          skippedZeroOrDupCount += 1;
+          continue;
+        }
+
+        const direction = settlement.netSettlement > 0 ? 'out' : 'in';
+        const amount = Math.round(Math.abs(settlement.netSettlement));
+        const fullDesc = formatMemberClearanceCashFlowDescription({
+          memberNrp: member?.nrp ?? null,
+          memberName: member?.nama ?? null,
+          totalSavings: settlement.totalSavings,
+          totalDebtOffset: settlement.totalDebtOffset,
+          netSettlement: settlement.netSettlement,
+        });
+
+        let insRes: any = await cfTable.insert({
+          direction,
+          category: MEMBER_CLEARANCE_CATEGORY,
+          amount,
+          reference_id: memberId,
+          description: fullDesc,
+          created_at: settlement.clearanceTimestamp,
+        });
+
+        if (insRes?.error && isPostgrestColumnError(insRes.error)) {
+          insRes = await cfTable.insert({
+            direction,
+            category: MEMBER_CLEARANCE_CATEGORY,
+            amount,
+            reference_id: memberId,
+            created_at: settlement.clearanceTimestamp,
+          });
+        }
+
+        if (!insRes?.error) {
+          insertedCount += 1;
+          existingClearanceByRef.set(memberId, { reference_id: memberId });
+        }
+      }
+    }
+
+    return {
+      insertedCount,
+      updatedCount,
+      skippedCount: skippedZeroOrDupCount,
+    };
+  } catch (err) {
+    console.warn('Warning syncResignedMemberClearanceToCashFlow:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Melengkapi deskripsi baris mutasi `cash_flow` berkategori `KLIRING_ANGGOTA_KELUAR`
+ * yang kolom `description`-nya masih kosong atau bernilai `'-'`.
+ */
+export async function enrichMemberClearanceCashFlowDescriptions<
+  T extends {
+    id?: string;
+    kategori?: string;
+    category?: string;
+    deskripsi?: string;
+    description?: string | null;
+    reference_id?: string | null;
+    kas_masuk?: number;
+    kas_keluar?: number;
+    amount?: number;
+    direction?: 'in' | 'out';
+  }
+>(rows: T[]): Promise<T[]> {
+  const needsEnrichment = (row: T): boolean => {
+    const category = row.kategori ?? row.category;
+    if (!isMemberClearanceCategory(category)) return false;
+    const rawDesc = row.deskripsi ?? row.description;
+    return isBlankOrDashDescription(rawDesc);
+  };
+
+  const targetRows = rows.filter(needsEnrichment);
+  if (targetRows.length === 0) return rows;
+
+  try {
+    const refIds = Array.from(
+      new Set(targetRows.map((r) => r.reference_id).filter((id): id is string => Boolean(id)))
+    );
+    if (refIds.length === 0) return rows;
+
+    const memberRows = await safeFetchByIds<any>(
+      'anggota',
+      'id, nrp, nama, pangkat, status, membership_status, updated_at',
+      refIds,
+      'id, nrp, nama, status'
+    );
+    const memberMap = new Map<string, any>();
+    for (const m of memberRows) {
+      if (m?.id) memberMap.set(String(m.id), m);
+    }
+
+    const memberIds = Array.from(memberMap.keys());
+    const ctx = await fetchMemberClearanceContext(memberIds);
+
+    return rows.map((row) => {
+      if (!needsEnrichment(row)) return row;
+      const refId = row.reference_id ? String(row.reference_id) : '';
+      const member = refId ? memberMap.get(refId) : undefined;
+      if (!member) return row;
+
+      const settlement = computeMemberSettlementFromContext(refId, member, ctx);
+      const fallbackNet =
+        Number(row.kas_keluar || 0) > 0
+          ? Number(row.kas_keluar)
+          : Number(row.kas_masuk || 0) > 0
+          ? -Number(row.kas_masuk)
+          : row.direction === 'in'
+          ? -Number(row.amount || 0)
+          : Number(row.amount || 0);
+
+      const enrichedDesc = formatMemberClearanceCashFlowDescription({
+        memberNrp: member?.nrp ?? null,
+        memberName: member?.nama ?? null,
+        totalSavings:
+          settlement.totalSavings > 0
+            ? settlement.totalSavings
+            : Math.round(Math.abs(fallbackNet)),
+        totalDebtOffset: settlement.totalDebtOffset,
+        netSettlement:
+          settlement.netSettlement !== 0 ? settlement.netSettlement : fallbackNet,
+      });
+
+      return {
+        ...row,
+        ...(row.deskripsi !== undefined ? { deskripsi: enrichedDesc } : {}),
+        ...(row.description !== undefined ? { description: enrichedDesc } : {}),
+      };
+    });
+  } catch (err) {
+    console.warn('Warning enrichMemberClearanceCashFlowDescriptions:', err);
     return rows;
   }
 }

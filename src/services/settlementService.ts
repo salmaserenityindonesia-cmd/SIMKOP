@@ -1,4 +1,9 @@
 import { supabase } from '../lib/supabaseClient';
+import {
+  MEMBER_CLEARANCE_CATEGORY,
+  formatMemberClearanceCashFlowDescription,
+  isMemberClearanceCategory,
+} from '../utils/clearanceCashFlowFormat';
 
 export interface DepositSettlementDetail {
   deposit_name: string;
@@ -23,6 +28,22 @@ export interface SettlementSummary {
   net_settlement: number;
   deposit_details: DepositSettlementDetail[];
   loan_details: LoanSettlementDetail[];
+}
+
+export interface ProcessClearanceCashFlowOptions {
+  member?: { id?: string; nrp?: string | null; nama?: string | null } | null;
+  summary?: SettlementSummary | null;
+  clearanceTimestamp?: string;
+}
+
+function isPostgrestColumnError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.code === 'PGRST204' ||
+    err?.code === '42703' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
 }
 
 export const settlementService = {
@@ -167,9 +188,181 @@ export const settlementService = {
   },
 
   /**
+   * Mengambil snapshot komponen kliring (simpanan, kewajiban, identitas anggota) sebelum eksekusi RPC.
+   */
+  async _resolvePreClearanceSnapshot(
+    memberId: string,
+    options?: ProcessClearanceCashFlowOptions
+  ): Promise<{
+    summary: SettlementSummary | null;
+    member: { id?: string; nrp?: string | null; nama?: string | null } | null;
+  }> {
+    let snapshotSummary = options?.summary ?? null;
+    let snapshotMember = options?.member ?? null;
+
+    if (!snapshotSummary && supabase && typeof supabase.from === 'function') {
+      try {
+        const mdRef: any = supabase.from('member_deposits');
+        if (mdRef && typeof mdRef.select === 'function') {
+          snapshotSummary = await this.getSettlementByMember(memberId);
+        }
+      } catch {
+        snapshotSummary = null;
+      }
+    }
+
+    if (!snapshotMember && supabase && typeof supabase.from === 'function') {
+      try {
+        const anggotaRef: any = supabase.from('anggota');
+        if (anggotaRef && typeof anggotaRef.select === 'function') {
+          const q: any = anggotaRef.select('id, nrp, nama');
+          if (q && typeof q.eq === 'function') {
+            const eqQ: any = q.eq('id', memberId);
+            const mRes: any =
+              typeof eqQ?.maybeSingle === 'function'
+                ? await eqQ.maybeSingle()
+                : typeof eqQ?.single === 'function'
+                  ? await eqQ.single()
+                  : await eqQ;
+            const row = Array.isArray(mRes?.data) ? mRes.data[0] : mRes?.data;
+            if (row) {
+              snapshotMember = row;
+            }
+          }
+        }
+      } catch {
+        snapshotMember = null;
+      }
+    }
+
+    return { summary: snapshotSummary, member: snapshotMember };
+  },
+
+  /**
+   * Mencatat tepat 1 baris mutasi arus kas kliring anggota keluar (`KLIRING_ANGGOTA_KELUAR`)
+   * ke `public.cash_flow` secara idempoten.
+   */
+  async recordClearanceCashFlow(params: {
+    memberId: string;
+    memberNrp?: string | null;
+    memberName?: string | null;
+    totalSavings: number;
+    totalDebtOffset: number;
+    netSettlement: number;
+    clearanceTimestamp?: string;
+  }): Promise<boolean> {
+    if (!supabase || typeof supabase.from !== 'function') return false;
+
+    const totalSavings = Math.max(0, Math.round(Number(params.totalSavings || 0)));
+    const totalDebtOffset = Math.max(0, Math.round(Number(params.totalDebtOffset || 0)));
+    const netSettlement = Math.round(Number(params.netSettlement || 0));
+    if (netSettlement === 0) return false;
+
+    const cfTable: any = supabase.from('cash_flow');
+    if (!cfTable || typeof cfTable.insert !== 'function') return false;
+
+    // Idempotency guard: pastikan tidak menyisipkan baris ganda untuk member yang sama
+    if (typeof cfTable.select === 'function') {
+      try {
+        const selQ: any = cfTable.select('id, category, reference_id');
+        let res: any = null;
+        if (selQ && typeof selQ.eq === 'function') {
+          res = await selQ.eq('reference_id', params.memberId);
+        } else if (selQ && typeof selQ.then === 'function') {
+          res = await selQ;
+        }
+        const rows = Array.isArray(res?.data) ? res.data : [];
+        const alreadyRecorded = rows.some(
+          (r: any) =>
+            String(r?.reference_id || '') === String(params.memberId) &&
+            isMemberClearanceCategory(r?.category)
+        );
+        if (alreadyRecorded) return false;
+      } catch {
+        // Non-blocking fallback
+      }
+    }
+
+    let memberNrp = params.memberNrp ?? null;
+    let memberName = params.memberName ?? null;
+    if (!memberNrp || !memberName) {
+      try {
+        const anggotaRef: any = supabase.from('anggota');
+        if (anggotaRef && typeof anggotaRef.select === 'function') {
+          const q: any = anggotaRef.select('id, nrp, nama');
+          if (q && typeof q.eq === 'function') {
+            const eqQ: any = q.eq('id', params.memberId);
+            const mRes: any =
+              typeof eqQ?.maybeSingle === 'function'
+                ? await eqQ.maybeSingle()
+                : typeof eqQ?.single === 'function'
+                  ? await eqQ.single()
+                  : await eqQ;
+            const mData = Array.isArray(mRes?.data) ? mRes.data[0] : mRes?.data;
+            if (mData) {
+              memberNrp = memberNrp ?? mData.nrp ?? null;
+              memberName = memberName ?? mData.nama ?? null;
+            }
+          }
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+    }
+
+    const direction = netSettlement > 0 ? 'out' : 'in';
+    const amount = Math.round(Math.abs(netSettlement));
+    const description = formatMemberClearanceCashFlowDescription({
+      memberNrp,
+      memberName,
+      totalSavings,
+      totalDebtOffset,
+      netSettlement,
+    });
+    const createdAt = params.clearanceTimestamp || new Date().toISOString();
+
+    let insRes: any = await cfTable.insert({
+      direction,
+      category: MEMBER_CLEARANCE_CATEGORY,
+      amount,
+      reference_id: params.memberId,
+      description,
+      created_at: createdAt,
+    });
+
+    if (insRes?.error && isPostgrestColumnError(insRes.error)) {
+      insRes = await cfTable.insert({
+        direction,
+        category: MEMBER_CLEARANCE_CATEGORY,
+        amount,
+        reference_id: params.memberId,
+        created_at: createdAt,
+      });
+    }
+
+    if (insRes?.error) {
+      console.warn(
+        'Gagal mencatat arus kas kliring anggota keluar:',
+        insRes.error?.message || insRes.error
+      );
+      return false;
+    }
+
+    return true;
+  },
+
+  /**
    * Memproses pengunduran diri dengan metode Pelunasan Seketika (Instant Payoff / Surplus)
    */
-  async processInstantPayoff(memberId: string, paymentMethod: string, notes: string): Promise<boolean> {
+  async processInstantPayoff(
+    memberId: string,
+    paymentMethod: string,
+    notes: string,
+    options ?: ProcessClearanceCashFlowOptions
+  ): Promise < boolean > {
+    const { summary: snapshotSummary, member: snapshotMember } =
+      await this._resolvePreClearanceSnapshot(memberId, options);
+
     // Requires authenticated user id to be passed to RPC, but Supabase auth.uid() handles it in RPC if needed.
     // We pass NULL for p_processed_by since the RPC will use auth.uid() internally if we rewrite it,
     // or we can just fetch session.
@@ -183,12 +376,27 @@ export const settlementService = {
       p_processed_by: userId
     });
 
-    if (error) {
+    if(error) {
       throw new Error(`Gagal memproses kliring pelunasan seketika: ${error.message}`);
     }
 
     // Melunaskan seluruh sisa jadwal angsuran pinjaman dan mencatat riwayat pelunasan kliring
     await this.settleRemainingLoanSchedules(memberId, paymentMethod, notes);
+
+    // Catat 1 baris mutasi kas keluar/masuk di public.cash_flow (idempoten)
+    if(snapshotSummary && Math.round(Number(snapshotSummary.net_settlement || 0)) !== 0) {
+      await this.recordClearanceCashFlow({
+        memberId,
+        memberNrp: snapshotMember?.nrp,
+        memberName: snapshotMember?.nama,
+        totalSavings: snapshotSummary.total_hak,
+        totalDebtOffset: snapshotSummary.total_kewajiban,
+        netSettlement: snapshotSummary.net_settlement,
+        clearanceTimestamp: options?.clearanceTimestamp,
+      }).catch((cfErr) => {
+        console.warn('Non-blocking cash_flow clearance warning:', cfErr);
+      });
+    }
 
     return data ?? true;
   },
@@ -216,17 +424,37 @@ export const settlementService = {
   /**
    * (Legacy/Deprecated) Memproses pengunduran diri dan kliring via RPC lama
    */
-  async processClearance(memberId: string): Promise<boolean> {
+  async processClearance(
+    memberId: string,
+    options ?: ProcessClearanceCashFlowOptions
+  ): Promise < boolean > {
+    const { summary: snapshotSummary, member: snapshotMember } =
+      await this._resolvePreClearanceSnapshot(memberId, options);
+
     const { data, error } = await supabase.rpc('process_member_clearance', {
       p_member_id: memberId
     });
 
-    if (error) {
+    if(error) {
       throw new Error(`Gagal memproses kliring pengunduran diri: ${error.message}`);
     }
 
     // Melunaskan seluruh sisa jadwal angsuran pinjaman
     await this.settleRemainingLoanSchedules(memberId, 'POTONG_SIMPANAN_KLIRING', 'Pelunasan otomatis melalui kliring anggota keluar (legacy)');
+
+    if(snapshotSummary && Math.round(Number(snapshotSummary.net_settlement || 0)) !== 0) {
+      await this.recordClearanceCashFlow({
+        memberId,
+        memberNrp: snapshotMember?.nrp,
+        memberName: snapshotMember?.nama,
+        totalSavings: snapshotSummary.total_hak,
+        totalDebtOffset: snapshotSummary.total_kewajiban,
+        netSettlement: snapshotSummary.net_settlement,
+        clearanceTimestamp: options?.clearanceTimestamp,
+      }).catch((cfErr) => {
+        console.warn('Non-blocking legacy cash_flow clearance warning:', cfErr);
+      });
+    }
 
     return data ?? true;
   },
@@ -327,7 +555,7 @@ export const settlementService = {
         const total_paid = reps.reduce((sum: number, r: any) => sum + Math.max(0, Number(r.amount_paid || 0)), 0);
         const principal = Math.max(0, Math.abs(Number((loan as any).principal_amount || loan.amount || 0)));
         const remaining_balance = Math.max(0, principal - total_paid);
-        
+
         result.push({
           loan_id: loan.id,
           loan_number: loan.loan_number || null,

@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Landmark,
   Users,
+  UserX,
 } from 'lucide-react';
 import {
   getCashFlowReferenceBreakdown,
@@ -26,6 +27,7 @@ import {
   isPosCashSaleCategory,
   sanitizePosTerminology,
 } from '../../utils/posCashFlowFormat';
+import { isMemberClearanceCategory } from '../../utils/clearanceCashFlowFormat';
 
 export interface CashFlowReferenceModalItem {
   id: string;
@@ -98,6 +100,9 @@ const formatPaymentMethodLabel = (method?: string | null): string => {
 const formatHeaderCategoryLabel = (category?: string | null): string => {
   if (isPosCashSaleCategory(category)) {
     return 'Penjualan POS';
+  }
+  if (isMemberClearanceCategory(category)) {
+    return 'Kliring Anggota Keluar';
   }
   const clean = String(category || '').trim();
   return clean ? sanitizePosTerminology(clean) : '-';
@@ -1401,6 +1406,305 @@ export default function CashFlowReferenceModal({
               </div>
             </div>
           )}
+
+          {/* ── KONTEN E2b: KLIRING ANGGOTA KELUAR ── */}
+          {!loading && !error && breakdown?.kind === 'MEMBER_CLEARANCE' && (() => {
+            const mc = breakdown.memberClearance;
+            const isSurplus = mc.netSettlement >= 0;
+
+            return (
+              <div className="space-y-4">
+                {/* Kartu Status Anggota Keluar */}
+                <div className="bg-white rounded-xl border border-rose-200 p-5 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-600">
+                        <UserX className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-sm font-bold text-slate-900">
+                            Detail Kliring &amp; Pengunduran Diri Anggota
+                          </h4>
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                            RESIGNED / KELUAR
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {isSurplus
+                            ? 'Pencairan seluruh hak simpanan setelah kompensasi kewajiban pinjaman/bon'
+                            : 'Pelunasan kekurangan utang oleh anggota keluar setelah pemotongan seluruh hak simpanan'}
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`text-base font-bold tabular-nums ${
+                        isSurplus ? 'text-rose-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {formatRp(Math.abs(mc.netSettlement))}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <p className="text-slate-500">Nama Anggota</p>
+                      <p className="font-bold text-slate-900 mt-0.5">{mc.member.nama}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">NRP</p>
+                      <p className="font-mono font-semibold text-slate-800 mt-0.5">
+                        {mc.member.nrp}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Pangkat</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {mc.member.pangkat || '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Status Keanggotaan</p>
+                      <p className="mt-0.5">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                          RESIGNED / KELUAR
+                        </span>
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Tanggal Kliring</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatDateTimeId(mc.clearanceDate)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Metode Penyaluran / Pelunasan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatPaymentMethodLabel(mc.paymentMethod)}
+                      </p>
+                    </div>
+                    {mc.member.bankAccountNumber && (
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <p className="text-slate-500">Rekening Bank Tujuan</p>
+                        <p className="font-mono font-semibold text-slate-800 mt-0.5 flex items-center gap-1.5">
+                          <Landmark className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>
+                            {mc.member.bankName ? `${mc.member.bankName} — ` : ''}
+                            {mc.member.bankAccountNumber}
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                    {mc.notes && (
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <p className="text-slate-500">Catatan Kliring</p>
+                        <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
+                          {mc.notes}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Indikator Verifikasi Kecocokan Jurnal */}
+                <div
+                  className={`rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs ${
+                    mc.isMatched
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {mc.isMatched ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    )}
+                    <span>
+                      Total Kas Kliring ={' '}
+                      <strong className="font-bold tabular-nums">
+                        {formatRp(Math.abs(mc.netSettlement))}
+                      </strong>{' '}
+                      ({mc.savingsItems.length} komponen simpanan)
+                    </span>
+                  </div>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
+                      mc.isMatched
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-amber-100 text-amber-800 border border-amber-300'
+                    }`}
+                  >
+                    {mc.isMatched
+                      ? '✓ Cocok dengan Jurnal Kas'
+                      : `Selisih ${formatRp(Math.abs(mc.difference))}`}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Rincian Hak Simpanan yang Dicairkan */}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                    <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                      <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                        Rincian Hak Simpanan yang Dicairkan
+                      </h5>
+                      <span className="text-xs font-bold text-emerald-700 tabular-nums">
+                        {formatRp(mc.totalSavings)}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                          <tr>
+                            <th className="px-4 py-2 font-semibold">Jenis Simpanan</th>
+                            <th className="px-4 py-2 font-semibold text-right">Nominal Dicairkan</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {mc.savingsItems.length === 0 ? (
+                            mc.totalSavings > 0 ? (
+                              <tr>
+                                <td className="px-4 py-2.5 font-medium text-slate-800">
+                                  Akumulasi Hak Simpanan Anggota
+                                </td>
+                                <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-900">
+                                  {formatRp(mc.totalSavings)}
+                                </td>
+                              </tr>
+                            ) : (
+                              <tr>
+                                <td colSpan={2} className="px-4 py-6 text-center text-slate-500">
+                                  Tidak ada saldo simpanan yang dicairkan.
+                                </td>
+                              </tr>
+                            )
+                          ) : (
+                            mc.savingsItems.map((item) => (
+                              <tr key={item.depositTypeId}>
+                                <td className="px-4 py-2.5 font-medium text-slate-800">
+                                  <span>{item.name}</span>
+                                  {item.code && (
+                                    <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-mono text-[10px]">
+                                      {item.code}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-slate-900">
+                                  {formatRp(item.amount)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                        <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold text-slate-900">
+                          <tr>
+                            <td className="px-4 py-2.5">Total Hak Simpanan</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-emerald-700">
+                              {formatRp(mc.totalSavings)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Rincian Potongan Kewajiban & Hasil Akhir */}
+                  <div className="space-y-4">
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                      <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+                        <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                          Rincian Potongan Kewajiban (Pinjaman / Bon)
+                        </h5>
+                        <span className="text-xs font-bold text-amber-700 tabular-nums">
+                          {formatRp(mc.totalDebtOffset)}
+                        </span>
+                      </div>
+                      {mc.debtItems.length === 0 ? (
+                        <div className="p-4 text-xs text-slate-600 flex items-center justify-between">
+                          <span>Tidak ada potongan kewajiban pinjaman / bon</span>
+                          <span className="font-bold text-slate-800 tabular-nums">
+                            Total Kewajiban Pinjaman / Bon: {formatRp(0)}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-slate-100 text-slate-600 border-b border-slate-200">
+                              <tr>
+                                <th className="px-4 py-2 font-semibold">No. Pinjaman / Keterangan</th>
+                                <th className="px-4 py-2 font-semibold text-right">Potongan</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {mc.debtItems.map((debt) => (
+                                <tr key={debt.loanId}>
+                                  <td className="px-4 py-2.5">
+                                    <span className="font-mono font-semibold text-slate-800">
+                                      {debt.loanNumber}
+                                    </span>
+                                    <span className="block text-[11px] text-slate-500">
+                                      {debt.purpose}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-amber-700">
+                                    {formatRp(debt.offsetAmount)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot className="bg-slate-50 border-t-2 border-slate-200 font-bold text-slate-900">
+                              <tr>
+                                <td className="px-4 py-2.5">Total Kewajiban Pinjaman / Bon</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-amber-700">
+                                  {formatRp(mc.totalDebtOffset)}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Kartu Hasil Akhir Net Settlement */}
+                    <div
+                      className={`rounded-xl border p-4 shadow-xs space-y-2 text-xs ${
+                        isSurplus
+                          ? 'bg-rose-50/70 border-rose-200'
+                          : 'bg-emerald-50/70 border-emerald-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-slate-700">
+                        <span>Total Hak Simpanan</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatRp(mc.totalSavings)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-700">
+                        <span>Total Kewajiban Pinjaman / Bon</span>
+                        <span className="font-semibold tabular-nums">
+                          -{formatRp(mc.totalDebtOffset)}
+                        </span>
+                      </div>
+                      <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                        <span className="font-bold text-slate-900">
+                          {isSurplus
+                            ? 'Total Kas Bersih Diserahkan ke Anggota'
+                            : 'Total Kekurangan Disetor Anggota ke Koperasi'}
+                        </span>
+                        <span
+                          className={`text-sm sm:text-base font-extrabold tabular-nums ${
+                            isSurplus ? 'text-rose-700' : 'text-emerald-700'
+                          }`}
+                        >
+                          {formatRp(Math.abs(mc.netSettlement))}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── KONTEN E3: METADATA JURNAL UMUM ── */}
           {!loading && !error && breakdown?.kind === 'journal_only' && (
