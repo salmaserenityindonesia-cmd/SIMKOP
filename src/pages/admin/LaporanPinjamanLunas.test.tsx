@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import LaporanPinjamanLunas from './LaporanPinjamanLunas';
 import LoanSubsidiaryLedgerModal, {
   buildLoanSubsidiaryLedger,
+  buildFinancialReportUrl,
 } from '../../components/loans/LoanSubsidiaryLedgerModal';
 import {
   getPaidOffLoansReport,
@@ -682,5 +683,90 @@ describe('Clickable LOAN-... Reference & LoanSubsidiaryLedgerModal', () => {
     expect(fallbackLedger.entries[0].debit).toBe(12000000);
     expect(fallbackLedger.entries[1].credit).toBe(12000000);
     expect(fallbackLedger.endingBalance).toBe(0);
+  });
+
+  it('builds deep-link URLs to /admin/laporan-keuangan and renders clickable KW-PINJ/... buttons for margin and 0% loans', () => {
+    const goodsUrl = buildFinancialReportUrl('LOAN-1795083121561', {
+      marginPortion: 100000,
+      date: '2026-11-19T08:00:00.000Z',
+      referenceNumber: 'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD',
+    });
+    expect(goodsUrl).toBe(
+      '/admin/laporan-keuangan?tab=shu&ref=LOAN-1795083121561&receipt=KW-PINJ%2FLOAN-1795083121561%2FB1%2F20261119-TCD&date=2026-11-19'
+    );
+
+    const cashUrl = buildFinancialReportUrl('LOAN-1795088101742', {
+      marginPortion: 0,
+      date: '2026-11-19T10:15:00.000Z',
+      referenceNumber: 'KW-PINJ/LOAN-1795088101742/B1/20261119-HXO',
+    });
+    expect(cashUrl).toBe(
+      '/admin/laporan-keuangan?tab=cashflow&ref=LOAN-1795088101742&receipt=KW-PINJ%2FLOAN-1795088101742%2FB1%2F20261119-HXO&date=2026-11-19'
+    );
+
+    // Goods markup modal renders indigo SHU deep-link button for repayment and static badge for disbursement
+    const goodsHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <LoanSubsidiaryLedgerModal loanRecord={goodsMarkupRow} onClose={() => {}} />
+      </MemoryRouter>
+    );
+    expect(goodsHtml).toContain('data-testid="inspect-receipt-repay-rep-g-1"');
+    expect(goodsHtml).toContain(
+      'data-report-url="/admin/laporan-keuangan?tab=shu&amp;ref=LOAN-1795083121561&amp;receipt=KW-PINJ%2FLOAN-1795083121561%2FB1%2F20261119-TCD&amp;date=2026-11-19"'
+    );
+    expect(goodsHtml).toContain(
+      'title="Klik untuk menelusuri baris referensi di Estimasi SHU Berjalan (/admin/laporan-keuangan)"'
+    );
+    expect(goodsHtml).not.toContain('data-testid="inspect-receipt-disbursement-');
+
+    // 0% cash loan renders emerald Cash Flow deep-link button (works without Router too)
+    const cashLoanRow: PaidOffLoanReportRow = {
+      ...prabowoRow,
+      id: 'loan-cash-1795088101742',
+      loanId: 'loan-cash-1795088101742',
+      loanNumber: 'LOAN-1795088101742',
+      tenor: 1,
+      principalAmount: 1000000,
+      monthlyInstallment: 1000000,
+      totalPaid: 1000000,
+      schedules: [
+        {
+          id: 'sc-cash-1',
+          periodNumber: 1,
+          dueDate: '2026-11-19',
+          targetAmount: 1000000,
+          paidAmount: 1000000,
+          status: 'paid',
+          paymentDate: '2026-11-19T10:15:00.000Z',
+          paymentMethod: 'potong_gaji',
+          receiptNumber: 'KW-PINJ/LOAN-1795088101742/B1/20261119-HXO',
+        },
+      ],
+      repayments: [
+        {
+          id: 'rep-cash-1',
+          scheduleId: 'sc-cash-1',
+          periodNumber: 1,
+          amountPaid: 1000000,
+          principalPortion: 1000000,
+          marginPortion: 0,
+          paymentDate: '2026-11-19T10:15:00.000Z',
+          paymentMethod: 'potong_gaji',
+          receiptNumber: 'KW-PINJ/LOAN-1795088101742/B1/20261119-HXO',
+        },
+      ],
+    };
+
+    const cashHtml = renderToStaticMarkup(
+      <LoanSubsidiaryLedgerModal loanRecord={cashLoanRow} onClose={() => {}} />
+    );
+    expect(cashHtml).toContain('data-testid="inspect-receipt-repay-rep-cash-1"');
+    expect(cashHtml).toContain(
+      'data-report-url="/admin/laporan-keuangan?tab=cashflow&amp;ref=LOAN-1795088101742&amp;receipt=KW-PINJ%2FLOAN-1795088101742%2FB1%2F20261119-HXO&amp;date=2026-11-19"'
+    );
+    expect(cashHtml).toContain(
+      'title="Klik untuk menelusuri mutasi kas angsuran di Laporan Keuangan (/admin/laporan-keuangan)"'
+    );
+    expect(cashHtml).toContain('bg-emerald-50');
   });
 });

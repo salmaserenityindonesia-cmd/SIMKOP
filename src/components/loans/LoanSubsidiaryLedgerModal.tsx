@@ -48,6 +48,7 @@ export interface LoanSubsidiaryLedgerModalProps {
   loanRecord: PaidOffLoanReportRow | null;
   onClose: () => void;
   onOpenInMatrix?: (loanNumber: string) => void;
+  onInspectInFinancialReport?: (targetUrl: string) => void;
 }
 
 const formatRp = (amount: number = 0): string =>
@@ -392,6 +393,90 @@ export function buildLoanSubsidiaryLedger(
   };
 }
 
+/**
+ * Menyusun URL deep-link ke /admin/laporan-keuangan berdasarkan komponen margin angsuran.
+ */
+export function buildFinancialReportUrl(
+  loanNumber: string,
+  entry: Pick<LoanSubsidiaryLedgerEntry, 'marginPortion' | 'date' | 'referenceNumber'>
+): string {
+  const hasMargin = Number(entry.marginPortion || 0) > 0;
+  const targetTab = hasMargin ? 'shu' : 'cashflow';
+  const rawDate = entry.date ? String(entry.date).trim() : '';
+  const dateMatch = rawDate.match(/^(\d{4}-\d{2}-\d{2})/);
+  const txDate = dateMatch ? dateMatch[1] : '';
+  const refNum = String(entry.referenceNumber || '').trim();
+
+  const params = new URLSearchParams({
+    tab: targetTab,
+    ref: loanNumber,
+  });
+  if (refNum && refNum !== '-' && refNum !== loanNumber) {
+    params.set('receipt', refNum);
+  }
+  if (txDate) {
+    params.set('date', txDate);
+  }
+  return `/admin/laporan-keuangan?${params.toString()}`;
+}
+
+function ReceiptBadgeButton({
+  entry,
+  loanNumber,
+  onSelect,
+}: {
+  entry: LoanSubsidiaryLedgerEntry;
+  loanNumber: string;
+  onSelect: (targetUrl: string) => void;
+}) {
+  const targetUrl = buildFinancialReportUrl(loanNumber, entry);
+  const hasMargin = Number(entry.marginPortion || 0) > 0;
+  const tooltip = hasMargin
+    ? 'Klik untuk menelusuri baris referensi di Estimasi SHU Berjalan (/admin/laporan-keuangan)'
+    : 'Klik untuk menelusuri mutasi kas angsuran di Laporan Keuangan (/admin/laporan-keuangan)';
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(targetUrl)}
+      data-testid={`inspect-receipt-${entry.id}`}
+      data-report-url={targetUrl}
+      title={tooltip}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-mono text-[11px] font-semibold hover:underline transition-colors cursor-pointer group ${
+        hasMargin
+          ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200'
+          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200'
+      }`}
+    >
+      <span>{entry.referenceNumber}</span>
+      <ExternalLink className="w-3 h-3 shrink-0 opacity-75 group-hover:opacity-100 transition-opacity" />
+    </button>
+  );
+}
+
+function ReceiptNavigateButton({
+  entry,
+  loanNumber,
+  onClose,
+}: {
+  entry: LoanSubsidiaryLedgerEntry;
+  loanNumber: string;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+
+  return (
+    <ReceiptBadgeButton
+      entry={entry}
+      loanNumber={loanNumber}
+      onSelect={(targetUrl) => {
+        onClose();
+        navigate(targetUrl);
+      }}
+    />
+  );
+}
+
 function MatrixNavigateButton({
   loanNumber,
   onClose,
@@ -426,6 +511,7 @@ export default function LoanSubsidiaryLedgerModal({
   loanRecord,
   onClose,
   onOpenInMatrix,
+  onInspectInFinancialReport,
 }: LoanSubsidiaryLedgerModalProps) {
   const inRouter = useInRouterContext();
 
@@ -459,6 +545,15 @@ export default function LoanSubsidiaryLedgerModal({
       window.location.assign(
         `/admin/loan-matrix?search=${encodeURIComponent(loanRecord.loanNumber)}`
       );
+    }
+  };
+
+  const handleFallbackInspectInReport = (targetUrl: string) => {
+    onClose();
+    if (onInspectInFinancialReport) {
+      onInspectInFinancialReport(targetUrl);
+    } else if (typeof window !== 'undefined') {
+      window.location.assign(targetUrl);
     }
   };
 
@@ -701,15 +796,33 @@ export default function LoanSubsidiaryLedgerModal({
                           {formatReportDate(entry.date)}
                         </td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded font-mono text-[11px] font-semibold ${
-                              isDisbursement
-                                ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
-                            }`}
-                          >
-                            {entry.referenceNumber}
-                          </span>
+                          {!isDisbursement &&
+                          entry.referenceNumber &&
+                          entry.referenceNumber !== '-' ? (
+                            inRouter ? (
+                              <ReceiptNavigateButton
+                                entry={entry}
+                                loanNumber={loanRecord.loanNumber}
+                                onClose={onClose}
+                              />
+                            ) : (
+                              <ReceiptBadgeButton
+                                entry={entry}
+                                loanNumber={loanRecord.loanNumber}
+                                onSelect={handleFallbackInspectInReport}
+                              />
+                            )
+                          ) : (
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded font-mono text-[11px] font-semibold ${
+                                isDisbursement
+                                  ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              }`}
+                            >
+                              {entry.referenceNumber}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="font-semibold text-slate-800 flex items-center gap-1.5">

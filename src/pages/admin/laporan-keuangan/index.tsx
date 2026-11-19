@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Link, useInRouterContext } from 'react-router-dom';
-import { ExternalLink, Receipt, Search, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
+import { ExternalLink, Receipt, RotateCcw, Search, X } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
 import ShuReferenceDetailModal, {
@@ -802,6 +802,116 @@ export async function getShuEstimation(
   };
 }
 
+// ─── Deep-Link Highlight Helpers ─────────────────────────────────────────────
+
+export function extractReceiptPeriodNumber(receipt?: string): string | null {
+  if (!receipt) return null;
+  const match = String(receipt).match(/\/B(\d+)(?:\/|$)/i);
+  return match ? match[1] : null;
+}
+
+export function getHighlightedShuRowIds(
+  rows: ShuReferenceRow[],
+  ref: string,
+  receipt: string
+): Set<string> {
+  const normRef = ref.trim().toLowerCase();
+  const normReceipt = receipt.trim().toLowerCase();
+  if (!normRef && !normReceipt) return new Set();
+
+  if (normReceipt) {
+    const exactOrSub = rows.filter((row) => {
+      const rNo = String(row.referenceNumber || '').toLowerCase();
+      return rNo === normReceipt || rNo.includes(normReceipt);
+    });
+    if (exactOrSub.length > 0) {
+      return new Set(exactOrSub.map((r) => r.id));
+    }
+  }
+
+  if (normRef) {
+    const refMatched = rows.filter((row) => {
+      const rNo = String(row.referenceNumber || '').toLowerCase();
+      const lNo = String(row.loanNumber || '').toLowerCase();
+      return rNo.includes(normRef) || lNo.includes(normRef);
+    });
+    return new Set(refMatched.map((r) => r.id));
+  }
+
+  return new Set();
+}
+
+export function getHighlightedCashFlowRowIds(
+  rows: CashFlowTransaction[],
+  ref: string,
+  receipt: string,
+  txDate?: string
+): Set<string> {
+  const normRef = ref.trim().toLowerCase();
+  const normReceipt = receipt.trim().toLowerCase();
+  const normDate = (txDate || '').trim();
+  if (!normRef && !normReceipt) return new Set();
+
+  if (normReceipt) {
+    const receiptMatches = rows.filter((r) => {
+      const rRef = String(r.referensi || '').toLowerCase();
+      const rDesc = String(r.deskripsi || '').toLowerCase();
+      return rRef.includes(normReceipt) || rDesc.includes(normReceipt);
+    });
+    if (receiptMatches.length > 0) {
+      return new Set(receiptMatches.map((r) => r.id));
+    }
+  }
+
+  if (!normRef) return new Set();
+
+  let candidates = rows.filter((r) => {
+    const rRef = String(r.referensi || '').toLowerCase();
+    const rDesc = String(r.deskripsi || '').toLowerCase();
+    const rId = String(r.reference_id || '').toLowerCase();
+    return rRef.includes(normRef) || rDesc.includes(normRef) || rId.includes(normRef);
+  });
+
+  if (candidates.length > 1) {
+    const periodNum = extractReceiptPeriodNumber(receipt);
+    if (periodNum) {
+      const periodRegex = new RegExp(`(?:bln\\s*)?ke-?${periodNum}(?:\\D|$)`, 'i');
+      const periodMatches = candidates.filter((r) =>
+        periodRegex.test(String(r.deskripsi || ''))
+      );
+      if (periodMatches.length > 0) {
+        const repaymentMatches = periodMatches.filter(
+          (r) => String(r.kategori || '').toLowerCase() === 'angsuran_pinjaman'
+        );
+        candidates = repaymentMatches.length > 0 ? repaymentMatches : periodMatches;
+      }
+    }
+
+    if (candidates.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(normDate)) {
+      const dateMatches = candidates.filter(
+        (r) => String(r.created_at || '').slice(0, 10) === normDate
+      );
+      if (dateMatches.length > 0) {
+        candidates = dateMatches;
+      }
+    }
+  }
+
+  return new Set(candidates.map((r) => r.id));
+}
+
+const ResetRefFilterButton = ({ onReset }: { onReset: () => void }) => (
+  <button
+    type="button"
+    onClick={onReset}
+    data-testid="reset-ref-filter-btn"
+    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap"
+  >
+    <RotateCcw className="w-3.5 h-3.5" />
+    <span>Reset Filter Referensi</span>
+  </button>
+);
+
 // ─── Main Page Component ──────────────────────────────────────────────────────
 
 export interface LaporanKeuanganProps {
@@ -810,31 +920,53 @@ export interface LaporanKeuanganProps {
   initialSelectedCashFlowRef?: CashFlowTransaction | null;
   initialStoreCreditSummary?: OutstandingStoreCreditSummary | null;
   initialActiveTab?: 'cashflow' | 'shu';
+  initialCashFlowData?: CashFlowData | null;
+  initialCashFlowSearchQuery?: string;
   initialShuData?: ShuEstimationData | null;
   initialSelectedShuRef?: ShuReferenceRow | null;
   initialShuSearchQuery?: string;
 }
 
-export default function LaporanKeuangan({
+interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
+  urlTab?: 'cashflow' | 'shu' | null;
+  urlRef?: string;
+  urlReceipt?: string;
+  urlDate?: string;
+  onClearUrlParams?: () => void;
+}
+
+function LaporanKeuanganContent({
   initialResetModalOpen = false,
   initialConfirmText = '',
   initialSelectedCashFlowRef = null,
   initialStoreCreditSummary = null,
   initialActiveTab = 'cashflow',
+  initialCashFlowData = null,
+  initialCashFlowSearchQuery = '',
   initialShuData = null,
   initialSelectedShuRef = null,
   initialShuSearchQuery = '',
-}: LaporanKeuanganProps = {}) {
+  urlTab = null,
+  urlRef = '',
+  urlReceipt = '',
+  urlDate = '',
+  onClearUrlParams,
+}: LaporanKeuanganContentProps = {}) {
   const { showToast } = useFeedback();
   const inRouter = useInRouterContext();
-  const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>(initialActiveTab);
-  const [startDate, setStartDate] = useState(startOfMonth);
-  const [endDate, setEndDate]     = useState(todayStr);
-  const [unit, setUnit]           = useState('all');
-  const [loading, setLoading]     = useState(false);
+  const initialSearchValue = (urlRef || urlReceipt).trim();
+  const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>(urlTab ?? initialActiveTab);
+  const [startDate, setStartDate] = useState(
+    urlDate && urlDate < startOfMonth ? urlDate : startOfMonth
+  );
+  const [endDate, setEndDate] = useState(
+    urlDate && urlDate > todayStr ? urlDate : todayStr
+  );
+  const [unit, setUnit] = useState('all');
+  const [loading, setLoading] = useState(false);
 
-  const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(null);
-  const [shuData, setShuData]           = useState<ShuEstimationData | null>(initialShuData);
+  const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(initialCashFlowData);
+  const [shuData, setShuData] = useState<ShuEstimationData | null>(initialShuData);
   const [storeCreditSummary, setStoreCreditSummary] = useState<OutstandingStoreCreditSummary>(
     initialStoreCreditSummary ?? {
       totalOutstandingReceivable: 0,
@@ -843,6 +975,11 @@ export default function LaporanKeuangan({
       totalRepaid: 0,
     }
   );
+  const [cashFlowSearchQuery, setCashFlowSearchQuery] = useState<string>(
+    (urlTab === 'cashflow' || (!urlTab && initialSearchValue)) && initialSearchValue
+      ? initialSearchValue
+      : initialCashFlowSearchQuery
+  );
   const [cashFlowPage, setCashFlowPage] = useState<number>(1);
   const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
   const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
@@ -850,17 +987,60 @@ export default function LaporanKeuangan({
   );
 
   // State Pencarian, Pagination & Drill-Down Tabel Estimasi SHU
-  const [shuSearchQuery, setShuSearchQuery] = useState<string>(initialShuSearchQuery);
+  const [shuSearchQuery, setShuSearchQuery] = useState<string>(
+    urlTab === 'shu' && initialSearchValue ? initialSearchValue : initialShuSearchQuery
+  );
   const [shuCurrentPage, setShuCurrentPage] = useState<number>(1);
   const [shuPageSize, setShuPageSize] = useState<number>(10);
   const [selectedShuRef, setSelectedShuRef] = useState<ShuReferenceRow | null>(
     initialSelectedShuRef ?? null
   );
 
+  // State Highlight Deep-Link Referensi URL
+  const [activeHighlightRef, setActiveHighlightRef] = useState<string>(urlRef);
+  const [activeHighlightReceipt, setActiveHighlightReceipt] = useState<string>(urlReceipt);
+  const [activeHighlightDate, setActiveHighlightDate] = useState<string>(urlDate);
+
   // State Modal Konfirmasi Reset Kas
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
   const [confirmText, setConfirmText] = useState(initialConfirmText);
   const [isResetting, setIsResetting] = useState(false);
+
+  const urlDeepLinkKey = `${urlTab ?? ''}|${urlRef}|${urlReceipt}|${urlDate}`;
+  const appliedUrlKeyRef = useRef<string>(urlDeepLinkKey);
+  const lastAutoPagedKeyRef = useRef<string>('');
+  const lastScrolledKeyRef = useRef<string>('');
+
+  // Sinkronisasi apabila parameter deep-link URL berubah saat halaman tetap mounted
+  useEffect(() => {
+    if (urlDeepLinkKey === appliedUrlKeyRef.current) return;
+    appliedUrlKeyRef.current = urlDeepLinkKey;
+    lastAutoPagedKeyRef.current = '';
+    lastScrolledKeyRef.current = '';
+
+    if (!urlTab && !urlRef && !urlReceipt && !urlDate) return;
+
+    if (urlTab) {
+      setActiveTab(urlTab);
+    }
+    if (urlDate) {
+      setStartDate((prev) => (urlDate < prev ? urlDate : prev));
+      setEndDate((prev) => (urlDate > prev ? urlDate : prev));
+    }
+
+    const nextSearch = (urlRef || urlReceipt).trim();
+    setActiveHighlightRef(urlRef);
+    setActiveHighlightReceipt(urlReceipt);
+    setActiveHighlightDate(urlDate);
+
+    if (urlTab === 'shu') {
+      setShuSearchQuery(nextSearch);
+      setShuCurrentPage(1);
+    } else if (urlTab === 'cashflow' || nextSearch) {
+      setCashFlowSearchQuery(nextSearch);
+      setCashFlowPage(1);
+    }
+  }, [urlDeepLinkKey, urlTab, urlRef, urlReceipt, urlDate]);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -890,29 +1070,59 @@ export default function LaporanKeuangan({
 
   useEffect(() => {
     setCashFlowPage(1);
-  }, [startDate, endDate, unit]);
+  }, [cashFlowSearchQuery, cashFlowPageSize, startDate, endDate, unit]);
 
   useEffect(() => {
     setShuCurrentPage(1);
   }, [shuSearchQuery, shuPageSize, startDate, endDate, unit]);
 
   const cashFlowTransactions = cashFlowData?.transactions ?? [];
-  const totalCashFlowItems = cashFlowTransactions.length;
+  const normalizedCashFlowQuery = cashFlowSearchQuery.trim().toLowerCase();
+  const filteredCashFlowTransactions = normalizedCashFlowQuery
+    ? cashFlowTransactions.filter((t) => {
+        const refMatch = String(t.referensi || '').toLowerCase().includes(normalizedCashFlowQuery);
+        const descMatch = String(t.deskripsi || '').toLowerCase().includes(normalizedCashFlowQuery);
+        const catMatch = String(t.kategori || '').toLowerCase().includes(normalizedCashFlowQuery);
+        const refIdMatch = String(t.reference_id || '').toLowerCase().includes(normalizedCashFlowQuery);
+        return refMatch || descMatch || catMatch || refIdMatch;
+      })
+    : cashFlowTransactions;
+  const totalCashFlowItems = filteredCashFlowTransactions.length;
   const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
   const safeCashFlowPage = Math.min(cashFlowPage, totalCashFlowPages);
   const cashFlowStartIndex = (safeCashFlowPage - 1) * cashFlowPageSize;
   const cashFlowEndIndex = Math.min(cashFlowStartIndex + cashFlowPageSize, totalCashFlowItems);
-  const paginatedCashFlow = cashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
+  const paginatedCashFlow = filteredCashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
+
+  const filteredCashFlowInflow = filteredCashFlowTransactions.reduce(
+    (sum, r) => sum + Number(r.kas_masuk || 0),
+    0
+  );
+  const filteredCashFlowOutflow = filteredCashFlowTransactions.reduce(
+    (sum, r) => sum + Number(r.kas_keluar || 0),
+    0
+  );
+  const filteredCashFlowNet = filteredCashFlowInflow - filteredCashFlowOutflow;
+  const displayedCashFlowInflow = normalizedCashFlowQuery
+    ? filteredCashFlowInflow
+    : (cashFlowData?.inflowTotal ?? 0);
+  const displayedCashFlowOutflow = normalizedCashFlowQuery
+    ? filteredCashFlowOutflow
+    : (cashFlowData?.outflowTotal ?? 0);
+  const displayedCashFlowNet = normalizedCashFlowQuery
+    ? filteredCashFlowNet
+    : (cashFlowData?.netCashflow ?? 0);
 
   const shuReferenceRows = shuData?.shuReferenceRows ?? [];
   const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
   const filteredShuRows = normalizedShuQuery
     ? shuReferenceRows.filter((row) => {
         const refMatch = row.referenceNumber.toLowerCase().includes(normalizedShuQuery);
+        const loanMatch = String(row.loanNumber || '').toLowerCase().includes(normalizedShuQuery);
         const nameMatch = row.memberName.toLowerCase().includes(normalizedShuQuery);
         const nrpMatch = row.memberNrp.toLowerCase().includes(normalizedShuQuery);
         const methodMatch = row.paymentMethodLabel.toLowerCase().includes(normalizedShuQuery);
-        return refMatch || nameMatch || nrpMatch || methodMatch;
+        return refMatch || loanMatch || nameMatch || nrpMatch || methodMatch;
       })
     : shuReferenceRows;
   const totalShuItems = filteredShuRows.length;
@@ -921,6 +1131,101 @@ export default function LaporanKeuangan({
   const shuStartIndex = (safeShuPage - 1) * shuPageSize;
   const shuEndIndex = Math.min(shuStartIndex + shuPageSize, totalShuItems);
   const paginatedShuRows = filteredShuRows.slice(shuStartIndex, shuEndIndex);
+
+  const highlightedCashFlowIds = getHighlightedCashFlowRowIds(
+    filteredCashFlowTransactions,
+    activeHighlightRef,
+    activeHighlightReceipt,
+    activeHighlightDate
+  );
+  const highlightedShuIds = getHighlightedShuRowIds(
+    filteredShuRows,
+    activeHighlightRef,
+    activeHighlightReceipt
+  );
+  const hasActiveUrlRef = Boolean(activeHighlightRef || activeHighlightReceipt);
+
+  const handleResetReferenceFilter = () => {
+    setShuSearchQuery('');
+    setCashFlowSearchQuery('');
+    setActiveHighlightRef('');
+    setActiveHighlightReceipt('');
+    setActiveHighlightDate('');
+    setCashFlowPage(1);
+    setShuCurrentPage(1);
+    lastAutoPagedKeyRef.current = '';
+    lastScrolledKeyRef.current = '';
+    onClearUrlParams?.();
+  };
+
+  const autoPageKey = `${activeTab}|${activeHighlightRef}|${activeHighlightReceipt}|${activeHighlightDate}|${filteredCashFlowTransactions.length}|${filteredShuRows.length}`;
+  useEffect(() => {
+    if (loading || !hasActiveUrlRef) return;
+    if (lastAutoPagedKeyRef.current === autoPageKey) return;
+
+    if (activeTab === 'cashflow' && highlightedCashFlowIds.size > 0) {
+      const idx = filteredCashFlowTransactions.findIndex((r) =>
+        highlightedCashFlowIds.has(r.id)
+      );
+      if (idx >= 0) {
+        lastAutoPagedKeyRef.current = autoPageKey;
+        const targetPage = Math.floor(idx / cashFlowPageSize) + 1;
+        if (targetPage !== cashFlowPage) {
+          setCashFlowPage(targetPage);
+        }
+      }
+    } else if (activeTab === 'shu' && highlightedShuIds.size > 0) {
+      const idx = filteredShuRows.findIndex((r) => highlightedShuIds.has(r.id));
+      if (idx >= 0) {
+        lastAutoPagedKeyRef.current = autoPageKey;
+        const targetPage = Math.floor(idx / shuPageSize) + 1;
+        if (targetPage !== shuCurrentPage) {
+          setShuCurrentPage(targetPage);
+        }
+      }
+    }
+  }, [
+    loading,
+    hasActiveUrlRef,
+    autoPageKey,
+    activeTab,
+    highlightedCashFlowIds,
+    highlightedShuIds,
+    filteredCashFlowTransactions,
+    filteredShuRows,
+    cashFlowPageSize,
+    cashFlowPage,
+    shuPageSize,
+    shuCurrentPage,
+  ]);
+
+  const highlightScrollKey = `${activeTab}|${activeHighlightRef}|${activeHighlightReceipt}|${safeCashFlowPage}|${safeShuPage}|${highlightedCashFlowIds.size}|${highlightedShuIds.size}`;
+  useEffect(() => {
+    if (loading || !hasActiveUrlRef) return;
+    if (typeof document === 'undefined') return;
+
+    const hasMatch =
+      activeTab === 'cashflow'
+        ? highlightedCashFlowIds.size > 0
+        : highlightedShuIds.size > 0;
+    if (!hasMatch) return;
+    if (lastScrolledKeyRef.current === highlightScrollKey) return;
+
+    const targetRow = document.querySelector<HTMLElement>('tr[data-highlighted-ref="true"]');
+    if (targetRow) {
+      lastScrolledKeyRef.current = highlightScrollKey;
+      if (typeof targetRow.scrollIntoView === 'function') {
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [
+    loading,
+    hasActiveUrlRef,
+    activeTab,
+    highlightedCashFlowIds.size,
+    highlightedShuIds.size,
+    highlightScrollKey,
+  ]);
 
   const filteredShuTotalOmzet = filteredShuRows.reduce((sum, r) => sum + Number(r.omzet || 0), 0);
   const filteredShuTotalHpp = filteredShuRows.reduce((sum, r) => sum + Number(r.hpp || 0), 0);
@@ -1329,14 +1634,46 @@ export default function LaporanKeuangan({
 
           {/* Transaction Table */}
           <div className="bg-white rounded-xl border border-outline-variant/30 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-outline-variant/20 flex items-center justify-between">
-              <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-secondary text-[20px]">receipt_long</span>
-                Mutasi Arus Kas Terperinci
-              </h2>
-              <span className="text-[12px] text-on-surface-variant">
-                {cashFlowData?.transactions.length ?? 0} transaksi
-              </span>
+            <div className="px-5 py-4 border-b border-outline-variant/20 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
+                  <span className="material-symbols-outlined text-secondary text-[20px]">receipt_long</span>
+                  Mutasi Arus Kas Terperinci
+                </h2>
+                <span className="text-[12px] text-on-surface-variant">
+                  {normalizedCashFlowQuery
+                    ? `${totalCashFlowItems} / ${cashFlowTransactions.length} transaksi`
+                    : `${cashFlowTransactions.length} transaksi`}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto no-print">
+                <div className="relative flex-1 md:w-80">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={cashFlowSearchQuery}
+                    onChange={(e) => setCashFlowSearchQuery(e.target.value)}
+                    placeholder="Cari referensi CF-..., deskripsi, atau LOAN-..."
+                    aria-label="Cari mutasi arus kas"
+                    data-testid="cashflow-search-input"
+                    className="w-full pl-9 pr-8 py-2 rounded-lg border border-outline-variant/50 bg-slate-50/50 focus:bg-white text-xs sm:text-sm text-on-surface placeholder:text-slate-400 focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-colors"
+                  />
+                  {cashFlowSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setCashFlowSearchQuery('')}
+                      aria-label="Hapus pencarian arus kas"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {hasActiveUrlRef && (
+                  <ResetRefFilterButton onReset={handleResetReferenceFilter} />
+                )}
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -1353,13 +1690,27 @@ export default function LaporanKeuangan({
                   {totalCashFlowItems === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-12 text-on-surface-variant text-sm">
-                        <span className="material-symbols-outlined text-[36px] block mb-2 text-outline">inbox</span>
-                        Tidak ada transaksi pada periode ini
+                        <span className="material-symbols-outlined text-[36px] block mb-2 text-outline">
+                          {normalizedCashFlowQuery ? 'search_off' : 'inbox'}
+                        </span>
+                        {normalizedCashFlowQuery
+                          ? 'Tidak ada mutasi arus kas yang cocok dengan pencarian'
+                          : 'Tidak ada transaksi pada periode ini'}
                       </td>
                     </tr>
                   ) : (
-                    paginatedCashFlow.map((t, i) => (
-                      <tr key={t.id} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`}>
+                    paginatedCashFlow.map((t, i) => {
+                      const isHighlighted = highlightedCashFlowIds.has(t.id);
+                      return (
+                        <tr
+                          key={t.id}
+                          data-highlighted-ref={isHighlighted ? 'true' : undefined}
+                          className={`border-b border-outline-variant/10 transition-colors ${
+                            isHighlighted
+                              ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
+                              : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
+                          }`}
+                        >
                         <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <button
@@ -1387,7 +1738,8 @@ export default function LaporanKeuangan({
                           {formatRp(t.saldo_berjalan)}
                         </td>
                       </tr>
-                    ))
+                      );
+                    })
                   )}
                 </tbody>
                 {totalCashFlowItems > 0 && (
@@ -1395,13 +1747,13 @@ export default function LaporanKeuangan({
                     <tr>
                       <td colSpan={5} className="px-4 py-3 font-bold text-primary text-sm">TOTAL</td>
                       <td className="px-4 py-3 text-right font-bold text-emerald-700 tabular-nums whitespace-nowrap">
-                        {formatRp(cashFlowData?.inflowTotal ?? 0)}
+                        {formatRp(displayedCashFlowInflow)}
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-rose-700 tabular-nums whitespace-nowrap">
-                        {formatRp(cashFlowData?.outflowTotal ?? 0)}
+                        {formatRp(displayedCashFlowOutflow)}
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-indigo-700 tabular-nums whitespace-nowrap">
-                        {formatRp(cashFlowData?.netCashflow ?? 0)}
+                        {formatRp(displayedCashFlowNet)}
                       </td>
                     </tr>
                   </tfoot>
@@ -1512,25 +1864,31 @@ export default function LaporanKeuangan({
                 </p>
               </div>
 
-              <div className="relative w-full md:w-80 no-print">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  value={shuSearchQuery}
-                  onChange={(e) => setShuSearchQuery(e.target.value)}
-                  placeholder="Cari No. Referensi (INV-...), NRP, atau Nama..."
-                  aria-label="Cari transaksi sumber SHU"
-                  className="w-full pl-9 pr-8 py-2 rounded-lg border border-outline-variant/50 bg-slate-50/50 focus:bg-white text-xs sm:text-sm text-on-surface placeholder:text-slate-400 focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-colors"
-                />
-                {shuSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setShuSearchQuery('')}
-                    aria-label="Hapus pencarian"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto no-print">
+                <div className="relative flex-1 md:w-80">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={shuSearchQuery}
+                    onChange={(e) => setShuSearchQuery(e.target.value)}
+                    placeholder="Cari No. Referensi (INV-...), NRP, atau Nama..."
+                    aria-label="Cari transaksi sumber SHU"
+                    data-testid="shu-search-input"
+                    className="w-full pl-9 pr-8 py-2 rounded-lg border border-outline-variant/50 bg-slate-50/50 focus:bg-white text-xs sm:text-sm text-on-surface placeholder:text-slate-400 focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-colors"
+                  />
+                  {shuSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setShuSearchQuery('')}
+                      aria-label="Hapus pencarian"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {hasActiveUrlRef && (
+                  <ResetRefFilterButton onReset={handleResetReferenceFilter} />
                 )}
               </div>
             </div>
@@ -1581,11 +1939,15 @@ export default function LaporanKeuangan({
                     paginatedShuRows.map((row, i) => {
                       const badgeStyle =
                         SHU_SOURCE_BADGE[row.sourceType] ?? SHU_SOURCE_BADGE.pos_cash;
+                      const isHighlighted = highlightedShuIds.has(row.id);
                       return (
                         <tr
                           key={row.id}
-                          className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${
-                            i % 2 === 1 ? 'bg-[#f8fafc]' : ''
+                          data-highlighted-ref={isHighlighted ? 'true' : undefined}
+                          className={`border-b border-outline-variant/10 transition-colors ${
+                            isHighlighted
+                              ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
+                              : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
                           }`}
                         >
                           <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">
@@ -1924,4 +2286,43 @@ export default function LaporanKeuangan({
       />
     </AdminLayout>
   );
+}
+
+function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = (searchParams.get('tab') || '').trim().toLowerCase();
+  const urlTab: 'cashflow' | 'shu' | null =
+    rawTab === 'shu' || rawTab === 'cashflow' ? rawTab : null;
+  const urlRef = (searchParams.get('ref') || '').trim();
+  const urlReceipt = (searchParams.get('receipt') || '').trim();
+  const rawDate = (searchParams.get('date') || '').trim();
+  const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '';
+
+  const handleClearUrlParams = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    next.delete('ref');
+    next.delete('receipt');
+    next.delete('date');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  return (
+    <LaporanKeuanganContent
+      {...props}
+      urlTab={urlTab}
+      urlRef={urlRef}
+      urlReceipt={urlReceipt}
+      urlDate={urlDate}
+      onClearUrlParams={handleClearUrlParams}
+    />
+  );
+}
+
+export default function LaporanKeuangan(props: LaporanKeuanganProps = {}) {
+  const inRouter = useInRouterContext();
+  if (inRouter) {
+    return <LaporanKeuanganWithRouter {...props} />;
+  }
+  return <LaporanKeuanganContent {...props} />;
 }

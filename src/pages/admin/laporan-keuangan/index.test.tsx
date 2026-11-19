@@ -1,7 +1,15 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import LaporanKeuangan, { KategoriBadge, getCashFlowReport, getShuEstimation } from './index';
+import LaporanKeuangan, {
+  KategoriBadge,
+  getCashFlowReport,
+  getShuEstimation,
+  extractReceiptPeriodNumber,
+  getHighlightedShuRowIds,
+  getHighlightedCashFlowRowIds,
+} from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
 import * as cashFlowService from '../../../services/cashFlowService';
 import { supabase } from '../../../lib/supabaseClient';
@@ -1776,5 +1784,237 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
         (supabase.from as any).mockImplementation(defaultFromImpl);
       }
     }
+  });
+});
+
+describe('Deep-Link Navigation (?tab=, ?ref=, ?receipt=, ?date=) & Highlighting', () => {
+  it('extracts installment period from KW-PINJ/... receipts and matches SHU & Cash Flow target rows accurately', () => {
+    expect(extractReceiptPeriodNumber('KW-PINJ/LOAN-1795088101742/B1/20261119-HXO')).toBe('1');
+    expect(extractReceiptPeriodNumber('KW-PINJ/PINJ-MIGRASI-97109810/B24')).toBe('24');
+    expect(extractReceiptPeriodNumber('INV-12345')).toBeNull();
+
+    const shuIds = getHighlightedShuRowIds(
+      [
+        {
+          id: 'loan-repay-1',
+          referenceNumber: 'PAY-BRG-001',
+          loanNumber: 'LOAN-1795083121561',
+          sourceType: 'goods_financing',
+          transactionDate: '19/11/2026',
+          rawDate: '2026-11-19T08:00:00.000Z',
+          memberName: 'Surya Pratama',
+          memberNrp: '87010011',
+          paymentMethodLabel: 'Margin Pembiayaan',
+          omzet: 100000,
+          hpp: 0,
+          grossProfit: 100000,
+          marginPercent: 100,
+          items: [],
+        },
+        {
+          id: 'pos-99',
+          referenceNumber: 'INV-9999999',
+          sourceType: 'pos_cash',
+          transactionDate: '19/11/2026',
+          rawDate: '2026-11-19T09:00:00.000Z',
+          memberName: 'Pelanggan Umum',
+          memberNrp: '',
+          paymentMethodLabel: 'POS • Tunai',
+          omzet: 50000,
+          hpp: 40000,
+          grossProfit: 10000,
+          marginPercent: 20,
+          items: [],
+        },
+      ],
+      'LOAN-1795083121561',
+      'KW-PINJ/LOAN-1795083121561/B1/20261119-TCD'
+    );
+    expect(Array.from(shuIds)).toEqual(['loan-repay-1']);
+
+    const cfIds = getHighlightedCashFlowRowIds(
+      [
+        {
+          id: 'cf-disb',
+          tanggal: '19/10/2026',
+          referensi: 'CF-11111111',
+          deskripsi: 'Pencairan Pinjaman (LOAN-1795088101742) — 88010001 - Budi',
+          kategori: 'pencairan_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 0,
+          kas_keluar: 2000000,
+          saldo_berjalan: -2000000,
+          created_at: '2026-10-19T08:00:00.000Z',
+        },
+        {
+          id: 'cf-b1',
+          tanggal: '19/11/2026',
+          referensi: 'CF-50196D6C',
+          deskripsi: 'Angsuran Pinjaman (LOAN-1795088101742) Bln ke-1 — 88010001 - Budi',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: -1000000,
+          created_at: '2026-11-19T10:15:00.000Z',
+        },
+        {
+          id: 'cf-b2',
+          tanggal: '19/12/2026',
+          referensi: 'CF-60207E7D',
+          deskripsi: 'Angsuran Pinjaman (LOAN-1795088101742) Bln ke-2 — 88010001 - Budi',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: 0,
+          created_at: '2026-12-19T10:15:00.000Z',
+        },
+      ],
+      'LOAN-1795088101742',
+      'KW-PINJ/LOAN-1795088101742/B1/20261119-HXO',
+      '2026-11-19'
+    );
+    expect(Array.from(cfIds)).toEqual(['cf-b1']);
+  });
+
+  it('activates Estimasi SHU Berjalan tab, expands startDate, filters by ref/loanNumber, highlights matched row, and shows Reset Filter Referensi', () => {
+    const shuData = {
+      grossSales: 150000,
+      cogs: 120000,
+      grossProfit: 30000,
+      goodsFinancingMargin: 100000,
+      opex: 0,
+      estimatedShu: 130000,
+      marginPercentage: 52,
+      marginPerKategori: [],
+      shuReferenceRows: [
+        {
+          id: 'loan-repay-goods-1',
+          referenceNumber: 'PAY-GOODS-001',
+          loanNumber: 'LOAN-1795083121561',
+          sourceType: 'goods_financing' as const,
+          transactionDate: '15/8/2026',
+          rawDate: '2026-08-15T08:00:00.000Z',
+          memberName: 'Surya Pratama',
+          memberNrp: '87010011',
+          paymentMethodLabel: 'Margin Pembiayaan',
+          omzet: 100000,
+          hpp: 0,
+          grossProfit: 100000,
+          marginPercent: 100,
+          items: [],
+        },
+        {
+          id: 'pos-other-1',
+          referenceNumber: 'INV-OTHER-999',
+          sourceType: 'pos_cash' as const,
+          transactionDate: '19/11/2026',
+          rawDate: '2026-11-19T09:00:00.000Z',
+          memberName: 'Andi Wijaya',
+          memberNrp: '92030003',
+          paymentMethodLabel: 'POS • Tunai',
+          omzet: 150000,
+          hpp: 120000,
+          grossProfit: 30000,
+          marginPercent: 20,
+          items: [],
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter
+        initialEntries={[
+          '/admin/laporan-keuangan?tab=shu&ref=LOAN-1795083121561&receipt=KW-PINJ/LOAN-1795083121561/B1/20261119-TCD&date=2026-08-15',
+        ]}
+      >
+        <LaporanKeuangan initialShuData={shuData} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Rincian Sumber Laba &amp; Margin per Nomor Referensi');
+    expect(html).toContain('value="2026-08-15"');
+    expect(html).toContain('data-testid="shu-search-input"');
+    expect(html).toContain('value="LOAN-1795083121561"');
+    expect(html).toContain('PAY-GOODS-001');
+    expect(html).toContain('Surya Pratama');
+    expect(html).not.toContain('INV-OTHER-999');
+    expect(html).toContain('data-highlighted-ref="true"');
+    expect(html).toContain('bg-amber-50/90 ring-2 ring-amber-400/70');
+    expect(html).toContain('data-testid="reset-ref-filter-btn"');
+    expect(html).toContain('Reset Filter Referensi');
+  });
+
+  it('activates Arus Kas tab, populates cashflow search with ref, filters unrelated rows, and highlights only matching installment row', () => {
+    const cashFlowData = {
+      inflowTotal: 2150000,
+      outflowTotal: 0,
+      netCashflow: 2150000,
+      transactions: [
+        {
+          id: '50196d6c-0000-0000-0000-000000000001',
+          tanggal: '19/11/2026',
+          referensi: 'CF-50196D6C',
+          deskripsi: 'Angsuran Pinjaman (LOAN-1795088101742) Bln ke-1 — 88010001 - Budi',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: 1000000,
+          created_at: '2026-11-19T10:15:00.000Z',
+        },
+        {
+          id: '60207e7d-0000-0000-0000-000000000002',
+          tanggal: '19/12/2026',
+          referensi: 'CF-60207E7D',
+          deskripsi: 'Angsuran Pinjaman (LOAN-1795088101742) Bln ke-2 — 88010001 - Budi',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: 2000000,
+          created_at: '2026-12-19T10:15:00.000Z',
+        },
+        {
+          id: '99999999-0000-0000-0000-000000000003',
+          tanggal: '19/11/2026',
+          referensi: 'CF-99999999',
+          deskripsi: 'Penjualan Tunai (INV-8888) — Pelanggan Umum',
+          kategori: 'penjualan_tunai',
+          unit_usaha: 'Retail Toko',
+          kas_masuk: 150000,
+          kas_keluar: 0,
+          saldo_berjalan: 2150000,
+          created_at: '2026-11-19T11:00:00.000Z',
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter
+        initialEntries={[
+          '/admin/laporan-keuangan?tab=cashflow&ref=LOAN-1795088101742&receipt=KW-PINJ/LOAN-1795088101742/B1/20261119-HXO&date=2026-11-19',
+        ]}
+      >
+        <LaporanKeuangan initialCashFlowData={cashFlowData} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Mutasi Arus Kas Terperinci');
+    expect(html).toContain('data-testid="cashflow-search-input"');
+    expect(html).toContain('value="LOAN-1795088101742"');
+    expect(html).toContain('CF-50196D6C');
+    expect(html).toContain('Angsuran Pinjaman (LOAN-1795088101742) Bln ke-1');
+    expect(html).not.toContain('CF-99999999');
+    expect(html).toContain('data-testid="reset-ref-filter-btn"');
+    expect(html).toContain('Reset Filter Referensi');
+
+    // Only 1 row (CF-50196D6C) should carry data-highlighted-ref="true", not Bln ke-2
+    const highlightedMatches = html.match(/data-highlighted-ref="true"/g) ?? [];
+    expect(highlightedMatches).toHaveLength(1);
+    expect(html).toMatch(
+      /data-highlighted-ref="true"[\s\S]*?CF-50196D6C/
+    );
   });
 });
