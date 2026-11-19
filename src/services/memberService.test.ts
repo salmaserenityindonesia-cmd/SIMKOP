@@ -1052,6 +1052,82 @@ describe('memberService - resetAllMembersData', () => {
     expect(tableRows.member_deposits).toHaveLength(0);
     expect(tableRows.anggota).toHaveLength(0);
   });
+
+  it('removes SALDO_AWAL_SIMPANAN row from cash_flow after reset on both RPC and fallback paths', async () => {
+    const cashFlowRows = [
+      { id: 'cf-open-1', category: 'SALDO_AWAL_SIMPANAN', direction: 'in', amount: 2500000 },
+      { id: 'cf-other', category: 'penjualan_tunai', direction: 'in', amount: 50000 },
+    ];
+
+    const buildMockFrom = (withEmptyMembers = false) =>
+      vi.fn().mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col: string, val: string) => ({
+                order: vi.fn().mockResolvedValue({
+                  data: cashFlowRows.filter((r: any) => r[col] === val),
+                  error: null,
+                }),
+              })),
+            }),
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation(async (col: string, val: string) => {
+                for (let i = cashFlowRows.length - 1; i >= 0; i--) {
+                  if ((cashFlowRows[i] as any)[col] === val) cashFlowRows.splice(i, 1);
+                }
+                return { error: null };
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions' || table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+              neq: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return { update: vi.fn().mockReturnValue({ not: vi.fn().mockResolvedValue({ error: null }) }) };
+        }
+        if (table === 'audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            neq: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: withEmptyMembers ? [] : [], error: null }),
+            }),
+          }),
+        };
+      });
+
+    // Path 1: RPC succeeds
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: { success: true, members_deleted: 5, loans_deleted: 1, deposits_deleted: 20 },
+      error: null,
+    });
+    (supabase.from as any) = buildMockFrom();
+
+    await resetAllMembersData();
+    expect(cashFlowRows.some((r) => r.category === 'SALDO_AWAL_SIMPANAN')).toBe(false);
+    expect(cashFlowRows.some((r) => r.id === 'cf-other')).toBe(true);
+
+    // Path 2: RPC fails -> fallback deletion
+    cashFlowRows.push({ id: 'cf-open-2', category: 'SALDO_AWAL_SIMPANAN', direction: 'in', amount: 1500000 });
+    (supabase.rpc as any) = vi.fn().mockResolvedValue({
+      data: null,
+      error: { message: 'RPC missing' },
+    });
+    (supabase.from as any) = buildMockFrom(true);
+
+    await resetAllMembersData();
+    expect(cashFlowRows.some((r) => r.category === 'SALDO_AWAL_SIMPANAN')).toBe(false);
+  });
 });
 
 describe('memberService - extractMemberTHP and getActiveMembersForLoan', () => {

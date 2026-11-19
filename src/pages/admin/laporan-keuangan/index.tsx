@@ -4,7 +4,7 @@ import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
 import {
   resetFinancialTransactions,
-  syncInitialSavingsOpeningCashFlow,
+  syncOpeningSavingsBalanceToCashFlow,
 } from '../../../services/cashFlowService';
 import { syncUnrecordedStoreCreditPaymentsToCashFlow } from '../../../services/storeCreditLedgerService';
 
@@ -65,8 +65,8 @@ const todayStr = getLocalDateString(today);
 
 const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }> = {
   penjualan_tunai:     { bg: 'bg-emerald-50',  text: 'text-emerald-800', label: 'Penjualan POS' },
-  SALDO_AWAL_SIMPANAN: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Saldo Awal Simpanan' },
-  saldo_awal_simpanan: { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Saldo Awal Simpanan' },
+  SALDO_AWAL_SIMPANAN: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
+  saldo_awal_simpanan: { bg: 'bg-indigo-50 border border-indigo-200', text: 'text-indigo-700', label: 'Saldo Awal Simpanan (Cut-Off)' },
   PELUNASAN_BON_TOKO:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
   pelunasan_bon_toko:  { bg: 'bg-emerald-50 border border-emerald-200', text: 'text-emerald-700', label: 'Pelunasan Bon Toko' },
   SETORAN_ANGGOTA:     { bg: 'bg-blue-50',     text: 'text-blue-800',    label: 'Setoran Anggota' },
@@ -93,11 +93,11 @@ export const KategoriBadge = ({ kategori }: { kategori: string }) => {
 export async function getCashFlowReport(
   startDate: string,
   endDate: string,
-  unit: string
+  _unit: string
 ): Promise<CashFlowData> {
   // Sinkronkan pelunasan bon toko historis & saldo awal simpanan cut-off ke cash_flow (idempoten)
   await syncUnrecordedStoreCreditPaymentsToCashFlow().catch(() => {});
-  await syncInitialSavingsOpeningCashFlow().catch(() => {});
+  await syncOpeningSavingsBalanceToCashFlow().catch(() => {});
 
   // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
@@ -134,28 +134,38 @@ export async function getCashFlowReport(
     .gt('paid_cash', 0);
   if (salesErr) console.error('sales query error:', salesErr);
 
-  const rows: CashFlowTransaction[] = [];
-  let runningSaldo = 0;
+  const parseTimestamp = (raw?: string | null): number => {
+    if (!raw) return 0;
+    const ms = new Date(raw).getTime();
+    return isNaN(ms) ? 0 : ms;
+  };
+
+  const taggedRows: Array<{ row: CashFlowTransaction; ts: number }> = [];
 
   // Build from cash_flow
   for (const r of (cfRows ?? [])) {
-    const masuk  = r.direction === 'in'  ? Number(r.amount) : 0;
-    const keluar = r.direction === 'out' ? Number(r.amount) : 0;
-    runningSaldo += masuk - keluar;
+    const dir = r.direction ?? r.type;
+    const masuk  = dir === 'in'  ? Number(r.amount) : 0;
+    const keluar = dir === 'out' ? Number(r.amount) : 0;
     const isOpeningSavings =
       r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
-    rows.push({
-      id: r.id,
-      tanggal: new Date(r.created_at).toLocaleDateString('id-ID'),
-      referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
-      deskripsi:
-        r.description ??
-        (isOpeningSavings ? 'Saldo Awal Simpanan Anggota (Cut-Off Per 1 Maret 2026)' : '-'),
-      kategori: r.category ?? 'lainnya',
-      unit_usaha: 'Umum', // cash_flow table has no 'unit' column
-      kas_masuk: masuk,
-      kas_keluar: keluar,
-      saldo_berjalan: runningSaldo,
+    taggedRows.push({
+      ts: parseTimestamp(r.created_at),
+      row: {
+        id: r.id,
+        tanggal: new Date(r.created_at).toLocaleDateString('id-ID'),
+        referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
+        deskripsi:
+          r.description ??
+          (isOpeningSavings
+            ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
+            : '-'),
+        kategori: r.category ?? 'lainnya',
+        unit_usaha: 'Umum', // cash_flow table has no 'unit' column
+        kas_masuk: masuk,
+        kas_keluar: keluar,
+        saldo_berjalan: 0,
+      },
     });
   }
 
@@ -166,24 +176,27 @@ export async function getCashFlowReport(
     for (const s of (salesRows ?? [])) {
       const masuk = Number(s.paid_cash ?? 0);
       if (masuk > 0) {
-        runningSaldo += masuk;
-        rows.push({
-          id: s.id,
-          tanggal: new Date(s.created_at).toLocaleDateString('id-ID'),
-          referensi: `POS-${s.id.slice(0, 8).toUpperCase()}`,
-          deskripsi: 'Penjualan Kasir Tunai',
-          kategori: 'penjualan_tunai',
-          unit_usaha: 'Retail Toko',
-          kas_masuk: masuk,
-          kas_keluar: 0,
-          saldo_berjalan: runningSaldo,
+        taggedRows.push({
+          ts: parseTimestamp(s.created_at),
+          row: {
+            id: s.id,
+            tanggal: new Date(s.created_at).toLocaleDateString('id-ID'),
+            referensi: `POS-${s.id.slice(0, 8).toUpperCase()}`,
+            deskripsi: 'Penjualan Kasir Tunai',
+            kategori: 'penjualan_tunai',
+            unit_usaha: 'Retail Toko',
+            kas_masuk: masuk,
+            kas_keluar: 0,
+            saldo_berjalan: 0,
+          },
         });
       }
     }
   }
 
-  // Sort by tanggal ascending
-  rows.sort((a, b) => a.tanggal.localeCompare(b.tanggal));
+  // Sort chronologically by raw created_at timestamp
+  taggedRows.sort((a, b) => a.ts - b.ts);
+  const rows = taggedRows.map((item) => item.row);
 
   // Recalculate running saldo after sort
   let saldo = 0;
@@ -198,7 +211,7 @@ export async function getCashFlowReport(
   return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: rows };
 }
 
-async function getShuEstimation(
+export async function getShuEstimation(
   startDate: string,
   endDate: string
 ): Promise<ShuEstimationData> {
@@ -271,17 +284,35 @@ async function getShuEstimation(
     }
   }
 
-  // 3. Beban Operasional
+  // 3. Beban Operasional (secara eksplisit hanya mengambil beban operasional, mengecualikan saldo awal/simpanan)
   const { data: opexData, error: opexErr } = await supabase
     .from('cash_flow')
-    .select('amount')
+    .select('amount, category, direction')
     .gte('created_at', startDate)
     .lte('created_at', endDate + 'T23:59:59')
     .eq('direction', 'out')
     .eq('category', 'beban_operasional');
   if (opexErr) console.error('opex error:', opexErr);
 
-  const opex = (opexData ?? []).reduce((s: number, r: any) => s + Number(r.amount ?? 0), 0);
+  const NON_SHU_CATEGORIES = new Set([
+    'SALDO_AWAL_SIMPANAN',
+    'saldo_awal_simpanan',
+    'SETORAN_ANGGOTA',
+    'setoran_anggota',
+    'simpanan',
+  ]);
+
+  const opex = (opexData ?? [])
+    .filter((r: any) => {
+      const dir = r?.direction ?? r?.type;
+      const cat = r?.category;
+      if (dir !== undefined && dir !== 'out') return false;
+      if (cat !== undefined && (NON_SHU_CATEGORIES.has(cat) || cat !== 'beban_operasional')) {
+        return false;
+      }
+      return true;
+    })
+    .reduce((s: number, r: any) => s + Number(r?.amount ?? 0), 0);
   const grossProfit  = grossSales - cogs;
   const estimatedShu = grossProfit - opex;
   const marginPct    = grossSales > 0 ? (estimatedShu / grossSales) * 100 : 0;

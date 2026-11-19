@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import LaporanKeuangan, { KategoriBadge, getCashFlowReport } from './index';
+import LaporanKeuangan, { KategoriBadge, getCashFlowReport, getShuEstimation } from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
 import * as cashFlowService from '../../../services/cashFlowService';
 import { supabase } from '../../../lib/supabaseClient';
@@ -131,13 +131,13 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('Halaman 1 / 1');
   });
 
-  it('renders SALDO_AWAL_SIMPANAN category badge cleanly as "Saldo Awal Simpanan" with emerald styling', () => {
+  it('renders SALDO_AWAL_SIMPANAN category badge cleanly as "Saldo Awal Simpanan (Cut-Off)" with indigo styling', () => {
     const html = renderToStaticMarkup(<KategoriBadge kategori="SALDO_AWAL_SIMPANAN" />);
 
-    expect(html).toContain('Saldo Awal Simpanan');
-    expect(html).toContain('bg-emerald-50');
-    expect(html).toContain('text-emerald-700');
-    expect(html).toContain('border-emerald-200');
+    expect(html).toContain('Saldo Awal Simpanan (Cut-Off)');
+    expect(html).toContain('bg-indigo-50');
+    expect(html).toContain('text-indigo-700');
+    expect(html).toContain('border-indigo-200');
   });
 
   it('getCashFlowReport syncs opening savings and maps SALDO_AWAL_SIMPANAN to inflowTotal with default description', async () => {
@@ -224,7 +224,66 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
       expect(report.transactions[0]).toMatchObject({
         kategori: 'SALDO_AWAL_SIMPANAN',
         kas_masuk: 1250000,
-        deskripsi: 'Saldo Awal Simpanan Anggota (Cut-Off Per 1 Maret 2026)',
+        deskripsi: 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)',
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('getShuEstimation excludes SALDO_AWAL_SIMPANAN and deposit_transactions so SHU remains Rp 0 when sales are empty', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    const queriedTables: string[] = [];
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        queriedTables.push(table);
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({
+                      // Simulasikan apabila backend/mock mengembalikan baris SALDO_AWAL_SIMPANAN bersama hasil
+                      data: [
+                        { amount: 50000000, category: 'SALDO_AWAL_SIMPANAN', direction: 'in' },
+                        { amount: 2500000, category: 'SETORAN_ANGGOTA', direction: 'in' },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-01-01', '2026-11-19');
+
+      expect(queriedTables).not.toContain('deposit_transactions');
+      expect(shu).toEqual({
+        grossSales: 0,
+        cogs: 0,
+        grossProfit: 0,
+        opex: 0,
+        estimatedShu: 0,
+        marginPercentage: 0,
+        marginPerKategori: [],
       });
     } finally {
       if (defaultFromImpl) {

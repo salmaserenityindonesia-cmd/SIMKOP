@@ -2,9 +2,13 @@ import { supabase } from '../lib/supabaseClient';
 import type { Simpanan } from './depositManagementService';
 import { getActiveSavingsRateTiers } from './savingsRateService';
 import { normalizeName, type InitialSavingsRow } from '../utils/initialSavingsParser';
-import { syncInitialSavingsOpeningCashFlow } from './cashFlowService';
+import {
+  syncOpeningSavingsBalanceToCashFlow,
+  syncInitialSavingsOpeningCashFlow,
+} from './cashFlowService';
 
 export type { InitialSavingsRow };
+export { syncOpeningSavingsBalanceToCashFlow, syncInitialSavingsOpeningCashFlow };
 
 function shouldFallback(e: any): boolean {
   if (!e) return false;
@@ -1175,6 +1179,9 @@ export async function resetAllMembersData(): Promise<ResetMembersResult> {
   try {
     const { data, error: rpcError } = await supabase.rpc('reset_members_and_financial_records');
     if (!rpcError && data) {
+      await syncOpeningSavingsBalanceToCashFlow().catch((cfErr) => {
+        console.warn('Gagal menyinkronkan cash_flow setelah reset anggota:', cfErr);
+      });
       return data as ResetMembersResult;
     }
     if (rpcError) {
@@ -1227,6 +1234,10 @@ export async function resetAllMembersData(): Promise<ResetMembersResult> {
       console.warn('Gagal mencatat audit log reset anggota:', auditErr.message);
     }
 
+    await syncOpeningSavingsBalanceToCashFlow().catch((cfErr) => {
+      console.warn('Gagal menyinkronkan cash_flow setelah reset anggota:', cfErr);
+    });
+
     return {
       success: true,
       members_deleted: 0,
@@ -1267,7 +1278,8 @@ export async function syncInitialSavingsBalances(
     throw new Error('Tanggal aktif saldo awal wajib diisi dengan format YYYY-MM-DD yang valid.');
   }
 
-  const parsedEffectiveDate = new Date(`${trimmedDate}T00:00:00`);
+  const cutOffIso = `${trimmedDate}T00:00:00.000Z`;
+  const parsedEffectiveDate = new Date(cutOffIso);
   if (isNaN(parsedEffectiveDate.getTime())) {
     throw new Error('Tanggal aktif saldo awal wajib diisi dengan format YYYY-MM-DD yang valid.');
   }
@@ -1276,7 +1288,17 @@ export async function syncInitialSavingsBalances(
     throw new Error('Tidak ada data baris saldo awal untuk disimpan.');
   }
 
-  const effectiveIso = parsedEffectiveDate.toISOString();
+  const cutOffYear = Number(trimmedDate.slice(0, 4));
+  const cutOffMonth = Number(trimmedDate.slice(5, 7));
+  const openingForYear = cutOffMonth > 1 ? cutOffYear : cutOffYear - 1;
+  const openingForMonth = cutOffMonth > 1 ? cutOffMonth - 1 : 12;
+  const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+  const openingDescription = `Saldo Awal Cut-Off (s/d ${SHORT_MONTHS[openingForMonth - 1]} ${openingForYear})`;
+  const preCutOffFilter =
+    cutOffMonth > 1
+      ? `and(for_year.eq.${cutOffYear},for_month.lte.${cutOffMonth - 1})`
+      : `for_year.lt.${cutOffYear}`;
+  const cleanOrFilter = `description.ilike.%saldo awal%,description.ilike.%migrasi%,description.ilike.%cut-off%,${preCutOffFilter}`;
 
   // 1. Pemetaan NRP -> anggota.id & nama
   let memberRows: Array<{ id: string; nrp: string; nama?: string }> = [];
@@ -1479,7 +1501,7 @@ export async function syncInitialSavingsBalances(
 
       const primaryDepositAccountId = accountIdsForType[0];
 
-      // Clean Overwrite: bersihkan transaksi saldo awal / migrasi sebelumnya untuk rekening ini
+      // Clean Overwrite: bersihkan transaksi saldo awal / cut-off / migrasi sebelumnya untuk rekening ini
       for (const accId of accountIdsForType) {
         const delBase: any = supabase
           .from('deposit_transactions')
@@ -1488,8 +1510,20 @@ export async function syncInitialSavingsBalances(
 
         let delErr: any = null;
         if (typeof delBase?.or === 'function') {
-          const res = await delBase.or('description.ilike.%Saldo Awal%,description.ilike.%Migrasi%,for_month.is.null');
+          const res = await delBase.or(cleanOrFilter);
           delErr = res?.error;
+          if (delErr) {
+            const retryBase: any = supabase
+              .from('deposit_transactions')
+              .delete()
+              .eq('member_deposit_id', accId);
+            if (typeof retryBase?.or === 'function') {
+              const retryRes = await retryBase.or(
+                'description.ilike.%saldo awal%,description.ilike.%migrasi%,description.ilike.%cut-off%'
+              );
+              delErr = retryRes?.error;
+            }
+          }
         } else {
           const res = await delBase;
           delErr = res?.error;
@@ -1504,11 +1538,11 @@ export async function syncInitialSavingsBalances(
         const { error: insTxErr } = await supabase.from('deposit_transactions').insert({
           member_deposit_id: primaryDepositAccountId,
           transaction_type: 'deposit',
-          amount: entry.amount,
-          description: `Saldo Awal Simpanan (Aktif sejak ${trimmedDate})`,
-          for_month: null,
-          for_year: null,
-          created_at: effectiveIso,
+          amount: Math.round(entry.amount),
+          for_year: openingForYear,
+          for_month: openingForMonth,
+          description: openingDescription,
+          created_at: cutOffIso,
         });
 
         if (insTxErr) {
@@ -1535,7 +1569,9 @@ export async function syncInitialSavingsBalances(
                     Math.round(
                       accTxs.reduce((sum: number, t: any) => {
                         const amt = Number(t?.amount || 0);
-                        return t?.transaction_type === 'withdrawal' ? sum - amt : sum + amt;
+                        return t?.transaction_type === 'withdrawal' || t?.transaction_type === 'termination'
+                          ? sum - amt
+                          : sum + amt;
                       }, 0)
                     )
                   );
@@ -1597,7 +1633,7 @@ export async function syncInitialSavingsBalances(
   }
 
   // 5. Sinkronkan rekap saldo awal simpanan ke public.cash_flow secara idempoten berbasis selisih
-  await syncInitialSavingsOpeningCashFlow(totalImportedOpening, trimmedDate).catch((cfErr) => {
+  await syncOpeningSavingsBalanceToCashFlow(trimmedDate, totalImportedOpening).catch((cfErr) => {
     console.warn('Gagal menyinkronkan saldo awal simpanan ke cash_flow:', cfErr);
   });
 

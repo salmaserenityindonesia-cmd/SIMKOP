@@ -276,8 +276,10 @@ describe('syncInitialSavingsBalances', () => {
       member_deposit_id: 'md-pokok',
       transaction_type: 'deposit',
       amount: 100000,
-      description: 'Saldo Awal Simpanan (Aktif sejak 2026-01-01)',
-      created_at: new Date('2026-01-01T00:00:00').toISOString(),
+      for_year: 2025,
+      for_month: 12,
+      description: 'Saldo Awal Cut-Off (s/d Des 2025)',
+      created_at: '2026-01-01T00:00:00.000Z',
     });
 
     expect(upsertedSettings[0]).toMatchObject({
@@ -439,6 +441,20 @@ describe('syncInitialSavingsBalances', () => {
               return Promise.resolve({ error: null });
             }),
           })),
+          delete: vi.fn().mockImplementation(() => ({
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              for (let idx = cashFlowRows.length - 1; idx >= 0; idx--) {
+                if (cashFlowRows[idx][col] === val) cashFlowRows.splice(idx, 1);
+              }
+              return Promise.resolve({ error: null });
+            }),
+            in: vi.fn().mockImplementation((col: string, vals: string[]) => {
+              for (let idx = cashFlowRows.length - 1; idx >= 0; idx--) {
+                if (vals.includes(cashFlowRows[idx][col])) cashFlowRows.splice(idx, 1);
+              }
+              return Promise.resolve({ error: null });
+            }),
+          })),
         };
       }
       if (table === 'system_settings') {
@@ -466,6 +482,19 @@ describe('syncInitialSavingsBalances', () => {
     );
 
     expect(orCalls).toHaveLength(4);
+    for (const filterStr of orCalls) {
+      expect(filterStr).toContain('description.ilike.%saldo awal%');
+      expect(filterStr).toContain('description.ilike.%migrasi%');
+      expect(filterStr).toContain('description.ilike.%cut-off%');
+      expect(filterStr).toContain('and(for_year.eq.2026,for_month.lte.2)');
+    }
+    expect(txStore).toHaveLength(4);
+    expect(txStore[0]).toMatchObject({
+      for_year: 2026,
+      for_month: 2,
+      description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+      created_at: '2026-03-01T00:00:00.000Z',
+    });
     expect(balanceUpdates).toEqual([
       { id: 'md-pokok', balance: 100000 },
       { id: 'md-wajib', balance: 500000 },
@@ -480,7 +509,7 @@ describe('syncInitialSavingsBalances', () => {
       created_at: '2026-03-01T00:00:00.000Z',
     });
 
-    // Impor ulang dengan perubahan nominal: total menjadi 1.000.000 (tidak boleh duplikat baris cash_flow)
+    // Impor ulang dengan perubahan nominal naik: total menjadi 1.000.000 (tidak boleh duplikat baris cash_flow)
     await syncInitialSavingsBalances(
       [
         {
@@ -497,6 +526,41 @@ describe('syncInitialSavingsBalances', () => {
 
     expect(cashFlowRows).toHaveLength(1);
     expect(cashFlowRows[0].amount).toBe(1000000);
+
+    // Impor ulang dengan perubahan nominal turun: total menjadi 600.000 (tidak boleh duplikat baris cash_flow)
+    await syncInitialSavingsBalances(
+      [
+        {
+          nrp: '12345678',
+          nama: 'Budi Santoso',
+          jumlah_simpanan_pokok: 100000,
+          jumlah_simpanan_wajib: 300000,
+          jumlah_simpanan_belanja: 50000,
+          jumlah_simpanan_lebaran: 150000,
+        },
+      ],
+      '2026-03-01'
+    );
+
+    expect(cashFlowRows).toHaveLength(1);
+    expect(cashFlowRows[0].amount).toBe(600000);
+
+    // Overwrite semua saldo menjadi 0 -> baris SALDO_AWAL_SIMPANAN dihapus dari cash_flow
+    await syncInitialSavingsBalances(
+      [
+        {
+          nrp: '12345678',
+          nama: 'Budi Santoso',
+          jumlah_simpanan_pokok: 0,
+          jumlah_simpanan_wajib: 0,
+          jumlah_simpanan_belanja: 0,
+          jumlah_simpanan_lebaran: 0,
+        },
+      ],
+      '2026-03-01'
+    );
+
+    expect(cashFlowRows).toHaveLength(0);
   });
 
   it('invokes onProgress callback sequentially from 1 to total with member name', async () => {
