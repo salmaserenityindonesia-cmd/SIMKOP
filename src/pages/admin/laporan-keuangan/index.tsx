@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
-import { ExternalLink, Receipt } from 'lucide-react';
+import { ExternalLink, Receipt, Search, X } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
+import ShuReferenceDetailModal, {
+  type ShuReferenceRow,
+  type ShuReferenceLineItem,
+  type ShuSourceType,
+} from '../../../components/finance/ShuReferenceDetailModal';
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
 import {
@@ -55,6 +60,8 @@ export interface MarginKategori {
   gross_margin_pct: number;
 }
 
+export type { ShuReferenceRow, ShuReferenceLineItem, ShuSourceType };
+
 export interface ShuEstimationData {
   grossSales: number;
   cogs: number;
@@ -64,6 +71,7 @@ export interface ShuEstimationData {
   estimatedShu: number;
   marginPercentage: number;
   marginPerKategori: MarginKategori[];
+  shuReferenceRows?: ShuReferenceRow[];
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -256,76 +264,235 @@ export async function getCashFlowReport(
   return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: enrichedRows };
 }
 
+const isMissingColumnErr = (err: any): boolean => {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    err.code === '42703' ||
+    err.code === 'PGRST204' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+};
+
+const classifyPosPaymentSource = (
+  sale: any
+): { sourceType: ShuSourceType; paymentMethodLabel: string } => {
+  const paidCash = Number(sale?.paid_cash ?? 0);
+  const paidDeposit = Number(sale?.paid_deposit ?? 0);
+  const paidCredit = Number(sale?.paid_credit ?? 0);
+  const positiveChannels = [paidCash > 0, paidDeposit > 0, paidCredit > 0].filter(Boolean).length;
+
+  if (positiveChannels > 1) {
+    return { sourceType: 'pos_split', paymentMethodLabel: 'POS • Campuran' };
+  }
+  if (paidCredit > 0 || sale?.payment_scheme === 'store_credit') {
+    return { sourceType: 'pos_credit', paymentMethodLabel: 'POS • Bon Toko' };
+  }
+  if (paidDeposit > 0) {
+    return { sourceType: 'pos_deposit', paymentMethodLabel: 'POS • Potong Simpanan' };
+  }
+  return { sourceType: 'pos_cash', paymentMethodLabel: 'POS • Tunai' };
+};
+
+const SHU_SOURCE_BADGE: Record<ShuSourceType, { bg: string; text: string }> = {
+  pos_cash:        { bg: 'bg-emerald-50 border border-emerald-200/80', text: 'text-emerald-700' },
+  pos_deposit:     { bg: 'bg-blue-50 border border-blue-200/80',       text: 'text-blue-700' },
+  pos_credit:      { bg: 'bg-amber-50 border border-amber-200/80',     text: 'text-amber-800' },
+  pos_split:       { bg: 'bg-purple-50 border border-purple-200/80',   text: 'text-purple-700' },
+  goods_financing: { bg: 'bg-teal-50 border border-teal-200/80',       text: 'text-teal-800' },
+};
+
+const formatDisplayDateId = (raw?: string | null): string => {
+  if (!raw) return '-';
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? String(raw) : d.toLocaleDateString('id-ID');
+};
+
 export async function getShuEstimation(
   startDate: string,
   endDate: string
 ): Promise<ShuEstimationData> {
   // 1. Total Omzet dari sales.total_amount (completed)
   // NOTE: actual column is 'sale_status' (enum), not 'status'
-  const { data: salesData, error: salesErr } = await supabase
-    .from('sales')
-    .select('id, total_amount, created_at')
-    .gte('created_at', startDate)
-    .lte('created_at', endDate + 'T23:59:59')
-    .eq('sale_status', 'completed');
-  if (salesErr) console.error('shu sales error:', salesErr);
+  const runSalesQuery = async (cols: string): Promise<any> => {
+    return await (supabase.from('sales') as any)
+      .select(cols)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate + 'T23:59:59')
+      .eq('sale_status', 'completed');
+  };
 
-  const grossSales = (salesData ?? []).reduce((s: number, r: any) => s + Number(r.total_amount ?? 0), 0);
-  const saleIds = (salesData ?? []).map((r: any) => r.id);
+  let salesRes: any = await runSalesQuery(
+    'id, sale_number, member_id, subtotal, discount, total_amount, paid_cash, paid_deposit, paid_credit, payment_scheme, created_at'
+  );
+  if (salesRes?.error && isMissingColumnErr(salesRes.error)) {
+    salesRes = await runSalesQuery('id, total_amount, created_at');
+  }
+  if (salesRes?.error) console.error('shu sales error:', salesRes.error);
 
-  // 2. HPP = SUM(sale_items.quantity * products.buy_price)
+  const salesData: any[] = Array.isArray(salesRes?.data) ? salesRes.data : [];
+  const grossSales = salesData.reduce((s: number, r: any) => s + Number(r.total_amount ?? 0), 0);
+  const saleIds = salesData.map((r: any) => r.id);
+
+  // 2. HPP = SUM(sale_items.quantity * products.buy_price) & Rincian per Referensi
   let cogs = 0;
   const marginMap: Record<string, { omzet: number; hpp: number; kategori: string }> = {};
+  const memberMap: Record<string, { nrp: string; nama: string }> = {};
+  const shuReferenceRows: ShuReferenceRow[] = [];
 
   if (saleIds.length > 0) {
     // NOTE: sale_items has both (quantity/unit_price) and (qty/price) columns.
     // 'quantity' is NOT NULL so it's the canonical column for HPP calculation.
-    const { data: saleItems, error: siErr } = await supabase
-      .from('sale_items')
-      .select('quantity, unit_price, product_id, sale_id')
-      .in('sale_id', saleIds);
-    if (siErr) console.error('sale_items error:', siErr);
+    const runSaleItemsQuery = async (cols: string): Promise<any> => {
+      const q: any = (supabase.from('sale_items') as any).select(cols);
+      if (q && typeof q.in === 'function') {
+        return await q.in('sale_id', saleIds);
+      }
+      if (q && typeof q.then === 'function') return await q;
+      return { data: [], error: null };
+    };
 
-    const productIds = [...new Set((saleItems ?? []).map((si: any) => si.product_id))];
+    let siRes: any = await runSaleItemsQuery(
+      'sale_id, product_id, product_name, quantity, qty, unit_price, price, subtotal'
+    );
+    if (siRes?.error && isMissingColumnErr(siRes.error)) {
+      siRes = await runSaleItemsQuery('quantity, unit_price, product_id, sale_id');
+    }
+    if (siRes?.error) console.error('sale_items error:', siRes.error);
+    const saleItems: any[] = Array.isArray(siRes?.data) ? siRes.data : [];
 
-    let productMap: Record<string, { buy_price: number; category_id: string }> = {};
+    const productIds = [...new Set(saleItems.map((si: any) => si.product_id).filter(Boolean))];
+
+    const productMap: Record<string, { name?: string; buy_price: number; category_id: string }> = {};
     if (productIds.length > 0) {
-      const { data: products, error: prodErr } = await supabase
-        .from('products')
-        .select('id, buy_price, category_id')
-        .in('id', productIds);
-      if (prodErr) console.error('products error:', prodErr);
-      for (const p of (products ?? [])) {
-        productMap[p.id] = { buy_price: Number(p.buy_price ?? 0), category_id: p.category_id };
+      const runProdQuery = async (cols: string): Promise<any> => {
+        const q: any = (supabase.from('products') as any).select(cols);
+        if (q && typeof q.in === 'function') return await q.in('id', productIds);
+        if (q && typeof q.then === 'function') return await q;
+        return { data: [], error: null };
+      };
+      let prodRes: any = await runProdQuery('id, name, buy_price, category_id');
+      if (prodRes?.error && isMissingColumnErr(prodRes.error)) {
+        prodRes = await runProdQuery('id, buy_price, category_id');
+      }
+      if (prodRes?.error) console.error('products error:', prodRes.error);
+      for (const p of (Array.isArray(prodRes?.data) ? prodRes.data : [])) {
+        productMap[p.id] = {
+          name: p.name,
+          buy_price: Number(p.buy_price ?? 0),
+          category_id: p.category_id,
+        };
       }
     }
 
     // Get categories
     const catIds = [...new Set(Object.values(productMap).map(p => p.category_id).filter(Boolean))];
-    let catMap: Record<string, string> = {};
+    const catMap: Record<string, string> = {};
     if (catIds.length > 0) {
-      const { data: cats } = await supabase
-        .from('product_categories')
-        .select('id, name')
-        .in('id', catIds);
-      for (const c of (cats ?? [])) catMap[c.id] = c.name;
+      try {
+        const catQ: any = supabase.from('product_categories')?.select?.('id, name');
+        if (catQ && typeof catQ.in === 'function') {
+          const { data: cats } = await catQ.in('id', catIds);
+          for (const c of (cats ?? [])) catMap[c.id] = c.name;
+        }
+      } catch {
+        // Non-blocking fallback
+      }
     }
 
-    // Build a map of sale_id -> sale total for omzet by category
-    const saleAmountMap: Record<string, number> = {};
-    for (const s of (salesData ?? [])) saleAmountMap[s.id] = Number(s.total_amount ?? 0);
+    // Fetch member identities for POS sales
+    const saleMemberIds = [
+      ...new Set(salesData.map((s: any) => s.member_id).filter(Boolean).map(String)),
+    ];
+    if (saleMemberIds.length > 0) {
+      try {
+        const memQ: any = supabase.from('anggota')?.select?.('id, nrp, nama');
+        if (memQ && typeof memQ.in === 'function') {
+          const mRes = await memQ.in('id', saleMemberIds);
+          for (const m of mRes?.data || []) {
+            if (m?.id) {
+              memberMap[String(m.id)] = {
+                nrp: String(m.nrp ?? ''),
+                nama: String(m.nama ?? ''),
+              };
+            }
+          }
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+    }
 
-    for (const si of (saleItems ?? [])) {
+    const itemsBySaleId: Record<string, ShuReferenceLineItem[]> = {};
+
+    for (const si of saleItems) {
       const prod = productMap[si.product_id];
-      if (!prod) continue;
-      const itemHpp   = Number(si.quantity ?? 0) * prod.buy_price;
-      const itemOmzet = Number(si.quantity ?? 0) * Number(si.unit_price ?? 0);
-      cogs += itemHpp;
+      const qty = Number(si.quantity ?? si.qty ?? 0);
+      const sellPrice = Number(si.unit_price ?? si.price ?? 0);
+      const buyPrice = prod ? prod.buy_price : Number(si.buy_price ?? 0);
+      const subtotalOmzet = qty * sellPrice;
+      const subtotalHpp = qty * buyPrice;
+      const subtotalProfit = subtotalOmzet - subtotalHpp;
+      const productName = String(si.product_name || prod?.name || 'Produk');
+      const categoryName = prod?.category_id ? (catMap[prod.category_id] ?? 'Lainnya') : 'Lainnya';
 
-      const catName = catMap[prod.category_id] ?? 'Lainnya';
-      if (!marginMap[catName]) marginMap[catName] = { omzet: 0, hpp: 0, kategori: catName };
-      marginMap[catName].omzet += itemOmzet;
-      marginMap[catName].hpp   += itemHpp;
+      cogs += subtotalHpp;
+
+      if (!marginMap[categoryName]) {
+        marginMap[categoryName] = { omzet: 0, hpp: 0, kategori: categoryName };
+      }
+      marginMap[categoryName].omzet += subtotalOmzet;
+      marginMap[categoryName].hpp += subtotalHpp;
+
+      const saleKey = String(si.sale_id);
+      if (!itemsBySaleId[saleKey]) itemsBySaleId[saleKey] = [];
+      itemsBySaleId[saleKey].push({
+        productName,
+        categoryName,
+        qty,
+        sellPrice,
+        buyPrice,
+        subtotalOmzet,
+        subtotalHpp,
+        subtotalProfit,
+      });
+    }
+
+    for (const sale of salesData) {
+      const sid = String(sale.id);
+      const lineItems = itemsBySaleId[sid] ?? [];
+      const itemsOmzet = lineItems.reduce((sum, it) => sum + it.subtotalOmzet, 0);
+      const itemsHpp = lineItems.reduce((sum, it) => sum + it.subtotalHpp, 0);
+      const omzet =
+        sale.total_amount !== undefined && sale.total_amount !== null
+          ? Number(sale.total_amount)
+          : itemsOmzet;
+      const hpp = itemsHpp;
+      const grossProfit = omzet - hpp;
+      const marginPercent = omzet > 0 ? (grossProfit / omzet) * 100 : 0;
+      const { sourceType, paymentMethodLabel } = classifyPosPaymentSource(sale);
+      const member = sale.member_id ? memberMap[String(sale.member_id)] : undefined;
+      const rawDate = String(sale.created_at || '');
+
+      shuReferenceRows.push({
+        id: `pos-${sid}`,
+        referenceNumber: String(
+          sale.sale_number || `INV-${sid.slice(0, 8).toUpperCase()}`
+        ),
+        sourceType,
+        transactionDate: formatDisplayDateId(rawDate),
+        rawDate,
+        memberName: member?.nama || 'Pelanggan Umum',
+        memberNrp: member?.nrp ?? '',
+        paymentMethodLabel,
+        omzet,
+        hpp,
+        grossProfit,
+        marginPercent,
+        discount: Number(sale.discount ?? 0),
+        items: lineItems,
+      });
     }
   }
 
@@ -367,10 +534,7 @@ export async function getShuEstimation(
   try {
     const repayTable: any = supabase.from('loan_repayments');
     if (repayTable && typeof repayTable.select === 'function') {
-      const runRepayQuery = async (withPortionCols: boolean) => {
-        const cols = withPortionCols
-          ? 'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_date, payment_method'
-          : 'id, loan_id, schedule_id, amount_paid, payment_date, payment_method';
+      const runRepayQuery = async (cols: string) => {
         const q: any = repayTable.select(cols);
         if (q && typeof q.gte === 'function') {
           const gteQ = q.gte('payment_date', startDate);
@@ -385,19 +549,18 @@ export async function getShuEstimation(
         return { data: [], error: null };
       };
 
-      let repayRes = await runRepayQuery(true);
-      if (repayRes?.error) {
-        const msg = String(repayRes.error.message || '').toLowerCase();
-        if (
-          repayRes.error.code === '42703' ||
-          repayRes.error.code === 'PGRST204' ||
-          msg.includes('margin_portion') ||
-          msg.includes('principal_portion') ||
-          msg.includes('column') ||
-          msg.includes('schema cache')
-        ) {
-          repayRes = await runRepayQuery(false);
-        }
+      let repayRes = await runRepayQuery(
+        'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_date, payment_method, receipt_number, notes'
+      );
+      if (repayRes?.error && isMissingColumnErr(repayRes.error)) {
+        repayRes = await runRepayQuery(
+          'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_date, payment_method'
+        );
+      }
+      if (repayRes?.error && isMissingColumnErr(repayRes.error)) {
+        repayRes = await runRepayQuery(
+          'id, loan_id, schedule_id, amount_paid, payment_date, payment_method'
+        );
       }
 
       const rawRepayments = Array.isArray(repayRes?.data) ? repayRes.data : [];
@@ -424,10 +587,6 @@ export async function getShuEstimation(
         const schedIds = Array.from(
           new Set(missingMarginRows.map((r: any) => r.schedule_id).filter(Boolean).map(String))
         );
-        const loanIds = Array.from(
-          new Set(missingMarginRows.map((r: any) => r.loan_id).filter(Boolean).map(String))
-        );
-
         if (schedIds.length > 0) {
           try {
             const schedQ: any = supabase
@@ -443,48 +602,145 @@ export async function getShuEstimation(
             // Non-blocking fallback
           }
         }
+      }
 
-        if (loanIds.length > 0) {
-          try {
-            const loanQ: any = supabase
-              .from('loans')
-              ?.select?.('id, amount, principal_amount, cost_price, markup_amount');
+      const allLoanIds = Array.from(
+        new Set(validRepayments.map((r: any) => r.loan_id).filter(Boolean).map(String))
+      );
+      if (allLoanIds.length > 0) {
+        try {
+          const runLoanQuery = async (cols: string) => {
+            const loanQ: any = supabase.from('loans')?.select?.(cols);
             if (loanQ && typeof loanQ.in === 'function') {
-              const lRes = await loanQ.in('id', loanIds);
-              for (const l of lRes?.data || []) {
-                if (l?.id) loanLookup.set(String(l.id), l);
+              return await loanQ.in('id', allLoanIds);
+            }
+            return { data: [], error: null };
+          };
+          let lRes = await runLoanQuery(
+            'id, loan_number, member_id, amount, principal_amount, cost_price, markup_amount, item_description'
+          );
+          if (lRes?.error && isMissingColumnErr(lRes.error)) {
+            lRes = await runLoanQuery('id, amount, principal_amount, member_id');
+          }
+          for (const l of lRes?.data || []) {
+            if (l?.id) loanLookup.set(String(l.id), l);
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      }
+
+      const loanMemberIds = Array.from(
+        new Set(
+          Array.from(loanLookup.values())
+            .map((l: any) => l?.member_id)
+            .filter((id: any) => id && !memberMap[String(id)])
+            .map(String)
+        )
+      );
+      if (loanMemberIds.length > 0) {
+        try {
+          const memQ: any = supabase.from('anggota')?.select?.('id, nrp, nama');
+          if (memQ && typeof memQ.in === 'function') {
+            const mRes = await memQ.in('id', loanMemberIds);
+            for (const m of mRes?.data || []) {
+              if (m?.id) {
+                memberMap[String(m.id)] = {
+                  nrp: String(m.nrp ?? ''),
+                  nama: String(m.nama ?? ''),
+                };
               }
             }
-          } catch {
-            // Non-blocking fallback
           }
+        } catch {
+          // Non-blocking fallback
         }
       }
 
       for (const r of validRepayments) {
         const explicitMargin = Math.round(Number(r?.margin_portion || 0));
-        if (explicitMargin > 0) {
-          goodsFinancingMargin += explicitMargin;
-          continue;
-        }
+        let marginPortion = 0;
+        let principalPortion = 0;
 
         const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
         const loan = r?.loan_id ? loanLookup.get(String(r.loan_id)) : null;
-        const portions = calculateRepaymentPortions({
-          amountPaid: Number(r?.amount_paid || 0),
-          targetAmount: Number(sched?.target_amount || r?.amount_paid || 0),
-          schedulePrincipalPortion: sched?.principal_portion,
-          scheduleMarginPortion: sched?.margin_portion,
-          loanCostPrice: loan?.cost_price,
-          loanMarkupAmount: loan?.markup_amount,
-          loanTotalAmount: loan?.principal_amount ?? loan?.amount,
-        });
-        goodsFinancingMargin += portions.marginPortion;
+
+        if (explicitMargin > 0) {
+          marginPortion = explicitMargin;
+          principalPortion =
+            r?.principal_portion !== undefined && r?.principal_portion !== null
+              ? Math.round(Number(r.principal_portion))
+              : Math.max(0, Math.round(Number(r?.amount_paid || 0)) - marginPortion);
+        } else {
+          const portions = calculateRepaymentPortions({
+            amountPaid: Number(r?.amount_paid || 0),
+            targetAmount: Number(sched?.target_amount || r?.amount_paid || 0),
+            schedulePrincipalPortion: sched?.principal_portion,
+            scheduleMarginPortion: sched?.margin_portion,
+            loanCostPrice: loan?.cost_price,
+            loanMarkupAmount: loan?.markup_amount,
+            loanTotalAmount: loan?.principal_amount ?? loan?.amount,
+          });
+          marginPortion = portions.marginPortion;
+          principalPortion = portions.principalPortion;
+        }
+
+        goodsFinancingMargin += marginPortion;
+
+        if (marginPortion > 0) {
+          const refNo = String(
+            r?.receipt_number ||
+              loan?.loan_number ||
+              `PAY-${String(r?.id || '').slice(0, 8).toUpperCase()}`
+          );
+          const rawDate = String(r?.payment_date || '');
+          const member = loan?.member_id ? memberMap[String(loan.member_id)] : undefined;
+          const itemLabel = loan?.item_description
+            ? `Margin Pembiayaan Barang — ${String(loan.item_description)}`
+            : 'Realisasi Margin Pembiayaan Barang';
+
+          shuReferenceRows.push({
+            id: `loan-repay-${String(r?.id || refNo)}`,
+            referenceNumber: refNo,
+            sourceType: 'goods_financing',
+            transactionDate: formatDisplayDateId(rawDate),
+            rawDate,
+            memberName: member?.nama || 'Pelanggan Umum',
+            memberNrp: member?.nrp ?? '',
+            paymentMethodLabel: 'Margin Pembiayaan',
+            omzet: marginPortion,
+            hpp: 0,
+            grossProfit: marginPortion,
+            marginPercent: 100,
+            repaymentAmount: Number(r?.amount_paid || 0),
+            principalPortion,
+            loanNumber: loan?.loan_number ?? null,
+            items: [
+              {
+                productName: itemLabel,
+                categoryName: 'Pembiayaan Barang',
+                qty: 1,
+                sellPrice: marginPortion,
+                buyPrice: 0,
+                subtotalOmzet: marginPortion,
+                subtotalHpp: 0,
+                subtotalProfit: marginPortion,
+              },
+            ],
+          });
+        }
       }
     }
   } catch (goodsMarginErr) {
     console.warn('Gagal menghitung pendapatan margin pembiayaan barang:', goodsMarginErr);
   }
+
+  const getSafeTime = (raw: string): number => {
+    if (!raw) return 0;
+    const ms = new Date(raw).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+  };
+  shuReferenceRows.sort((a, b) => getSafeTime(b.rawDate) - getSafeTime(a.rawDate));
 
   const grossProfit  = grossSales - cogs;
   const estimatedShu = grossProfit + goodsFinancingMargin - opex;
@@ -508,6 +764,7 @@ export async function getShuEstimation(
     estimatedShu,
     marginPercentage: marginPct,
     marginPerKategori,
+    shuReferenceRows,
   };
 }
 
@@ -520,6 +777,8 @@ export interface LaporanKeuanganProps {
   initialStoreCreditSummary?: OutstandingStoreCreditSummary | null;
   initialActiveTab?: 'cashflow' | 'shu';
   initialShuData?: ShuEstimationData | null;
+  initialSelectedShuRef?: ShuReferenceRow | null;
+  initialShuSearchQuery?: string;
 }
 
 export default function LaporanKeuangan({
@@ -529,6 +788,8 @@ export default function LaporanKeuangan({
   initialStoreCreditSummary = null,
   initialActiveTab = 'cashflow',
   initialShuData = null,
+  initialSelectedShuRef = null,
+  initialShuSearchQuery = '',
 }: LaporanKeuanganProps = {}) {
   const { showToast } = useFeedback();
   const inRouter = useInRouterContext();
@@ -552,6 +813,14 @@ export default function LaporanKeuangan({
   const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
   const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
     initialSelectedCashFlowRef ?? null
+  );
+
+  // State Pencarian, Pagination & Drill-Down Tabel Estimasi SHU
+  const [shuSearchQuery, setShuSearchQuery] = useState<string>(initialShuSearchQuery);
+  const [shuCurrentPage, setShuCurrentPage] = useState<number>(1);
+  const [shuPageSize, setShuPageSize] = useState<number>(10);
+  const [selectedShuRef, setSelectedShuRef] = useState<ShuReferenceRow | null>(
+    initialSelectedShuRef ?? null
   );
 
   // State Modal Konfirmasi Reset Kas
@@ -589,6 +858,10 @@ export default function LaporanKeuangan({
     setCashFlowPage(1);
   }, [startDate, endDate, unit]);
 
+  useEffect(() => {
+    setShuCurrentPage(1);
+  }, [shuSearchQuery, shuPageSize, startDate, endDate, unit]);
+
   const cashFlowTransactions = cashFlowData?.transactions ?? [];
   const totalCashFlowItems = cashFlowTransactions.length;
   const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
@@ -596,6 +869,35 @@ export default function LaporanKeuangan({
   const cashFlowStartIndex = (safeCashFlowPage - 1) * cashFlowPageSize;
   const cashFlowEndIndex = Math.min(cashFlowStartIndex + cashFlowPageSize, totalCashFlowItems);
   const paginatedCashFlow = cashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
+
+  const shuReferenceRows = shuData?.shuReferenceRows ?? [];
+  const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
+  const filteredShuRows = normalizedShuQuery
+    ? shuReferenceRows.filter((row) => {
+        const refMatch = row.referenceNumber.toLowerCase().includes(normalizedShuQuery);
+        const nameMatch = row.memberName.toLowerCase().includes(normalizedShuQuery);
+        const nrpMatch = row.memberNrp.toLowerCase().includes(normalizedShuQuery);
+        const methodMatch = row.paymentMethodLabel.toLowerCase().includes(normalizedShuQuery);
+        return refMatch || nameMatch || nrpMatch || methodMatch;
+      })
+    : shuReferenceRows;
+  const totalShuItems = filteredShuRows.length;
+  const totalShuPages = Math.max(1, Math.ceil(totalShuItems / shuPageSize));
+  const safeShuPage = Math.min(shuCurrentPage, totalShuPages);
+  const shuStartIndex = (safeShuPage - 1) * shuPageSize;
+  const shuEndIndex = Math.min(shuStartIndex + shuPageSize, totalShuItems);
+  const paginatedShuRows = filteredShuRows.slice(shuStartIndex, shuEndIndex);
+
+  const filteredShuTotalOmzet = filteredShuRows.reduce((sum, r) => sum + Number(r.omzet || 0), 0);
+  const filteredShuTotalHpp = filteredShuRows.reduce((sum, r) => sum + Number(r.hpp || 0), 0);
+  const filteredShuTotalProfit = filteredShuRows.reduce(
+    (sum, r) => sum + Number(r.grossProfit || 0),
+    0
+  );
+  const filteredShuTotalMarginPct =
+    filteredShuTotalOmzet > 0
+      ? (filteredShuTotalProfit / filteredShuTotalOmzet) * 100
+      : 0;
 
   // Quick preset handlers
   const applyPreset = (preset: 'today' | 'thisMonth' | 'year2026') => {
@@ -643,9 +945,52 @@ export default function LaporanKeuangan({
         wsShu.addRow(['Beban Operasional', shuData.opex]);
         wsShu.addRow(['Estimasi SHU Bersih', shuData.estimatedShu]);
         wsShu.addRow([]);
-        wsShu.addRow(['Kategori Produk','Omzet','HPP','Laba Kotor','Gross Margin %']);
-        for (const m of shuData.marginPerKategori) {
-          wsShu.addRow([m.kategori, m.omzet, m.hpp, m.laba_kotor, m.gross_margin_pct.toFixed(1) + '%']);
+        if (shuData.shuReferenceRows) {
+          wsShu.addRow([
+            'Tanggal',
+            'No. Referensi',
+            'Sumber / Metode',
+            'Anggota / Pembeli',
+            'Omzet (Rp)',
+            'HPP / Modal (Rp)',
+            'Laba Kotor (Rp)',
+            'Margin %',
+          ]);
+          let exportOmzet = 0;
+          let exportHpp = 0;
+          let exportProfit = 0;
+          for (const row of shuData.shuReferenceRows) {
+            const buyer = row.memberNrp ? `${row.memberNrp} - ${row.memberName}` : row.memberName;
+            wsShu.addRow([
+              row.transactionDate,
+              row.referenceNumber,
+              row.paymentMethodLabel,
+              buyer,
+              row.omzet,
+              row.hpp,
+              row.grossProfit,
+              row.marginPercent.toFixed(1) + '%',
+            ]);
+            exportOmzet += row.omzet;
+            exportHpp += row.hpp;
+            exportProfit += row.grossProfit;
+          }
+          const exportMarginPct = exportOmzet > 0 ? (exportProfit / exportOmzet) * 100 : 0;
+          wsShu.addRow([
+            '',
+            '',
+            '',
+            'TOTAL',
+            exportOmzet,
+            exportHpp,
+            exportProfit,
+            exportMarginPct.toFixed(1) + '%',
+          ]);
+        } else {
+          wsShu.addRow(['Kategori Produk','Omzet','HPP','Laba Kotor','Gross Margin %']);
+          for (const m of shuData.marginPerKategori) {
+            wsShu.addRow([m.kategori, m.omzet, m.hpp, m.laba_kotor, m.gross_margin_pct.toFixed(1) + '%']);
+          }
         }
       }
 
@@ -776,6 +1121,7 @@ export default function LaporanKeuangan({
             <button
               onClick={() => {
                 setCashFlowPage(1);
+                setShuCurrentPage(1);
                 fetchData();
               }}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors shadow-sm"
@@ -1119,53 +1465,225 @@ export default function LaporanKeuangan({
             })}
           </div>
 
-          {/* Margin per Kategori Table */}
+          {/* Sumber Laba & Margin per Nomor Referensi Table */}
           <div className="bg-white rounded-xl border border-outline-variant/30 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-outline-variant/20">
-              <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-secondary text-[20px]">bar_chart</span>
-                Rincian Margin Laba per Kategori Produk
-              </h2>
+            <div className="px-5 py-4 border-b border-outline-variant/20 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
+                  <span className="material-symbols-outlined text-secondary text-[20px]">receipt_long</span>
+                  Rincian Sumber Laba &amp; Margin per Nomor Referensi
+                </h2>
+                <p className="text-[12px] text-on-surface-variant mt-0.5">
+                  Klik nomor referensi untuk menelusuri rincian item barang, HPP, dan kontribusi laba SHU
+                </p>
+              </div>
+
+              <div className="relative w-full md:w-80 no-print">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={shuSearchQuery}
+                  onChange={(e) => setShuSearchQuery(e.target.value)}
+                  placeholder="Cari No. Referensi (INV-...), NRP, atau Nama..."
+                  aria-label="Cari transaksi sumber SHU"
+                  className="w-full pl-9 pr-8 py-2 rounded-lg border border-outline-variant/50 bg-slate-50/50 focus:bg-white text-xs sm:text-sm text-on-surface placeholder:text-slate-400 focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-colors"
+                />
+                {shuSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setShuSearchQuery('')}
+                    aria-label="Hapus pencarian"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-surface-container-low border-b border-outline-variant/20">
                   <tr>
-                    {['Kategori Produk','Omzet (Rp)','HPP (Rp)','Laba Kotor (Rp)','Gross Margin %'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
-                        {h}
-                      </th>
-                    ))}
+                    <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      TANGGAL
+                    </th>
+                    <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      NO. REFERENSI
+                    </th>
+                    <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      SUMBER / METODE
+                    </th>
+                    <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      ANGGOTA / PEMBELI
+                    </th>
+                    <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      OMZET (RP)
+                    </th>
+                    <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      HPP / MODAL (RP)
+                    </th>
+                    <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      LABA KOTOR (RP)
+                    </th>
+                    <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
+                      MARGIN %
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {shuData.marginPerKategori.length === 0 ? (
+                  {totalShuItems === 0 ? (
                     <tr>
-                      <td colSpan={5} className="text-center py-10 text-on-surface-variant text-sm">
-                        Tidak ada data margin pada periode ini
+                      <td colSpan={8} className="text-center py-10 text-on-surface-variant text-sm">
+                        <span className="material-symbols-outlined text-[36px] block mb-2 text-outline">
+                          {normalizedShuQuery ? 'search_off' : 'inbox'}
+                        </span>
+                        {normalizedShuQuery
+                          ? 'Tidak ada transaksi yang cocok dengan pencarian'
+                          : 'Tidak ada transaksi sumber laba pada periode ini'}
                       </td>
                     </tr>
                   ) : (
-                    shuData.marginPerKategori.map((m, i) => (
-                      <tr key={i} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`}>
-                        <td className="px-4 py-3 font-semibold text-on-surface">{m.kategori}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-blue-700 font-semibold">{formatRp(m.omzet)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-orange-700 font-semibold">{formatRp(m.hpp)}</td>
-                        <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-semibold">{formatRp(m.laba_kotor)}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold ${
-                            m.gross_margin_pct >= 20 ? 'bg-emerald-100 text-emerald-800' :
-                            m.gross_margin_pct >= 10 ? 'bg-amber-100 text-amber-800' :
-                            'bg-rose-100 text-rose-800'
-                          }`}>
-                            {m.gross_margin_pct.toFixed(1)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))
+                    paginatedShuRows.map((row, i) => {
+                      const badgeStyle =
+                        SHU_SOURCE_BADGE[row.sourceType] ?? SHU_SOURCE_BADGE.pos_cash;
+                      return (
+                        <tr
+                          key={row.id}
+                          className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${
+                            i % 2 === 1 ? 'bg-[#f8fafc]' : ''
+                          }`}
+                        >
+                          <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">
+                            {row.transactionDate}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedShuRef(row)}
+                              title="Klik untuk melihat rincian item pembentuk laba"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold transition-colors cursor-pointer group"
+                            >
+                              <span>{row.referenceNumber}</span>
+                              <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${badgeStyle.bg} ${badgeStyle.text}`}
+                            >
+                              {row.paymentMethodLabel}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 min-w-[180px]">
+                            <div className="font-semibold text-on-surface text-[13px] leading-tight">
+                              {row.memberName}
+                            </div>
+                            {row.memberNrp && (
+                              <div className="text-[11px] text-on-surface-variant font-mono mt-0.5">
+                                NRP: {row.memberNrp}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-blue-700 font-semibold whitespace-nowrap">
+                            {formatRp(row.omzet)}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-orange-700 font-semibold whitespace-nowrap">
+                            {formatRp(row.hpp)}
+                          </td>
+                          <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-bold whitespace-nowrap">
+                            {formatRp(row.grossProfit)}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold ${
+                                row.marginPercent >= 20
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : row.marginPercent >= 10
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {row.marginPercent.toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
+                {totalShuItems > 0 && (
+                  <tfoot className="bg-primary/5 border-t-2 border-primary/20">
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 font-bold text-primary text-sm">
+                        TOTAL
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-blue-800 tabular-nums whitespace-nowrap">
+                        {formatRp(filteredShuTotalOmzet)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-orange-800 tabular-nums whitespace-nowrap">
+                        {formatRp(filteredShuTotalHpp)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-bold text-emerald-800 tabular-nums whitespace-nowrap">
+                        {formatRp(filteredShuTotalProfit)}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold bg-emerald-100 text-emerald-900">
+                          {filteredShuTotalMarginPct.toFixed(1)}%
+                        </span>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl text-xs sm:text-sm text-slate-600 no-print">
+              <div className="flex items-center gap-3">
+                <span>
+                  Menampilkan{' '}
+                  <strong className="font-semibold text-slate-800">
+                    {totalShuItems > 0 ? shuStartIndex + 1 : 0}-{shuEndIndex}
+                  </strong>{' '}
+                  dari <strong className="font-semibold text-slate-800">{totalShuItems}</strong>{' '}
+                  transaksi
+                </span>
+                <select
+                  value={shuPageSize}
+                  onChange={(e) => {
+                    setShuPageSize(Number(e.target.value));
+                    setShuCurrentPage(1);
+                  }}
+                  aria-label="Jumlah baris per halaman SHU"
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value={10}>10 / halaman</option>
+                  <option value={25}>25 / halaman</option>
+                  <option value={50}>50 / halaman</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShuCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeShuPage <= 1}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Prev
+                </button>
+                <span className="px-3 py-1.5 text-xs font-semibold text-slate-800">
+                  Halaman {safeShuPage} / {totalShuPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShuCurrentPage((prev) => Math.min(totalShuPages, prev + 1))}
+                  disabled={safeShuPage >= totalShuPages}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1363,6 +1881,12 @@ export default function LaporanKeuangan({
       <CashFlowReferenceModal
         cashFlowItem={selectedCashFlowRef}
         onClose={() => setSelectedCashFlowRef(null)}
+      />
+
+      {/* ── MODAL DRILL-DOWN RINCIAN REFERENSI PEMBENTUK SHU ── */}
+      <ShuReferenceDetailModal
+        referenceItem={selectedShuRef}
+        onClose={() => setSelectedShuRef(null)}
       />
     </AdminLayout>
   );

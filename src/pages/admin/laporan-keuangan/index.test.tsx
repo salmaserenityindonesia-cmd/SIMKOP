@@ -289,6 +289,7 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
         estimatedShu: 0,
         marginPercentage: 0,
         marginPerKategori: [],
+        shuReferenceRows: [],
       });
     } finally {
       if (defaultFromImpl) {
@@ -1053,5 +1054,585 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('Pendapatan Margin Pembiayaan Barang');
     expect(html).toContain('60.000');
     expect(html).toContain('310.000');
+  });
+
+  it('getShuEstimation aggregates POS sales by reference number with payment classification, member lookup, DESC order, and line items', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const mockSales = [
+        // Deliberately out of chronological order to verify JS DESC sorting
+        {
+          id: 'sale-3',
+          sale_number: 'INV-1795063690932',
+          member_id: 'mem-1',
+          subtotal: 120000,
+          discount: 0,
+          total_amount: 120000,
+          paid_cash: 0,
+          paid_deposit: 0,
+          paid_credit: 120000,
+          payment_scheme: 'store_credit',
+          created_at: '2026-11-19T10:00:00.000Z',
+        },
+        {
+          id: 'sale-1',
+          sale_number: 'INV-1795079184845',
+          member_id: 'mem-1',
+          subtotal: 150000,
+          discount: 0,
+          total_amount: 150000,
+          paid_cash: 150000,
+          paid_deposit: 0,
+          paid_credit: 0,
+          payment_scheme: 'cash',
+          created_at: '2026-11-19T14:00:00.000Z',
+        },
+        {
+          id: 'sale-4',
+          sale_number: 'INV-1795050000999',
+          member_id: null,
+          subtotal: 80000,
+          discount: 0,
+          total_amount: 80000,
+          paid_cash: 30000,
+          paid_deposit: 50000,
+          paid_credit: 0,
+          payment_scheme: 'split',
+          created_at: '2026-11-19T08:00:00.000Z',
+        },
+        {
+          id: 'sale-2',
+          sale_number: 'INV-1795078441001',
+          member_id: 'mem-2',
+          subtotal: 100000,
+          discount: 0,
+          total_amount: 100000,
+          paid_cash: 0,
+          paid_deposit: 100000,
+          paid_credit: 0,
+          payment_scheme: 'split',
+          created_at: '2026-11-19T12:00:00.000Z',
+        },
+      ];
+
+      const mockSaleItems = [
+        {
+          sale_id: 'sale-1',
+          product_id: 'prod-atk',
+          product_name: 'Kertas HVS A4',
+          quantity: 2,
+          unit_price: 75000,
+        },
+        {
+          sale_id: 'sale-2',
+          product_id: 'prod-kanebo',
+          product_name: 'Kanebo Serbaguna',
+          quantity: 1,
+          unit_price: 100000,
+        },
+        {
+          sale_id: 'sale-3',
+          product_id: 'prod-fd',
+          product_name: 'Flashdisk 32GB',
+          quantity: 3,
+          unit_price: 40000,
+        },
+        {
+          sale_id: 'sale-4',
+          product_id: 'prod-umum',
+          product_name: 'Pulpen Gel Pack',
+          quantity: 1,
+          unit_price: 80000,
+        },
+      ];
+
+      const mockProducts = [
+        { id: 'prod-atk', name: 'Kertas HVS A4', buy_price: 60000, category_id: 'cat-1' },
+        { id: 'prod-kanebo', name: 'Kanebo Serbaguna', buy_price: 80195, category_id: 'cat-2' },
+        { id: 'prod-fd', name: 'Flashdisk 32GB', buy_price: 35000, category_id: 'cat-3' },
+        { id: 'prod-umum', name: 'Pulpen Gel Pack', buy_price: 65000, category_id: 'cat-1' },
+      ];
+
+      const mockCategories = [
+        { id: 'cat-1', name: 'ATK/HVS WARNA' },
+        { id: 'cat-2', name: 'KANEBO' },
+        { id: 'cat-3', name: 'FLASHDISK' },
+      ];
+
+      const mockMembers = [
+        { id: 'mem-1', nrp: '88010001', nama: 'Budi Santoso' },
+        { id: 'mem-2', nrp: '91020002', nama: 'Siti Aminah' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: mockSales, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'sale_items') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockSaleItems, error: null }),
+            }),
+          };
+        }
+        if (table === 'products') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockProducts, error: null }),
+            }),
+          };
+        }
+        if (table === 'product_categories') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockCategories, error: null }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+
+      expect(shu.grossSales).toBe(450000);
+      expect(shu.cogs).toBe(370195);
+      expect(shu.grossProfit).toBe(79805);
+      expect(shu.shuReferenceRows).toHaveLength(4);
+
+      const rows = shu.shuReferenceRows!;
+      // Sorted newest first (created_at DESC)
+      expect(rows.map((r) => r.referenceNumber)).toEqual([
+        'INV-1795079184845',
+        'INV-1795078441001',
+        'INV-1795063690932',
+        'INV-1795050000999',
+      ]);
+
+      expect(rows[0]).toMatchObject({
+        referenceNumber: 'INV-1795079184845',
+        sourceType: 'pos_cash',
+        paymentMethodLabel: 'POS • Tunai',
+        memberName: 'Budi Santoso',
+        memberNrp: '88010001',
+        omzet: 150000,
+        hpp: 120000,
+        grossProfit: 30000,
+        marginPercent: 20,
+      });
+      expect(rows[0].items).toEqual([
+        {
+          productName: 'Kertas HVS A4',
+          categoryName: 'ATK/HVS WARNA',
+          qty: 2,
+          sellPrice: 75000,
+          buyPrice: 60000,
+          subtotalOmzet: 150000,
+          subtotalHpp: 120000,
+          subtotalProfit: 30000,
+        },
+      ]);
+
+      expect(rows[1]).toMatchObject({
+        referenceNumber: 'INV-1795078441001',
+        sourceType: 'pos_deposit',
+        paymentMethodLabel: 'POS • Potong Simpanan',
+        memberName: 'Siti Aminah',
+        memberNrp: '91020002',
+        omzet: 100000,
+        hpp: 80195,
+        grossProfit: 19805,
+      });
+
+      expect(rows[2]).toMatchObject({
+        referenceNumber: 'INV-1795063690932',
+        sourceType: 'pos_credit',
+        paymentMethodLabel: 'POS • Bon Toko',
+        memberName: 'Budi Santoso',
+        memberNrp: '88010001',
+        omzet: 120000,
+        hpp: 105000,
+        grossProfit: 15000,
+      });
+
+      expect(rows[3]).toMatchObject({
+        referenceNumber: 'INV-1795050000999',
+        sourceType: 'pos_split',
+        paymentMethodLabel: 'POS • Campuran',
+        memberName: 'Pelanggan Umum',
+        memberNrp: '',
+        omzet: 80000,
+        hpp: 65000,
+        grossProfit: 15000,
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('getShuEstimation includes goods financing repayments with margin_portion > 0 in shuReferenceRows and excludes 0%-margin loans', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'rep-brg-1',
+                      loan_id: 'loan-brg-1',
+                      schedule_id: 'sch-brg-1',
+                      amount_paid: 460000,
+                      principal_portion: 400000,
+                      margin_portion: 60000,
+                      payment_date: '2026-11-19T09:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                      receipt_number: 'PAY-BRG-001',
+                    },
+                    {
+                      id: 'rep-cash-1',
+                      loan_id: 'loan-cash-1',
+                      schedule_id: 'sch-cash-1',
+                      amount_paid: 500000,
+                      principal_portion: 500000,
+                      margin_portion: 0,
+                      payment_date: '2026-11-19T10:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                      receipt_number: 'PAY-CASH-001',
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'loan-brg-1',
+                    loan_number: 'LOAN-BRG-001',
+                    member_id: 'mem-1',
+                    amount: 4600000,
+                    principal_amount: 4600000,
+                    cost_price: 4000000,
+                    markup_amount: 600000,
+                    item_description: 'Kulkas 2 Pintu',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'mem-1', nrp: '88010001', nama: 'Budi Santoso' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.goodsFinancingMargin).toBe(60000);
+      expect(shu.shuReferenceRows).toHaveLength(1);
+      expect(shu.shuReferenceRows![0]).toMatchObject({
+        referenceNumber: 'PAY-BRG-001',
+        sourceType: 'goods_financing',
+        paymentMethodLabel: 'Margin Pembiayaan',
+        memberName: 'Budi Santoso',
+        memberNrp: '88010001',
+        omzet: 60000,
+        hpp: 0,
+        grossProfit: 60000,
+        marginPercent: 100,
+        repaymentAmount: 460000,
+        principalPortion: 400000,
+        loanNumber: 'LOAN-BRG-001',
+      });
+      expect(shu.shuReferenceRows![0].items[0].productName).toContain('Kulkas 2 Pintu');
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('renders reference-based SHU breakdown table with clickable INV badges, TOTAL row matching KPIs, search, and pagination', () => {
+    const sampleShuRows = [
+      {
+        id: 'pos-1',
+        referenceNumber: 'INV-1795079184845',
+        sourceType: 'pos_cash' as const,
+        transactionDate: '19/11/2026',
+        rawDate: '2026-11-19T14:00:00.000Z',
+        memberName: 'Budi Santoso',
+        memberNrp: '88010001',
+        paymentMethodLabel: 'POS • Tunai',
+        omzet: 150000,
+        hpp: 120000,
+        grossProfit: 30000,
+        marginPercent: 20,
+        items: [],
+      },
+      {
+        id: 'pos-2',
+        referenceNumber: 'INV-1795078441001',
+        sourceType: 'pos_deposit' as const,
+        transactionDate: '19/11/2026',
+        rawDate: '2026-11-19T12:00:00.000Z',
+        memberName: 'Siti Aminah',
+        memberNrp: '91020002',
+        paymentMethodLabel: 'POS • Potong Simpanan',
+        omzet: 180000,
+        hpp: 145195,
+        grossProfit: 34805,
+        marginPercent: 19.3,
+        items: [],
+      },
+      {
+        id: 'pos-3',
+        referenceNumber: 'INV-1795063690932',
+        sourceType: 'pos_credit' as const,
+        transactionDate: '19/11/2026',
+        rawDate: '2026-11-19T10:00:00.000Z',
+        memberName: 'Andi Wijaya',
+        memberNrp: '92030003',
+        paymentMethodLabel: 'POS • Bon Toko',
+        omzet: 120000,
+        hpp: 105000,
+        grossProfit: 15000,
+        marginPercent: 12.5,
+        items: [],
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuData={{
+          grossSales: 450000,
+          cogs: 370195,
+          grossProfit: 79805,
+          goodsFinancingMargin: 0,
+          opex: 0,
+          estimatedShu: 79805,
+          marginPercentage: 17.7,
+          marginPerKategori: [],
+          shuReferenceRows: sampleShuRows,
+        }}
+      />
+    );
+
+    // New table heading replaces category table heading
+    expect(html).toContain('Rincian Sumber Laba &amp; Margin per Nomor Referensi');
+    expect(html).not.toContain('Rincian Margin Laba per Kategori Produk');
+
+    // Columns & clickable INV-... references
+    expect(html).toContain('NO. REFERENSI');
+    expect(html).toContain('SUMBER / METODE');
+    expect(html).toContain('ANGGOTA / PEMBELI');
+    expect(html).toContain('INV-1795079184845');
+    expect(html).toContain('INV-1795078441001');
+    expect(html).toContain('INV-1795063690932');
+    expect(html).toContain('POS • Tunai');
+    expect(html).toContain('POS • Potong Simpanan');
+    expect(html).toContain('POS • Bon Toko');
+    expect(html).toContain('NRP: 88010001');
+
+    // TOTAL row matches KPI cards
+    expect(html).toContain('TOTAL');
+    expect(html).toContain('450.000');
+    expect(html).toContain('370.195');
+    expect(html).toContain('79.805');
+
+    // Search input & pagination controls
+    expect(html).toContain('Cari No. Referensi (INV-...), NRP, atau Nama...');
+    expect(html).toContain('10 / halaman');
+    expect(html).toContain('25 / halaman');
+    expect(html).toContain('50 / halaman');
+    expect(html).toContain('Prev');
+    expect(html).toContain('Next');
+    expect(html).toContain('1-3');
+  });
+
+  it('filters SHU reference rows by initialShuSearchQuery and shows empty search message when unmatched', () => {
+    const sampleShuRows = [
+      {
+        id: 'pos-1',
+        referenceNumber: 'INV-1795079184845',
+        sourceType: 'pos_cash' as const,
+        transactionDate: '19/11/2026',
+        rawDate: '2026-11-19T14:00:00.000Z',
+        memberName: 'Budi Santoso',
+        memberNrp: '88010001',
+        paymentMethodLabel: 'POS • Tunai',
+        omzet: 150000,
+        hpp: 120000,
+        grossProfit: 30000,
+        marginPercent: 20,
+        items: [],
+      },
+      {
+        id: 'pos-2',
+        referenceNumber: 'INV-1795078441001',
+        sourceType: 'pos_deposit' as const,
+        transactionDate: '19/11/2026',
+        rawDate: '2026-11-19T12:00:00.000Z',
+        memberName: 'Siti Aminah',
+        memberNrp: '91020002',
+        paymentMethodLabel: 'POS • Potong Simpanan',
+        omzet: 180000,
+        hpp: 145195,
+        grossProfit: 34805,
+        marginPercent: 19.3,
+        items: [],
+      },
+    ];
+
+    const matchedHtml = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuSearchQuery="INV-1795078441001"
+        initialShuData={{
+          grossSales: 330000,
+          cogs: 265195,
+          grossProfit: 64805,
+          goodsFinancingMargin: 0,
+          opex: 0,
+          estimatedShu: 64805,
+          marginPercentage: 19.6,
+          marginPerKategori: [],
+          shuReferenceRows: sampleShuRows,
+        }}
+      />
+    );
+
+    expect(matchedHtml).toContain('INV-1795078441001');
+    expect(matchedHtml).toContain('Siti Aminah');
+    expect(matchedHtml).not.toContain('INV-1795079184845');
+    expect(matchedHtml).not.toContain('Budi Santoso');
+
+    const unmatchedHtml = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuSearchQuery="TIDAK-ADA-999"
+        initialShuData={{
+          grossSales: 330000,
+          cogs: 265195,
+          grossProfit: 64805,
+          goodsFinancingMargin: 0,
+          opex: 0,
+          estimatedShu: 64805,
+          marginPercentage: 19.6,
+          marginPerKategori: [],
+          shuReferenceRows: sampleShuRows,
+        }}
+      />
+    );
+
+    expect(unmatchedHtml).toContain('Tidak ada transaksi yang cocok dengan pencarian');
+  });
+
+  it('renders ShuReferenceDetailModal when initialSelectedShuRef is provided', () => {
+    const html = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialSelectedShuRef={{
+          id: 'pos-1',
+          referenceNumber: 'INV-1795079184845',
+          sourceType: 'pos_cash',
+          transactionDate: '19/11/2026',
+          rawDate: '2026-11-19T14:00:00.000Z',
+          memberName: 'Budi Santoso',
+          memberNrp: '88010001',
+          paymentMethodLabel: 'POS • Tunai',
+          omzet: 150000,
+          hpp: 120000,
+          grossProfit: 30000,
+          marginPercent: 20,
+          items: [
+            {
+              productName: 'Kertas HVS A4 70gr',
+              categoryName: 'ATK/HVS WARNA',
+              qty: 2,
+              sellPrice: 75000,
+              buyPrice: 60000,
+              subtotalOmzet: 150000,
+              subtotalHpp: 120000,
+              subtotalProfit: 30000,
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(html).toContain('Rincian Bukti Transaksi Pembentuk SHU');
+    expect(html).toContain('INV-1795079184845');
+    expect(html).toContain('Kertas HVS A4 70gr');
+    expect(html).toContain('ATK/HVS WARNA');
   });
 });
