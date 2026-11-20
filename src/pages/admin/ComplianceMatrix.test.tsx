@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   ComplianceMatrix,
+  rowMatchesSavingsSearch,
   loadComplianceAvailableYearsData,
   fetchComplianceMatrixData,
   fetchComplianceData,
@@ -1738,6 +1739,98 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
         />
       );
       expect(emptyHtml).toContain('colSpan="6"');
+    });
+  });
+
+  describe('Trace-Back Filter (KW-SETOR-... / CF-...)', () => {
+    it('rowMatchesSavingsSearch matches member NRP, name, traceMatchedMemberIds, and cell reference_no', () => {
+      const rowA = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-bagus',
+        nrp: '00050543',
+        nama: 'BAGUS BUDI PRASETYO',
+        months: [
+          {
+            w: 200000,
+            b: 25000,
+            l: 50000,
+            bal_w: 200000,
+            bal_b: 25000,
+            bal_l: 50000,
+            wajib: { status: 'paid', amount: 200000, targetAmount: 200000, reference_no: 'KW-SETOR-20261120-3663' },
+            belanja: { status: 'paid', amount: 25000, targetAmount: 25000 },
+            lebaran: { status: 'paid', amount: 50000, targetAmount: 50000 },
+          },
+        ],
+      } as any;
+
+      const rowB = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-other',
+        nrp: '00099999',
+        nama: 'ANGGOTA LAIN',
+        months: [],
+      } as any;
+
+      expect(rowMatchesSavingsSearch(rowA, '00050543')).toBe(true);
+      expect(rowMatchesSavingsSearch(rowB, '00050543')).toBe(false);
+
+      expect(rowMatchesSavingsSearch(rowA, 'KW-SETOR-20261120-3663')).toBe(true);
+      expect(rowMatchesSavingsSearch(rowB, 'KW-SETOR-20261120-3663')).toBe(false);
+
+      expect(rowMatchesSavingsSearch(rowA, 'CF-EED98D59', new Set(['m-bagus']))).toBe(true);
+      expect(rowMatchesSavingsSearch(rowB, 'CF-EED98D59', new Set(['m-bagus']))).toBe(false);
+    });
+
+    it('renders trace-back filter panel, itemized breakdown rows, and filters table to matching member', () => {
+      const rowBagus = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-bagus',
+        nrp: '00050543',
+        nama: 'BAGUS BUDI PRASETYO',
+      };
+      const rowOther = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-other',
+        nrp: '00099999',
+        nama: 'SITI AMINAH',
+      };
+
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialData={[rowBagus as any, rowOther as any]}
+          initialYear="2026"
+          initialSearch="00050543"
+          initialTraceRef="KW-SETOR-20261120-3663"
+          initialTraceRows={[
+            {
+              id: 'tx-1',
+              memberId: 'm-bagus',
+              memberNrp: '00050543',
+              memberName: 'BAGUS BUDI PRASETYO',
+              depositTypeName: 'Simpanan Wajib',
+              depositTypeCode: 'WAJIB',
+              forMonth: 11,
+              forYear: 2026,
+              periodLabel: 'November 2026',
+              paymentMethod: 'tunai',
+              referenceNo: 'KW-SETOR-20261120-3663',
+              description: 'Setoran Simpanan Wajib (Nov 2026)',
+              notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+              amount: 4050000,
+              createdAt: '2026-11-20T09:00:00.000Z',
+            },
+          ]}
+        />
+      );
+
+      expect(html).toContain('data-testid="traceback-filter-panel"');
+      expect(html).toContain('KW-SETOR-20261120-3663');
+      expect(html).toContain('data-testid="btn-reset-traceback-filter"');
+      expect(html).toContain('November 2026');
+      expect(html).toContain('4.050.000');
+      expect(html).toContain('BAGUS BUDI PRASETYO');
+      expect(html).not.toContain('SITI AMINAH');
     });
   });
 });

@@ -10,6 +10,7 @@ import PengaturanKoperasi, {
 } from './PengaturanKoperasi';
 import * as savingsRateService from '../../services/savingsRateService';
 import * as settingsService from '../../services/settingsService';
+import * as systemResetService from '../../services/systemResetService';
 
 // Mock AdminLayout
 vi.mock('../../components/layout/AdminLayout', () => ({
@@ -151,6 +152,24 @@ vi.mock('../../services/savingsRateService', async (importOriginal) => {
       ...payload
     })),
     deleteRateTier: vi.fn().mockResolvedValue(true)
+  };
+});
+
+vi.mock('../../services/systemResetService', async (importOriginal) => {
+  const actual = await importOriginal<typeof systemResetService>();
+  return {
+    ...actual,
+    getTransactionalResetPreview: vi.fn().mockResolvedValue({
+      totalRows: 0,
+      tables: []
+    }),
+    executeSystemTransactionalReset: vi.fn().mockResolvedValue({
+      success: true,
+      truncatedCount: 10,
+      truncatedTables: ['public.cash_flow', 'public.sales'],
+      preservedTables: actual.PRESERVED_MASTER_TABLES.map((t) => t.name),
+      restoredMembersCount: 0
+    })
   };
 });
 
@@ -540,6 +559,99 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
 
         expect(html).toContain('data-testid="btn-confirm-critical-threshold" disabled=""');
       });
+    });
+  });
+
+  describe('Zona Berbahaya — Reset Data Transaksional UI', () => {
+    it('renders the Danger Zone card with all 9 preserved master tables and trigger button', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi initialLoading={false} initialRateTiers={mockTiers} />
+      );
+
+      expect(html).toContain('data-testid="danger-zone-reset-card"');
+      expect(html).toContain('Zona Berbahaya — Reset Data Transaksional');
+      expect(html).toContain('Reset Seluruh Data Transaksi (Pertahankan Data Master)');
+      expect(html).toContain('data-testid="btn-open-reset-transactions-modal"');
+      expect(html).toContain('Reset Data Transaksi...');
+
+      for (const masterTable of systemResetService.PRESERVED_MASTER_TABLES) {
+        expect(html).toContain(masterTable.name);
+      }
+    });
+
+    it('does not render the transactional reset modal by default', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi initialLoading={false} initialResetModalOpen={false} />
+      );
+
+      expect(html).not.toContain('data-testid="reset-transactions-modal"');
+      expect(html).not.toContain('Konfirmasi Reset Seluruh Data Transaksi');
+    });
+
+    it('renders reset modal with 9 master table badges, preview stats, warning, and disabled button when phrase does not match', () => {
+      const preview = {
+        totalRows: 125,
+        tables: [
+          { table: 'cash_flow', label: 'Arus Kas', count: 40 },
+          { table: 'sales', label: 'Penjualan POS', count: 85 }
+        ]
+      };
+
+      const htmlEmpty = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialResetModalOpen={true}
+          initialResetPhraseInput=""
+          initialResetPreview={preview}
+        />
+      );
+
+      expect(htmlEmpty).toContain('data-testid="reset-transactions-modal"');
+      expect(htmlEmpty).toContain('Konfirmasi Reset Seluruh Data Transaksi');
+      expect(htmlEmpty).toContain('125 baris');
+      expect(htmlEmpty).toContain('Arus Kas:');
+      expect(htmlEmpty).toContain('Penjualan POS:');
+      expect(htmlEmpty).toContain('Peringatan Penghapusan Permanen:');
+      expect(htmlEmpty).toContain('data-testid="reset-phrase-input"');
+      expect(htmlEmpty).toContain('data-testid="btn-confirm-reset-transactions" disabled=""');
+
+      const decodedHtmlEmpty = htmlEmpty.replace(/&amp;/g, '&');
+      for (const masterTable of systemResetService.PRESERVED_MASTER_TABLES) {
+        expect(decodedHtmlEmpty).toContain(masterTable.name);
+        expect(decodedHtmlEmpty).toContain(masterTable.label);
+      }
+
+      const htmlPartial = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialResetModalOpen={true}
+          initialResetPhraseInput="RESET DATA"
+        />
+      );
+      expect(htmlPartial).toContain('data-testid="btn-confirm-reset-transactions" disabled=""');
+
+      const htmlLowercase = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialResetModalOpen={true}
+          initialResetPhraseInput="reset data transaksi"
+        />
+      );
+      expect(htmlLowercase).toContain('data-testid="btn-confirm-reset-transactions" disabled=""');
+    });
+
+    it('enables Kosongkan Data Transaksi Sekarang button only when phrase matches RESET DATA TRANSAKSI', () => {
+      const htmlMatched = renderToStaticMarkup(
+        <PengaturanKoperasi
+          initialLoading={false}
+          initialResetModalOpen={true}
+          initialResetPhraseInput="RESET DATA TRANSAKSI"
+        />
+      );
+
+      expect(htmlMatched).toContain('data-testid="btn-confirm-reset-transactions"');
+      expect(htmlMatched).not.toContain('data-testid="btn-confirm-reset-transactions" disabled=""');
+      expect(htmlMatched).toContain('Kosongkan Data Transaksi Sekarang');
     });
   });
 });

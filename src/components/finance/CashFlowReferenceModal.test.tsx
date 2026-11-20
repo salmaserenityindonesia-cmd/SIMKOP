@@ -734,4 +734,107 @@ describe('CashFlowReferenceModal Component', () => {
     expect(html).toContain('Total Kekurangan Disetor Anggota ke Koperasi');
     expect(html).toContain('3.500.000');
   });
+
+  it('renders MEMBER_DEPOSIT_BATCH (CF-EED98D59 / SETORAN_ANGGOTA) with source menu, kwitansi badge, itemized table, and trace-back link', () => {
+    const batchBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'MEMBER_DEPOSIT_BATCH',
+      journal: {
+        id: 'eed98d59-1111-4000-8000-000000000001',
+        refCode: 'CF-EED98D59',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 4050000,
+        description:
+          'Setoran Anggota BAGUS BUDI PRASETYO (00050543) - Tunai [KW-SETOR-20261120-3663]',
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: null,
+        createdAt: '2026-11-20T09:00:00.000Z',
+      },
+      memberDepositBatch: {
+        sourceMenu: 'Simpanan & Buku Besar → Setoran Simpanan',
+        receiptNumber: 'KW-SETOR-20261120-3663',
+        paymentMethod: 'tunai',
+        member: {
+          id: 'mem-bagus',
+          nrp: '00050543',
+          nama: 'BAGUS BUDI PRASETYO',
+          pangkat: 'Serka',
+        },
+        items: [
+          {
+            id: 'tx-1',
+            depositTypeName: 'Simpanan Pokok',
+            depositTypeCode: 'POKOK',
+            forMonth: null,
+            forYear: null,
+            periodLabel: 'Kewajiban Pokok',
+            paymentMethod: 'tunai',
+            referenceNo: 'KW-SETOR-20261120-3663',
+            description: 'Setoran Simpanan Pokok',
+            notes: 'Pelunasan Simpanan Pokok',
+            amount: 500000,
+            createdAt: '2026-11-20T09:00:00.000Z',
+          },
+          {
+            id: 'tx-2',
+            depositTypeName: 'Simpanan Wajib',
+            depositTypeCode: 'WAJIB',
+            forMonth: 10,
+            forYear: 2026,
+            periodLabel: 'Oktober 2026',
+            paymentMethod: 'tunai',
+            referenceNo: 'KW-SETOR-20261120-3663',
+            description: 'Setoran Simpanan Wajib (Okt 2026)',
+            notes: null,
+            amount: 3550000,
+            createdAt: '2026-11-20T09:00:01.000Z',
+          },
+        ],
+        totalAmount: 4050000,
+        journalAmount: 4050000,
+        difference: 0,
+        isMatched: true,
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={{
+          ...baseOpeningItem,
+          id: 'eed98d59-1111-4000-8000-000000000001',
+          referensi: 'CF-EED98D59',
+          kategori: 'SETORAN_ANGGOTA',
+          deskripsi:
+            'Setoran Anggota BAGUS BUDI PRASETYO (00050543) - Tunai [KW-SETOR-20261120-3663]',
+          kas_masuk: 4050000,
+          kas_keluar: 0,
+          direction: 'in',
+        }}
+        onClose={() => {}}
+        initialBreakdown={batchBreakdown}
+      />
+    );
+
+    expect(html).toContain('Kategori: Setoran Anggota');
+    expect(html).toContain('Metadata Lengkap Jurnal Arus Kas');
+    expect(html).toContain('data-testid="member-deposit-batch-banner"');
+    expect(html).toContain('Simpanan &amp; Buku Besar → Setoran Simpanan');
+    expect(html).toContain('KW-SETOR-20261120-3663');
+    expect(html).toContain('BAGUS BUDI PRASETYO');
+    expect(html).toContain('NRP: 00050543');
+    expect(html).toContain('data-testid="member-deposit-batch-table"');
+    expect(html).toContain('Simpanan Pokok');
+    expect(html).toContain('Kewajiban Pokok');
+    expect(html).toContain('500.000');
+    expect(html).toContain('Simpanan Wajib');
+    expect(html).toContain('Oktober 2026');
+    expect(html).toContain('3.550.000');
+    expect(html).toContain('TOTAL SETORAN MASUK KAS');
+    expect(html).toContain('4.050.000');
+    expect(html).toContain('Cocok dengan Jurnal Kas');
+    expect(html).toContain(
+      'href="/admin/compliance-matrix?search=00050543&amp;ref=KW-SETOR-20261120-3663"'
+    );
+    expect(html).toContain('Telusuri di Buku Besar Simpanan');
+  });
 });

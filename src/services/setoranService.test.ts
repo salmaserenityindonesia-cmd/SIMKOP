@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { supabase } from '../lib/supabaseClient';
 
 interface MockTables {
   anggota: any[];
@@ -491,6 +492,7 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
       direction: 'in',
       amount: 250000,
       category: 'SETORAN_ANGGOTA',
+      reference_id: receipt.receiptNo,
     });
     expect(cashFlowInserts[0].payload.description).toContain('Transfer Bank');
     expect(cashFlowInserts[0].payload.description).toContain(receipt.receiptNo);
@@ -573,5 +575,53 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
     const wajibItem = summary.items.find((i) => i.code === 'WAJIB');
     expect(wajibItem).toBeDefined();
     expect(wajibItem!.unpaidMonths.some((m) => m.year === 2026 && m.month === 12)).toBe(false);
+  });
+
+  it('falls back cleanly to UUID reference_id when Postgres cash_flow.reference_id rejects non-UUID receipt string (22P02)', async () => {
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+    const wajib = summary.items.find((i) => i.code === 'WAJIB')!;
+
+    const spy = vi.spyOn(supabase, 'from').mockImplementation((table: any) => {
+      if (table === 'cash_flow') {
+        const baseBuilder = createQueryBuilder('cash_flow');
+        const origInsert = baseBuilder.insert;
+        baseBuilder.insert = (payload: any) => {
+          if (payload && typeof payload.reference_id === 'string' && payload.reference_id.startsWith('KW-')) {
+            return {
+              then: (resolve: any, reject: any) =>
+                Promise.resolve({
+                  data: null,
+                  error: {
+                    code: '22P02',
+                    message: `invalid input syntax for type uuid: "${payload.reference_id}"`,
+                  },
+                }).then(resolve, reject),
+            };
+          }
+          return origInsert(payload);
+        };
+        return baseBuilder;
+      }
+      return createQueryBuilder(table as keyof MockTables);
+    });
+
+    try {
+      const receipt = await processMemberPayment({
+        member: summary.member,
+        items: [{ item: wajib, payAmount: 150000 }],
+        paymentMethod: 'tunai',
+        cashierId: 'cashier-1',
+        cashierName: 'Siti Kasir',
+        selectedYear: 2026,
+        selectedMonth: 11,
+      });
+
+      const cashFlowInserts = insertedLog.filter((l) => l.table === 'cash_flow');
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0].payload.reference_id).toBe('deposit_transactions-5');
+      expect(cashFlowInserts[0].payload.description).toContain(`[${receipt.receiptNo}]`);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

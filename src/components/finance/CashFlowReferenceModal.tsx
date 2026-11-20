@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import {
   BookOpen,
   X,
@@ -17,9 +18,12 @@ import {
   Landmark,
   Users,
   UserX,
+  ArrowRight,
+  Layers,
 } from 'lucide-react';
 import {
   getCashFlowReferenceBreakdown,
+  isMemberDepositBatchCategory,
   type CashFlowReferenceBreakdown,
 } from '../../services/cashFlowAuditService';
 import {
@@ -101,6 +105,9 @@ const formatHeaderCategoryLabel = (category?: string | null): string => {
   if (isPosCashSaleCategory(category)) {
     return 'Penjualan POS';
   }
+  if (isMemberDepositBatchCategory(category)) {
+    return 'Setoran Anggota';
+  }
   if (isMemberClearanceCategory(category)) {
     return 'Kliring Anggota Keluar';
   }
@@ -108,11 +115,32 @@ const formatHeaderCategoryLabel = (category?: string | null): string => {
   return clean ? sanitizePosTerminology(clean) : '-';
 };
 
+const getDepositTypeBadgeClass = (code?: string | null): string => {
+  const c = String(code || '').trim().toUpperCase();
+  if (c === 'POKOK' || c === 'SP') {
+    return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  }
+  if (c === 'WAJIB' || c === 'SW') {
+    return 'bg-blue-50 text-blue-700 border-blue-200';
+  }
+  if (c === 'BELANJA' || c === 'SB') {
+    return 'bg-purple-50 text-purple-700 border-purple-200';
+  }
+  if (c === 'LEBARAN' || c === 'SL' || c === 'SHR') {
+    return 'bg-amber-50 text-amber-800 border-amber-200';
+  }
+  if (c === 'PINJAMAN') {
+    return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  }
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+};
+
 export default function CashFlowReferenceModal({
   cashFlowItem,
   onClose,
   initialBreakdown = null,
 }: CashFlowReferenceModalProps) {
+  const inRouter = useInRouterContext();
   const [breakdown, setBreakdown] = useState<CashFlowReferenceBreakdown | null>(
     initialBreakdown
   );
@@ -122,6 +150,7 @@ export default function CashFlowReferenceModal({
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [copied, setCopied] = useState<boolean>(false);
+  const [copiedReceipt, setCopiedReceipt] = useState<boolean>(false);
 
   const loadBreakdown = useCallback(async () => {
     if (!cashFlowItem) return;
@@ -159,6 +188,7 @@ export default function CashFlowReferenceModal({
     setSearchQuery('');
     setPage(1);
     setCopied(false);
+    setCopiedReceipt(false);
 
     if (!cashFlowItem) {
       setBreakdown(null);
@@ -247,6 +277,18 @@ export default function CashFlowReferenceModal({
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Non-blocking clipboard error
+    }
+  };
+
+  const handleCopyReceipt = async (receiptCode: string) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(receiptCode);
+      }
+      setCopiedReceipt(true);
+      setTimeout(() => setCopiedReceipt(false), 2000);
     } catch {
       // Non-blocking clipboard error
     }
@@ -1301,6 +1343,280 @@ export default function CashFlowReferenceModal({
               </div>
             </div>
           )}
+
+          {/* ── KONTEN D3b: SETORAN ANGGOTA BATCH (TERIMA SETORAN / KW-SETOR) ── */}
+          {!loading && !error && breakdown?.kind === 'MEMBER_DEPOSIT_BATCH' && (() => {
+            const batch = breakdown.memberDepositBatch;
+            const traceParams = new URLSearchParams();
+            if (batch.member.nrp && batch.member.nrp !== '-') {
+              traceParams.set('search', batch.member.nrp);
+            }
+            const traceRefValue =
+              batch.receiptNumber && batch.receiptNumber !== '-'
+                ? batch.receiptNumber
+                : breakdown.journal.refCode;
+            if (traceRefValue) {
+              traceParams.set('ref', traceRefValue);
+            }
+            const traceBackUrl = `/admin/compliance-matrix?${traceParams.toString()}`;
+
+            return (
+              <div className="space-y-4">
+                {/* Metadata Lengkap Jurnal Arus Kas */}
+                <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+                  <div className="flex items-center gap-2 pb-2.5 border-b border-slate-100">
+                    <FileText className="w-4 h-4 text-indigo-600" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                      Metadata Lengkap Jurnal Arus Kas
+                    </h4>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <p className="text-slate-500">Kode Referensi</p>
+                      <p className="font-mono font-bold text-indigo-700 mt-0.5">
+                        {breakdown.journal.refCode}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Waktu Pencatatan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatDateTimeId(breakdown.journal.createdAt)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Nominal Jurnal Kas Masuk</p>
+                      <p className="font-bold text-emerald-700 mt-0.5 tabular-nums">
+                        {formatRp(breakdown.journal.amount)}
+                      </p>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <p className="text-slate-500">Uraian Jurnal</p>
+                      <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
+                        {sanitizePosTerminology(breakdown.journal.description)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Banner Asal Menu & Bukti Setoran */}
+                <div
+                  data-testid="member-deposit-batch-banner"
+                  className="bg-white rounded-xl border border-emerald-200 p-4 shadow-xs space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-emerald-600" />
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Rincian Asal Setoran Simpanan Anggota
+                      </h4>
+                    </div>
+                    {batch.receiptNumber !== '-' && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono text-xs font-bold">
+                          {batch.receiptNumber}
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="btn-copy-receipt-code"
+                          onClick={() => handleCopyReceipt(batch.receiptNumber)}
+                          title="Salin nomor kwitansi trace-back"
+                          className="p-1.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer"
+                        >
+                          {copiedReceipt ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <p className="text-slate-500">Asal Menu Input</p>
+                      <p className="font-semibold text-slate-900 mt-0.5">
+                        {batch.sourceMenu}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Identitas Penyetor</p>
+                      <p className="font-semibold text-slate-900 mt-0.5">
+                        {batch.member.nama}{' '}
+                        <span className="font-mono text-slate-600">
+                          (NRP: {batch.member.nrp})
+                        </span>
+                        {batch.member.pangkat ? (
+                          <span className="ml-1 text-slate-500 font-normal">
+                            • {batch.member.pangkat}
+                          </span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Metode Pembayaran</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatPaymentMethodLabel(batch.paymentMethod)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Indikator Kecocokan Jurnal */}
+                <div
+                  className={`rounded-xl border px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs ${
+                    batch.isMatched
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {batch.isMatched ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    )}
+                    <span>
+                      Total Rincian Komponen ={' '}
+                      <strong className="font-bold tabular-nums">
+                        {formatRp(batch.totalAmount)}
+                      </strong>{' '}
+                      ({batch.items.length} item mutasi)
+                    </span>
+                  </div>
+                  <span
+                    className={`inline-flex items-center px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
+                      batch.isMatched
+                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                        : 'bg-amber-100 text-amber-800 border border-amber-300'
+                    }`}
+                  >
+                    {batch.isMatched
+                      ? '✓ Cocok dengan Jurnal Kas'
+                      : batch.items.length === 0
+                      ? 'Rincian transaksi tidak ditemukan'
+                      : `Selisih ${formatRp(Math.abs(batch.difference))}`}
+                  </span>
+                </div>
+
+                {/* Tabel Rincian Komponen Setoran Simpanan */}
+                <div
+                  data-testid="member-deposit-batch-table"
+                  className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs"
+                >
+                  <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Tabel Rincian Komponen Setoran Simpanan
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {batch.items.length} baris
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-2.5 font-semibold w-12">NO</th>
+                          <th className="px-3 py-2.5 font-semibold">JENIS SIMPANAN</th>
+                          <th className="px-3 py-2.5 font-semibold">PERIODE / BULAN</th>
+                          <th className="px-3 py-2.5 font-semibold">KETERANGAN</th>
+                          <th className="px-3 py-2.5 font-semibold text-right">NOMINAL (RP)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {batch.items.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                              Belum ada rincian komponen setoran yang terhubung untuk jurnal ini.
+                            </td>
+                          </tr>
+                        ) : (
+                          batch.items.map((item, idx) => (
+                            <tr
+                              key={item.id || `${item.depositTypeCode}-${idx}`}
+                              className={idx % 2 === 1 ? 'bg-slate-50/70' : 'bg-white'}
+                            >
+                              <td className="px-3 py-2.5 text-slate-500 tabular-nums">
+                                {idx + 1}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${getDepositTypeBadgeClass(
+                                    item.depositTypeCode
+                                  )}`}
+                                >
+                                  <span>{item.depositTypeName}</span>
+                                  {item.depositTypeCode && item.depositTypeCode !== '-' && (
+                                    <span className="font-mono text-[10px] opacity-80">
+                                      ({item.depositTypeCode})
+                                    </span>
+                                  )}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 font-medium text-slate-800 whitespace-nowrap">
+                                {item.periodLabel}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-600">
+                                {item.notes || item.description}
+                              </td>
+                              <td className="px-3 py-2.5 text-right font-semibold tabular-nums text-slate-900 whitespace-nowrap">
+                                {formatRp(item.amount)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                      {batch.items.length > 0 && (
+                        <tfoot className="bg-emerald-50/80 border-t-2 border-emerald-200 font-bold text-slate-900">
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-3 py-3 text-xs uppercase tracking-wider text-emerald-900"
+                            >
+                              TOTAL SETORAN MASUK KAS
+                            </td>
+                            <td className="px-3 py-3 text-right text-sm font-extrabold tabular-nums text-emerald-700 whitespace-nowrap">
+                              {formatRp(batch.totalAmount)}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </div>
+
+                {/* Tautan Trace-Back ke Buku Besar Simpanan */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-indigo-50/60 border border-indigo-200 rounded-xl px-4 py-3">
+                  <div className="text-xs text-indigo-900">
+                    <span className="font-semibold">Audit Dua Arah:</span> Lacak pembukuan simpanan anggota ini dengan filter otomatis kode bukti{' '}
+                    <code className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-200">
+                      {traceRefValue}
+                    </code>
+                  </div>
+                  {inRouter ? (
+                    <Link
+                      to={traceBackUrl}
+                      onClick={onClose}
+                      data-testid="btn-trace-savings-ledger"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-xs"
+                    >
+                      <span>Telusuri di Buku Besar Simpanan</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  ) : (
+                    <a
+                      href={traceBackUrl}
+                      data-testid="btn-trace-savings-ledger"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors shadow-xs"
+                    >
+                      <span>Telusuri di Buku Besar Simpanan</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ── KONTEN E1: SHIFT KASIR ── */}
           {!loading && !error && breakdown?.kind === 'cashier_shift' && (

@@ -28,6 +28,7 @@ import {
   recordVoluntaryDeposit,
   StatementEntry,
 } from '../../services/voluntarySavingsService';
+import { getTraceBackDepositRows } from '../../services/cashFlowAuditService';
 import { supabase } from '../../lib/supabaseClient';
 
 function formatDateTime(dateStr: string): string {
@@ -48,7 +49,9 @@ export default function RekeningKoranSimpanan() {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<AdditionalDepositProduct[]>([]);
   const [members, setMembers] = useState<MemberAdditionalSavingsSummary[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => (searchParams.get('search') || '').trim());
+  const [refFilter, setRefFilter] = useState(() => (searchParams.get('ref') || '').trim());
+  const [resolvedTraceReceipt, setResolvedTraceReceipt] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
@@ -77,7 +80,19 @@ export default function RekeningKoranSimpanan() {
       setMembers(res.members);
 
       const paramMemberId = searchParams.get('memberId');
+      const paramSearch = (searchParams.get('search') || '').trim().toLowerCase();
       let nextMemberId = preserveSelection ? selectedMemberId || paramMemberId : paramMemberId;
+      if (!nextMemberId && paramSearch) {
+        const matched = res.members.find(
+          (m) =>
+            m.nrp.toLowerCase() === paramSearch ||
+            m.nrp.toLowerCase().includes(paramSearch) ||
+            m.nama.toLowerCase().includes(paramSearch)
+        );
+        if (matched) {
+          nextMemberId = matched.memberId;
+        }
+      }
       if (!nextMemberId || !res.members.some((m) => m.memberId === nextMemberId)) {
         nextMemberId = res.members[0]?.memberId || null;
       }
@@ -150,6 +165,43 @@ export default function RekeningKoranSimpanan() {
     }
     return 0;
   }, [statement, selectedMember, selectedProduct]);
+
+  useEffect(() => {
+    const trimmed = refFilter.trim();
+    if (!trimmed || !trimmed.toUpperCase().startsWith('CF-')) {
+      setResolvedTraceReceipt(null);
+      return;
+    }
+    let cancelled = false;
+    getTraceBackDepositRows(trimmed, searchQuery || null)
+      .then((res) => {
+        if (!cancelled) {
+          setResolvedTraceReceipt(res.resolvedReceiptCode || null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedTraceReceipt(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refFilter, searchQuery]);
+
+  const filteredStatementEntries = useMemo(() => {
+    const entries = statement?.entries || [];
+    const q = refFilter.trim().toLowerCase();
+    if (!q) return entries;
+    const alt = resolvedTraceReceipt ? resolvedTraceReceipt.toLowerCase() : '';
+    return entries.filter((entry) => {
+      const refStr = String(entry.referenceNo || '').toLowerCase();
+      const descStr = String(entry.description || '').toLowerCase();
+      return (
+        refStr.includes(q) ||
+        descStr.includes(q) ||
+        (alt ? refStr.includes(alt) || descStr.includes(alt) : false)
+      );
+    });
+  }, [statement?.entries, refFilter, resolvedTraceReceipt]);
 
   const fetchStatement = async (memberId: string, productId: string) => {
     setStatementLoading(true);
@@ -648,6 +700,36 @@ export default function RekeningKoranSimpanan() {
                       </div>
                     </div>
 
+                    {/* Filter Kode Trace-Back Mutasi */}
+                    <div className="px-5 py-3 bg-slate-50/80 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                      <div className="relative flex-1 min-w-[220px] max-w-md">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={refFilter}
+                          onChange={(e) => setRefFilter(e.target.value)}
+                          placeholder="Filter kode bukti / trace-back (KW-SETOR-... / CF-...)..."
+                          className="w-full pl-8 pr-8 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
+                        />
+                        {refFilter && (
+                          <button
+                            type="button"
+                            onClick={() => setRefFilter('')}
+                            title="Reset filter kode bukti"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                      {refFilter && (
+                        <div className="text-xs text-slate-600">
+                          Filter aktif: <code className="font-mono font-semibold text-emerald-700">{refFilter}</code>{' '}
+                          ({filteredStatementEntries.length} mutasi cocok)
+                        </div>
+                      )}
+                    </div>
+
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
@@ -668,14 +750,16 @@ export default function RekeningKoranSimpanan() {
                                 Memuat mutasi rekening koran...
                               </td>
                             </tr>
-                          ) : !statement || statement.entries.length === 0 ? (
+                          ) : !statement || filteredStatementEntries.length === 0 ? (
                             <tr>
                               <td colSpan={7} className="py-10 text-center text-slate-500">
-                                Belum ada mutasi transaksi untuk produk simpanan ini.
+                                {refFilter
+                                  ? `Tidak ada mutasi yang cocok dengan kode bukti "${refFilter}".`
+                                  : 'Belum ada mutasi transaksi untuk produk simpanan ini.'}
                               </td>
                             </tr>
                           ) : (
-                            statement.entries.map((entry) => (
+                            filteredStatementEntries.map((entry) => (
                               <tr key={entry.id} className="hover:bg-slate-50/70">
                                 <td className="py-3 px-4 text-xs text-slate-600 whitespace-nowrap">
                                   {formatDateTime(entry.date)}

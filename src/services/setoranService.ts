@@ -775,16 +775,48 @@ export async function calculateMemberCumulativeBills(
   };
 }
 
-async function insertDepositTransactionResilient(payload: Record<string, any>): Promise<void> {
-  const { error } = await supabase.from('deposit_transactions').insert(payload);
-  if (!error) return;
+function isUuidTypeSyntaxError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return code === '22P02' || msg.includes('invalid input syntax for type uuid');
+}
 
+async function insertDepositTransactionRow(payload: Record<string, any>): Promise<{ id: string | null; error: any }> {
+  const insQ: any = supabase.from('deposit_transactions').insert(payload);
+  let res: any;
+  if (insQ && typeof insQ.select === 'function') {
+    const selQ = insQ.select('id');
+    if (selQ && typeof selQ.maybeSingle === 'function') {
+      res = await selQ.maybeSingle();
+    } else if (selQ && typeof selQ.single === 'function') {
+      res = await selQ.single();
+    } else {
+      res = await selQ;
+    }
+  } else {
+    res = await insQ;
+  }
+
+  if (res?.error) {
+    return { id: null, error: res.error };
+  }
+  const row = Array.isArray(res?.data) ? res.data[0] : res?.data;
+  return { id: row?.id ? String(row.id) : null, error: null };
+}
+
+async function insertDepositTransactionResilient(payload: Record<string, any>): Promise<string | null> {
+  const first = await insertDepositTransactionRow(payload);
+  if (!first.error) return first.id;
+
+  const error = first.error;
   if (isPostgrestColumnError(error)) {
     const fallback1: Record<string, any> = { ...payload };
     delete fallback1.transaction_date;
-    const { error: err1 } = await supabase.from('deposit_transactions').insert(fallback1);
-    if (!err1) return;
+    const second = await insertDepositTransactionRow(fallback1);
+    if (!second.error) return second.id;
 
+    const err1 = second.error;
     if (isPostgrestColumnError(err1)) {
       const fallback2: Record<string, any> = {
         member_deposit_id: payload.member_deposit_id,
@@ -796,21 +828,26 @@ async function insertDepositTransactionResilient(payload: Record<string, any>): 
         description: payload.description,
         notes: payload.notes,
       };
-      const { error: err2 } = await supabase.from('deposit_transactions').insert(fallback2);
-      if (!err2) return;
+      const third = await insertDepositTransactionRow(fallback2);
+      if (!third.error) return third.id;
 
+      const err2 = third.error;
       if (isPostgrestColumnError(err2)) {
+        const refSuffix =
+          payload.reference_no && !String(payload.description || '').includes(String(payload.reference_no))
+            ? ` [${payload.reference_no}]`
+            : '';
         const fallback3: Record<string, any> = {
           member_deposit_id: payload.member_deposit_id,
           transaction_type: payload.transaction_type,
           amount: payload.amount,
           for_month: payload.for_month,
           for_year: payload.for_year,
-          description: payload.description,
+          description: `${String(payload.description || 'Setoran Simpanan')}${refSuffix}`,
         };
-        const { error: err3 } = await supabase.from('deposit_transactions').insert(fallback3);
-        if (!err3) return;
-        throw new Error(`Gagal menyimpan transaksi simpanan: ${err3.message}`);
+        const fourth = await insertDepositTransactionRow(fallback3);
+        if (!fourth.error) return fourth.id;
+        throw new Error(`Gagal menyimpan transaksi simpanan: ${fourth.error.message}`);
       }
       throw new Error(`Gagal menyimpan transaksi simpanan: ${err2.message}`);
     }
@@ -856,23 +893,54 @@ async function insertLoanRepaymentResilient(payload: Record<string, any>): Promi
 async function insertCashFlowResilient(
   amount: number,
   description: string,
-  cashierId?: string | null
+  cashierId?: string | null,
+  receiptNo?: string | null,
+  fallbackUuidRef?: string | null
 ): Promise<void> {
-  const { error } = await supabase.from('cash_flow').insert({
+  const primaryPayload: Record<string, any> = {
     direction: 'in',
     amount,
     category: 'SETORAN_ANGGOTA',
+    reference_id: receiptNo || fallbackUuidRef || null,
     description,
     created_by: cashierId || null,
-  });
+  };
+
+  const { error } = await supabase.from('cash_flow').insert(primaryPayload);
 
   if (!error) return;
+
+  if (isUuidTypeSyntaxError(error)) {
+    const uuidPayload: Record<string, any> = {
+      direction: 'in',
+      amount,
+      category: 'SETORAN_ANGGOTA',
+      reference_id: fallbackUuidRef || null,
+      description,
+      created_by: cashierId || null,
+    };
+    const { error: uuidErr } = await supabase.from('cash_flow').insert(uuidPayload);
+    if (!uuidErr) return;
+
+    if (isPostgrestColumnError(uuidErr)) {
+      const { error: minUuidErr } = await supabase.from('cash_flow').insert({
+        direction: 'in',
+        amount,
+        category: 'SETORAN_ANGGOTA',
+        reference_id: fallbackUuidRef || null,
+      });
+      if (!minUuidErr) return;
+      throw new Error(`Gagal mencatat arus kas setoran: ${minUuidErr.message}`);
+    }
+    throw new Error(`Gagal mencatat arus kas setoran: ${uuidErr.message}`);
+  }
 
   if (isPostgrestColumnError(error)) {
     const { error: err2 } = await supabase.from('cash_flow').insert({
       direction: 'in',
       amount,
       category: 'SETORAN_ANGGOTA',
+      ...(fallbackUuidRef ? { reference_id: fallbackUuidRef } : {}),
     });
     if (!err2) return;
     throw new Error(`Gagal mencatat arus kas setoran: ${err2.message}`);
@@ -978,6 +1046,7 @@ export async function processMemberPayment(
   }
 
   let loanScheduleRowIndex = 0;
+  let firstInsertedDepositTxId: string | null = null;
 
   // 1. Allocate each checked item
   for (const { item, payAmount } of payableItems) {
@@ -988,7 +1057,7 @@ export async function processMemberPayment(
         item.memberDepositId
       );
 
-      await insertDepositTransactionResilient({
+      const insertedId = await insertDepositTransactionResilient({
         member_deposit_id: depositAccountId,
         transaction_type: 'deposit',
         amount: payAmount,
@@ -1001,6 +1070,9 @@ export async function processMemberPayment(
         notes: `Metode: ${paymentMethodLabel} | Kwitansi: ${receiptNo}`,
         created_by: cashierId || null,
       });
+      if (!firstInsertedDepositTxId && insertedId) {
+        firstInsertedDepositTxId = insertedId;
+      }
 
       totalPaid += payAmount;
       const expectedRem = item.unpaidMonths[0]?.remaining ?? payAmount;
@@ -1035,7 +1107,7 @@ export async function processMemberPayment(
         const alloc = Math.min(remainingPay, m.remaining);
         if (alloc <= 0) continue;
 
-        await insertDepositTransactionResilient({
+        const insertedId = await insertDepositTransactionResilient({
           member_deposit_id: depositAccountId,
           transaction_type: 'deposit',
           amount: alloc,
@@ -1048,6 +1120,9 @@ export async function processMemberPayment(
           notes: `Metode: ${paymentMethodLabel} | Kwitansi: ${receiptNo}`,
           created_by: cashierId || null,
         });
+        if (!firstInsertedDepositTxId && insertedId) {
+          firstInsertedDepositTxId = insertedId;
+        }
 
         remainingPay -= alloc;
         totalPaid += alloc;
@@ -1072,7 +1147,7 @@ export async function processMemberPayment(
         const targetMonth = selectedMonth || now.getMonth() + 1;
         const label = formatPeriodLabel(targetYear, targetMonth, false);
 
-        await insertDepositTransactionResilient({
+        const insertedExtraId = await insertDepositTransactionResilient({
           member_deposit_id: depositAccountId,
           transaction_type: 'deposit',
           amount: remainingPay,
@@ -1085,6 +1160,9 @@ export async function processMemberPayment(
           notes: `Metode: ${paymentMethodLabel} | Kwitansi: ${receiptNo}`,
           created_by: cashierId || null,
         });
+        if (!firstInsertedDepositTxId && insertedExtraId) {
+          firstInsertedDepositTxId = insertedExtraId;
+        }
 
         totalPaid += remainingPay;
         receiptLines.push({
@@ -1233,7 +1311,13 @@ export async function processMemberPayment(
 
   // 2. Record combined inflow in cash_flow
   const cashFlowDescription = `Setoran Anggota ${member.nama} (${member.nrp}) - ${paymentMethodLabel} [${receiptNo}]`;
-  await insertCashFlowResilient(totalPaid, cashFlowDescription, cashierId);
+  await insertCashFlowResilient(
+    totalPaid,
+    cashFlowDescription,
+    cashierId,
+    receiptNo,
+    firstInsertedDepositTxId || member.id
+  );
 
   // 3. Load official koperasi profile for receipt header
   const koperasiProfile = await getKoperasiProfile();

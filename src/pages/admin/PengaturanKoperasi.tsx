@@ -35,7 +35,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   ArrowRight,
-  FileSpreadsheet
+  FileSpreadsheet,
+  CheckCircle2
 } from 'lucide-react';
 import {
   getRateTiers,
@@ -43,6 +44,13 @@ import {
   deleteRateTier,
   SavingsRateTier
 } from '../../services/savingsRateService';
+import {
+  PRESERVED_MASTER_TABLES,
+  RESET_CONFIRMATION_PHRASE,
+  executeSystemTransactionalReset,
+  getTransactionalResetPreview,
+  type TransactionalResetPreview
+} from '../../services/systemResetService';
 import BulkLebaranRateImportModal from '../../components/members/BulkLebaranRateImportModal';
 
 export const MONTH_NAMES = [
@@ -117,6 +125,9 @@ export interface PengaturanKoperasiProps {
   initialConfirmModalOpen?: boolean;
   initialConfirmationInputText?: string;
   initialOriginalMinThp?: number;
+  initialResetModalOpen?: boolean;
+  initialResetPhraseInput?: string;
+  initialResetPreview?: TransactionalResetPreview | null;
 }
 
 export default function PengaturanKoperasi({
@@ -128,7 +139,10 @@ export default function PengaturanKoperasi({
   initialMinThpRatNotes,
   initialConfirmModalOpen = false,
   initialConfirmationInputText = '',
-  initialOriginalMinThp
+  initialOriginalMinThp,
+  initialResetModalOpen = false,
+  initialResetPhraseInput = '',
+  initialResetPreview = null
 }: PengaturanKoperasiProps = {}) {
   const { showToast } = useFeedback();
 
@@ -153,6 +167,13 @@ export default function PengaturanKoperasi({
   const [isSavingLoanSettings, setIsSavingLoanSettings] = useState<boolean>(false);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(initialConfirmModalOpen);
   const [confirmationInputText, setConfirmationInputText] = useState<string>(initialConfirmationInputText);
+
+  // Danger Zone: System Transactional Reset State
+  const [isResetTransactionsModalOpen, setIsResetTransactionsModalOpen] = useState<boolean>(initialResetModalOpen);
+  const [resetPhraseInput, setResetPhraseInput] = useState<string>(initialResetPhraseInput);
+  const [isResettingTransactions, setIsResettingTransactions] = useState<boolean>(false);
+  const [resetPreview, setResetPreview] = useState<TransactionalResetPreview | null>(initialResetPreview);
+  const [isLoadingResetPreview, setIsLoadingResetPreview] = useState<boolean>(false);
 
   // Savings Rate Tiers State
   const [rateTiers, setRateTiers] = useState<SavingsRateTier[]>(initialRateTiers || []);
@@ -253,6 +274,54 @@ export default function PengaturanKoperasi({
   const handleCancelConfirmModal = () => {
     setIsConfirmModalOpen(false);
     setConfirmationInputText('');
+  };
+
+  const handleOpenResetTransactionsModal = async () => {
+    setResetPhraseInput('');
+    setIsResetTransactionsModalOpen(true);
+    setIsLoadingResetPreview(true);
+    try {
+      const preview = await getTransactionalResetPreview();
+      setResetPreview(preview);
+    } catch {
+      // Pratinjau bersifat informatif; abaikan jika gagal menghitung statistik
+    } finally {
+      setIsLoadingResetPreview(false);
+    }
+  };
+
+  const handleCloseResetTransactionsModal = () => {
+    if (isResettingTransactions) return;
+    setIsResetTransactionsModalOpen(false);
+    setResetPhraseInput('');
+  };
+
+  const handleExecuteTransactionalReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetPhraseInput.trim() !== RESET_CONFIRMATION_PHRASE || isResettingTransactions) {
+      return;
+    }
+
+    setIsResettingTransactions(true);
+    try {
+      const result = await executeSystemTransactionalReset(resetPhraseInput.trim());
+      setIsResetTransactionsModalOpen(false);
+      setResetPhraseInput('');
+      setResetPreview(null);
+      const restoredNote =
+        result.restoredMembersCount > 0
+          ? ` ${result.restoredMembersCount} status anggota dipulihkan ke ACTIVE.`
+          : '';
+      showToast(
+        `Reset selesai! ${result.truncatedCount} tabel transaksi berhasil dikosongkan dan 9 tabel master tetap utuh.${restoredNote}`,
+        'success'
+      );
+      await Promise.all([loadProfile(), loadRateTiers(), loadLoanSettings()]);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengosongkan data transaksional', 'error');
+    } finally {
+      setIsResettingTransactions(false);
+    }
   };
 
   const loadRateTiers = async () => {
@@ -1028,6 +1097,60 @@ export default function PengaturanKoperasi({
               </div>
             </form>
           </div>
+
+          {/* Zona Berbahaya — Reset Data Transaksional */}
+          <div
+            data-testid="danger-zone-reset-card"
+            className="rounded-xl border border-rose-200 bg-rose-50/30 shadow-xs overflow-hidden"
+          >
+            <div className="p-5 border-b border-rose-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-rose-50/70">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-rose-100 text-rose-700 rounded-xl shrink-0">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-200 mb-1">
+                    Zona Berbahaya — Reset Data Transaksional
+                  </span>
+                  <h2 className="font-bold text-slate-900 text-base">
+                    Reset Seluruh Data Transaksi (Pertahankan Data Master)
+                  </h2>
+                  <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                    Mengosongkan seluruh mutasi arus kas, transaksi &amp; rekening simpanan, pinjaman, bon toko, penjualan POS &amp; shift, pembelian/retur, kliring, serta arsip tutup buku/SHU secara atomik — <strong className="text-emerald-700">tanpa menghapus</strong> 9 tabel master inti berikut.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                data-testid="btn-open-reset-transactions-modal"
+                onClick={handleOpenResetTransactionsModal}
+                className="px-4 py-2.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2 cursor-pointer shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Reset Data Transaksi...</span>
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <div className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>9 Tabel Master Inti yang Dipertahankan (Whitelist 100% Utuh):</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {PRESERVED_MASTER_TABLES.map((table) => (
+                  <span
+                    key={table.name}
+                    title={table.label}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-white text-emerald-800 border border-emerald-200 shadow-2xs"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    <code className="font-mono font-semibold">{table.name}</code>
+                    <span className="text-slate-500 hidden sm:inline">({table.label})</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
         </>
       )}
 
@@ -1354,6 +1477,175 @@ export default function PengaturanKoperasi({
                     <>
                       <ShieldAlert className="w-3.5 h-3.5" />
                       <span>Konfirmasi & Terapkan Kebijakan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Kritis Reset Data Transaksional */}
+      {isResetTransactionsModalOpen && (
+        <div
+          data-testid="reset-transactions-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-rose-200 max-w-xl w-full max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-rose-100 flex items-center justify-between bg-rose-50/80 sticky top-0 z-10">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-100 text-rose-700 rounded-xl">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Konfirmasi Reset Seluruh Data Transaksi
+                  </h3>
+                  <p className="text-xs text-rose-700 font-medium">
+                    Zona Berbahaya • Tindakan Permanen
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseResetTransactionsModal}
+                disabled={isResettingTransactions}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-rose-100/70 transition-colors cursor-pointer disabled:opacity-50"
+                title="Tutup dialog"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <form onSubmit={handleExecuteTransactionalReset} className="p-6 space-y-5 text-sm">
+              {/* Daftar 9 Tabel Master yang Dipertahankan */}
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>9 Tabel Master yang Dipertahankan (Aman):</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {PRESERVED_MASTER_TABLES.map((table) => (
+                    <div
+                      key={table.name}
+                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs"
+                    >
+                      <span className="font-medium truncate">{table.label}</span>
+                      <code className="font-mono font-bold text-[11px] bg-white/80 px-1.5 py-0.5 rounded border border-emerald-200 shrink-0">
+                        {table.name}
+                      </code>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Statistik Data Transaksi Saat Ini */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-slate-500" />
+                    <span>Estimasi Data Transaksi yang Akan Dikosongkan</span>
+                  </span>
+                  {!isLoadingResetPreview && resetPreview && (
+                    <span className="font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                      {resetPreview.totalRows.toLocaleString('id-ID')} baris
+                    </span>
+                  )}
+                </div>
+
+                {isLoadingResetPreview ? (
+                  <div className="text-xs text-slate-500 flex items-center gap-2 py-1">
+                    <div className="w-3.5 h-3.5 border-2 border-slate-300 border-t-rose-600 rounded-full animate-spin" />
+                    <span>Menghitung jumlah baris transaksi saat ini...</span>
+                  </div>
+                ) : resetPreview ? (
+                  resetPreview.totalRows > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {resetPreview.tables
+                        .filter((item) => item.count > 0)
+                        .map((item) => (
+                          <span
+                            key={item.table}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-white border border-slate-200 text-slate-700"
+                          >
+                            <span>{item.label}:</span>
+                            <strong className="text-rose-700">{item.count.toLocaleString('id-ID')}</strong>
+                          </span>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      Belum ada data transaksi tercatat pada tabel utama.
+                    </p>
+                  )
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Seluruh tabel di luar daftar 9 tabel master akan dikosongkan.
+                  </p>
+                )}
+              </div>
+
+              {/* Peringatan Permanen */}
+              <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <span className="font-bold text-rose-900 block mb-0.5">
+                    Peringatan Penghapusan Permanen:
+                  </span>
+                  Seluruh riwayat transaksi di skema <code className="font-mono font-semibold">public</code> di luar 9 tabel master di atas akan dikosongkan secara permanen (<code className="font-mono">TRUNCATE ... CASCADE</code>) dan tidak dapat dikembalikan. Status anggota yang sempat <code className="font-mono">RESIGNED</code> atau nonaktif akan dipulihkan ke <code className="font-mono font-semibold">ACTIVE</code>.
+                </div>
+              </div>
+
+              {/* Input Frasa Verifikasi */}
+              <div className="space-y-2">
+                <label htmlFor="resetTransactionsPhraseInput" className="block text-xs font-semibold text-slate-700">
+                  Ketik <span className="font-mono font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">&quot;{RESET_CONFIRMATION_PHRASE}&quot;</span> untuk membuka tombol eksekusi
+                </label>
+                <input
+                  id="resetTransactionsPhraseInput"
+                  data-testid="reset-phrase-input"
+                  type="text"
+                  value={resetPhraseInput}
+                  onChange={(e) => setResetPhraseInput(e.target.value)}
+                  disabled={isResettingTransactions}
+                  placeholder={RESET_CONFIRMATION_PHRASE}
+                  className="w-full px-4 py-2.5 font-mono text-center tracking-wider text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-600 font-bold text-slate-800 transition-all placeholder:font-sans placeholder:font-normal placeholder:tracking-normal placeholder:text-slate-400 disabled:bg-slate-100"
+                  autoFocus
+                />
+                <p className="text-[11px] text-slate-500 text-center">
+                  Harus diketik persis huruf kapital: <code className="font-mono font-semibold">{RESET_CONFIRMATION_PHRASE}</code>
+                </p>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  data-testid="btn-cancel-reset-transactions"
+                  onClick={handleCloseResetTransactionsModal}
+                  disabled={isResettingTransactions}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  data-testid="btn-confirm-reset-transactions"
+                  disabled={resetPhraseInput.trim() !== RESET_CONFIRMATION_PHRASE || isResettingTransactions}
+                  className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed rounded-lg transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isResettingTransactions ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Mengosongkan Data Transaksi...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Kosongkan Data Transaksi Sekarang</span>
                     </>
                   )}
                 </button>

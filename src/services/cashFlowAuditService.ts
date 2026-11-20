@@ -211,6 +211,55 @@ export interface IndividualDepositBreakdown {
   amount: number;
 }
 
+export interface MemberDepositBatchItem {
+  id: string;
+  memberId?: string;
+  memberNrp?: string;
+  memberName?: string;
+  depositTypeName: string;
+  depositTypeCode: string;
+  forMonth: number | null;
+  forYear: number | null;
+  periodLabel: string;
+  paymentMethod: string | null;
+  referenceNo: string | null;
+  description: string;
+  notes: string | null;
+  amount: number;
+  createdAt: string;
+}
+
+export interface MemberDepositBatchBreakdown {
+  sourceMenu: string;
+  receiptNumber: string;
+  paymentMethod: string | null;
+  member: {
+    id: string;
+    nrp: string;
+    nama: string;
+    pangkat?: string | null;
+  };
+  items: MemberDepositBatchItem[];
+  totalAmount: number;
+  journalAmount: number;
+  difference: number;
+  isMatched: boolean;
+}
+
+export interface TraceBackDepositLookupResult {
+  traceCode: string;
+  resolvedReceiptCode: string | null;
+  resolvedCashFlowRef: string | null;
+  member: {
+    id: string;
+    nrp: string;
+    nama: string;
+    pangkat?: string | null;
+  } | null;
+  items: MemberDepositBatchItem[];
+  totalAmount: number;
+}
+
 export interface JournalMetadata {
   id: string;
   refCode: string;
@@ -325,6 +374,11 @@ export type CashFlowReferenceBreakdown =
       kind: 'individual_deposit';
       journal: JournalMetadata;
       individualDeposit: IndividualDepositBreakdown;
+    }
+  | {
+      kind: 'MEMBER_DEPOSIT_BATCH';
+      journal: JournalMetadata;
+      memberDepositBatch: MemberDepositBatchBreakdown;
     }
   | {
       kind: 'cashier_shift';
@@ -1419,6 +1473,616 @@ const CASHIER_SHIFT_CATEGORIES = new Set([
   'SELISIH_KURANG_KASIR',
 ]);
 
+const FULL_MONTH_NAMES_ID = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+] as const;
+
+const DEPOSIT_TX_FULL_COLS =
+  'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, reference_no, payment_method, notes, transaction_date, created_at';
+const DEPOSIT_TX_NO_DATE_COLS =
+  'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, reference_no, payment_method, notes, created_at';
+const DEPOSIT_TX_MIN_COLS =
+  'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, created_at';
+
+const LOAN_REPAY_FULL_COLS =
+  'id, loan_id, schedule_id, amount_paid, payment_method, receipt_number, payment_date, notes, created_at';
+const LOAN_REPAY_NO_DATE_COLS =
+  'id, loan_id, schedule_id, amount_paid, payment_method, receipt_number, notes, created_at';
+const LOAN_REPAY_MIN_COLS =
+  'id, loan_id, amount_paid, notes, created_at';
+
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isMemberDepositBatchCategory(category?: string | null): boolean {
+  const normalized = String(category || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+  return normalized === 'SETORAN_ANGGOTA';
+}
+
+export function extractReceiptCodeFromCashFlow(
+  referenceId?: string | null,
+  description?: string | null
+): string | null {
+  const refTrimmed = String(referenceId || '').trim();
+  if (/^(KW-[A-Z0-9/_-]+)$/i.test(refTrimmed)) {
+    return refTrimmed.toUpperCase();
+  }
+
+  const desc = String(description || '');
+  const bracketMatch = desc.match(/\[(KW-[A-Z0-9/_-]+)\]/i);
+  if (bracketMatch?.[1]) {
+    return bracketMatch[1].toUpperCase();
+  }
+
+  const setorMatch = desc.match(/\b(KW-SETOR-[A-Z0-9/_-]+)\b/i);
+  if (setorMatch?.[1]) {
+    return setorMatch[1].toUpperCase();
+  }
+
+  const kwMatch = desc.match(/\b(KW-[A-Z0-9/_-]+)\b/i);
+  if (kwMatch?.[1]) {
+    return kwMatch[1].toUpperCase();
+  }
+
+  return null;
+}
+
+export function extractMemberNrpFromDepositDescription(
+  description?: string | null
+): string | null {
+  const desc = String(description || '');
+  const parenMatch = desc.match(/\((\d{5,})\)/);
+  if (parenMatch?.[1]) return parenMatch[1];
+
+  const dashMatch = desc.match(/[—–-]\s*(?:\(lama\s*\d+\)\s*)?(\d{5,})\s*-/);
+  if (dashMatch?.[1]) return dashMatch[1];
+
+  return null;
+}
+
+export function extractMemberNameFromDepositDescription(
+  description?: string | null
+): string | null {
+  const desc = String(description || '');
+  const exactMatch = desc.match(/^Setoran\s+Anggota\s+(.+?)\s*\(\d{5,}\)/i);
+  if (exactMatch?.[1]) return exactMatch[1].trim();
+
+  const fallbackMatch = desc.match(/^Setoran\s+Anggota\s+(.+?)\s*\(/i);
+  if (fallbackMatch?.[1]) return fallbackMatch[1].trim();
+
+  return null;
+}
+
+export function extractPaymentMethodFromDepositDescription(
+  description?: string | null
+): string | null {
+  const desc = String(description || '');
+  const match = desc.match(/\)\s*-\s*([^[\]]+?)(?:\s*\[|$)/i);
+  return match?.[1] ? match[1].trim() : null;
+}
+
+function formatBatchPeriodLabel(
+  forMonth: number | null,
+  forYear: number | null,
+  depositTypeCode: string,
+  description?: string | null
+): string {
+  if (
+    forMonth !== null &&
+    forYear !== null &&
+    Number.isInteger(forMonth) &&
+    forMonth >= 1 &&
+    forMonth <= 12 &&
+    Number.isInteger(forYear) &&
+    forYear > 0
+  ) {
+    return `${FULL_MONTH_NAMES_ID[forMonth - 1]} ${forYear}`;
+  }
+
+  const codeUpper = String(depositTypeCode || '').trim().toUpperCase();
+  if (codeUpper === 'POKOK' || codeUpper === 'SP') {
+    return 'Kewajiban Pokok';
+  }
+
+  const desc = String(description || '');
+  const parenPeriod = desc.match(/\(([^()]+)\)\s*$/);
+  if (parenPeriod?.[1] && !/^\d{5,}$/.test(parenPeriod[1].trim())) {
+    return parenPeriod[1].trim();
+  }
+
+  return 'Sekali Bayar';
+}
+
+function getBatchBucketSortOrder(code?: string | null): number {
+  const upper = String(code || '').trim().toUpperCase();
+  if (upper === 'POKOK' || upper === 'SP') return 1;
+  if (upper === 'WAJIB' || upper === 'SW') return 2;
+  if (upper === 'BELANJA' || upper === 'SB') return 3;
+  if (upper === 'LEBARAN' || upper === 'SL' || upper === 'SHR') return 4;
+  if (upper === 'PINJAMAN') return 6;
+  return 5;
+}
+
+function depositTxMatchesReceipt(tx: any, receiptCodeUpper: string): boolean {
+  if (!receiptCodeUpper) return false;
+  const refNo = String(tx?.reference_no || '').trim().toUpperCase();
+  if (refNo === receiptCodeUpper || refNo.includes(receiptCodeUpper)) return true;
+
+  const notes = String(tx?.notes || '').toUpperCase();
+  if (notes.includes(receiptCodeUpper)) return true;
+
+  const desc = String(tx?.description || '').toUpperCase();
+  if (desc.includes(receiptCodeUpper)) return true;
+
+  return false;
+}
+
+function loanRepaymentMatchesReceipt(rep: any, receiptCodeUpper: string): boolean {
+  if (!receiptCodeUpper) return false;
+  const repNo = String(rep?.receipt_number || '').trim().toUpperCase();
+  if (
+    repNo === receiptCodeUpper ||
+    repNo.startsWith(`${receiptCodeUpper}-L`) ||
+    repNo.includes(receiptCodeUpper)
+  ) {
+    return true;
+  }
+  const notes = String(rep?.notes || '').toUpperCase();
+  return notes.includes(receiptCodeUpper);
+}
+
+async function fetchDepositTransactionsByRefResilient(
+  receiptCode: string
+): Promise<any[]> {
+  let res = await safeFetchListByEq<any>(
+    'deposit_transactions',
+    DEPOSIT_TX_FULL_COLS,
+    'reference_no',
+    receiptCode
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchListByEq<any>(
+      'deposit_transactions',
+      DEPOSIT_TX_NO_DATE_COLS,
+      'reference_no',
+      receiptCode
+    );
+  }
+  if (res.error) return [];
+  return (res.data || []).filter(
+    (r: any) => !r?.transaction_type || r.transaction_type === 'deposit'
+  );
+}
+
+async function fetchAllDepositTransactionsResilient(): Promise<any[]> {
+  let res = await safeFetchAllPaged<any>('deposit_transactions', DEPOSIT_TX_FULL_COLS);
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>('deposit_transactions', DEPOSIT_TX_NO_DATE_COLS);
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>('deposit_transactions', DEPOSIT_TX_MIN_COLS);
+  }
+  return res.data || [];
+}
+
+async function fetchAllLoanRepaymentsResilient(): Promise<any[]> {
+  let res = await safeFetchAllPaged<any>('loan_repayments', LOAN_REPAY_FULL_COLS);
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>('loan_repayments', LOAN_REPAY_NO_DATE_COLS);
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchAllPaged<any>('loan_repayments', LOAN_REPAY_MIN_COLS);
+  }
+  return res.data || [];
+}
+
+async function fetchSingleDepositTxResilient(id: string): Promise<any | null> {
+  let res = await safeFetchSingleById<any>('deposit_transactions', DEPOSIT_TX_FULL_COLS, id);
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>('deposit_transactions', DEPOSIT_TX_NO_DATE_COLS, id);
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>('deposit_transactions', DEPOSIT_TX_MIN_COLS, id);
+  }
+  return res.data ?? null;
+}
+
+function selectBestMatchedDepositRowsForAmount(
+  sameDayRows: any[],
+  journalAmount: number,
+  journalCreatedAt: string
+): any[] {
+  if (sameDayRows.length === 0) return [];
+  const totalAll = sameDayRows.reduce(
+    (s, r) => s + Math.round(Number(r?.amount || 0)),
+    0
+  );
+  if (journalAmount <= 0 || totalAll === journalAmount) {
+    return sameDayRows;
+  }
+
+  // 1. Coba kelompokkan berdasarkan reference_no yang jumlahnya persis sama dengan nominal jurnal
+  const byRef = new Map<string, any[]>();
+  for (const row of sameDayRows) {
+    const key = String(row?.reference_no || '').trim().toUpperCase();
+    if (!key) continue;
+    const list = byRef.get(key) || [];
+    list.push(row);
+    byRef.set(key, list);
+  }
+  for (const group of byRef.values()) {
+    const groupSum = group.reduce(
+      (s, r) => s + Math.round(Number(r?.amount || 0)),
+      0
+    );
+    if (groupSum === journalAmount) {
+      return group;
+    }
+  }
+
+  // 2. Coba filter baris dengan timestamp dalam ±60 detik dari created_at cash_flow
+  const journalMs = new Date(journalCreatedAt).getTime();
+  if (!Number.isNaN(journalMs)) {
+    const withinWindow = sameDayRows.filter((row) => {
+      const txMs = new Date(row?.created_at || '').getTime();
+      return !Number.isNaN(txMs) && Math.abs(txMs - journalMs) <= 60_000;
+    });
+    const windowSum = withinWindow.reduce(
+      (s, r) => s + Math.round(Number(r?.amount || 0)),
+      0
+    );
+    if (withinWindow.length > 0 && windowSum === journalAmount) {
+      return withinWindow;
+    }
+  }
+
+  return sameDayRows;
+}
+
+async function resolveMemberDepositBatchData(params: {
+  cashFlowRow: CashFlowAuditInput;
+  journal: JournalMetadata;
+  receiptCode: string | null;
+  memberNrpHint: string | null;
+  memberNameHint: string | null;
+  paymentMethodHint: string | null;
+}): Promise<MemberDepositBatchBreakdown> {
+  const {
+    cashFlowRow,
+    journal,
+    receiptCode: initialReceiptCode,
+    memberNrpHint,
+    memberNameHint,
+    paymentMethodHint,
+  } = params;
+
+  let effectiveReceiptCode = initialReceiptCode;
+  let matchedTxs: any[] = [];
+  let cachedAllTxs: any[] | null = null;
+
+  const getAllTxs = async (): Promise<any[]> => {
+    if (cachedAllTxs !== null) return cachedAllTxs;
+    cachedAllTxs = await fetchAllDepositTransactionsResilient();
+    return cachedAllTxs;
+  };
+
+  // 1. Pencocokan utama via reference_no (direct eq query, lalu full scan notes/description)
+  if (effectiveReceiptCode) {
+    const receiptUpper = effectiveReceiptCode.toUpperCase();
+    const directMatches = await fetchDepositTransactionsByRefResilient(effectiveReceiptCode);
+    if (directMatches.length > 0) {
+      matchedTxs = directMatches;
+    }
+
+    const directSum = matchedTxs.reduce(
+      (s, t) => s + Math.round(Number(t?.amount || 0)),
+      0
+    );
+    if (matchedTxs.length === 0 || (journal.amount > 0 && directSum < journal.amount)) {
+      const allTxs = await getAllTxs();
+      const scannedMatches = allTxs.filter(
+        (row: any) =>
+          row?.transaction_type === 'deposit' && depositTxMatchesReceipt(row, receiptUpper)
+      );
+      if (scannedMatches.length > matchedTxs.length) {
+        matchedTxs = scannedMatches;
+      }
+    }
+  }
+
+  // 2. Pencocokan via UUID cash_flow.reference_id (dapat berupa deposit_transactions.id atau anggota.id)
+  let resolvedMemberFromRef: any | null = null;
+  const rawRefId = String(cashFlowRow.reference_id || '').trim();
+  if (matchedTxs.length === 0 && rawRefId && UUID_REGEX.test(rawRefId)) {
+    const txById = await fetchSingleDepositTxResilient(rawRefId);
+    if (txById && txById.transaction_type === 'deposit') {
+      const txRef = String(txById.reference_no || '').trim();
+      if (txRef && !effectiveReceiptCode) {
+        effectiveReceiptCode = txRef.toUpperCase();
+      }
+      if (effectiveReceiptCode) {
+        const allTxs = await getAllTxs();
+        const batchMatches = allTxs.filter(
+          (row: any) =>
+            row?.transaction_type === 'deposit' &&
+            depositTxMatchesReceipt(row, effectiveReceiptCode!)
+        );
+        matchedTxs = batchMatches.length > 0 ? batchMatches : [txById];
+      } else {
+        matchedTxs = [txById];
+      }
+    } else {
+      const memberByRef = await safeFetchSingleById<any>(
+        'anggota',
+        'id, nrp, nama, pangkat',
+        rawRefId
+      );
+      if (memberByRef.data?.id) {
+        resolvedMemberFromRef = memberByRef.data;
+      }
+    }
+  }
+
+  // 3. Fallback historis: cocokkan anggota via NRP + tanggal transaksi + nominal jurnal
+  let resolvedMember: any | null = resolvedMemberFromRef;
+  if (matchedTxs.length === 0 && (memberNrpHint || resolvedMember)) {
+    if (!resolvedMember && memberNrpHint) {
+      const allMembers = await safeFetchAllPaged<any>('anggota', 'id, nrp, nama, pangkat');
+      resolvedMember =
+        (allMembers.data || []).find(
+          (m: any) => stripResignedNrpPrefix(m?.nrp) === stripResignedNrpPrefix(memberNrpHint)
+        ) ?? null;
+    }
+
+    if (resolvedMember?.id) {
+      const memberMdsRes = await safeFetchListByEq<any>(
+        'member_deposits',
+        'id, member_id, deposit_type_id',
+        'member_id',
+        String(resolvedMember.id)
+      );
+      let memberMdIds = new Set(
+        (memberMdsRes.data || []).map((md: any) => String(md.id)).filter(Boolean)
+      );
+      if (memberMdIds.size === 0) {
+        const allMds = await safeFetchAllPaged<any>(
+          'member_deposits',
+          'id, member_id, deposit_type_id'
+        );
+        memberMdIds = new Set(
+          (allMds.data || [])
+            .filter((md: any) => String(md?.member_id || '') === String(resolvedMember.id))
+            .map((md: any) => String(md.id))
+        );
+      }
+
+      if (memberMdIds.size > 0) {
+        const allTxs = await getAllTxs();
+        const cfDateCandidates = getDateCandidates(cashFlowRow.created_at);
+        const sameDayMemberTxs = allTxs.filter((row: any) => {
+          if (row?.transaction_type !== 'deposit') return false;
+          if (!memberMdIds.has(String(row?.member_deposit_id || ''))) return false;
+          if (isOpeningDepositTransaction(row)) return false;
+          const descLower = String(row?.description || '').toLowerCase();
+          if (descLower.includes('saldo awal')) return false;
+
+          if (cfDateCandidates.length === 0) return true;
+          const txDateCandidates = getDateCandidates(
+            row?.transaction_date || row?.created_at
+          );
+          return hasCommonDate(cfDateCandidates, txDateCandidates);
+        });
+
+        matchedTxs = selectBestMatchedDepositRowsForAmount(
+          sameDayMemberTxs,
+          journal.amount,
+          journal.createdAt
+        );
+      }
+    }
+  }
+
+  // 4. Cek angsuran pinjaman yang dibayar dalam batch kwitansi yang sama (jika masih ada selisih)
+  const matchedTxSum = matchedTxs.reduce(
+    (s, t) => s + Math.round(Number(t?.amount || 0)),
+    0
+  );
+  let matchedLoanRepayments: any[] = [];
+  if (
+    effectiveReceiptCode &&
+    (matchedTxs.length === 0 || (journal.amount > 0 && matchedTxSum < journal.amount))
+  ) {
+    const receiptUpper = effectiveReceiptCode.toUpperCase();
+    const allRepayments = await fetchAllLoanRepaymentsResilient();
+    matchedLoanRepayments = allRepayments.filter((rep: any) =>
+      loanRepaymentMatchesReceipt(rep, receiptUpper)
+    );
+  }
+
+  // 5. Enrich member_deposits, deposit_types, loans, dan anggota
+  const mdIds = Array.from(
+    new Set(
+      matchedTxs.map((t: any) => String(t?.member_deposit_id || '')).filter(Boolean)
+    )
+  );
+  const loanIds = Array.from(
+    new Set(
+      matchedLoanRepayments.map((r: any) => String(r?.loan_id || '')).filter(Boolean)
+    )
+  );
+
+  const [mdRows, loanRows] = await Promise.all([
+    mdIds.length > 0
+      ? safeFetchByIds<any>('member_deposits', 'id, member_id, deposit_type_id', mdIds)
+      : Promise.resolve([]),
+    loanIds.length > 0
+      ? safeFetchByIds<any>(
+          'loans',
+          'id, member_id, loan_type_name, jenis_pinjaman',
+          loanIds,
+          'id, member_id'
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const mdMap = new Map<string, any>();
+  for (const md of mdRows) {
+    if (md?.id) mdMap.set(String(md.id), md);
+  }
+  const loanMap = new Map<string, any>();
+  for (const l of loanRows) {
+    if (l?.id) loanMap.set(String(l.id), l);
+  }
+
+  const dtIds = Array.from(
+    new Set(mdRows.map((md: any) => String(md?.deposit_type_id || '')).filter(Boolean))
+  );
+  const memberIds = Array.from(
+    new Set(
+      [
+        ...mdRows.map((md: any) => String(md?.member_id || '')),
+        ...loanRows.map((l: any) => String(l?.member_id || '')),
+        resolvedMember?.id ? String(resolvedMember.id) : '',
+      ].filter(Boolean)
+    )
+  );
+
+  const [dtRows, memberRows] = await Promise.all([
+    dtIds.length > 0
+      ? safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
+      : Promise.resolve([]),
+    memberIds.length > 0
+      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, pangkat', memberIds)
+      : Promise.resolve([]),
+  ]);
+
+  const dtMap = new Map<string, any>();
+  for (const dt of dtRows) {
+    if (dt?.id) dtMap.set(String(dt.id), dt);
+  }
+  const memberMap = new Map<string, any>();
+  for (const m of memberRows) {
+    if (m?.id) memberMap.set(String(m.id), m);
+  }
+
+  const primaryMemberRow = memberRows[0] || resolvedMember || null;
+  const finalMember = {
+    id: String(primaryMemberRow?.id || ''),
+    nrp: stripResignedNrpPrefix(primaryMemberRow?.nrp) || memberNrpHint || '-',
+    nama: String(primaryMemberRow?.nama || memberNameHint || 'Anggota'),
+    pangkat: primaryMemberRow?.pangkat ?? null,
+  };
+
+  const items: MemberDepositBatchItem[] = [];
+
+  for (const tx of matchedTxs) {
+    const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
+    const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+    const txMember = md?.member_id ? memberMap.get(String(md.member_id)) : primaryMemberRow;
+
+    const depositTypeCode = String(dt?.code || '').trim() || '-';
+    const depositTypeName = String(dt?.name || '').trim() || 'Simpanan Anggota';
+    const forMonth =
+      tx?.for_month !== null && tx?.for_month !== undefined && tx?.for_month !== ''
+        ? Number(tx.for_month)
+        : null;
+    const forYear =
+      tx?.for_year !== null && tx?.for_year !== undefined && tx?.for_year !== ''
+        ? Number(tx.for_year)
+        : null;
+
+    items.push({
+      id: String(tx.id || `${md?.id || 'tx'}-${forYear || 0}-${forMonth || 0}`),
+      memberId: txMember?.id ? String(txMember.id) : finalMember.id || undefined,
+      memberNrp: stripResignedNrpPrefix(txMember?.nrp) || finalMember.nrp,
+      memberName: txMember?.nama ? String(txMember.nama) : finalMember.nama,
+      depositTypeName,
+      depositTypeCode,
+      forMonth,
+      forYear,
+      periodLabel: formatBatchPeriodLabel(
+        forMonth,
+        forYear,
+        depositTypeCode,
+        tx?.description
+      ),
+      paymentMethod: tx?.payment_method ?? paymentMethodHint ?? null,
+      referenceNo: tx?.reference_no ?? effectiveReceiptCode ?? null,
+      description: String(tx?.description || `Setoran ${depositTypeName}`),
+      notes: tx?.notes ?? null,
+      amount: Math.round(Number(tx?.amount || 0)),
+      createdAt: String(tx?.created_at || tx?.transaction_date || journal.createdAt),
+    });
+  }
+
+  for (const rep of matchedLoanRepayments) {
+    const loan = rep?.loan_id ? loanMap.get(String(rep.loan_id)) : undefined;
+    const repMember = loan?.member_id ? memberMap.get(String(loan.member_id)) : primaryMemberRow;
+    const loanLabel = loan?.loan_type_name || loan?.jenis_pinjaman || 'Pinjaman Anggota';
+
+    items.push({
+      id: `repay-${String(rep.id || rep.receipt_number || Math.random())}`,
+      memberId: repMember?.id ? String(repMember.id) : finalMember.id || undefined,
+      memberNrp: stripResignedNrpPrefix(repMember?.nrp) || finalMember.nrp,
+      memberName: repMember?.nama ? String(repMember.nama) : finalMember.nama,
+      depositTypeName: `Angsuran ${loanLabel}`,
+      depositTypeCode: 'PINJAMAN',
+      forMonth: null,
+      forYear: null,
+      periodLabel: formatBatchPeriodLabel(null, null, 'PINJAMAN', rep?.notes),
+      paymentMethod: rep?.payment_method ?? paymentMethodHint ?? null,
+      referenceNo: rep?.receipt_number ?? effectiveReceiptCode ?? null,
+      description: String(rep?.notes || `Pembayaran Angsuran ${loanLabel}`),
+      notes: rep?.notes ?? null,
+      amount: Math.round(Number(rep?.amount_paid || 0)),
+      createdAt: String(rep?.created_at || rep?.payment_date || journal.createdAt),
+    });
+  }
+
+  items.sort((a, b) => {
+    const bucketDiff =
+      getBatchBucketSortOrder(a.depositTypeCode) - getBatchBucketSortOrder(b.depositTypeCode);
+    if (bucketDiff !== 0) return bucketDiff;
+
+    const pA = a.forYear && a.forMonth ? a.forYear * 12 + a.forMonth : 0;
+    const pB = b.forYear && b.forMonth ? b.forYear * 12 + b.forMonth : 0;
+    if (pA !== pB) return pA - pB;
+
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+
+  const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+  const firstRefNo = items.find((i) => i.referenceNo)?.referenceNo || null;
+  const firstPayMethod = items.find((i) => i.paymentMethod)?.paymentMethod || null;
+  const resolvedReceiptNumber = effectiveReceiptCode || firstRefNo || '-';
+
+  return {
+    sourceMenu: 'Simpanan & Buku Besar → Setoran Simpanan',
+    receiptNumber: resolvedReceiptNumber,
+    paymentMethod: firstPayMethod || paymentMethodHint || null,
+    member: finalMember,
+    items,
+    totalAmount,
+    journalAmount: journal.amount,
+    difference: totalAmount - journal.amount,
+    isMatched: items.length > 0 && totalAmount === journal.amount,
+  };
+}
+
 export async function getCashFlowReferenceBreakdown(
   cashFlowRow: CashFlowAuditInput
 ): Promise<CashFlowReferenceBreakdown> {
@@ -2253,6 +2917,36 @@ export async function getCashFlowReferenceBreakdown(
     return { kind: 'journal_only', journal };
   }
 
+  // ── Cabang D2b: Setoran Simpanan Anggota Batch (Menu Terima Setoran / KW-SETOR) ─
+  const parsedBatchReceipt = extractReceiptCodeFromCashFlow(
+    cashFlowRow.reference_id,
+    cashFlowRow.description
+  );
+  if (
+    isMemberDepositBatchCategory(cashFlowRow.category) ||
+    (isSavingsDepositCategory(cashFlowRow.category) &&
+      Boolean(parsedBatchReceipt && parsedBatchReceipt.startsWith('KW-SETOR-')))
+  ) {
+    const memberNrpHint = extractMemberNrpFromDepositDescription(cashFlowRow.description);
+    const memberNameHint = extractMemberNameFromDepositDescription(cashFlowRow.description);
+    const paymentMethodHint = extractPaymentMethodFromDepositDescription(cashFlowRow.description);
+
+    const memberDepositBatch = await resolveMemberDepositBatchData({
+      cashFlowRow,
+      journal,
+      receiptCode: parsedBatchReceipt,
+      memberNrpHint,
+      memberNameHint,
+      paymentMethodHint,
+    });
+
+    return {
+      kind: 'MEMBER_DEPOSIT_BATCH',
+      journal,
+      memberDepositBatch,
+    };
+  }
+
   // ── Cabang D3: Setoran Simpanan (Matriks / Individual) ─────────────────────
   if (isSavingsDepositCategory(cashFlowRow.category)) {
     let tx: any = null;
@@ -2594,6 +3288,300 @@ export async function getCashFlowReferenceBreakdown(
   return {
     kind: 'journal_only',
     journal,
+  };
+}
+
+/**
+ * Melacak rincian mutasi simpanan & angsuran berdasarkan kode trace-back
+ * (`KW-SETOR-...`, `KW-...`, atau kode referensi jurnal `CF-...`).
+ */
+export async function getTraceBackDepositRows(
+  traceCode: string,
+  memberNrpHint?: string | null
+): Promise<TraceBackDepositLookupResult> {
+  const trimmedCode = String(traceCode || '').trim();
+  if (!trimmedCode) {
+    return {
+      traceCode: '',
+      resolvedReceiptCode: null,
+      resolvedCashFlowRef: null,
+      member: null,
+      items: [],
+      totalAmount: 0,
+    };
+  }
+
+  const codeUpper = trimmedCode.toUpperCase();
+
+  if (codeUpper.startsWith('CF-')) {
+    const cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, category, amount, direction, description, reference_id, created_at'
+    );
+    const matchedCf = (cfRes.data || []).find(
+      (row: any) =>
+        `CF-${String(row?.id || '').slice(0, 8).toUpperCase()}` === codeUpper
+    );
+
+    if (matchedCf) {
+      const breakdown = await getCashFlowReferenceBreakdown({
+        id: String(matchedCf.id),
+        category: String(matchedCf.category || ''),
+        amount: Math.round(Number(matchedCf.amount || 0)),
+        direction: matchedCf.direction === 'out' ? 'out' : 'in',
+        description: matchedCf.description ?? null,
+        reference_id: matchedCf.reference_id ?? null,
+        referensi: codeUpper,
+        created_at: String(matchedCf.created_at || ''),
+      });
+
+      if (breakdown.kind === 'MEMBER_DEPOSIT_BATCH') {
+        const batch = breakdown.memberDepositBatch;
+        return {
+          traceCode: trimmedCode,
+          resolvedReceiptCode:
+            batch.receiptNumber && batch.receiptNumber !== '-'
+              ? batch.receiptNumber
+              : null,
+          resolvedCashFlowRef: codeUpper,
+          member: batch.member,
+          items: batch.items,
+          totalAmount: batch.totalAmount,
+        };
+      }
+
+      if (breakdown.kind === 'individual_deposit') {
+        const ind = breakdown.individualDeposit;
+        const item: MemberDepositBatchItem = {
+          id: ind.transactionId,
+          memberNrp: ind.nrp,
+          memberName: ind.nama,
+          depositTypeName: ind.depositTypeName,
+          depositTypeCode: ind.depositTypeCode,
+          forMonth: ind.forMonth,
+          forYear: ind.forYear,
+          periodLabel: ind.periodLabel,
+          paymentMethod: ind.paymentMethod,
+          referenceNo: ind.referenceNo,
+          description: ind.description,
+          notes: ind.notes,
+          amount: ind.amount,
+          createdAt: ind.createdAt,
+        };
+        return {
+          traceCode: trimmedCode,
+          resolvedReceiptCode: ind.referenceNo,
+          resolvedCashFlowRef: codeUpper,
+          member: {
+            id: '',
+            nrp: ind.nrp,
+            nama: ind.nama,
+            pangkat: ind.pangkat ?? null,
+          },
+          items: [item],
+          totalAmount: ind.amount,
+        };
+      }
+    }
+
+    return {
+      traceCode: trimmedCode,
+      resolvedReceiptCode: null,
+      resolvedCashFlowRef: codeUpper,
+      member: null,
+      items: [],
+      totalAmount: 0,
+    };
+  }
+
+  // Pencarian langsung berdasarkan nomor kwitansi (`KW-SETOR-...` / `KW-...`)
+  let matchedTxs = await fetchDepositTransactionsByRefResilient(trimmedCode);
+  if (matchedTxs.length === 0) {
+    const allTxs = await fetchAllDepositTransactionsResilient();
+    matchedTxs = allTxs.filter(
+      (row: any) =>
+        (!row?.transaction_type || row.transaction_type === 'deposit') &&
+        depositTxMatchesReceipt(row, codeUpper)
+    );
+  }
+
+  const allRepayments = await fetchAllLoanRepaymentsResilient();
+  const matchedRepayments = allRepayments.filter((rep: any) =>
+    loanRepaymentMatchesReceipt(rep, codeUpper)
+  );
+
+  const mdIds = Array.from(
+    new Set(matchedTxs.map((t: any) => String(t?.member_deposit_id || '')).filter(Boolean))
+  );
+  const loanIds = Array.from(
+    new Set(matchedRepayments.map((r: any) => String(r?.loan_id || '')).filter(Boolean))
+  );
+
+  const [mdRows, loanRows] = await Promise.all([
+    mdIds.length > 0
+      ? safeFetchByIds<any>('member_deposits', 'id, member_id, deposit_type_id', mdIds)
+      : Promise.resolve([]),
+    loanIds.length > 0
+      ? safeFetchByIds<any>(
+          'loans',
+          'id, member_id, loan_type_name, jenis_pinjaman',
+          loanIds,
+          'id, member_id'
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const mdMap = new Map<string, any>();
+  for (const md of mdRows) if (md?.id) mdMap.set(String(md.id), md);
+  const loanMap = new Map<string, any>();
+  for (const l of loanRows) if (l?.id) loanMap.set(String(l.id), l);
+
+  const dtIds = Array.from(
+    new Set(mdRows.map((md: any) => String(md?.deposit_type_id || '')).filter(Boolean))
+  );
+  const memberIds = Array.from(
+    new Set(
+      [
+        ...mdRows.map((md: any) => String(md?.member_id || '')),
+        ...loanRows.map((l: any) => String(l?.member_id || '')),
+      ].filter(Boolean)
+    )
+  );
+
+  const [dtRows, memberRows] = await Promise.all([
+    dtIds.length > 0
+      ? safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
+      : Promise.resolve([]),
+    memberIds.length > 0
+      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, pangkat', memberIds)
+      : Promise.resolve([]),
+  ]);
+
+  const dtMap = new Map<string, any>();
+  for (const dt of dtRows) if (dt?.id) dtMap.set(String(dt.id), dt);
+  const memberMap = new Map<string, any>();
+  for (const m of memberRows) if (m?.id) memberMap.set(String(m.id), m);
+
+  const normalizedNrpHint = memberNrpHint
+    ? stripResignedNrpPrefix(memberNrpHint).toLowerCase()
+    : '';
+  const distinctMembers = Array.from(memberMap.values());
+  let targetMember = distinctMembers[0] || null;
+  if (normalizedNrpHint && distinctMembers.length > 1) {
+    targetMember =
+      distinctMembers.find(
+        (m: any) =>
+          stripResignedNrpPrefix(m?.nrp).toLowerCase() === normalizedNrpHint
+      ) || targetMember;
+  }
+
+  const items: MemberDepositBatchItem[] = [];
+  for (const tx of matchedTxs) {
+    const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
+    const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+    const m = md?.member_id ? memberMap.get(String(md.member_id)) : targetMember;
+    if (
+      normalizedNrpHint &&
+      distinctMembers.length > 1 &&
+      m &&
+      stripResignedNrpPrefix(m.nrp).toLowerCase() !== normalizedNrpHint
+    ) {
+      continue;
+    }
+
+    const depositTypeCode = String(dt?.code || '').trim() || '-';
+    const depositTypeName = String(dt?.name || '').trim() || 'Simpanan Anggota';
+    const forMonth =
+      tx?.for_month !== null && tx?.for_month !== undefined && tx?.for_month !== ''
+        ? Number(tx.for_month)
+        : null;
+    const forYear =
+      tx?.for_year !== null && tx?.for_year !== undefined && tx?.for_year !== ''
+        ? Number(tx.for_year)
+        : null;
+
+    items.push({
+      id: String(tx.id),
+      memberId: m?.id ? String(m.id) : undefined,
+      memberNrp: stripResignedNrpPrefix(m?.nrp) || undefined,
+      memberName: m?.nama ? String(m.nama) : undefined,
+      depositTypeName,
+      depositTypeCode,
+      forMonth,
+      forYear,
+      periodLabel: formatBatchPeriodLabel(
+        forMonth,
+        forYear,
+        depositTypeCode,
+        tx?.description
+      ),
+      paymentMethod: tx?.payment_method ?? null,
+      referenceNo: tx?.reference_no ?? codeUpper,
+      description: String(tx?.description || `Setoran ${depositTypeName}`),
+      notes: tx?.notes ?? null,
+      amount: Math.round(Number(tx?.amount || 0)),
+      createdAt: String(tx?.created_at || tx?.transaction_date || ''),
+    });
+  }
+
+  for (const rep of matchedRepayments) {
+    const loan = rep?.loan_id ? loanMap.get(String(rep.loan_id)) : undefined;
+    const m = loan?.member_id ? memberMap.get(String(loan.member_id)) : targetMember;
+    if (
+      normalizedNrpHint &&
+      distinctMembers.length > 1 &&
+      m &&
+      stripResignedNrpPrefix(m.nrp).toLowerCase() !== normalizedNrpHint
+    ) {
+      continue;
+    }
+    const loanLabel = loan?.loan_type_name || loan?.jenis_pinjaman || 'Pinjaman Anggota';
+
+    items.push({
+      id: `repay-${String(rep.id)}`,
+      memberId: m?.id ? String(m.id) : undefined,
+      memberNrp: stripResignedNrpPrefix(m?.nrp) || undefined,
+      memberName: m?.nama ? String(m.nama) : undefined,
+      depositTypeName: `Angsuran ${loanLabel}`,
+      depositTypeCode: 'PINJAMAN',
+      forMonth: null,
+      forYear: null,
+      periodLabel: formatBatchPeriodLabel(null, null, 'PINJAMAN', rep?.notes),
+      paymentMethod: rep?.payment_method ?? null,
+      referenceNo: rep?.receipt_number ?? codeUpper,
+      description: String(rep?.notes || `Pembayaran Angsuran ${loanLabel}`),
+      notes: rep?.notes ?? null,
+      amount: Math.round(Number(rep?.amount_paid || 0)),
+      createdAt: String(rep?.created_at || rep?.payment_date || ''),
+    });
+  }
+
+  items.sort((a, b) => {
+    const bucketDiff =
+      getBatchBucketSortOrder(a.depositTypeCode) - getBatchBucketSortOrder(b.depositTypeCode);
+    if (bucketDiff !== 0) return bucketDiff;
+    const pA = a.forYear && a.forMonth ? a.forYear * 12 + a.forMonth : 0;
+    const pB = b.forYear && b.forMonth ? b.forYear * 12 + b.forMonth : 0;
+    if (pA !== pB) return pA - pB;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+
+  const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+
+  return {
+    traceCode: trimmedCode,
+    resolvedReceiptCode: codeUpper,
+    resolvedCashFlowRef: null,
+    member: targetMember
+      ? {
+          id: String(targetMember.id),
+          nrp: stripResignedNrpPrefix(targetMember.nrp) || '-',
+          nama: String(targetMember.nama || 'Anggota'),
+          pangkat: targetMember.pangkat ?? null,
+        }
+      : null,
+    items,
+    totalAmount,
   };
 }
 

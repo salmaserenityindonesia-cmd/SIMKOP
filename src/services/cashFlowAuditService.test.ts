@@ -8,6 +8,7 @@ import {
   enrichStoreCreditCashFlowDescriptions,
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
+  getTraceBackDepositRows,
   syncPosCashSalesToCashFlow,
   syncResignedMemberClearanceToCashFlow,
 } from './cashFlowAuditService';
@@ -2573,5 +2574,291 @@ describe('cashFlowAuditService - Kliring Anggota Keluar (KLIRING_ANGGOTA_KELUAR)
     expect(res.skippedCount).toBe(1);
     expect(insertedCashFlows).toHaveLength(0);
     expect(cashFlowRows.map((r) => r.id)).toEqual(['13ba88c2-0000-4000-8000-000000000001']);
+  });
+});
+
+describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function buildTableMock(rows: any[]) {
+    return {
+      select: vi.fn().mockReturnValue({
+        in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+          data: rows.filter((r) => vals.includes(r[col])),
+          error: null,
+        })),
+        eq: vi.fn().mockImplementation((col: string, val: any) => {
+          const filtered = rows.filter((r) => r[col] === val);
+          return {
+            maybeSingle: vi.fn().mockResolvedValue({ data: filtered[0] ?? null, error: null }),
+            single: vi.fn().mockResolvedValue({ data: filtered[0] ?? null, error: null }),
+            then: (onRes: any, onRej: any) =>
+              Promise.resolve({ data: filtered, error: null }).then(onRes, onRej),
+          };
+        }),
+        range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+          data: rows.slice(from, to + 1),
+          error: null,
+        })),
+      }),
+    };
+  }
+
+  it('resolves SETORAN_ANGGOTA CF-EED98D59 (reference_id: null) via [KW-SETOR-20261120-3663] to itemized deposit_transactions totaling Rp 4.050.000', async () => {
+    const anggotaRows = [
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+    ];
+    const depositTypes = [
+      { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' },
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+    ];
+    const memberDeposits = [
+      { id: 'md-p', member_id: 'mem-bagus', deposit_type_id: 'dt-pokok' },
+      { id: 'md-w', member_id: 'mem-bagus', deposit_type_id: 'dt-wajib' },
+      { id: 'md-b', member_id: 'mem-bagus', deposit_type_id: 'dt-belanja' },
+      { id: 'md-l', member_id: 'mem-bagus', deposit_type_id: 'dt-lebaran' },
+    ];
+    const depositTransactions = [
+      {
+        id: 'tx-p-1',
+        member_deposit_id: 'md-p',
+        transaction_type: 'deposit',
+        amount: 500000,
+        for_month: null,
+        for_year: null,
+        reference_no: 'KW-SETOR-20261120-3663',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Pokok',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+        created_at: '2026-11-20T09:00:00.000Z',
+      },
+      {
+        id: 'tx-w-oct',
+        member_deposit_id: 'md-w',
+        transaction_type: 'deposit',
+        amount: 1500000,
+        for_month: 10,
+        for_year: 2026,
+        reference_no: 'KW-SETOR-20261120-3663',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Wajib (Okt 2026)',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+        created_at: '2026-11-20T09:00:01.000Z',
+      },
+      {
+        id: 'tx-w-nov',
+        member_deposit_id: 'md-w',
+        transaction_type: 'deposit',
+        amount: 1500000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: 'KW-SETOR-20261120-3663',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Wajib (Nov 2026)',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+        created_at: '2026-11-20T09:00:02.000Z',
+      },
+      {
+        id: 'tx-b-nov',
+        member_deposit_id: 'md-b',
+        transaction_type: 'deposit',
+        amount: 250000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: 'KW-SETOR-20261120-3663',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Belanja (Nov 2026)',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+        created_at: '2026-11-20T09:00:03.000Z',
+      },
+      {
+        id: 'tx-l-nov',
+        member_deposit_id: 'md-l',
+        transaction_type: 'deposit',
+        amount: 300000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: 'KW-SETOR-20261120-3663',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Lebaran (Nov 2026)',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261120-3663',
+        created_at: '2026-11-20T09:00:04.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildTableMock(depositTransactions);
+      return buildTableMock([]);
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'eed98d59-1111-4000-8000-000000000001',
+      referensi: 'CF-EED98D59',
+      category: 'SETORAN_ANGGOTA',
+      amount: 4050000,
+      direction: 'in',
+      reference_id: null,
+      description:
+        'Setoran Anggota BAGUS BUDI PRASETYO (00050543) - Tunai [KW-SETOR-20261120-3663]',
+      created_at: '2026-11-20T09:00:05.000Z',
+    });
+
+    expect(res.kind).toBe('MEMBER_DEPOSIT_BATCH');
+    if (res.kind === 'MEMBER_DEPOSIT_BATCH') {
+      const b = res.memberDepositBatch;
+      expect(b.receiptNumber).toBe('KW-SETOR-20261120-3663');
+      expect(b.sourceMenu).toBe('Simpanan & Buku Besar → Setoran Simpanan');
+      expect(b.member).toMatchObject({
+        id: 'mem-bagus',
+        nrp: '00050543',
+        nama: 'BAGUS BUDI PRASETYO',
+      });
+      expect(b.items).toHaveLength(5);
+      expect(b.totalAmount).toBe(4050000);
+      expect(b.isMatched).toBe(true);
+      expect(b.items.map((i) => i.periodLabel)).toEqual([
+        'Kewajiban Pokok',
+        'Oktober 2026',
+        'November 2026',
+        'November 2026',
+        'November 2026',
+      ]);
+    }
+  });
+
+  it('falls back to matching historical deposit_transactions by member NRP and date when reference_no is missing', async () => {
+    const anggotaRows = [
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+    ];
+    const depositTypes = [
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+    ];
+    const memberDeposits = [
+      { id: 'md-w', member_id: 'mem-bagus', deposit_type_id: 'dt-wajib' },
+      { id: 'md-b', member_id: 'mem-bagus', deposit_type_id: 'dt-belanja' },
+    ];
+    const depositTransactions = [
+      {
+        id: 'tx-hist-1',
+        member_deposit_id: 'md-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: null,
+        description: 'Setoran Simpanan Wajib (Nov 2026)',
+        created_at: '2026-11-20T09:00:00.000Z',
+      },
+      {
+        id: 'tx-hist-2',
+        member_deposit_id: 'md-b',
+        transaction_type: 'deposit',
+        amount: 50000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: null,
+        description: 'Setoran Simpanan Belanja (Nov 2026)',
+        created_at: '2026-11-20T09:00:01.000Z',
+      },
+      {
+        id: 'tx-hist-other-day',
+        member_deposit_id: 'md-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 10,
+        for_year: 2026,
+        reference_no: null,
+        description: 'Setoran Simpanan Wajib (Okt 2026)',
+        created_at: '2026-10-15T09:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildTableMock(depositTransactions);
+      return buildTableMock([]);
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'eed98d59-2222-4000-8000-000000000002',
+      referensi: 'CF-EED98D59',
+      category: 'SETORAN_ANGGOTA',
+      amount: 250000,
+      direction: 'in',
+      reference_id: null,
+      description:
+        'Setoran Anggota BAGUS BUDI PRASETYO (00050543) - Tunai [KW-SETOR-20261120-9999]',
+      created_at: '2026-11-20T09:00:02.000Z',
+    });
+
+    expect(res.kind).toBe('MEMBER_DEPOSIT_BATCH');
+    if (res.kind === 'MEMBER_DEPOSIT_BATCH') {
+      expect(res.memberDepositBatch.items).toHaveLength(2);
+      expect(res.memberDepositBatch.totalAmount).toBe(250000);
+      expect(res.memberDepositBatch.isMatched).toBe(true);
+    }
+  });
+
+  it('getTraceBackDepositRows resolves both KW-SETOR-... and CF-... trace-back codes', async () => {
+    const anggotaRows = [
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+    ];
+    const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
+    const memberDeposits = [{ id: 'md-w', member_id: 'mem-bagus', deposit_type_id: 'dt-wajib' }];
+    const depositTransactions = [
+      {
+        id: 'tx-w-nov',
+        member_deposit_id: 'md-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 11,
+        for_year: 2026,
+        reference_no: 'KW-SETOR-20261120-3663',
+        description: 'Setoran Simpanan Wajib (Nov 2026)',
+        created_at: '2026-11-20T09:00:00.000Z',
+      },
+    ];
+    const cashFlowRows = [
+      {
+        id: 'eed98d59-1111-4000-8000-000000000001',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 200000,
+        reference_id: null,
+        description:
+          'Setoran Anggota BAGUS BUDI PRASETYO (00050543) - Tunai [KW-SETOR-20261120-3663]',
+        created_at: '2026-11-20T09:00:05.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildTableMock(depositTransactions);
+      if (table === 'cash_flow') return buildTableMock(cashFlowRows);
+      return buildTableMock([]);
+    });
+
+    const kwRes = await getTraceBackDepositRows('KW-SETOR-20261120-3663');
+    expect(kwRes.items).toHaveLength(1);
+    expect(kwRes.totalAmount).toBe(200000);
+    expect(kwRes.member?.nrp).toBe('00050543');
+
+    const cfRes = await getTraceBackDepositRows('CF-EED98D59');
+    expect(cfRes.resolvedCashFlowRef).toBe('CF-EED98D59');
+    expect(cfRes.resolvedReceiptCode).toBe('KW-SETOR-20261120-3663');
+    expect(cfRes.items).toHaveLength(1);
+    expect(cfRes.totalAmount).toBe(200000);
   });
 });

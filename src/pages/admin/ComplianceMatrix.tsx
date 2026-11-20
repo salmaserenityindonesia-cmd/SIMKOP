@@ -3,8 +3,8 @@
  * Halaman Matriks Kepatuhan Simpanan Anggota.
  * Menyediakan audit visual kepatuhan, ekspor Excel berformula, dan modal impor mutasi buku besar.
  */
-import { useState, useEffect, useContext, useMemo } from 'react';
-import { Link, useInRouterContext } from 'react-router-dom';
+import { useState, useEffect, useContext, useMemo, useCallback } from 'react';
+import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
@@ -19,8 +19,13 @@ import {
   ChevronDown,
   Upload,
   CheckSquare,
-  BookOpen
+  BookOpen,
+  RotateCcw
 } from 'lucide-react';
+import {
+  getTraceBackDepositRows,
+  type MemberDepositBatchItem
+} from '../../services/cashFlowAuditService';
 import {
   getComplianceMatrixData,
   ComplianceMatrixRow,
@@ -76,6 +81,53 @@ export interface ComplianceMatrixProps {
   initialShowExportDropdown?: boolean;
   initialIsExporting?: boolean;
   initialCutoffDate?: string | null;
+  initialSearch?: string;
+  initialTraceRef?: string;
+  initialTraceRows?: MemberDepositBatchItem[];
+}
+
+interface ComplianceMatrixInternalProps extends ComplianceMatrixProps {
+  urlSearch?: string;
+  urlRef?: string;
+  onClearUrlParams?: () => void;
+}
+
+export function rowMatchesSavingsSearch(
+  row: ComplianceMatrixRow,
+  query: string,
+  traceMatchedMemberIds?: Set<string>
+): boolean {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) {
+    if (traceMatchedMemberIds && traceMatchedMemberIds.size > 0) {
+      return traceMatchedMemberIds.has(row.member_id);
+    }
+    return true;
+  }
+
+  if (
+    row.nama.toLowerCase().includes(q) ||
+    row.nrp.toLowerCase().includes(q)
+  ) {
+    return true;
+  }
+
+  if (traceMatchedMemberIds && traceMatchedMemberIds.has(row.member_id)) {
+    return true;
+  }
+
+  return (row.months || []).some((m) => {
+    if (!m) return false;
+    const candidates = [
+      m.wajib?.reference_no,
+      m.belanja?.reference_no,
+      m.lebaran?.reference_no,
+      m.wajib?.notes,
+      m.belanja?.notes,
+      m.lebaran?.notes,
+    ];
+    return candidates.some((val) => val && String(val).toLowerCase().includes(q));
+  });
 }
 
 export const handleExportSavingsMatrix = async (
@@ -238,7 +290,7 @@ export const fetchComplianceMatrixData = async (
 
 export const fetchComplianceData = fetchComplianceMatrixData;
 
-export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
+function ComplianceMatrixContent({
   initialYear,
   initialAvailableYears,
   onYearChange,
@@ -253,7 +305,13 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
   initialShowExportDropdown,
   initialIsExporting,
   initialCutoffDate,
-}) => {
+  initialSearch = '',
+  initialTraceRef = '',
+  initialTraceRows,
+  urlSearch = '',
+  urlRef = '',
+  onClearUrlParams,
+}: ComplianceMatrixInternalProps) {
   const inRouter = useInRouterContext();
   const currentYearStr = new Date().getFullYear().toString();
   const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
@@ -263,7 +321,19 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       : [new Date().getFullYear()]
   );
   const [filterType, setFilterType] = useState('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(
+    urlSearch || initialSearch || (urlRef && !urlSearch ? urlRef : '')
+  );
+  const [activeTraceRef, setActiveTraceRef] = useState(urlRef || initialTraceRef || '');
+  const [traceRows, setTraceRows] = useState<MemberDepositBatchItem[]>(initialTraceRows || []);
+  const [traceResolvedReceipt, setTraceResolvedReceipt] = useState<string | null>(null);
+  const [traceMember, setTraceMember] = useState<{
+    id: string;
+    nrp: string;
+    nama: string;
+    pangkat?: string | null;
+  } | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
@@ -374,15 +444,100 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     }
   }, [year]);
 
-  const filteredData = data.filter(row => 
-    row.nama.toLowerCase().includes(search.toLowerCase()) || 
-    row.nrp.includes(search)
+  const effectiveTraceCode = (
+    activeTraceRef ||
+    (/^(KW-|CF-)/i.test(search.trim()) ? search.trim() : '')
+  ).trim();
+
+  useEffect(() => {
+    if (urlSearch) {
+      setSearch(urlSearch);
+    }
+    if (urlRef) {
+      setActiveTraceRef(urlRef);
+      if (!urlSearch) {
+        setSearch(urlRef);
+      }
+    }
+  }, [urlSearch, urlRef]);
+
+  useEffect(() => {
+    if (initialTraceRows !== undefined) {
+      setTraceRows(initialTraceRows);
+      return;
+    }
+    if (!effectiveTraceCode) {
+      setTraceRows([]);
+      setTraceResolvedReceipt(null);
+      setTraceMember(null);
+      setTraceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTraceLoading(true);
+    const nrpHint =
+      search.trim() && search.trim().toUpperCase() !== effectiveTraceCode.toUpperCase()
+        ? search.trim()
+        : null;
+
+    getTraceBackDepositRows(effectiveTraceCode, nrpHint)
+      .then((res) => {
+        if (cancelled) return;
+        setTraceRows(res.items);
+        setTraceResolvedReceipt(res.resolvedReceiptCode);
+        setTraceMember(res.member);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTraceRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTraceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveTraceCode, initialTraceRows]);
+
+  const handleResetTraceBack = () => {
+    setActiveTraceRef('');
+    setSearch('');
+    setTraceRows([]);
+    setTraceResolvedReceipt(null);
+    setTraceMember(null);
+    onClearUrlParams?.();
+  };
+
+  const traceMatchedMemberIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (traceMember?.id) ids.add(String(traceMember.id));
+    for (const item of traceRows) {
+      if (item.memberId) ids.add(String(item.memberId));
+    }
+    return ids;
+  }, [traceMember, traceRows]);
+
+  const activeHighlightRefs = useMemo(() => {
+    const refs = new Set<string>();
+    if (effectiveTraceCode) refs.add(effectiveTraceCode.toUpperCase());
+    if (traceResolvedReceipt) refs.add(traceResolvedReceipt.toUpperCase());
+    return refs;
+  }, [effectiveTraceCode, traceResolvedReceipt]);
+
+  const filteredData = useMemo(
+    () =>
+      data.filter((row) =>
+        rowMatchesSavingsSearch(row, search || activeTraceRef, traceMatchedMemberIds)
+      ),
+    [data, search, activeTraceRef, traceMatchedMemberIds]
   );
 
   // Reset page when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [search]);
+  }, [search, activeTraceRef]);
 
   const totalFiltered = filteredData.length;
   const totalPages = Math.ceil(totalFiltered / itemsPerPage);
@@ -498,6 +653,11 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
     const isWajibPartial = !isWajibUnbilled && !isWajibFrozen && wajibItem.status !== 'paid' && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
     const isBelanjaPartial = !isBelanjaUnbilled && !isBelanjaFrozen && belanjaItem.status !== 'paid' && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
     const isLebaranPartial = !isLebaranUnbilled && !isLebaranFrozen && lebaranItem.status !== 'paid' && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
+    const cellMatchesTrace =
+      activeHighlightRefs.size > 0 &&
+      [wajibItem.reference_no, belanjaItem.reference_no, lebaranItem.reference_no].some(
+        (ref) => ref && activeHighlightRefs.has(String(ref).trim().toUpperCase())
+      );
 
     return (
       <div 
@@ -507,7 +667,9 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           nama: row.nama,
           joinDate: row.tgl_awal_anggota || row.created_at
         })}
-        className="relative group flex flex-col gap-0.5 py-1 px-1.5 text-[11px] leading-tight font-mono select-none rounded hover:bg-slate-100/80 cursor-pointer transition-colors"
+        className={`relative group flex flex-col gap-0.5 py-1 px-1.5 text-[11px] leading-tight font-mono select-none rounded hover:bg-slate-100/80 cursor-pointer transition-colors ${
+          cellMatchesTrace ? 'ring-2 ring-indigo-500 bg-indigo-50/50' : ''
+        }`}
         title={isMonthAllCovered
           ? `Sudah tercakup dalam Saldo Awal (${colPeriod?.label || `${MONTHS[monthIndex]} ${year}`})`
           : `Klik untuk rincian buku besar ${row.nama} - ${MONTHS[monthIndex]} ${year}`
@@ -820,8 +982,40 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
               placeholder="Cari NRP / Nama Anggota..." 
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                title="Bersihkan pencarian"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="relative min-w-[220px]">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+            <input
+              type="text"
+              data-testid="traceback-code-input"
+              placeholder="Kode Trace-Back (KW-... / CF-...)"
+              value={activeTraceRef}
+              onChange={(e) => setActiveTraceRef(e.target.value)}
+              className="w-full pl-9 pr-8 py-2 bg-indigo-50/40 border border-indigo-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-slate-800 placeholder:font-sans"
+            />
+            {activeTraceRef && (
+              <button
+                type="button"
+                onClick={handleResetTraceBack}
+                title="Reset filter kode trace-back"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -926,6 +1120,102 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Panel Filter Trace-Back Kode Bukti */}
+      {effectiveTraceCode && (
+        <div
+          data-testid="traceback-filter-panel"
+          className="bg-indigo-50/70 border-x border-b border-indigo-200 p-4 space-y-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600 text-white font-semibold">
+                Kode Trace-Back: <code className="font-mono font-bold">{effectiveTraceCode}</code>
+              </span>
+              {traceResolvedReceipt &&
+                traceResolvedReceipt.toUpperCase() !== effectiveTraceCode.toUpperCase() && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
+                    Kwitansi: {traceResolvedReceipt}
+                  </span>
+                )}
+              {traceMember && (
+                <span className="font-semibold text-slate-800">
+                  {traceMember.nama} — NRP <span className="font-mono">{traceMember.nrp}</span>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              data-testid="btn-reset-traceback-filter"
+              onClick={handleResetTraceBack}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Filter Trace-Back</span>
+            </button>
+          </div>
+
+          {traceLoading ? (
+            <div className="flex items-center gap-2 text-xs text-indigo-700 py-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Melacak rincian mutasi simpanan untuk kode bukti {effectiveTraceCode}...</span>
+            </div>
+          ) : traceRows.length > 0 ? (
+            <div className="bg-white rounded-xl border border-indigo-200/80 overflow-x-auto shadow-2xs">
+              <table className="w-full text-xs text-left border-collapse">
+                <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Tanggal</th>
+                    <th className="px-3 py-2 font-semibold">Jenis Simpanan</th>
+                    <th className="px-3 py-2 font-semibold">Periode / Bulan</th>
+                    <th className="px-3 py-2 font-semibold">No. Bukti</th>
+                    <th className="px-3 py-2 font-semibold">Keterangan</th>
+                    <th className="px-3 py-2 font-semibold text-right">Nominal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {traceRows.map((tr) => (
+                    <tr key={tr.id} className="hover:bg-slate-50/70">
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                        {tr.createdAt ? tr.createdAt.slice(0, 10) : '-'}
+                      </td>
+                      <td className="px-3 py-2 font-semibold text-slate-900">
+                        {tr.depositTypeName}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-700">
+                        {tr.periodLabel}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-indigo-700 whitespace-nowrap">
+                        {tr.referenceNo || effectiveTraceCode}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">
+                        {tr.notes || tr.description}
+                      </td>
+                      <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700 whitespace-nowrap">
+                        {formatCurrency(tr.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-emerald-50/70 border-t border-emerald-200 font-bold text-slate-900">
+                  <tr>
+                    <td colSpan={5} className="px-3 py-2 text-xs uppercase tracking-wider text-emerald-900">
+                      TOTAL MUTASI TRACE-BACK ({traceRows.length} komponen)
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-emerald-700 whitespace-nowrap">
+                      {formatCurrency(traceRows.reduce((s, r) => s + r.amount, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600">
+              Menampilkan anggota yang terhubung dengan kode bukti <code className="font-mono font-semibold">{effectiveTraceCode}</code>.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Main Table */}
       <div className="bg-white border-x border-slate-200 overflow-hidden relative w-full">
@@ -1524,6 +1814,36 @@ export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = ({
       />
     </AdminLayout>
   );
+}
+
+function ComplianceMatrixWithRouter(props: ComplianceMatrixProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSearch = (searchParams.get('search') || '').trim();
+  const urlRef = (searchParams.get('ref') || '').trim();
+
+  const handleClearUrlParams = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('search');
+    next.delete('ref');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  return (
+    <ComplianceMatrixContent
+      {...props}
+      urlSearch={urlSearch}
+      urlRef={urlRef}
+      onClearUrlParams={handleClearUrlParams}
+    />
+  );
+}
+
+export const ComplianceMatrix: React.FC<ComplianceMatrixProps> = (props) => {
+  const inRouter = useInRouterContext();
+  if (inRouter) {
+    return <ComplianceMatrixWithRouter {...props} />;
+  }
+  return <ComplianceMatrixContent {...props} />;
 };
 
 export default ComplianceMatrix;
