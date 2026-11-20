@@ -1409,8 +1409,11 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
     if (res.kind === 'individual_deposit') {
       expect(res.individualDeposit).toMatchObject({
         transactionId: 'tx-bagus-mar26',
+        memberId: 'm-bagus',
         nrp: '00050543',
         nama: 'BAGUS BUDI PRASETYO',
+        memberNrp: '00050543',
+        memberName: 'BAGUS BUDI PRASETYO',
         pangkat: 'Serka',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
@@ -1418,7 +1421,9 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
         forYear: 2026,
         periodLabel: 'Mar 2026',
         shortPeriodLabel: 'Mar-26',
+        periodCode: 'Mar-26',
         referenceNo: 'KW-2026/03/00050543',
+        receiptNumber: 'KW-2026/03/00050543',
         paymentMethod: 'tunai',
         notes: 'Lunas via bendahara',
         amount: 200000,
@@ -2860,5 +2865,101 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
     expect(cfRes.resolvedReceiptCode).toBe('KW-SETOR-20261120-3663');
     expect(cfRes.items).toHaveLength(1);
     expect(cfRes.totalAmount).toBe(200000);
+  });
+
+  it('populates structured bidirectional trace fields for single matrix deposit without receipt number (CF-6C928789)', async () => {
+    const anggotaRows = [
+      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Bripka' },
+    ];
+    const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
+    const memberDeposits = [{ id: 'md-donny-w', member_id: 'mem-donny', deposit_type_id: 'dt-wajib' }];
+    const depositTransactions = [
+      {
+        id: 'tx-donny-mar26',
+        member_deposit_id: 'md-donny-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 3,
+        for_year: 2026,
+        reference_no: null,
+        payment_method: 'tunai',
+        description: 'Setoran Matriks WAJIB Mar 2026',
+        notes: 'Setoran Simpanan Wajib Mar-26',
+        created_at: '2026-03-10T08:00:00.000Z',
+      },
+    ];
+    const cashFlowRows = [
+      {
+        id: '6c928789-0000-4000-8000-000000000001',
+        category: 'Setoran Simpanan',
+        direction: 'in',
+        amount: 200000,
+        reference_id: 'tx-donny-mar26',
+        description: 'Setoran Simpanan Wajib [Mar 2026] — 00060019 - DONNY ILHAM PAMBUDI',
+        created_at: '2026-03-10T08:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildTableMock(depositTransactions);
+      if (table === 'cash_flow') return buildTableMock(cashFlowRows);
+      return buildTableMock([]);
+    });
+
+    const breakdownRes = await getCashFlowReferenceBreakdown({
+      id: '6c928789-0000-4000-8000-000000000001',
+      referensi: 'CF-6C928789',
+      category: 'Setoran Simpanan',
+      amount: 200000,
+      direction: 'in',
+      reference_id: 'tx-donny-mar26',
+      description: 'Setoran Simpanan Wajib [Mar 2026] — 00060019 - DONNY ILHAM PAMBUDI',
+      created_at: '2026-03-10T08:00:00.000Z',
+    });
+
+    expect(breakdownRes.kind).toBe('individual_deposit');
+    if (breakdownRes.kind === 'individual_deposit') {
+      expect(breakdownRes.individualDeposit).toMatchObject({
+        transactionId: 'tx-donny-mar26',
+        memberId: 'mem-donny',
+        nrp: '00060019',
+        nama: 'DONNY ILHAM PAMBUDI',
+        memberNrp: '00060019',
+        memberName: 'DONNY ILHAM PAMBUDI',
+        depositTypeCode: 'WAJIB',
+        depositTypeName: 'Simpanan Wajib',
+        forMonth: 3,
+        forYear: 2026,
+        periodLabel: 'Mar 2026',
+        shortPeriodLabel: 'Mar-26',
+        periodCode: 'Mar-26',
+        referenceNo: null,
+        receiptNumber: 'CF-6C928789',
+        amount: 200000,
+      });
+    }
+
+    const traceRes = await getTraceBackDepositRows('CF-6C928789');
+    expect(traceRes.resolvedCashFlowRef).toBe('CF-6C928789');
+    expect(traceRes.resolvedReceiptCode).toBeNull();
+    expect(traceRes.member).toMatchObject({
+      id: 'mem-donny',
+      nrp: '00060019',
+      nama: 'DONNY ILHAM PAMBUDI',
+    });
+    expect(traceRes.items).toHaveLength(1);
+    expect(traceRes.items[0]).toMatchObject({
+      id: 'tx-donny-mar26',
+      memberId: 'mem-donny',
+      memberNrp: '00060019',
+      memberName: 'DONNY ILHAM PAMBUDI',
+      depositTypeCode: 'WAJIB',
+      forMonth: 3,
+      forYear: 2026,
+      amount: 200000,
+    });
   });
 });

@@ -1,9 +1,12 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   ComplianceMatrix,
   rowMatchesSavingsSearch,
+  normalizeDepositFilterType,
+  parseShortPeriodParam,
   loadComplianceAvailableYearsData,
   fetchComplianceMatrixData,
   fetchComplianceData,
@@ -1831,6 +1834,84 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).toContain('4.050.000');
       expect(html).toContain('BAGUS BUDI PRASETYO');
       expect(html).not.toContain('SITI AMINAH');
+    });
+
+    it('normalizes deposit type codes and parses period URL query parameters accurately', () => {
+      expect(normalizeDepositFilterType('WAJIB')).toBe('wajib');
+      expect(normalizeDepositFilterType('sw')).toBe('wajib');
+      expect(normalizeDepositFilterType('BELANJA')).toBe('belanja');
+      expect(normalizeDepositFilterType('sb')).toBe('belanja');
+      expect(normalizeDepositFilterType('LEBARAN')).toBe('lebaran');
+      expect(normalizeDepositFilterType('SL')).toBe('lebaran');
+      expect(normalizeDepositFilterType('SHR')).toBe('lebaran');
+      expect(normalizeDepositFilterType('')).toBe('all');
+      expect(normalizeDepositFilterType('UNKNOWN')).toBe('all');
+
+      expect(parseShortPeriodParam('Mar-26')).toEqual({ month: 3, year: 2026 });
+      expect(parseShortPeriodParam('Nov-2026')).toEqual({ month: 11, year: 2026 });
+      expect(parseShortPeriodParam('Mei 2026')).toEqual({ month: 5, year: 2026 });
+      expect(parseShortPeriodParam('Aug-25')).toEqual({ month: 8, year: 2025 });
+      expect(parseShortPeriodParam('2026-03')).toEqual({ month: 3, year: 2026 });
+      expect(parseShortPeriodParam('')).toBeNull();
+      expect(parseShortPeriodParam('Xyz-26')).toBeNull();
+      expect(parseShortPeriodParam('2026-13')).toBeNull();
+      expect(parseShortPeriodParam('1999-03')).toBeNull();
+    });
+
+    it('applies search, ref, type, and period URL query params from MemoryRouter and highlights matched Mar-26 cell without reference_no', () => {
+      const rowDonny = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-donny',
+        nrp: '00060019',
+        nama: 'DONNY ILHAM PAMBUDI',
+      };
+      const rowOther = {
+        ...mockMatrixResult.rows[0],
+        member_id: 'm-other',
+        nrp: '00099999',
+        nama: 'SITI AMINAH',
+      };
+
+      const html = renderToStaticMarkup(
+        <MemoryRouter
+          initialEntries={[
+            '/admin/compliance-matrix?search=00060019&ref=CF-6C928789&type=WAJIB&period=Mar-26',
+          ]}
+        >
+          <ComplianceMatrix
+            initialData={[rowDonny as any, rowOther as any]}
+            initialTraceRows={[
+              {
+                id: 'tx-donny-mar26',
+                memberId: 'm-donny',
+                memberNrp: '00060019',
+                memberName: 'DONNY ILHAM PAMBUDI',
+                depositTypeName: 'Simpanan Wajib',
+                depositTypeCode: 'WAJIB',
+                forMonth: 3,
+                forYear: 2026,
+                periodLabel: 'Mar 2026',
+                paymentMethod: 'tunai',
+                referenceNo: null,
+                description: 'Setoran Matriks WAJIB Mar 2026',
+                notes: null,
+                amount: 200000,
+                createdAt: '2026-03-10T08:00:00.000Z',
+              },
+            ]}
+          />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('DONNY ILHAM PAMBUDI');
+      expect(html).toContain('00060019');
+      expect(html).not.toContain('SITI AMINAH');
+      expect(html).toContain('data-testid="traceback-filter-panel"');
+      expect(html).toContain('CF-6C928789');
+      expect(html).toContain('Periode: Mar-26');
+      expect(html).toMatch(/<option[^>]*selected=""[^>]*value="wajib"|<option[^>]*value="wajib"[^>]*selected=""/);
+      const highlightMatches = html.match(/ring-2 ring-indigo-500/g) || [];
+      expect(highlightMatches).toHaveLength(1);
     });
   });
 });

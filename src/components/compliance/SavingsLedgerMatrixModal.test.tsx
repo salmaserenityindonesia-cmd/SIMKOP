@@ -1043,5 +1043,92 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('data-testid="checkbox-2026-11"');
       expect(html).toContain('data-testid="checkbox-2026-12"');
     });
+
+    it('reconciles LEBARAN opening balance, Pencairan Massal withdrawal, and post-cutoff checked deposits (DONNY / ALIF)', () => {
+      const checkedKeys = [
+        '2026-03', '2026-04', '2026-05', '2026-06', '2026-07',
+        '2026-08', '2026-09', '2026-10', '2026-11'
+      ];
+      const amounts = Object.fromEntries(checkedKeys.map((k) => [k, 200000]));
+
+      const html = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="b836aae4-0564-4f93-b44f-61b8ea6e5e75"
+          memberNrp="00060019"
+          memberName="DONNY ILHAM PAMBUDI"
+          joinDate="2024-11-13"
+          onClose={vi.fn()}
+          initialActiveTab="LEBARAN"
+          initialCutoffDate="2026-03-01"
+          initialOpeningBalances={{ LEBARAN: 2400000 }}
+          initialWithdrawals={{ LEBARAN: 2400000 }}
+          initialDbBalances={{ LEBARAN: 1800000 }}
+          initialCheckedMonths={{ LEBARAN: checkedKeys }}
+          initialMonthAmounts={{ LEBARAN: amounts }}
+          initialLoading={false}
+        />
+      );
+
+      expect(html).toContain('Saldo Awal Cut-Off (Per Mar-26):');
+      expect(html).toContain('2.400.000');
+      expect(html).toContain('Penarikan/Pencairan:');
+      expect(html).toContain('data-testid="modal-total-withdrawals"');
+      expect(html).toContain('Total Akumulasi Simpanan:');
+      expect(html).toContain('1.800.000');
+      expect(html).toContain('Sesuai / Seimbang');
+    });
+
+    it('reconciles WAJIB (3.200.000 + 1.800.000 = 5.000.000) and BELANJA (800.000 + 450.000 = 1.250.000) for DONNY ILHAM PAMBUDI', () => {
+      const checkedKeys = [
+        '2026-03', '2026-04', '2026-05', '2026-06', '2026-07',
+        '2026-08', '2026-09', '2026-10', '2026-11'
+      ];
+      const wajibAmounts = Object.fromEntries(checkedKeys.map((k) => [k, 200000]));
+      const belanjaAmounts = Object.fromEntries(checkedKeys.map((k) => [k, 50000]));
+
+      const htmlWajib = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="b836aae4-0564-4f93-b44f-61b8ea6e5e75"
+          memberNrp="00060019"
+          memberName="DONNY ILHAM PAMBUDI"
+          joinDate="2024-11-13"
+          onClose={vi.fn()}
+          initialActiveTab="WAJIB"
+          initialCutoffDate="2026-03-01"
+          initialOpeningBalances={{ WAJIB: 3200000 }}
+          initialDbBalances={{ WAJIB: 5000000 }}
+          initialCheckedMonths={{ WAJIB: checkedKeys }}
+          initialMonthAmounts={{ WAJIB: wajibAmounts }}
+          initialLoading={false}
+        />
+      );
+
+      expect(htmlWajib).toContain('Saldo Awal Cut-Off (Per Mar-26):');
+      expect(htmlWajib).toContain('3.200.000');
+      expect(htmlWajib).toContain('5.000.000');
+      expect(htmlWajib).toContain('Sesuai / Seimbang');
+
+      const htmlBelanja = renderToStaticMarkup(
+        <SavingsLedgerMatrixModal
+          memberId="b836aae4-0564-4f93-b44f-61b8ea6e5e75"
+          memberNrp="00060019"
+          memberName="DONNY ILHAM PAMBUDI"
+          joinDate="2024-11-13"
+          onClose={vi.fn()}
+          initialActiveTab="BELANJA"
+          initialCutoffDate="2026-03-01"
+          initialOpeningBalances={{ BELANJA: 800000 }}
+          initialDbBalances={{ BELANJA: 1250000 }}
+          initialCheckedMonths={{ BELANJA: checkedKeys }}
+          initialMonthAmounts={{ BELANJA: belanjaAmounts }}
+          initialLoading={false}
+        />
+      );
+
+      expect(htmlBelanja).toContain('Saldo Awal Cut-Off (Per Mar-26):');
+      expect(htmlBelanja).toContain('800.000');
+      expect(htmlBelanja).toContain('1.250.000');
+      expect(htmlBelanja).toContain('Sesuai / Seimbang');
+    });
   });
 });

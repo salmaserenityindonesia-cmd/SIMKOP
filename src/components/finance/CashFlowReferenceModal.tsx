@@ -54,6 +54,8 @@ export interface CashFlowReferenceModalProps {
   initialBreakdown?: CashFlowReferenceBreakdown | null;
 }
 
+const SAVINGS_LEDGER_ROUTE = '/admin/compliance-matrix';
+
 const formatRp = (n: number): string =>
   'Rp ' + Math.round(n).toLocaleString('id-ID');
 
@@ -1247,102 +1249,178 @@ export default function CashFlowReferenceModal({
           )}
 
           {/* ── KONTEN D3: SETORAN SIMPANAN ANGGOTA (MATRIKS) ── */}
-          {!loading && !error && breakdown?.kind === 'individual_deposit' && (
-            <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-xs space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Receipt className="w-4 h-4 text-emerald-600" />
-                  <h4 className="text-sm font-bold text-slate-900">
-                    Bukti Setoran Simpanan Anggota
-                  </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Setoran Simpanan
-                  </span>
-                  {breakdown.individualDeposit.shortPeriodLabel !== '-' && (
-                    <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                      {breakdown.individualDeposit.shortPeriodLabel}
-                    </span>
-                  )}
-                </div>
-                <span className="text-base font-bold text-emerald-700 tabular-nums">
-                  {formatRp(breakdown.individualDeposit.amount)}
-                </span>
-              </div>
+          {!loading && !error && breakdown?.kind === 'individual_deposit' && (() => {
+            const ind = breakdown.individualDeposit;
+            const rawNrp = String(ind.memberNrp || ind.nrp || '').trim();
+            const memberNrp = rawNrp && rawNrp !== '-' ? rawNrp : '';
+            const rawPeriodCode = String(ind.periodCode || ind.shortPeriodLabel || '').trim();
+            const periodCode = rawPeriodCode && rawPeriodCode !== '-' ? rawPeriodCode : '';
+            const rawDepositTypeCode = String(ind.depositTypeCode || '').trim();
+            const depositTypeCode =
+              rawDepositTypeCode && rawDepositTypeCode !== '-' ? rawDepositTypeCode : '';
+            const rawRefNo = String(ind.referenceNo || '').trim();
+            const hasReceiptNo = Boolean(rawRefNo && rawRefNo !== '-');
+            const rawReceiptNumber = String(ind.receiptNumber || '').trim();
+            const traceCode =
+              (hasReceiptNo ? rawRefNo : '') ||
+              (rawReceiptNumber && rawReceiptNumber !== '-' ? rawReceiptNumber : '') ||
+              breakdown.journal.refCode;
+            const traceBadgeLabel = hasReceiptNo
+              ? rawRefNo
+              : memberNrp && periodCode
+              ? `${memberNrp} • ${periodCode}`
+              : memberNrp || traceCode;
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
-                <div>
-                  <p className="text-slate-500">No. Kwitansi / Referensi</p>
-                  {breakdown.individualDeposit.referenceNo ? (
-                    <p className="mt-0.5">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
-                        {breakdown.individualDeposit.referenceNo}
+            const traceParams = new URLSearchParams();
+            if (memberNrp) {
+              traceParams.set('search', memberNrp);
+            }
+            if (traceCode) {
+              traceParams.set('ref', traceCode);
+            }
+            if (depositTypeCode) {
+              traceParams.set('type', depositTypeCode);
+            }
+            if (periodCode) {
+              traceParams.set('period', periodCode);
+            }
+            const traceQuery = traceParams.toString();
+            const traceBackUrl = traceQuery
+              ? `${SAVINGS_LEDGER_ROUTE}?${traceQuery}`
+              : SAVINGS_LEDGER_ROUTE;
+
+            return (
+              <div className="space-y-4">
+                <div className="bg-white rounded-xl border border-emerald-200 p-5 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Receipt className="w-4 h-4 text-emerald-600" />
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Bukti Setoran Simpanan Anggota
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Setoran Simpanan
                       </span>
-                    </p>
+                      {ind.shortPeriodLabel !== '-' && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                          {ind.shortPeriodLabel}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-base font-bold text-emerald-700 tabular-nums">
+                      {formatRp(ind.amount)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <p className="text-slate-500">No. Kwitansi / Referensi</p>
+                      {ind.referenceNo ? (
+                        <p className="mt-0.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
+                            {ind.referenceNo}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="font-mono font-semibold text-slate-700 mt-0.5">-</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Nama Anggota &amp; NRP</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ind.nama}{' '}
+                        <span className="font-mono text-slate-600">
+                          ({ind.nrp})
+                        </span>
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Pangkat</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ind.pangkat || '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Jenis Simpanan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ind.depositTypeName}
+                        {ind.depositTypeCode && ind.depositTypeCode !== '-'
+                          ? ` (${ind.depositTypeCode})`
+                          : ''}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Periode Bulan Setoran</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ind.periodLabel}
+                        {ind.shortPeriodLabel !== '-'
+                          ? ` (${ind.shortPeriodLabel})`
+                          : ''}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Metode Pembayaran</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatPaymentMethodLabel(ind.paymentMethod)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Waktu Pencatatan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatDateTimeId(ind.createdAt)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Nominal Setoran</p>
+                      <p className="font-bold text-emerald-700 tabular-nums mt-0.5">
+                        {formatRp(ind.amount)}
+                      </p>
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <p className="text-slate-500">Catatan / Keterangan</p>
+                      <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
+                        {ind.notes || ind.description}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bilah Audit Dua Arah ke Buku Besar Simpanan */}
+                <div
+                  data-testid="single-deposit-audit-bar"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
+                >
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                    Lacak pembukuan simpanan anggota ini dengan filter otomatis{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                      {traceBadgeLabel}
+                    </code>
+                  </div>
+                  {inRouter ? (
+                    <Link
+                      to={traceBackUrl}
+                      onClick={onClose}
+                      data-testid="btn-trace-savings-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Simpanan</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
                   ) : (
-                    <p className="font-mono font-semibold text-slate-700 mt-0.5">-</p>
+                    <a
+                      href={traceBackUrl}
+                      data-testid="btn-trace-savings-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Simpanan</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
                   )}
                 </div>
-                <div>
-                  <p className="text-slate-500">Nama Anggota &amp; NRP</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.individualDeposit.nama}{' '}
-                    <span className="font-mono text-slate-600">
-                      ({breakdown.individualDeposit.nrp})
-                    </span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Pangkat</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.individualDeposit.pangkat || '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Jenis Simpanan</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.individualDeposit.depositTypeName}
-                    {breakdown.individualDeposit.depositTypeCode &&
-                    breakdown.individualDeposit.depositTypeCode !== '-'
-                      ? ` (${breakdown.individualDeposit.depositTypeCode})`
-                      : ''}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Periode Bulan Setoran</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.individualDeposit.periodLabel}
-                    {breakdown.individualDeposit.shortPeriodLabel !== '-'
-                      ? ` (${breakdown.individualDeposit.shortPeriodLabel})`
-                      : ''}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Metode Pembayaran</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {formatPaymentMethodLabel(breakdown.individualDeposit.paymentMethod)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Waktu Pencatatan</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {formatDateTimeId(breakdown.individualDeposit.createdAt)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Nominal Setoran</p>
-                  <p className="font-bold text-emerald-700 tabular-nums mt-0.5">
-                    {formatRp(breakdown.individualDeposit.amount)}
-                  </p>
-                </div>
-                <div className="sm:col-span-2 lg:col-span-3">
-                  <p className="text-slate-500">Catatan / Keterangan</p>
-                  <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
-                    {breakdown.individualDeposit.notes || breakdown.individualDeposit.description}
-                  </p>
-                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ── KONTEN D3b: SETORAN ANGGOTA BATCH (TERIMA SETORAN / KW-SETOR) ── */}
           {!loading && !error && breakdown?.kind === 'MEMBER_DEPOSIT_BATCH' && (() => {
@@ -1358,7 +1436,7 @@ export default function CashFlowReferenceModal({
             if (traceRefValue) {
               traceParams.set('ref', traceRefValue);
             }
-            const traceBackUrl = `/admin/compliance-matrix?${traceParams.toString()}`;
+            const traceBackUrl = `${SAVINGS_LEDGER_ROUTE}?${traceParams.toString()}`;
 
             return (
               <div className="space-y-4">

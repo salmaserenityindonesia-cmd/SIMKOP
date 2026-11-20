@@ -16,6 +16,7 @@ import {
   getMonthAuditHistory,
   getSavingsDiscrepancyBreakdown,
   syncMatrixDepositsToCashFlow,
+  isProtectedSavingsTransaction,
   CheckMonthPayload,
   MonthAuditHistoryItem
 } from './savingsMatrixService';
@@ -1948,6 +1949,206 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       const secondSync = await syncMatrixDepositsToCashFlow();
       expect(secondSync).toEqual({ syncedCount: 0, skippedCount: 1 });
       expect(cashFlowRows).toHaveLength(1);
+    });
+  });
+
+  describe('Opening Balance Cut-Off & Withdrawal Protection (DONNY ILHAM PAMBUDI Regression)', () => {
+    it('isProtectedSavingsTransaction protects Saldo Awal Cut-Off (2026-02), for_month null, pre-cutoff, and withdrawals', () => {
+      const cutoff = '2026-03-01';
+
+      // Saldo Awal Cut-Off (s/d Feb 2026) tersimpan pada for_year=2026, for_month=2
+      expect(
+        isProtectedSavingsTransaction(
+          {
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+            for_year: 2026,
+            for_month: 2
+          },
+          cutoff
+        )
+      ).toBe(true);
+
+      // Penampung for_month NULL
+      expect(
+        isProtectedSavingsTransaction(
+          {
+            transaction_type: 'deposit',
+            description: 'Saldo Awal Simpanan',
+            for_year: null,
+            for_month: null
+          },
+          cutoff
+        )
+      ).toBe(true);
+
+      // Pencairan Massal Lebaran (withdrawal)
+      expect(
+        isProtectedSavingsTransaction(
+          {
+            transaction_type: 'withdrawal',
+            description: 'Pencairan Massal Simpanan Lebaran - Pencairan THR Idul Fitri 2026',
+            for_year: null,
+            for_month: null
+          },
+          cutoff
+        )
+      ).toBe(true);
+
+      // Setoran rutin pasca cut-off (Mar-26 s/d Nov-26) tidak dilindungi (boleh di-toggle)
+      expect(
+        isProtectedSavingsTransaction(
+          {
+            transaction_type: 'deposit',
+            description: 'Setoran Matriks WAJIB Mar 2026',
+            for_year: 2026,
+            for_month: 3
+          },
+          cutoff
+        )
+      ).toBe(false);
+    });
+
+    it('saveMonthDepositWithEvidence does NOT delete Saldo Awal Cut-Off or withdrawal rows in the same period', async () => {
+      let deleteCalled = false;
+      const insertedRows: any[] = [];
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'system_settings') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { key: 'initial_savings_effective_date', value: '2026-03-01' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({
+                    data: [
+                      {
+                        id: 'tx-opening-feb26',
+                        transaction_type: 'deposit',
+                        description: 'Saldo Awal Cut-Off (s/d Feb 2026)'
+                      },
+                      {
+                        id: 'tx-wd-lebaran',
+                        transaction_type: 'withdrawal',
+                        description: 'Pencairan Massal Simpanan Lebaran'
+                      }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            }),
+            delete: vi.fn().mockImplementation(() => {
+              deleteCalled = true;
+              return { in: vi.fn().mockResolvedValue({ error: null }) };
+            }),
+            insert: vi.fn().mockImplementation((row: any) => {
+              insertedRows.push(row);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'tx-inserted-1', ...row },
+                    error: null
+                  })
+                })
+              };
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockResolvedValue({ data: [], error: null })
+          };
+        }
+        return {};
+      });
+
+      const res = await saveMonthDepositWithEvidence({
+        memberDepositId: 'md-donny-wajib',
+        year: 2026,
+        month: 2,
+        amount: 200000
+      });
+
+      expect(res.success).toBe(true);
+      expect(deleteCalled).toBe(false);
+      expect(insertedRows).toHaveLength(1);
+    });
+
+    it('cancelMonthDepositWithReason skips deletion and returns cancelledCount 0 when period only contains Saldo Awal Cut-Off or withdrawal', async () => {
+      let deleteCalled = false;
+      let auditInserted = false;
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({
+                    data: [
+                      {
+                        id: 'tx-opening-protected',
+                        member_deposit_id: 'md-donny-wajib',
+                        transaction_type: 'deposit',
+                        amount: 3200000,
+                        for_year: 2026,
+                        for_month: 2,
+                        description: 'Saldo Awal Cut-Off (s/d Feb 2026)'
+                      },
+                      {
+                        id: 'tx-wd-protected',
+                        member_deposit_id: 'md-donny-wajib',
+                        transaction_type: 'withdrawal',
+                        amount: 2400000,
+                        for_year: 2026,
+                        for_month: 2,
+                        description: 'Pencairan Massal Simpanan Lebaran'
+                      }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            }),
+            delete: vi.fn().mockImplementation(() => {
+              deleteCalled = true;
+              return { in: vi.fn().mockResolvedValue({ error: null }) };
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            insert: vi.fn().mockImplementation(() => {
+              auditInserted = true;
+              return Promise.resolve({ error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await cancelMonthDepositWithReason(
+        'md-donny-wajib',
+        2026,
+        2,
+        'Uji proteksi saldo awal'
+      );
+
+      expect(res).toEqual({ success: true, cancelledCount: 0 });
+      expect(deleteCalled).toBe(false);
+      expect(auditInserted).toBe(false);
     });
   });
 });

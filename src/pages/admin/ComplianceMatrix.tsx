@@ -83,13 +83,75 @@ export interface ComplianceMatrixProps {
   initialCutoffDate?: string | null;
   initialSearch?: string;
   initialTraceRef?: string;
+  initialFilterType?: string;
+  initialTracePeriod?: string;
   initialTraceRows?: MemberDepositBatchItem[];
 }
 
 interface ComplianceMatrixInternalProps extends ComplianceMatrixProps {
   urlSearch?: string;
   urlRef?: string;
+  urlType?: string;
+  urlPeriod?: string;
   onClearUrlParams?: () => void;
+}
+
+export function normalizeDepositFilterType(
+  raw?: string | null
+): 'all' | 'wajib' | 'belanja' | 'lebaran' {
+  const code = String(raw || '').trim().toUpperCase();
+  if (code === 'WAJIB' || code === 'SW') return 'wajib';
+  if (code === 'BELANJA' || code === 'SB') return 'belanja';
+  if (code === 'LEBARAN' || code === 'SL' || code === 'SHR') return 'lebaran';
+  return 'all';
+}
+
+const MONTH_TOKEN_MAP: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  mei: 5,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  ags: 8,
+  aug: 8,
+  sep: 9,
+  okt: 10,
+  oct: 10,
+  nov: 11,
+  des: 12,
+  dec: 12,
+};
+
+export function parseShortPeriodParam(
+  raw?: string | null
+): { month: number; year: number } | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{1,2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    if (month >= 1 && month <= 12 && year >= 2000) {
+      return { month, year };
+    }
+    return null;
+  }
+
+  const tokenMatch = trimmed.match(/^([A-Za-z]{3})[-\s]+(\d{2}|\d{4})$/);
+  if (!tokenMatch) return null;
+
+  const month = MONTH_TOKEN_MAP[tokenMatch[1].toLowerCase()];
+  if (!month || month < 1 || month > 12) return null;
+
+  const rawYear = Number(tokenMatch[2]);
+  const year = tokenMatch[2].length === 2 ? 2000 + rawYear : rawYear;
+  if (year < 2000) return null;
+
+  return { month, year };
 }
 
 export function rowMatchesSavingsSearch(
@@ -307,24 +369,40 @@ function ComplianceMatrixContent({
   initialCutoffDate,
   initialSearch = '',
   initialTraceRef = '',
+  initialFilterType = '',
+  initialTracePeriod = '',
   initialTraceRows,
   urlSearch = '',
   urlRef = '',
+  urlType = '',
+  urlPeriod = '',
   onClearUrlParams,
 }: ComplianceMatrixInternalProps) {
   const inRouter = useInRouterContext();
   const currentYearStr = new Date().getFullYear().toString();
-  const [year, setYear] = useState<string>(initialYear ? initialYear.toString() : currentYearStr);
+  const initialParsedPeriod = parseShortPeriodParam(urlPeriod || initialTracePeriod);
+  const [year, setYear] = useState<string>(
+    initialYear
+      ? initialYear.toString()
+      : initialParsedPeriod
+      ? initialParsedPeriod.year.toString()
+      : currentYearStr
+  );
   const [availableYears, setAvailableYears] = useState<number[]>(
     initialAvailableYears && initialAvailableYears.length > 0
       ? initialAvailableYears
       : [new Date().getFullYear()]
   );
-  const [filterType, setFilterType] = useState('all');
+  const [filterType, setFilterType] = useState(() =>
+    normalizeDepositFilterType(urlType || initialFilterType)
+  );
   const [search, setSearch] = useState(
     urlSearch || initialSearch || (urlRef && !urlSearch ? urlRef : '')
   );
   const [activeTraceRef, setActiveTraceRef] = useState(urlRef || initialTraceRef || '');
+  const [activeTracePeriod, setActiveTracePeriod] = useState(
+    urlPeriod || initialTracePeriod || ''
+  );
   const [traceRows, setTraceRows] = useState<MemberDepositBatchItem[]>(initialTraceRows || []);
   const [traceResolvedReceipt, setTraceResolvedReceipt] = useState<string | null>(null);
   const [traceMember, setTraceMember] = useState<{
@@ -459,7 +537,18 @@ function ComplianceMatrixContent({
         setSearch(urlRef);
       }
     }
-  }, [urlSearch, urlRef]);
+    if (urlType) {
+      setFilterType(normalizeDepositFilterType(urlType));
+    }
+    if (urlPeriod) {
+      setActiveTracePeriod(urlPeriod);
+      const parsed = parseShortPeriodParam(urlPeriod);
+      if (parsed) {
+        const parsedYearStr = String(parsed.year);
+        setYear((prev) => (prev === parsedYearStr ? prev : parsedYearStr));
+      }
+    }
+  }, [urlSearch, urlRef, urlType, urlPeriod]);
 
   useEffect(() => {
     if (initialTraceRows !== undefined) {
@@ -487,6 +576,13 @@ function ComplianceMatrixContent({
         setTraceRows(res.items);
         setTraceResolvedReceipt(res.resolvedReceiptCode);
         setTraceMember(res.member);
+        if (!urlPeriod && !initialYear && res.items.length > 0 && res.items[0]?.forYear) {
+          const fy = Number(res.items[0].forYear);
+          if (Number.isInteger(fy) && fy > 0) {
+            const fyStr = String(fy);
+            setYear((prev) => (prev === fyStr ? prev : fyStr));
+          }
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -503,7 +599,9 @@ function ComplianceMatrixContent({
 
   const handleResetTraceBack = () => {
     setActiveTraceRef('');
+    setActiveTracePeriod('');
     setSearch('');
+    setFilterType('all');
     setTraceRows([]);
     setTraceResolvedReceipt(null);
     setTraceMember(null);
@@ -525,6 +623,20 @@ function ComplianceMatrixContent({
     if (traceResolvedReceipt) refs.add(traceResolvedReceipt.toUpperCase());
     return refs;
   }, [effectiveTraceCode, traceResolvedReceipt]);
+
+  const traceMatchedPeriods = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of traceRows) {
+      if (item.forYear && item.forMonth) {
+        set.add(`${item.forYear}-${item.forMonth}`);
+      }
+    }
+    const parsed = parseShortPeriodParam(activeTracePeriod);
+    if (parsed) {
+      set.add(`${parsed.year}-${parsed.month}`);
+    }
+    return set;
+  }, [traceRows, activeTracePeriod]);
 
   const filteredData = useMemo(
     () =>
@@ -653,11 +765,29 @@ function ComplianceMatrixContent({
     const isWajibPartial = !isWajibUnbilled && !isWajibFrozen && wajibItem.status !== 'paid' && (wajibItem.status === 'partial' || (Number(wajibItem.amount) > 0 && Number(wajibItem.amount) < targetW));
     const isBelanjaPartial = !isBelanjaUnbilled && !isBelanjaFrozen && belanjaItem.status !== 'paid' && (belanjaItem.status === 'partial' || (Number(belanjaItem.amount) > 0 && Number(belanjaItem.amount) < targetB));
     const isLebaranPartial = !isLebaranUnbilled && !isLebaranFrozen && lebaranItem.status !== 'paid' && (lebaranItem.status === 'partial' || (Number(lebaranItem.amount) > 0 && Number(lebaranItem.amount) < targetL));
-    const cellMatchesTrace =
+    const rowMatchesTracedMember =
+      traceMatchedMemberIds.size > 0
+        ? traceMatchedMemberIds.has(row.member_id) ||
+          Boolean(
+            traceMember?.nrp &&
+              row.nrp.trim().toLowerCase() === traceMember.nrp.trim().toLowerCase()
+          )
+        : traceMember?.nrp
+        ? row.nrp.trim().toLowerCase() === traceMember.nrp.trim().toLowerCase()
+        : true;
+
+    const cellMatchesByRef =
       activeHighlightRefs.size > 0 &&
       [wajibItem.reference_no, belanjaItem.reference_no, lebaranItem.reference_no].some(
         (ref) => ref && activeHighlightRefs.has(String(ref).trim().toUpperCase())
       );
+
+    const cellMatchesByPeriod =
+      Boolean(effectiveTraceCode || activeTracePeriod) &&
+      rowMatchesTracedMember &&
+      traceMatchedPeriods.has(`${yearNum}-${monthNum}`);
+
+    const cellMatchesTrace = cellMatchesByRef || cellMatchesByPeriod;
 
     return (
       <div 
@@ -966,7 +1096,7 @@ function ComplianceMatrixContent({
 
           <select 
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
+            onChange={(e) => setFilterType(normalizeDepositFilterType(e.target.value))}
             className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
           >
             <option value="all">Semua Jenis Simpanan</option>
@@ -1138,6 +1268,11 @@ function ComplianceMatrixContent({
                     Kwitansi: {traceResolvedReceipt}
                   </span>
                 )}
+              {activeTracePeriod && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-white text-indigo-800 border border-indigo-200 font-mono font-semibold">
+                  Periode: {activeTracePeriod}
+                </span>
+              )}
               {traceMember && (
                 <span className="font-semibold text-slate-800">
                   {traceMember.nama} — NRP <span className="font-mono">{traceMember.nrp}</span>
@@ -1820,11 +1955,15 @@ function ComplianceMatrixWithRouter(props: ComplianceMatrixProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlSearch = (searchParams.get('search') || '').trim();
   const urlRef = (searchParams.get('ref') || '').trim();
+  const urlType = (searchParams.get('type') || '').trim();
+  const urlPeriod = (searchParams.get('period') || '').trim();
 
   const handleClearUrlParams = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete('search');
     next.delete('ref');
+    next.delete('type');
+    next.delete('period');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -1833,6 +1972,8 @@ function ComplianceMatrixWithRouter(props: ComplianceMatrixProps) {
       {...props}
       urlSearch={urlSearch}
       urlRef={urlRef}
+      urlType={urlType}
+      urlPeriod={urlPeriod}
       onClearUrlParams={handleClearUrlParams}
     />
   );

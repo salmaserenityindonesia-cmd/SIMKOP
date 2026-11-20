@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect } from 'vitest';
 import CashFlowReferenceModal, {
   type CashFlowReferenceModalItem,
@@ -432,7 +433,7 @@ describe('CashFlowReferenceModal Component', () => {
     expect(html).toContain('50 / halaman');
   });
 
-  it('renders individual_deposit breakdown card with receipt number, member identity, deposit type, period, payment method, and amount', () => {
+  it('renders individual_deposit breakdown card with receipt number, member identity, deposit type, period, payment method, amount, and bidirectional audit bar', () => {
     const depositBreakdown: CashFlowReferenceBreakdown = {
       kind: 'individual_deposit',
       journal: {
@@ -449,8 +450,11 @@ describe('CashFlowReferenceModal Component', () => {
       },
       individualDeposit: {
         transactionId: 'tx-bagus-mar26',
+        memberId: 'm-bagus',
         nrp: '00050543',
         nama: 'BAGUS BUDI PRASETYO',
+        memberNrp: '00050543',
+        memberName: 'BAGUS BUDI PRASETYO',
         pangkat: 'Serka',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
@@ -458,7 +462,9 @@ describe('CashFlowReferenceModal Component', () => {
         forYear: 2026,
         periodLabel: 'Mar 2026',
         shortPeriodLabel: 'Mar-26',
+        periodCode: 'Mar-26',
         referenceNo: 'KW-2026/03/00050543',
+        receiptNumber: 'KW-2026/03/00050543',
         paymentMethod: 'tunai',
         description: 'Setoran Matriks WAJIB Mar 2026',
         notes: 'Pembayaran iuran rutin Maret 2026',
@@ -493,6 +499,95 @@ describe('CashFlowReferenceModal Component', () => {
     expect(html).toContain('Tunai Kasir');
     expect(html).toContain('Pembayaran iuran rutin Maret 2026');
     expect(html).toContain('200.000');
+    expect(html).toContain('data-testid="single-deposit-audit-bar"');
+    expect(html).toContain('Audit Dua Arah:');
+    expect(html).toContain('Telusuri di Buku Besar Simpanan');
+    expect(html).toContain(
+      'href="/admin/compliance-matrix?search=00050543&amp;ref=KW-2026%2F03%2F00050543&amp;type=WAJIB&amp;period=Mar-26"'
+    );
+  });
+
+  it('renders single-deposit bidirectional audit bar with NRP • periodCode badge fallback when receiptNo is empty (CF-6C928789) both outside and inside MemoryRouter', () => {
+    const donnyBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'individual_deposit',
+      journal: {
+        id: '6c928789-0000-4000-8000-000000000001',
+        refCode: 'CF-6C928789',
+        category: 'Setoran Simpanan',
+        direction: 'in',
+        amount: 200000,
+        description: 'Setoran Simpanan Wajib [Mar 2026] — 00060019 - DONNY ILHAM PAMBUDI',
+        unitUsaha: 'Umum',
+        referenceId: 'tx-donny-mar26',
+        createdAt: '2026-03-10T08:00:00.000Z',
+      },
+      individualDeposit: {
+        transactionId: 'tx-donny-mar26',
+        memberId: 'mem-donny',
+        nrp: '00060019',
+        nama: 'DONNY ILHAM PAMBUDI',
+        memberNrp: '00060019',
+        memberName: 'DONNY ILHAM PAMBUDI',
+        pangkat: 'Bripka',
+        depositTypeCode: 'WAJIB',
+        depositTypeName: 'Simpanan Wajib',
+        forMonth: 3,
+        forYear: 2026,
+        periodLabel: 'Mar 2026',
+        shortPeriodLabel: 'Mar-26',
+        periodCode: 'Mar-26',
+        referenceNo: null,
+        receiptNumber: 'CF-6C928789',
+        paymentMethod: 'tunai',
+        description: 'Setoran Matriks WAJIB Mar 2026',
+        notes: null,
+        createdAt: '2026-03-10T08:00:00.000Z',
+        amount: 200000,
+      },
+    };
+
+    const item: CashFlowReferenceModalItem = {
+      ...baseOpeningItem,
+      id: '6c928789-0000-4000-8000-000000000001',
+      referensi: 'CF-6C928789',
+      kategori: 'Setoran Simpanan',
+      kas_masuk: 200000,
+      kas_keluar: 0,
+      direction: 'in',
+    };
+
+    const expectedHref =
+      'href="/admin/compliance-matrix?search=00060019&amp;ref=CF-6C928789&amp;type=WAJIB&amp;period=Mar-26"';
+
+    const staticHtml = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={item}
+        onClose={() => {}}
+        initialBreakdown={donnyBreakdown}
+      />
+    );
+
+    expect(staticHtml).toContain('data-testid="single-deposit-audit-bar"');
+    expect(staticHtml).toContain('Audit Dua Arah:');
+    expect(staticHtml).toContain('00060019 • Mar-26');
+    expect(staticHtml).toContain('Telusuri di Buku Besar Simpanan');
+    expect(staticHtml).toContain('data-testid="btn-trace-savings-ledger"');
+    expect(staticHtml).toContain(expectedHref);
+
+    const routerHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <CashFlowReferenceModal
+          cashFlowItem={item}
+          onClose={() => {}}
+          initialBreakdown={donnyBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(routerHtml).toContain('data-testid="single-deposit-audit-bar"');
+    expect(routerHtml).toContain('data-testid="btn-trace-savings-ledger"');
+    expect(routerHtml).toContain('00060019 • Mar-26');
+    expect(routerHtml).toContain(expectedHref);
   });
 
   it('renders store_credit_payment side-by-side receivable reduction and cash addition cards with related INV receipts', () => {

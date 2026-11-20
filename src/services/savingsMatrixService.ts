@@ -197,6 +197,41 @@ export function isMonthBeforeCutOff(
   return targetIndex < cutOffIndex;
 }
 
+/**
+ * Mengembalikan true jika mutasi merupakan transaksi yang dilindungi dan TIDAK BOLEH
+ * dihapus/ditimpa oleh operasi centang/batal centang matriks bulanan
+ * (Saldo Awal Cut-Off, migrasi lampau, penampung for_month NULL, periode pra-cut-off, maupun penarikan/pencairan).
+ */
+export function isProtectedSavingsTransaction(
+  tx:
+    | {
+        transaction_type?: string | null;
+        description?: string | null;
+        for_year?: number | string | null;
+        for_month?: number | string | null;
+      }
+    | null
+    | undefined,
+  cutoffDate?: string | Date | null
+): boolean {
+  if (!tx) return true;
+  if (tx.transaction_type && tx.transaction_type !== 'deposit') return true;
+  if (isOpeningOrMigrationDepositDescription(tx.description)) return true;
+
+  const fy =
+    tx.for_year !== null && tx.for_year !== undefined && tx.for_year !== ''
+      ? Number(tx.for_year)
+      : NaN;
+  const fm =
+    tx.for_month !== null && tx.for_month !== undefined && tx.for_month !== ''
+      ? Number(tx.for_month)
+      : NaN;
+
+  if (!Number.isInteger(fy) || !Number.isInteger(fm) || fm < 1 || fm > 12) return true;
+  if (cutoffDate && isMonthBeforeCutOff(fy, fm, cutoffDate)) return true;
+  return false;
+}
+
 export const OFFICIAL_CUTOFF_DATE = '2026-03-01';
 
 /**
@@ -1538,14 +1573,15 @@ export async function bulkCheckAllUpToCurrentMonth(
               const existingTxs = Array.isArray(txListRes?.data) ? txListRes.data : [];
               const postCutoffIdsToDelete = existingTxs
                 .filter((t: any) => {
-                  if (t.transaction_type !== 'deposit') return false;
-                  const desc = (t.description || '').toLowerCase();
-                  if (desc.includes('saldo awal')) return false;
-                  if (t.for_month === null || t.for_month === undefined) return false;
-                  if (t.for_year && isMonthBeforeCutOff(Number(t.for_year), Number(t.for_month), initialSavingsCutOffDate)) {
+                  if (isProtectedSavingsTransaction(t, initialSavingsCutOffDate)) {
                     return false;
                   }
-                  if (typeCode === 'LEBARAN' && lastLebaranCutOffDate && t.for_year && isMonthSettledByCutOff(Number(t.for_year), Number(t.for_month), lastLebaranCutOffDate)) {
+                  if (
+                    typeCode === 'LEBARAN' &&
+                    lastLebaranCutOffDate &&
+                    t.for_year &&
+                    isMonthSettledByCutOff(Number(t.for_year), Number(t.for_month), lastLebaranCutOffDate)
+                  ) {
                     return false;
                   }
                   return true;
@@ -1959,10 +1995,13 @@ export async function saveMonthDepositWithEvidence(
   }
 
   // 2. Ambil & bersihkan mutasi lama (termasuk cash_flow terkait) untuk periode (member_deposit_id, year, month) jika ada
+  // Pastikan mutasi Saldo Awal / Cut-Off atau withdrawal tidak pernah terhapus
+  let selectExecuted = false;
+  let deletableIds: string[] = [];
   try {
     const dtTable: any = supabase?.from?.('deposit_transactions');
     if (dtTable && typeof dtTable.select === 'function') {
-      const selQ: any = dtTable.select('id');
+      const selQ: any = dtTable.select('id, transaction_type, description');
       if (selQ && typeof selQ.eq === 'function') {
         const sq1 = selQ.eq('member_deposit_id', payload.memberDepositId);
         if (sq1 && typeof sq1.eq === 'function') {
@@ -1971,11 +2010,19 @@ export async function saveMonthDepositWithEvidence(
             sq2 && typeof sq2.eq === 'function'
               ? await sq2.eq('for_month', payload.month)
               : await sq2;
-          const oldIds = (Array.isArray(oldRes?.data) ? oldRes.data : [])
-            .map((r: any) => r?.id)
-            .filter(Boolean);
-          if (oldIds.length > 0) {
-            await deleteCashFlowByReferenceIds(oldIds);
+          if (oldRes && !oldRes.error && Array.isArray(oldRes.data)) {
+            selectExecuted = true;
+            deletableIds = oldRes.data
+              .filter(
+                (r: any) =>
+                  r?.transaction_type !== 'withdrawal' &&
+                  !isOpeningOrMigrationDepositDescription(r?.description)
+              )
+              .map((r: any) => String(r?.id || ''))
+              .filter(Boolean);
+            if (deletableIds.length > 0) {
+              await deleteCashFlowByReferenceIds(deletableIds);
+            }
           }
         }
       }
@@ -1985,18 +2032,39 @@ export async function saveMonthDepositWithEvidence(
   }
 
   try {
-    const delQuery: any = supabase.from('deposit_transactions').delete();
-    if (typeof delQuery.eq === 'function') {
-      const q1 = delQuery.eq('member_deposit_id', payload.memberDepositId);
-      if (q1 && typeof q1.eq === 'function') {
-        const q2 = q1.eq('for_year', payload.year);
-        if (q2 && typeof q2.eq === 'function') {
-          await q2.eq('for_month', payload.month);
-        } else if (q2 && typeof q2.then === 'function') {
-          await q2;
+    if (selectExecuted) {
+      if (deletableIds.length > 0) {
+        const delQuery: any = supabase.from('deposit_transactions').delete();
+        if (typeof delQuery?.in === 'function') {
+          await delQuery.in('id', deletableIds);
+        } else if (typeof delQuery?.eq === 'function') {
+          const q1 = delQuery.eq('member_deposit_id', payload.memberDepositId);
+          if (q1 && typeof q1.eq === 'function') {
+            const q2 = q1.eq('for_year', payload.year);
+            if (q2 && typeof q2.eq === 'function') {
+              await q2.eq('for_month', payload.month);
+            } else if (q2 && typeof q2.then === 'function') {
+              await q2;
+            }
+          } else if (q1 && typeof q1.then === 'function') {
+            await q1;
+          }
         }
-      } else if (q1 && typeof q1.then === 'function') {
-        await q1;
+      }
+    } else {
+      const delQuery: any = supabase.from('deposit_transactions').delete();
+      if (typeof delQuery.eq === 'function') {
+        const q1 = delQuery.eq('member_deposit_id', payload.memberDepositId);
+        if (q1 && typeof q1.eq === 'function') {
+          const q2 = q1.eq('for_year', payload.year);
+          if (q2 && typeof q2.eq === 'function') {
+            await q2.eq('for_month', payload.month);
+          } else if (q2 && typeof q2.then === 'function') {
+            await q2;
+          }
+        } else if (q1 && typeof q1.then === 'function') {
+          await q1;
+        }
       }
     }
   } catch (err) {
@@ -2107,6 +2175,16 @@ export async function cancelMonthDepositWithReason(
     console.warn('Gagal memuat transaksi yang akan dibatalkan:', selErr);
   }
 
+  const deletableTxs = (existingTxs || []).filter(
+    (tx: any) =>
+      tx?.transaction_type !== 'withdrawal' &&
+      !isOpeningOrMigrationDepositDescription(tx?.description)
+  );
+
+  if (deletableTxs.length === 0) {
+    return { success: true, cancelledCount: 0 };
+  }
+
   // 2. Ambil admin yang sedang login
   let currentUserId: string | null = null;
   let currentUserName: string = 'Pengelola';
@@ -2127,49 +2205,54 @@ export async function cancelMonthDepositWithReason(
   }
 
   // 3. Catat audit log eksplisit ke audit_logs untuk setiap transaksi yang dibatalkan
-  if (existingTxs && existingTxs.length > 0) {
-    for (const tx of existingTxs) {
-      try {
-        const auditPayload = {
-          table_name: 'deposit_transactions',
-          action: 'DELETE',
-          record_id: tx.id ? String(tx.id) : undefined,
-          entity_name: 'deposit_transactions',
-          entity_id: memberDepositId,
-          old_data: tx,
-          performed_by: currentUserId,
-          performer_name: currentUserName,
-          notes: reason.trim(),
-          created_at: new Date().toISOString()
-        };
-        await supabase.from('audit_logs').insert(auditPayload);
-      } catch (auditErr) {
-        console.warn('Gagal mencatat riwayat audit pembatalan:', auditErr);
-      }
+  for (const tx of deletableTxs) {
+    try {
+      const auditPayload = {
+        table_name: 'deposit_transactions',
+        action: 'DELETE',
+        record_id: tx.id ? String(tx.id) : undefined,
+        entity_name: 'deposit_transactions',
+        entity_id: memberDepositId,
+        old_data: tx,
+        performed_by: currentUserId,
+        performer_name: currentUserName,
+        notes: reason.trim(),
+        created_at: new Date().toISOString()
+      };
+      await supabase.from('audit_logs').insert(auditPayload);
+    } catch (auditErr) {
+      console.warn('Gagal mencatat riwayat audit pembatalan:', auditErr);
+    }
 
-      // 3b. Perbarui deskripsi transaksi menjadi alasan pembatalan admin sebelum dihapus
-      // agar trigger database trg_audit_deposit_tx_delete secara otomatis menangkap alasan ini sebagai OLD.description
-      if (tx.id) {
-        try {
-          const tableRef: any = supabase.from('deposit_transactions');
-          if (typeof tableRef.update === 'function') {
-            const updBuilder = tableRef.update({
-              description: reason.trim()
-            });
-            if (typeof updBuilder.eq === 'function') {
-              await updBuilder.eq('id', tx.id);
-            }
+    // 3b. Perbarui deskripsi transaksi menjadi alasan pembatalan admin sebelum dihapus
+    // agar trigger database trg_audit_deposit_tx_delete secara otomatis menangkap alasan ini sebagai OLD.description
+    if (tx.id) {
+      try {
+        const tableRef: any = supabase.from('deposit_transactions');
+        if (typeof tableRef.update === 'function') {
+          const updBuilder = tableRef.update({
+            description: reason.trim()
+          });
+          if (typeof updBuilder.eq === 'function') {
+            await updBuilder.eq('id', tx.id);
           }
-        } catch (updErr) {
-          console.warn('Gagal memperbarui deskripsi transaksi sebelum pembatalan:', updErr);
         }
+      } catch (updErr) {
+        console.warn('Gagal memperbarui deskripsi transaksi sebelum pembatalan:', updErr);
       }
     }
   }
 
-  // 4. Hapus transaksi dari deposit_transactions
+  // 4. Hapus hanya transaksi setoran rutin dari deposit_transactions (lindungi Saldo Awal & withdrawal)
+  const cancelledTxIds = deletableTxs
+    .map((tx: any) => (tx?.id ? String(tx.id) : ''))
+    .filter(Boolean);
+
   const delQuery: any = supabase.from('deposit_transactions').delete();
-  if (typeof delQuery.eq === 'function') {
+  if (cancelledTxIds.length > 0 && typeof delQuery?.in === 'function') {
+    const delRes = await delQuery.in('id', cancelledTxIds);
+    if (delRes?.error) throw delRes.error;
+  } else if (typeof delQuery?.eq === 'function') {
     const q1 = delQuery.eq('member_deposit_id', memberDepositId);
     if (q1 && typeof q1.eq === 'function') {
       const q2 = q1.eq('for_year', year);
@@ -2184,41 +2267,36 @@ export async function cancelMonthDepositWithReason(
   }
 
   // 4b. Hapus entri arus kas (cash_flow) terkait agar total kas masuk akurat
-  const cancelledTxIds = (existingTxs || [])
-    .map((tx: any) => (tx?.id ? String(tx.id) : ''))
-    .filter(Boolean);
   if (cancelledTxIds.length > 0) {
     await deleteCashFlowByReferenceIds(cancelledTxIds);
   }
 
   // 4c. Pastikan catatan audit log untuk transaksi yang baru dihapus memuat alasan admin
-  if (existingTxs && existingTxs.length > 0) {
-    for (const tx of existingTxs) {
-      if (tx.id) {
-        try {
-          const auditTable: any = supabase.from('audit_logs');
-          if (typeof auditTable.update === 'function') {
-            const auditUpd = auditTable.update({
-              notes: reason.trim()
-            });
-            if (typeof auditUpd.eq === 'function') {
-              const qTbl = auditUpd.eq('table_name', 'deposit_transactions');
-              if (qTbl && typeof qTbl.eq === 'function') {
-                const qRec = qTbl.eq('record_id', String(tx.id));
-                if (qRec && typeof qRec.eq === 'function') {
-                  await qRec.eq('action', 'DELETE');
-                }
+  for (const tx of deletableTxs) {
+    if (tx.id) {
+      try {
+        const auditTable: any = supabase.from('audit_logs');
+        if (typeof auditTable.update === 'function') {
+          const auditUpd = auditTable.update({
+            notes: reason.trim()
+          });
+          if (typeof auditUpd.eq === 'function') {
+            const qTbl = auditUpd.eq('table_name', 'deposit_transactions');
+            if (qTbl && typeof qTbl.eq === 'function') {
+              const qRec = qTbl.eq('record_id', String(tx.id));
+              if (qRec && typeof qRec.eq === 'function') {
+                await qRec.eq('action', 'DELETE');
               }
             }
           }
-        } catch {
-          // ignore non-critical update
         }
+      } catch {
+        // ignore non-critical update
       }
     }
   }
 
-  return { success: true, cancelledCount: existingTxs.length };
+  return { success: true, cancelledCount: deletableTxs.length };
 }
 
 /**

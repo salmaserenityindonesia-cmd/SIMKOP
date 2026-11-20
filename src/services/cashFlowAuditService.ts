@@ -194,8 +194,11 @@ export interface LoanDisbursementBreakdown {
 
 export interface IndividualDepositBreakdown {
   transactionId: string;
+  memberId?: string;
   nrp: string;
   nama: string;
+  memberNrp?: string;
+  memberName?: string;
   pangkat?: string | null;
   depositTypeCode: string;
   depositTypeName: string;
@@ -203,7 +206,9 @@ export interface IndividualDepositBreakdown {
   forYear: number | null;
   periodLabel: string;
   shortPeriodLabel: string;
+  periodCode?: string;
   referenceNo: string | null;
+  receiptNumber?: string;
   paymentMethod: string | null;
   description: string;
   notes: string | null;
@@ -2999,6 +3004,7 @@ export async function getCashFlowReferenceBreakdown(
     }
 
     if (tx) {
+      let memberId: string | undefined;
       let nrp = '-';
       let nama = 'Anggota';
       let pangkat: string | null = null;
@@ -3012,6 +3018,9 @@ export async function getCashFlowReferenceBreakdown(
           String(tx.member_deposit_id)
         );
         if (md) {
+          if (md.member_id) {
+            memberId = String(md.member_id);
+          }
           const [memberRes, typeRes] = await Promise.all([
             md.member_id
               ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, pangkat', String(md.member_id))
@@ -3021,6 +3030,9 @@ export async function getCashFlowReferenceBreakdown(
               : Promise.resolve({ data: null, error: null }),
           ]);
           if (memberRes.data) {
+            if (memberRes.data.id) {
+              memberId = String(memberRes.data.id);
+            }
             nrp = String(memberRes.data.nrp || '-');
             nama = String(memberRes.data.nama || 'Anggota');
             pangkat = memberRes.data.pangkat ?? null;
@@ -3032,6 +3044,13 @@ export async function getCashFlowReferenceBreakdown(
         }
       }
 
+      if (nrp === '-') {
+        const extractedNrp =
+          extractMemberNrpFromDepositDescription(cashFlowRow.description) ||
+          extractMemberNrpFromDepositDescription(tx.description);
+        if (extractedNrp) nrp = extractedNrp;
+      }
+
       const forMonth =
         tx.for_month !== null && tx.for_month !== undefined ? Number(tx.for_month) : null;
       const forYear =
@@ -3039,6 +3058,13 @@ export async function getCashFlowReferenceBreakdown(
       const periodLabel = formatMatrixDepositPeriodLabel(forMonth, forYear);
       const shortPeriodLabel = formatMatrixDepositShortPeriod(forMonth, forYear);
       const txAmount = Math.round(Number(tx.amount ?? journal.amount));
+      const cleanedRefNo =
+        tx.reference_no &&
+        String(tx.reference_no).trim() !== '' &&
+        String(tx.reference_no).trim() !== '-'
+          ? String(tx.reference_no).trim()
+          : null;
+      const receiptNumber = cleanedRefNo || journal.refCode;
 
       if (isBlankOrDashDescription(journal.description)) {
         journal.description = formatMatrixDepositCashFlowDescription({
@@ -3056,8 +3082,11 @@ export async function getCashFlowReferenceBreakdown(
         journal,
         individualDeposit: {
           transactionId: String(tx.id || cashFlowRow.reference_id || ''),
+          memberId,
           nrp,
           nama,
+          memberNrp: nrp,
+          memberName: nama,
           pangkat,
           depositTypeCode,
           depositTypeName,
@@ -3065,7 +3094,9 @@ export async function getCashFlowReferenceBreakdown(
           forYear,
           periodLabel,
           shortPeriodLabel,
+          periodCode: shortPeriodLabel,
           referenceNo: tx.reference_no ?? null,
+          receiptNumber,
           paymentMethod: tx.payment_method ?? null,
           description: String(tx.description || journal.description),
           notes: tx.notes ?? null,
@@ -3352,10 +3383,13 @@ export async function getTraceBackDepositRows(
 
       if (breakdown.kind === 'individual_deposit') {
         const ind = breakdown.individualDeposit;
+        const resolvedNrp = ind.memberNrp || ind.nrp;
+        const resolvedName = ind.memberName || ind.nama;
         const item: MemberDepositBatchItem = {
           id: ind.transactionId,
-          memberNrp: ind.nrp,
-          memberName: ind.nama,
+          memberId: ind.memberId,
+          memberNrp: resolvedNrp,
+          memberName: resolvedName,
           depositTypeName: ind.depositTypeName,
           depositTypeCode: ind.depositTypeCode,
           forMonth: ind.forMonth,
@@ -3370,12 +3404,13 @@ export async function getTraceBackDepositRows(
         };
         return {
           traceCode: trimmedCode,
-          resolvedReceiptCode: ind.referenceNo,
+          resolvedReceiptCode:
+            ind.referenceNo && ind.referenceNo !== '-' ? ind.referenceNo : null,
           resolvedCashFlowRef: codeUpper,
           member: {
-            id: '',
-            nrp: ind.nrp,
-            nama: ind.nama,
+            id: ind.memberId || '',
+            nrp: resolvedNrp,
+            nama: resolvedName,
             pangkat: ind.pangkat ?? null,
           },
           items: [item],
