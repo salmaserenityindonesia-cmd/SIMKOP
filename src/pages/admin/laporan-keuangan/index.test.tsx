@@ -3271,4 +3271,44 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(rows[6][1]).toBe('CF-NOV1');
     expect(rows[7]).toEqual(['', '', '', '', 'TOTAL', 1000000, 0, 26640000]);
   });
+
+  it('renders PEMBAGIAN_SHU_RAT category badge as "Pembagian SHU (RAT)"', () => {
+    const html = renderToStaticMarkup(<KategoriBadge kategori="PEMBAGIAN_SHU_RAT" />);
+    expect(html).toContain('Pembagian SHU (RAT)');
+    expect(html).toContain('bg-purple-50');
+    expect(html).toContain('text-purple-800');
+  });
+
+  it('renders CLOSED fiscal year lock badge & banner when initialClosedFiscalYear is provided', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialStartDate="2026-01-01"
+          initialEndDate="2026-12-31"
+          initialClosedFiscalYear={{
+            id: 'close-2026',
+            fiscal_year: 2026,
+            closing_date: '2026-12-31',
+            opening_next_year_date: '2027-01-01',
+            closing_cash_balance: 50_000_000,
+            closing_loan_receivable: 15_000_000,
+            closing_store_receivable: 2_000_000,
+            closing_member_savings: 40_000_000,
+            net_shu_amount: 10_000_000,
+            reserve_fund_amount: 4_000_000,
+            member_shu_total: 6_000_000,
+            other_fund_amount: 0,
+            payout_method: 'CASH_PAYOUT',
+            status: 'CLOSED',
+            executed_at: '2026-12-31T23:59:00Z',
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Periode Fiskal: Tahun Buku 2026');
+    expect(html).toContain('CLOSED');
+    expect(html).toContain('data-testid="fiscal-year-closed-banner"');
+    expect(html).toContain('/admin/tutup-buku');
+  });
 });

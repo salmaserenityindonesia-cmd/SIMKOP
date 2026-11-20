@@ -36,6 +36,10 @@ import {
   type OutstandingStoreCreditSummary,
 } from '../../../services/storeCreditLedgerService';
 import { calculateRepaymentPortions } from '../../../services/loanService';
+import {
+  getFiscalYearClosing,
+  type FiscalYearClosingRecord,
+} from '../../../services/yearEndClosingService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -172,6 +176,9 @@ const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }
   KLIRING_ANGGOTA_KELUAR: { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
   kliring_anggota_keluar: { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
   'Kliring Anggota Keluar': { bg: 'bg-rose-50 border border-rose-200', text: 'text-rose-700', label: 'Kliring Anggota Keluar' },
+  PEMBAGIAN_SHU_RAT: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
+  pembagian_shu_rat: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
+  'Pembagian SHU (RAT)': { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
   beban_operasional: { bg: 'bg-red-50', text: 'text-red-800', label: 'Beban Operasional' },
 };
 
@@ -926,6 +933,9 @@ export async function getShuEstimation(
     'KLIRING_ANGGOTA_KELUAR',
     'kliring_anggota_keluar',
     'Kliring Anggota Keluar',
+    'PEMBAGIAN_SHU_RAT',
+    'pembagian_shu_rat',
+    'OPENING_BALANCE_NEW_YEAR',
   ]);
 
   const opex = (opexData ?? [])
@@ -1306,6 +1316,7 @@ export interface LaporanKeuanganProps {
   initialShuSearchQuery?: string;
   initialStartDate?: string;
   initialEndDate?: string;
+  initialClosedFiscalYear?: FiscalYearClosingRecord | null;
 }
 
 interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
@@ -1331,6 +1342,7 @@ function LaporanKeuanganContent({
   initialShuSearchQuery = '',
   initialStartDate,
   initialEndDate,
+  initialClosedFiscalYear = null,
   urlTab = null,
   urlRef = '',
   urlReceipt = '',
@@ -1355,6 +1367,11 @@ function LaporanKeuanganContent({
 
   const [cashFlowData, setCashFlowData] = useState<CashFlowData | null>(initialCashFlowData);
   const [shuData, setShuData] = useState<ShuEstimationData | null>(initialShuData);
+  const [closedFiscalYear, setClosedFiscalYear] = useState<FiscalYearClosingRecord | null>(
+    initialClosedFiscalYear
+  );
+  const filteredFiscalYear =
+    Number(String(endDate || startDate || '2026').slice(0, 4)) || new Date().getFullYear();
   const [storeCreditSummary, setStoreCreditSummary] = useState<OutstandingStoreCreditSummary>(
     initialStoreCreditSummary ?? {
       totalOutstandingReceivable: 0,
@@ -1468,7 +1485,7 @@ function LaporanKeuanganContent({
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [cf, shu, creditSummary] = await Promise.all([
+      const [cf, shu, creditSummary, fiscalClosing] = await Promise.all([
         getCashFlowReport(startDate, endDate, unit),
         getShuEstimation(startDate, endDate),
         getOutstandingStoreCreditSummary().catch(() => ({
@@ -1477,16 +1494,18 @@ function LaporanKeuanganContent({
           totalCreditSales: 0,
           totalRepaid: 0,
         })),
+        getFiscalYearClosing(filteredFiscalYear).catch(() => null),
       ]);
       setCashFlowData(cf);
       setShuData(shu);
       setStoreCreditSummary(creditSummary);
+      setClosedFiscalYear(fiscalClosing);
     } catch (e) {
       console.error('fetchData error:', e);
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, unit]);
+  }, [startDate, endDate, unit, filteredFiscalYear]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1862,7 +1881,7 @@ function LaporanKeuanganContent({
           <span className="text-outline-variant">/</span>
           <span className="text-secondary font-semibold">Laporan Keuangan Terpadu</span>
         </div>
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-primary" style={{ fontFamily: "'IBM Plex Serif', serif" }}>
               Laporan Keuangan Terpadu
@@ -1871,12 +1890,58 @@ function LaporanKeuanganContent({
               Ringkasan arus kas dan estimasi SHU berjalan koperasi
             </p>
           </div>
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-[12px] font-semibold border border-primary/20 no-print">
-            <span className="material-symbols-outlined text-[16px]">event</span>
-            Periode Fiskal: Tahun Buku 2026
-          </span>
+          <div className="hidden sm:flex items-center gap-2 no-print">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-[12px] font-semibold border border-primary/20">
+              <span className="material-symbols-outlined text-[16px]">event</span>
+              Periode Fiskal: Tahun Buku {filteredFiscalYear}
+            </span>
+            {closedFiscalYear?.status === 'CLOSED' && (
+              <span
+                data-testid="laporan-fiscal-closed-badge"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-[12px] font-bold border border-emerald-300"
+              >
+                <span className="material-symbols-outlined text-[15px]">lock</span>
+                TERKUNCI (CLOSED)
+              </span>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* ── BANNER STATUS TAHUN BUKU TERKUNCI (CLOSED) ── */}
+      {closedFiscalYear?.status === 'CLOSED' && (
+        <div
+          data-testid="fiscal-year-closed-banner"
+          className="rounded-xl border border-emerald-300 bg-emerald-50/80 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print"
+        >
+          <div className="flex items-start gap-2.5">
+            <span className="material-symbols-outlined text-emerald-700 text-[20px] mt-0.5">verified</span>
+            <div className="text-xs text-emerald-900">
+              <p className="font-bold">
+                Tahun Buku {closedFiscalYear.fiscal_year} Telah Ditutup Resmi (Status: CLOSED)
+              </p>
+              <p className="text-emerald-800 mt-0.5">
+                SHU Bersih {formatRp(closedFiscalYear.net_shu_amount)} • SHU Anggota {formatRp(closedFiscalYear.member_shu_total)} • Saldo awal Tahun Buku {closedFiscalYear.fiscal_year + 1} dibuka per 1 Januari {closedFiscalYear.fiscal_year + 1}.
+              </p>
+            </div>
+          </div>
+          {inRouter ? (
+            <Link
+              to="/admin/tutup-buku"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-800 text-xs font-bold hover:bg-emerald-100/70 transition-colors whitespace-nowrap"
+            >
+              Lihat Arsip &amp; Cetak Berita Acara RAT →
+            </Link>
+          ) : (
+            <a
+              href="/admin/tutup-buku"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-emerald-300 text-emerald-800 text-xs font-bold hover:bg-emerald-100/70 transition-colors whitespace-nowrap"
+            >
+              Lihat Arsip &amp; Cetak Berita Acara RAT →
+            </a>
+          )}
+        </div>
+      )}
 
       {/* ── FILTER TOOLBAR ── */}
       <div className="bg-white rounded-xl border border-outline-variant/30 p-4 shadow-sm no-print">

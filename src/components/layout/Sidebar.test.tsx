@@ -67,6 +67,7 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     expect(allHrefs).toContain('/admin/batch-update');
     expect(allHrefs).toContain('/admin/clearance');
     expect(allHrefs).toContain('/admin/laporan-keuangan');
+    expect(allHrefs).toContain('/admin/tutup-buku');
     expect(allHrefs).toContain('/admin/master-simpan-pinjam');
     expect(allHrefs).toContain('/admin/anggota');
     expect(allHrefs).toContain('/admin/users');
@@ -79,6 +80,7 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     expect(findActiveGroupId('/admin/rekening-koran-simpanan')).toBe('simpanan');
     expect(findActiveGroupId('/admin/clearance')).toBe('gaji');
     expect(findActiveGroupId('/admin/laporan-keuangan')).toBe('laporan');
+    expect(findActiveGroupId('/admin/tutup-buku')).toBe('laporan');
     expect(findActiveGroupId('/admin/anggota')).toBe('master');
     expect(findActiveGroupId('/admin')).toBeNull();
   });

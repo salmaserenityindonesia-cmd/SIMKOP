@@ -32,6 +32,7 @@ import {
   BookOpen,
   Banknote,
   ChevronDown,
+  Landmark,
 } from 'lucide-react';
 
 export interface NavigationItem {
@@ -170,6 +171,7 @@ export const navigationGroups: NavigationGroup[] = [
     icon: BarChart3,
     items: [
       { label: 'Laporan Keuangan Terpadu', icon: FileSpreadsheet, href: '/admin/laporan-keuangan', adminOnly: true },
+      { label: 'Tutup Buku & SHU RAT', icon: Landmark, href: '/admin/tutup-buku', adminOnly: true },
     ],
   },
   {

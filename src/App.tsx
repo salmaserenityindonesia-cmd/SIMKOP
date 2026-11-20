@@ -30,6 +30,7 @@ import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import LaporanRetail from './pages/admin/laporan-retail';
 import LaporanMutasiBarang from './pages/admin/LaporanMutasiBarang';
 import LaporanPenarikanSimpanan from './pages/admin/LaporanPenarikanSimpanan';
+import TutupBuku from './pages/admin/TutupBuku';
 import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
 import PengaturanKasir from './pages/admin/PengaturanKasir';
 import { FeedbackProvider } from './context/FeedbackContext';
@@ -279,6 +280,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <LaporanKeuangan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/tutup-buku" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <TutupBuku />
             </ProtectedRoute>
           } 
         />
