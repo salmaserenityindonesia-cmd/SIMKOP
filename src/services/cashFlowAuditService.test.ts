@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   consolidateBulkLebaranCashFlow,
+  deduplicateClearanceCashFlow,
   enrichDepositCashFlowDescriptions,
   enrichMemberClearanceCashFlowDescriptions,
   enrichPosCashFlowDescriptions,
@@ -2362,5 +2363,215 @@ describe('cashFlowAuditService - Kliring Anggota Keluar (KLIRING_ANGGOTA_KELUAR)
     expect(enriched[0].deskripsi).toBe(
       'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000'
     );
+  });
+
+  it('deduplicateClearanceCashFlow removes CF-2A2CEE11 duplicates (by reference_id or NRP) and keeps CF-13BA88C2', async () => {
+    const cashFlowRows: any[] = [
+      {
+        id: '2a2cee11-0000-4000-8000-000000000002',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        reference_id: 'mem-alif',
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+      {
+        id: '13ba88c2-0000-4000-8000-000000000001',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        reference_id: 'mem-alif',
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+      {
+        id: '2a2cee11-9999-4000-8000-000000000003',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        reference_id: 'mcl-alif-legacy',
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000',
+        created_at: '2026-11-19T14:21:00.000Z',
+      },
+      {
+        id: 'cf-pos-1',
+        category: 'penjualan_tunai',
+        direction: 'in',
+        amount: 50000,
+        reference_id: 'sale-1',
+        description: 'Penjualan Tunai',
+        created_at: '2026-11-19T09:00:00.000Z',
+      },
+    ];
+
+    const deletedBatches: string[][] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        const mock = buildPagedTableMock(cashFlowRows) as any;
+        mock.delete = vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (_col: string, ids: string[]) => {
+            deletedBatches.push(ids);
+            for (const id of ids) {
+              const idx = cashFlowRows.findIndex((r) => r.id === id);
+              if (idx >= 0) cashFlowRows.splice(idx, 1);
+            }
+            return { data: null, error: null };
+          }),
+        });
+        return mock;
+      }
+      return buildPagedTableMock([]);
+    });
+
+    const result = await deduplicateClearanceCashFlow();
+    expect(result.deletedCount).toBe(2);
+    expect(result.keptCount).toBe(1);
+    expect(result.deletedIds).toEqual([
+      '2a2cee11-0000-4000-8000-000000000002',
+      '2a2cee11-9999-4000-8000-000000000003',
+    ]);
+    expect(deletedBatches).toHaveLength(1);
+    expect(cashFlowRows.map((r) => r.id)).toEqual([
+      '13ba88c2-0000-4000-8000-000000000001',
+      'cf-pos-1',
+    ]);
+  });
+
+  it('syncResignedMemberClearanceToCashFlow uses in-flight mutex lock so concurrent calls insert exactly 1 row', async () => {
+    const anggotaRows = [
+      {
+        id: 'mem-alif',
+        nrp: '(lama 1) 00010062',
+        nama: 'MOCH. ALIF NURSYARIFUDDIN',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+        updated_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+    const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
+    const memberDeposits = [{ id: 'md-alif-w', member_id: 'mem-alif', deposit_type_id: 'dt-wajib' }];
+    const depositTransactions = [
+      { id: 'tx-1', member_deposit_id: 'md-alif-w', transaction_type: 'deposit', amount: 10460000 },
+    ];
+    const clearanceLogs = [
+      {
+        id: 'mcl-alif',
+        anggota_id: 'mem-alif',
+        settlement_type: 'SURPLUS_PAYOUT',
+        total_savings: 10460000,
+        total_loans: 0,
+        net_amount: 10460000,
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+
+    const cashFlowRows: any[] = [];
+    const insertedCashFlows: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildPagedTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildPagedTableMock(depositTypes);
+      if (table === 'member_deposits') return buildPagedTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildPagedTableMock(depositTransactions);
+      if (table === 'member_clearance_logs') return buildPagedTableMock(clearanceLogs);
+      if (table === 'loans' || table === 'loan_repayments') return buildPagedTableMock([]);
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async (from: number, to: number) => {
+              await new Promise((r) => setTimeout(r, 15));
+              return { data: cashFlowRows.slice(from, to + 1), error: null };
+            }),
+          }),
+          insert: vi.fn().mockImplementation(async (payload: any) => {
+            await new Promise((r) => setTimeout(r, 15));
+            const row = { id: `13ba88c2-0000-4000-8000-00000000000${insertedCashFlows.length + 1}`, ...payload };
+            cashFlowRows.push(row);
+            insertedCashFlows.push(row);
+            return { data: row, error: null };
+          }),
+        };
+      }
+      return buildPagedTableMock([]);
+    });
+
+    const [resA, resB] = await Promise.all([
+      syncResignedMemberClearanceToCashFlow(),
+      syncResignedMemberClearanceToCashFlow(),
+    ]);
+
+    expect(resA).toBe(resB);
+    expect(resA.insertedCount).toBe(1);
+    expect(insertedCashFlows).toHaveLength(1);
+    expect(cashFlowRows).toHaveLength(1);
+  });
+
+  it('syncResignedMemberClearanceToCashFlow cleans pre-existing CF-2A2CEE11 and skips insert when NRP already exists in description with null reference_id', async () => {
+    const anggotaRows = [
+      {
+        id: 'mem-alif',
+        nrp: '(lama 1) 00010062',
+        nama: 'MOCH. ALIF NURSYARIFUDDIN',
+        status: 'nonaktif',
+        membership_status: 'RESIGNED',
+        updated_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+    const cashFlowRows: any[] = [
+      {
+        id: '13ba88c2-0000-4000-8000-000000000001',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        reference_id: null,
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+      {
+        id: '2a2cee11-0000-4000-8000-000000000002',
+        category: 'KLIRING_ANGGOTA_KELUAR',
+        direction: 'out',
+        amount: 10460000,
+        reference_id: 'mem-alif',
+        description:
+          'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        created_at: '2026-11-19T14:20:00.000Z',
+      },
+    ];
+    const insertedCashFlows: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildPagedTableMock(anggotaRows);
+      if (table === 'cash_flow') {
+        const mock = buildPagedTableMock(cashFlowRows) as any;
+        mock.delete = vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (_col: string, ids: string[]) => {
+            for (const id of ids) {
+              const idx = cashFlowRows.findIndex((r) => r.id === id);
+              if (idx >= 0) cashFlowRows.splice(idx, 1);
+            }
+            return { data: null, error: null };
+          }),
+        });
+        mock.insert = vi.fn().mockImplementation(async (payload: any) => {
+          insertedCashFlows.push(payload);
+          return { data: payload, error: null };
+        });
+        return mock;
+      }
+      return buildPagedTableMock([]);
+    });
+
+    const res = await syncResignedMemberClearanceToCashFlow();
+    expect(res.deletedCount).toBe(1);
+    expect(res.insertedCount).toBe(0);
+    expect(res.skippedCount).toBe(1);
+    expect(insertedCashFlows).toHaveLength(0);
+    expect(cashFlowRows.map((r) => r.id)).toEqual(['13ba88c2-0000-4000-8000-000000000001']);
   });
 });

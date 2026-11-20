@@ -828,5 +828,96 @@ describe('settlementService', () => {
       await settlementService.processDebtorTransition('member-debtor-1', 'Cicil sisa');
       expect(insertedCashFlows).toHaveLength(0);
     });
+
+    it('melewati insert jika baris KLIRING_ANGGOTA_KELUAR dengan NRP anggota di description sudah ada (meski reference_id null)', async () => {
+      const insertedCashFlows: any[] = [];
+      const existingRows = [
+        {
+          id: '13ba88c2-0000-4000-8000-000000000001',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          reference_id: null,
+          description:
+            'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          const obj: any = {};
+          obj.select = vi.fn(() => obj);
+          obj.eq = vi.fn((col: string, val: any) =>
+            Promise.resolve({
+              data: existingRows.filter((r: any) => r[col] === val),
+              error: null,
+            })
+          );
+          obj.insert = vi.fn((payload: any) => {
+            insertedCashFlows.push(payload);
+            return Promise.resolve({ data: payload, error: null });
+          });
+          return obj;
+        }
+        return createChainMock([]);
+      });
+
+      const recorded = await settlementService.recordClearanceCashFlow({
+        memberId: 'mem-alif-id',
+        memberNrp: '(lama 1) 00010062',
+        memberName: 'MOCH. ALIF NURSYARIFUDDIN',
+        totalSavings: 10460000,
+        totalDebtOffset: 0,
+        netSettlement: 10460000,
+      });
+
+      expect(recorded).toBe(false);
+      expect(insertedCashFlows).toHaveLength(0);
+    });
+
+    it('menjamin pemanggilan paralel recordClearanceCashFlow untuk memberId yang sama hanya menyisipkan tepat 1 baris', async () => {
+      const insertedCashFlows: any[] = [];
+      const storedRows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          const obj: any = {};
+          obj.select = vi.fn(() => obj);
+          obj.eq = vi.fn(async (col: string, val: any) => {
+            await new Promise((r) => setTimeout(r, 15));
+            return {
+              data: storedRows.filter((r: any) => r[col] === val),
+              error: null,
+            };
+          });
+          obj.insert = vi.fn(async (payload: any) => {
+            await new Promise((r) => setTimeout(r, 15));
+            const row = { id: `cf-lock-${storedRows.length + 1}`, ...payload };
+            storedRows.push(row);
+            insertedCashFlows.push(row);
+            return { data: row, error: null };
+          });
+          return obj;
+        }
+        return createChainMock([]);
+      });
+
+      const params = {
+        memberId: 'mem-alif-concurrent',
+        memberNrp: '00010062',
+        memberName: 'MOCH. ALIF NURSYARIFUDDIN',
+        totalSavings: 10460000,
+        totalDebtOffset: 0,
+        netSettlement: 10460000,
+        clearanceTimestamp: '2026-11-19T14:20:00.000Z',
+      };
+
+      const results = await Promise.all([
+        settlementService.recordClearanceCashFlow(params),
+        settlementService.recordClearanceCashFlow(params),
+      ]);
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.filter((v) => v === false)).toHaveLength(1);
+      expect(insertedCashFlows).toHaveLength(1);
+    });
   });
 });

@@ -9,6 +9,11 @@ import LaporanKeuangan, {
   extractReceiptPeriodNumber,
   getHighlightedShuRowIds,
   getHighlightedCashFlowRowIds,
+  buildCashFlowCategoryOptions,
+  filterCashFlowTransactions,
+  buildCashFlowExportSheetRows,
+  getNormalizedCategoryLabel,
+  type CashFlowTransaction,
 } from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
 import * as cashFlowService from '../../../services/cashFlowService';
@@ -2233,5 +2238,535 @@ describe('Deep-Link Navigation (?tab=, ?ref=, ?receipt=, ?date=) & Highlighting'
         (supabase.from as any).mockImplementation(defaultFromImpl);
       }
     }
+  });
+
+  it('getCashFlowReport deduplicates duplicate CF-13BA88C2 & CF-2A2CEE11 clearance rows and ensures parallel StrictMode calls produce 1 entry', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cashFlowStore: any[] = [
+        {
+          id: '13ba88c2-0000-4000-8000-000000000001',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 10460000,
+          reference_id: 'mem-alif',
+          description:
+            'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+          created_at: '2026-11-19T14:20:00.000Z',
+        },
+        {
+          id: '2a2cee11-0000-4000-8000-000000000002',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 10460000,
+          reference_id: 'mem-alif',
+          description:
+            'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+          created_at: '2026-11-19T14:20:00.000Z',
+        },
+      ];
+      const anggotaRows = [
+        {
+          id: 'mem-alif',
+          nrp: '(lama 1) 00010062',
+          nama: 'MOCH. ALIF NURSYARIFUDDIN',
+          status: 'nonaktif',
+          membership_status: 'RESIGNED',
+          updated_at: '2026-11-19T14:20:00.000Z',
+        },
+      ];
+
+      const makePagedSelect = (rows: any[]) => ({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+            data: rows.filter((r) => vals.includes(r[col])),
+            error: null,
+          })),
+          range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+            data: rows.slice(from, to + 1),
+            error: null,
+          })),
+        }),
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') return makePagedSelect(anggotaRows);
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation(async (col: string, val: any) => ({
+                data: cashFlowStore.filter((r) => r[col] === val),
+                error: null,
+              })),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => {
+                await new Promise((r) => setTimeout(r, 10));
+                return { data: cashFlowStore.slice(from, to + 1), error: null };
+              }),
+              gte: vi.fn().mockImplementation((_col: string, sVal: string) => ({
+                lte: vi.fn().mockImplementation((_col2: string, eVal: string) => ({
+                  order: vi.fn().mockImplementation(async () => ({
+                    data: cashFlowStore.filter(
+                      (r) => String(r.created_at || '') >= sVal && String(r.created_at || '') <= eVal
+                    ),
+                    error: null,
+                  })),
+                })),
+              })),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation(async (_col: string, ids: string[]) => {
+                for (const id of ids) {
+                  const idx = cashFlowStore.findIndex((r) => r.id === id);
+                  if (idx >= 0) cashFlowStore.splice(idx, 1);
+                }
+                return { data: null, error: null };
+              }),
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return makePagedSelect([]);
+      });
+
+      const [reportA, reportB] = await Promise.all([
+        getCashFlowReport('2026-11-01', '2026-11-30', 'all'),
+        getCashFlowReport('2026-11-01', '2026-11-30', 'all'),
+      ]);
+
+      expect(cashFlowStore).toHaveLength(1);
+      expect(cashFlowStore[0].id).toBe('13ba88c2-0000-4000-8000-000000000001');
+
+      for (const report of [reportA, reportB]) {
+        expect(report.transactions).toHaveLength(1);
+        expect(report.transactions[0].referensi).toBe('CF-13BA88C2');
+        expect(report.transactions[0].kas_keluar).toBe(10460000);
+        expect(report.outflowTotal).toBe(10460000);
+        expect(report.netCashflow).toBe(-10460000);
+      }
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('applies in-memory deduplication guard in getCashFlowReport when DB delete fails and in LaporanKeuangan component UI', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cashFlowStore: any[] = [
+        {
+          id: '13ba88c2-0000-4000-8000-000000000001',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 10460000,
+          reference_id: 'mem-alif',
+          description:
+            'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+          created_at: '2026-11-19T14:20:00.000Z',
+        },
+        {
+          id: '2a2cee11-0000-4000-8000-000000000002',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 10460000,
+          reference_id: 'mem-alif',
+          description:
+            'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+          created_at: '2026-11-19T14:20:00.000Z',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: cashFlowStore.slice(from, to + 1),
+                error: null,
+              })),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: cashFlowStore, error: null }),
+                }),
+              }),
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: null, error: { message: 'RLS denied' } }),
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0].referensi).toBe('CF-13BA88C2');
+      expect(report.outflowTotal).toBe(10460000);
+
+      const html = renderToStaticMarkup(
+        <MemoryRouter>
+          <LaporanKeuangan
+            initialActiveTab="cashflow"
+            initialCashFlowData={{
+              inflowTotal: 0,
+              outflowTotal: 20920000,
+              netCashflow: -20920000,
+              transactions: [
+                {
+                  id: '13ba88c2-0000-4000-8000-000000000001',
+                  tanggal: '19/11/2026',
+                  referensi: 'CF-13BA88C2',
+                  deskripsi:
+                    'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+                  kategori: 'KLIRING_ANGGOTA_KELUAR',
+                  unit_usaha: 'Umum',
+                  kas_masuk: 0,
+                  kas_keluar: 10460000,
+                  saldo_berjalan: -10460000,
+                  reference_id: 'mem-alif',
+                  direction: 'out',
+                  created_at: '2026-11-19T14:20:00.000Z',
+                },
+                {
+                  id: '2a2cee11-0000-4000-8000-000000000002',
+                  tanggal: '19/11/2026',
+                  referensi: 'CF-2A2CEE11',
+                  deskripsi:
+                    'Kliring Pengunduran Diri — 00010062 - MOCH. ALIF NURSYARIFUDDIN | Hak Simpanan: Rp 10.460.000, Potong Utang: Rp 0, Kas Dibayarkan: Rp 10.460.000',
+                  kategori: 'KLIRING_ANGGOTA_KELUAR',
+                  unit_usaha: 'Umum',
+                  kas_masuk: 0,
+                  kas_keluar: 10460000,
+                  saldo_berjalan: -20920000,
+                  reference_id: 'mem-alif',
+                  direction: 'out',
+                  created_at: '2026-11-19T14:20:00.000Z',
+                },
+              ],
+            }}
+          />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('CF-13BA88C2');
+      expect(html).not.toContain('CF-2A2CEE11');
+      expect(html).toContain('10.460.000');
+      expect(html).not.toContain('20.920.000');
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+});
+
+describe('Multi-Category Filter on Mutasi Arus Kas Terperinci', () => {
+  const sampleTransactions: CashFlowTransaction[] = [
+    {
+      id: 'cf-1',
+      tanggal: '18/11/2026',
+      referensi: 'CF-POS-001',
+      deskripsi: 'Penjualan Tunai POS INV-001',
+      kategori: 'penjualan_tunai',
+      unit_usaha: 'Retail Toko',
+      kas_masuk: 120000,
+      kas_keluar: 0,
+      saldo_berjalan: 120000,
+      reference_id: 'sale-1',
+      direction: 'in',
+    },
+    {
+      id: 'cf-2',
+      tanggal: '18/11/2026',
+      referensi: 'CF-POS-002',
+      deskripsi: 'Penjualan Tunai POS INV-002',
+      kategori: 'PENJUALAN_POS',
+      unit_usaha: 'Retail Toko',
+      kas_masuk: 80000,
+      kas_keluar: 0,
+      saldo_berjalan: 200000,
+      reference_id: 'sale-2',
+      direction: 'in',
+    },
+    {
+      id: 'cf-3',
+      tanggal: '19/11/2026',
+      referensi: 'CF-ANG-001',
+      deskripsi: 'Angsuran Pinjaman LOAN-001 bln ke-2',
+      kategori: 'angsuran_pinjaman',
+      unit_usaha: 'Simpan Pinjam',
+      kas_masuk: 550000,
+      kas_keluar: 0,
+      saldo_berjalan: 750000,
+      reference_id: 'loan-1',
+      direction: 'in',
+    },
+    {
+      id: 'cf-4',
+      tanggal: '19/11/2026',
+      referensi: 'CF-KLR-001',
+      deskripsi: 'Kliring Pengunduran Diri Anggota',
+      kategori: 'KLIRING_ANGGOTA_KELUAR',
+      unit_usaha: 'Simpan Pinjam',
+      kas_masuk: 0,
+      kas_keluar: 420000,
+      saldo_berjalan: 330000,
+      reference_id: 'mem-1',
+      direction: 'out',
+    },
+  ];
+
+  const sampleCashFlowData = {
+    inflowTotal: 750000,
+    outflowTotal: 420000,
+    netCashflow: 330000,
+    transactions: sampleTransactions,
+  };
+
+  it('merges raw category variants into normalized options with summed counts, badge styling, and alphabetical sorting', () => {
+    expect(getNormalizedCategoryLabel('penjualan_tunai')).toBe('Penjualan POS');
+    expect(getNormalizedCategoryLabel('PENJUALAN_POS')).toBe('Penjualan POS');
+    expect(getNormalizedCategoryLabel('angsuran_pinjaman')).toBe('Angsuran Pinjaman');
+    expect(getNormalizedCategoryLabel('KLIRING_ANGGOTA_KELUAR')).toBe('Kliring Anggota Keluar');
+
+    const options = buildCashFlowCategoryOptions(sampleTransactions);
+
+    expect(options).toEqual([
+      {
+        label: 'Angsuran Pinjaman',
+        count: 1,
+        bg: 'bg-amber-50',
+        text: 'text-amber-800',
+      },
+      {
+        label: 'Kliring Anggota Keluar',
+        count: 1,
+        bg: 'bg-rose-50 border border-rose-200',
+        text: 'text-rose-700',
+      },
+      {
+        label: 'Penjualan POS',
+        count: 2,
+        bg: 'bg-emerald-50',
+        text: 'text-emerald-800',
+      },
+    ]);
+  });
+
+  it('filters cash flow transactions by multiple selected categories and combines with search query', () => {
+    expect(filterCashFlowTransactions(sampleTransactions, '', [])).toHaveLength(4);
+
+    const multiCategoryFiltered = filterCashFlowTransactions(sampleTransactions, '', [
+      'Angsuran Pinjaman',
+      'Kliring Anggota Keluar',
+    ]);
+    expect(multiCategoryFiltered.map((t) => t.referensi)).toEqual([
+      'CF-ANG-001',
+      'CF-KLR-001',
+    ]);
+
+    // Combines multi-category filter with search query matching normalized label or description
+    const combinedWithDesc = filterCashFlowTransactions(
+      sampleTransactions,
+      'LOAN-001',
+      ['Angsuran Pinjaman', 'Kliring Anggota Keluar']
+    );
+    expect(combinedWithDesc.map((t) => t.referensi)).toEqual(['CF-ANG-001']);
+
+    const combinedWithNormalizedCat = filterCashFlowTransactions(
+      sampleTransactions,
+      'Penjualan POS',
+      ['Penjualan POS', 'Angsuran Pinjaman']
+    );
+    expect(combinedWithNormalizedCat.map((t) => t.referensi)).toEqual([
+      'CF-POS-001',
+      'CF-POS-002',
+    ]);
+  });
+
+  it('builds Excel export sheet rows reflecting filtered transactions, metadata row, normalized category, and filtered TOTAL', () => {
+    const filtered = filterCashFlowTransactions(sampleTransactions, '', [
+      'Angsuran Pinjaman',
+      'Kliring Anggota Keluar',
+    ]);
+
+    const rows = buildCashFlowExportSheetRows({
+      startDate: '2026-11-01',
+      endDate: '2026-11-30',
+      transactions: filtered,
+      inflowTotal: 550000,
+      outflowTotal: 420000,
+      netCashflow: 130000,
+      selectedCategories: ['Angsuran Pinjaman', 'Kliring Anggota Keluar'],
+      searchQuery: '',
+    });
+
+    expect(rows[0]).toEqual(['LAPORAN ARUS KAS SIMKOP']);
+    expect(rows[1]).toEqual(['Periode: 2026-11-01 s/d 2026-11-30']);
+    expect(rows[2]).toEqual(['Filter Kategori: Angsuran Pinjaman, Kliring Anggota Keluar']);
+    expect(rows[3]).toEqual([]);
+    expect(rows[4]).toEqual([
+      'Tanggal',
+      'Referensi',
+      'Deskripsi',
+      'Kategori',
+      'Unit',
+      'Kas Masuk',
+      'Kas Keluar',
+      'Saldo Berjalan',
+    ]);
+    expect(rows[5][1]).toBe('CF-ANG-001');
+    expect(rows[5][3]).toBe('Angsuran Pinjaman');
+    expect(rows[6][1]).toBe('CF-KLR-001');
+    expect(rows[6][3]).toBe('Kliring Anggota Keluar');
+    expect(rows).toHaveLength(8);
+    expect(rows[7]).toEqual(['', '', '', '', 'TOTAL', 550000, 420000, 130000]);
+  });
+
+  it('renders "Semua Kategori" dropdown trigger by default without active filter chips', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialCashFlowData={sampleCashFlowData}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-testid="cashflow-category-filter-trigger"');
+    expect(html).toContain('Semua Kategori');
+    expect(html).not.toContain('data-testid="cashflow-category-filter-menu"');
+    expect(html).not.toContain('data-testid="cashflow-active-category-chips"');
+    expect(html).toContain('4 transaksi');
+    expect(html).toContain('CF-POS-001');
+    expect(html).toContain('CF-POS-002');
+    expect(html).toContain('CF-ANG-001');
+    expect(html).toContain('CF-KLR-001');
+  });
+
+  it('renders category checkbox dropdown menu with Pilih Semua, normalized labels, and counts when open', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialCashFlowData={sampleCashFlowData}
+          initialCategoryDropdownOpen={true}
+          initialSelectedCategories={['Penjualan POS']}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-testid="cashflow-category-filter-menu"');
+    expect(html).toContain('Pilih Kategori Mutasi');
+    expect(html).toContain('Pilih Semua');
+    expect(html).toContain('Reset');
+    expect(html).toContain('1 Kategori Dipilih');
+    expect(html).toContain('Angsuran Pinjaman');
+    expect(html).toContain('Kliring Anggota Keluar');
+    expect(html).toContain('Penjualan POS');
+    expect(html).toContain('>2</span>');
+    expect(html).toContain('>1</span>');
+  });
+
+  it('filters table rows, renders active category chips, and updates tfoot TOTAL while keeping overall KPI cards', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialCashFlowData={sampleCashFlowData}
+          initialSelectedCategories={['Angsuran Pinjaman', 'Kliring Anggota Keluar']}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('2 Kategori Dipilih');
+    expect(html).toContain('2 / 4 transaksi');
+    expect(html).toContain('data-testid="cashflow-active-category-chips"');
+    expect(html).toContain('Hapus Semua Filter');
+    expect(html).toContain('Hapus filter kategori Angsuran Pinjaman');
+    expect(html).toContain('Hapus filter kategori Kliring Anggota Keluar');
+
+    // Only matching transactions appear in table
+    expect(html).toContain('CF-ANG-001');
+    expect(html).toContain('CF-KLR-001');
+    expect(html).not.toContain('CF-POS-001');
+    expect(html).not.toContain('CF-POS-002');
+
+    // Top KPI cards continue displaying overall period totals
+    expect(html).toContain('750.000');
+    expect(html).toContain('330.000');
+
+    // Table footer TOTAL displays filtered totals
+    const tfootMatch = html.match(/<tfoot[\s\S]*?<\/tfoot>/);
+    expect(tfootMatch).not.toBeNull();
+    const tfootHtml = tfootMatch![0];
+    expect(tfootHtml).toContain('TOTAL');
+    expect(tfootHtml).toContain('(Terfilter — 2 transaksi)');
+    expect(tfootHtml).toContain('550.000');
+    expect(tfootHtml).toContain('420.000');
+    expect(tfootHtml).toContain('130.000');
+  });
+
+  it('renders category-specific empty state and omits tfoot when selected categories match zero rows', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialCashFlowData={sampleCashFlowData}
+          initialSelectedCategories={['Beban Operasional']}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('1 Kategori Dipilih');
+    expect(html).toContain('0 / 4 transaksi');
+    expect(html).toContain('Tidak ada mutasi arus kas untuk kategori yang dipilih');
+    expect(html).not.toMatch(/<tfoot[\s\S]*?<\/tfoot>/);
   });
 });

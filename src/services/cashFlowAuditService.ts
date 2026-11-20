@@ -26,11 +26,14 @@ import {
 } from '../utils/posCashFlowFormat';
 import {
   MEMBER_CLEARANCE_CATEGORY,
+  descriptionContainsClearanceMemberNrp,
+  extractNrpFromClearanceDescription,
   formatMemberClearanceCashFlowDescription,
   isClearanceLoanRepayment,
   isClearanceWithdrawalTx,
   isMemberClearanceCategory,
   isResignedMemberRecord,
+  partitionDuplicateClearanceRows,
   stripResignedNrpPrefix,
 } from '../utils/clearanceCashFlowFormat';
 
@@ -279,10 +282,17 @@ export interface MemberClearanceBreakdown {
   isMatched: boolean;
 }
 
+export interface DeduplicateClearanceCashFlowResult {
+  deletedCount: number;
+  keptCount: number;
+  deletedIds: string[];
+}
+
 export interface SyncResignedMemberClearanceResult {
   insertedCount: number;
   updatedCount: number;
   skippedCount: number;
+  deletedCount?: number;
 }
 
 export type CashFlowReferenceBreakdown =
@@ -3732,16 +3742,57 @@ export async function enrichPosCashFlowDescriptions<
   }
 }
 
-/**
- * Menyinkronkan (backfill idempoten) pencairan/kliring simpanan anggota berstatus `RESIGNED`
- * ke `public.cash_flow` (`category = 'KLIRING_ANGGOTA_KELUAR'`) beserta deskripsi rincian
- * hak simpanan, potongan utang, dan kas bersih yang dibayarkan.
- */
-export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResignedMemberClearanceResult> {
-  const emptyResult: SyncResignedMemberClearanceResult = {
-    insertedCount: 0,
-    updatedCount: 0,
-    skippedCount: 0,
+let activeClearanceDedupePromise: Promise<DeduplicateClearanceCashFlowResult> | null = null;
+let activeClearanceSyncPromise: Promise<SyncResignedMemberClearanceResult> | null = null;
+
+async function deleteCashFlowRowsByIds(ids: string[]): Promise<string[]> {
+  const uniqueIds = Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+
+  const cfTable: any = supabase?.from?.('cash_flow');
+  if (!cfTable || typeof cfTable.delete !== 'function') {
+    return [];
+  }
+
+  const deletedIds: string[] = [];
+  for (let i = 0; i < uniqueIds.length; i += 200) {
+    const chunk = uniqueIds.slice(i, i + 200);
+    try {
+      const delQ: any = cfTable.delete();
+      if (delQ && typeof delQ.in === 'function') {
+        const delRes: any = await delQ.in('id', chunk);
+        if (!delRes?.error) {
+          deletedIds.push(...chunk);
+        } else {
+          console.warn('Warning deleteCashFlowRowsByIds (.in):', delRes.error);
+        }
+      } else if (delQ && typeof delQ.eq === 'function') {
+        for (let j = 0; j < chunk.length; j += 1) {
+          const delId = chunk[j];
+          const targetQ: any = j === 0 ? delQ : cfTable.delete();
+          const delRes: any = await targetQ.eq('id', delId);
+          if (!delRes?.error) {
+            deletedIds.push(delId);
+          } else {
+            console.warn('Warning deleteCashFlowRowsByIds (.eq):', delRes.error);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Warning deleteCashFlowRowsByIds:', err);
+    }
+  }
+
+  return deletedIds;
+}
+
+async function runDeduplicateClearanceCashFlow(
+  prefetchedRows?: any[]
+): Promise<DeduplicateClearanceCashFlowResult> {
+  const emptyResult: DeduplicateClearanceCashFlowResult = {
+    deletedCount: 0,
+    keptCount: 0,
+    deletedIds: [],
   };
 
   try {
@@ -3749,15 +3800,97 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
       return emptyResult;
     }
 
-    const anggotaRes = await safeFetchAllAnggotaForClearance();
-    if (anggotaRes.error) {
-      return emptyResult;
+    let rows: any[];
+    if (Array.isArray(prefetchedRows)) {
+      rows = prefetchedRows;
+    } else {
+      let cfRes = await safeFetchAllPaged<any>(
+        'cash_flow',
+        'id, category, direction, amount, reference_id, description, created_at'
+      );
+      if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+        cfRes = await safeFetchAllPaged<any>(
+          'cash_flow',
+          'id, category, direction, amount, reference_id, created_at'
+        );
+      }
+      if (cfRes.error) {
+        return emptyResult;
+      }
+      rows = cfRes.data || [];
     }
 
-    const resignedMembers = (anggotaRes.data || []).filter(
-      (m: any) => m?.id && isResignedMemberRecord(m)
-    );
-    if (resignedMembers.length === 0) {
+    const { kept, duplicates } = partitionDuplicateClearanceRows(rows);
+    const duplicateIds = duplicates
+      .map((r: any) => String(r?.id || '').trim())
+      .filter(Boolean);
+
+    if (duplicateIds.length === 0) {
+      return {
+        deletedCount: 0,
+        keptCount: kept.length,
+        deletedIds: [],
+      };
+    }
+
+    const deletedIds = await deleteCashFlowRowsByIds(duplicateIds);
+    return {
+      deletedCount: deletedIds.length,
+      keptCount: kept.length,
+      deletedIds,
+    };
+  } catch (err) {
+    console.warn('Warning deduplicateClearanceCashFlow:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Menghapus baris duplikat `public.cash_flow` berkategori `KLIRING_ANGGOTA_KELUAR`
+ * berdasarkan `reference_id` atau NRP anggota, menyisakan tepat 1 baris kanonik
+ * paling awal (`created_at ASC, id ASC`). Dilengkapi singleton in-flight lock.
+ */
+export async function deduplicateClearanceCashFlow(): Promise<DeduplicateClearanceCashFlowResult> {
+  if (activeClearanceDedupePromise) {
+    return activeClearanceDedupePromise;
+  }
+
+  const runPromise = runDeduplicateClearanceCashFlow().finally(() => {
+    if (activeClearanceDedupePromise === runPromise) {
+      activeClearanceDedupePromise = null;
+    }
+  });
+  activeClearanceDedupePromise = runPromise;
+  return runPromise;
+}
+
+function compareClearanceRowsOrder(a: any, b: any): number {
+  const rawA = String(a?.created_at || '').trim();
+  const rawB = String(b?.created_at || '').trim();
+  const ta = rawA ? Date.parse(rawA) : NaN;
+  const tb = rawB ? Date.parse(rawB) : NaN;
+  if (Number.isFinite(ta) && Number.isFinite(tb)) {
+    if (ta !== tb) return ta - tb;
+  } else if (rawA !== rawB) {
+    return rawA < rawB ? -1 : 1;
+  }
+  const idA = String(a?.id || '').toLowerCase();
+  const idB = String(b?.id || '').toLowerCase();
+  if (idA < idB) return -1;
+  if (idA > idB) return 1;
+  return 0;
+}
+
+async function runSyncResignedMemberClearanceToCashFlow(): Promise<SyncResignedMemberClearanceResult> {
+  const emptyResult: SyncResignedMemberClearanceResult = {
+    insertedCount: 0,
+    updatedCount: 0,
+    skippedCount: 0,
+    deletedCount: 0,
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
       return emptyResult;
     }
 
@@ -3777,21 +3910,76 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
       return emptyResult;
     }
 
-    const existingClearanceByRef = new Map<string, any>();
-    for (const r of cfRes.data || []) {
-      if (!isMemberClearanceCategory(r?.category) || !r?.reference_id) continue;
-      existingClearanceByRef.set(String(r.reference_id), r);
+    const dedupeRes = await runDeduplicateClearanceCashFlow(cfRes.data || []);
+    const deletedIdSet = new Set(dedupeRes.deletedIds);
+    const survivingCfRows = (cfRes.data || []).filter(
+      (r: any) => !deletedIdSet.has(String(r?.id || '').trim())
+    );
+
+    const anggotaRes = await safeFetchAllAnggotaForClearance();
+    if (anggotaRes.error) {
+      return {
+        ...emptyResult,
+        deletedCount: dedupeRes.deletedCount,
+      };
     }
 
-    const memberById = new Map<string, any>();
-    for (const m of resignedMembers) {
-      memberById.set(String(m.id), m);
+    const resignedMembers = (anggotaRes.data || []).filter(
+      (m: any) => m?.id && isResignedMemberRecord(m)
+    );
+    if (resignedMembers.length === 0) {
+      return {
+        ...emptyResult,
+        deletedCount: dedupeRes.deletedCount,
+      };
     }
+
+    const existingClearanceRows = survivingCfRows
+      .filter((r: any) => isMemberClearanceCategory(r?.category))
+      .sort(compareClearanceRowsOrder);
+
+    const existingClearanceByRef = new Map<string, any>();
+    const existingClearanceByNrp = new Map<string, any>();
+
+    const registerClearanceRow = (r: any) => {
+      const refKey = String(r?.reference_id || '').trim();
+      if (refKey && !existingClearanceByRef.has(refKey)) {
+        existingClearanceByRef.set(refKey, r);
+      }
+      const extractedNrp = extractNrpFromClearanceDescription(r?.description);
+      if (extractedNrp) {
+        const nrpKey = extractedNrp.toLowerCase();
+        if (!existingClearanceByNrp.has(nrpKey)) {
+          existingClearanceByNrp.set(nrpKey, r);
+        }
+      }
+    };
+
+    for (const r of existingClearanceRows) {
+      registerClearanceRow(r);
+    }
+
+    const findExistingClearanceForMember = (member: any): any | undefined => {
+      const memberId = String(member?.id || '').trim();
+      if (memberId && existingClearanceByRef.has(memberId)) {
+        return existingClearanceByRef.get(memberId);
+      }
+      const cleanNrp = stripResignedNrpPrefix(member?.nrp).toLowerCase();
+      if (cleanNrp && cleanNrp !== '-') {
+        const byNrp = existingClearanceByNrp.get(cleanNrp);
+        if (byNrp) return byNrp;
+        const scanned = existingClearanceRows.find((r: any) =>
+          descriptionContainsClearanceMemberNrp(r?.description, member?.nrp)
+        );
+        if (scanned) return scanned;
+      }
+      return undefined;
+    };
 
     const rowsToUpdate: Array<{ cfRow: any; member: any }> = [];
     if (hasDescriptionCol) {
       for (const m of resignedMembers) {
-        const cfRow = existingClearanceByRef.get(String(m.id));
+        const cfRow = findExistingClearanceForMember(m);
         if (cfRow?.id && isBlankOrDashDescription(cfRow?.description)) {
           rowsToUpdate.push({ cfRow, member: m });
         }
@@ -3799,12 +3987,17 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
     }
 
     const missingMembers = resignedMembers.filter(
-      (m: any) => !existingClearanceByRef.has(String(m.id))
+      (m: any) => !findExistingClearanceForMember(m)
     );
 
     const skippedAlreadySynced = resignedMembers.length - missingMembers.length;
     if (missingMembers.length === 0 && rowsToUpdate.length === 0) {
-      return { insertedCount: 0, updatedCount: 0, skippedCount: skippedAlreadySynced };
+      return {
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: skippedAlreadySynced,
+        deletedCount: dedupeRes.deletedCount,
+      };
     }
 
     const targetMemberIds = Array.from(
@@ -3858,7 +4051,7 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
         const hasLogRefAlready = memberLogs.some(
           (l: any) => l?.id && existingClearanceByRef.has(String(l.id))
         );
-        if (hasLogRefAlready) {
+        if (hasLogRefAlready || findExistingClearanceForMember(member)) {
           skippedZeroOrDupCount += 1;
           continue;
         }
@@ -3900,7 +4093,13 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
 
         if (!insRes?.error) {
           insertedCount += 1;
-          existingClearanceByRef.set(memberId, { reference_id: memberId });
+          const insertedRow = {
+            reference_id: memberId,
+            category: MEMBER_CLEARANCE_CATEGORY,
+            description: fullDesc,
+          };
+          existingClearanceRows.push(insertedRow);
+          registerClearanceRow(insertedRow);
         }
       }
     }
@@ -3909,11 +4108,32 @@ export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResig
       insertedCount,
       updatedCount,
       skippedCount: skippedZeroOrDupCount,
+      deletedCount: dedupeRes.deletedCount,
     };
   } catch (err) {
     console.warn('Warning syncResignedMemberClearanceToCashFlow:', err);
     return emptyResult;
   }
+}
+
+/**
+ * Menyinkronkan (backfill idempoten) pencairan/kliring simpanan anggota berstatus `RESIGNED`
+ * ke `public.cash_flow` (`category = 'KLIRING_ANGGOTA_KELUAR'`) beserta deskripsi rincian
+ * hak simpanan, potongan utang, dan kas bersih yang dibayarkan.
+ * Menggunakan singleton in-flight mutex lock untuk mencegah eksekusi paralel (misal React StrictMode).
+ */
+export async function syncResignedMemberClearanceToCashFlow(): Promise<SyncResignedMemberClearanceResult> {
+  if (activeClearanceSyncPromise) {
+    return activeClearanceSyncPromise;
+  }
+
+  const runPromise = runSyncResignedMemberClearanceToCashFlow().finally(() => {
+    if (activeClearanceSyncPromise === runPromise) {
+      activeClearanceSyncPromise = null;
+    }
+  });
+  activeClearanceSyncPromise = runPromise;
+  return runPromise;
 }
 
 /**

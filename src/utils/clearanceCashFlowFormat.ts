@@ -120,3 +120,159 @@ export function formatMemberClearanceCashFlowDescription(
 
   return `Kliring Pengunduran Diri — ${memberSegment} | Hak Simpanan: Rp ${fmtSavings}, Potong Utang: Rp ${fmtDebt}, ${actionLabel}`;
 }
+
+export interface ClearanceCashFlowRowLike {
+  id?: string | null;
+  category?: string | null;
+  kategori?: string | null;
+  reference_id?: string | null;
+  description?: string | null;
+  deskripsi?: string | null;
+  created_at?: string | null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compareAscii(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+/**
+ * Extracts the member NRP from a `KLIRING_ANGGOTA_KELUAR` description header
+ * (restricted before `|` so currency amounts after `|` are never matched).
+ */
+export function extractNrpFromClearanceDescription(description?: string | null): string | null {
+  const raw = String(description || '').trim();
+  if (!raw || raw === '-') return null;
+
+  const header = raw.split('|')[0] || raw;
+  const structuredMatch = header.match(
+    /(?:—|–|-)\s*(?:\(lama\s*\d+\)\s*)?([A-Za-z0-9./-]*\d{3,}[A-Za-z0-9./-]*)\s*-\s+/i
+  );
+  if (structuredMatch?.[1]) {
+    return structuredMatch[1].trim();
+  }
+
+  const fallbackMatch = header.match(/\b(\d{6,})\b/);
+  return fallbackMatch?.[1] ? fallbackMatch[1].trim() : null;
+}
+
+/**
+ * Checks whether a clearance cash_flow description belongs to the given member NRP
+ * using strict boundary matching on the pre-`|` header segment.
+ */
+export function descriptionContainsClearanceMemberNrp(
+  description?: string | null,
+  memberNrp?: string | null
+): boolean {
+  const cleanNrp = stripResignedNrpPrefix(memberNrp);
+  if (!cleanNrp || cleanNrp === '-') return false;
+
+  const extracted = extractNrpFromClearanceDescription(description);
+  if (extracted && extracted.toLowerCase() === cleanNrp.toLowerCase()) {
+    return true;
+  }
+
+  const raw = String(description || '').trim();
+  if (!raw || raw === '-') return false;
+
+  const header = raw.split('|')[0] || raw;
+  const boundaryRegex = new RegExp(
+    `(?:^|[^0-9A-Za-z])${escapeRegExp(cleanNrp)}(?:$|[^0-9A-Za-z])`,
+    'i'
+  );
+  return boundaryRegex.test(header);
+}
+
+/**
+ * Partitions `KLIRING_ANGGOTA_KELUAR` rows into canonical kept rows and duplicate rows
+ * sorted deterministically by `created_at ASC, id ASC`.
+ */
+export function partitionDuplicateClearanceRows<T extends ClearanceCashFlowRowLike>(
+  rows: T[]
+): { kept: T[]; duplicates: T[] } {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { kept: [], duplicates: [] };
+  }
+
+  const clearanceRows = rows.filter((row) =>
+    isMemberClearanceCategory(row?.category ?? row?.kategori)
+  );
+  if (clearanceRows.length === 0) {
+    return { kept: [], duplicates: [] };
+  }
+
+  const sorted = [...clearanceRows].sort((a, b) => {
+    const rawA = String(a?.created_at || '').trim();
+    const rawB = String(b?.created_at || '').trim();
+    const ta = rawA ? Date.parse(rawA) : NaN;
+    const tb = rawB ? Date.parse(rawB) : NaN;
+
+    if (Number.isFinite(ta) && Number.isFinite(tb)) {
+      if (ta !== tb) return ta - tb;
+    } else if (rawA !== rawB) {
+      return compareAscii(rawA, rawB);
+    }
+
+    const idA = String(a?.id || '').toLowerCase();
+    const idB = String(b?.id || '').toLowerCase();
+    return compareAscii(idA, idB);
+  });
+
+  const kept: T[] = [];
+  const duplicates: T[] = [];
+  const seenRefIds = new Set<string>();
+  const seenNrps = new Set<string>();
+  const seenDescriptions = new Set<string>();
+
+  for (const row of sorted) {
+    const refKey = String(row?.reference_id || '').trim().toLowerCase();
+    const rawDesc = String(row?.description ?? row?.deskripsi ?? '').trim();
+    const nrpKey = (extractNrpFromClearanceDescription(rawDesc) || '').toLowerCase();
+    const normalizedDesc = rawDesc && rawDesc !== '-' ? rawDesc.toLowerCase() : '';
+
+    const isDuplicate =
+      (refKey !== '' && seenRefIds.has(refKey)) ||
+      (nrpKey !== '' && seenNrps.has(nrpKey)) ||
+      (refKey === '' &&
+        nrpKey === '' &&
+        normalizedDesc !== '' &&
+        seenDescriptions.has(normalizedDesc));
+
+    if (isDuplicate) {
+      duplicates.push(row);
+      continue;
+    }
+
+    kept.push(row);
+    if (refKey !== '') seenRefIds.add(refKey);
+    if (nrpKey !== '') seenNrps.add(nrpKey);
+    if (normalizedDesc !== '') seenDescriptions.add(normalizedDesc);
+  }
+
+  return { kept, duplicates };
+}
+
+/**
+ * Removes duplicate `KLIRING_ANGGOTA_KELUAR` rows from an in-memory cash_flow array
+ * while preserving the canonical earliest row and all non-clearance rows in order.
+ */
+export function deduplicateClearanceRowsInMemory<T extends ClearanceCashFlowRowLike>(
+  rows: T[]
+): T[] {
+  if (!Array.isArray(rows) || rows.length <= 1) {
+    return rows;
+  }
+
+  const { duplicates } = partitionDuplicateClearanceRows(rows);
+  if (duplicates.length === 0) {
+    return rows;
+  }
+
+  const duplicateSet = new Set<T>(duplicates);
+  return rows.filter((row) => !duplicateSet.has(row));
+}

@@ -1,8 +1,10 @@
 import { supabase } from '../lib/supabaseClient';
 import {
   MEMBER_CLEARANCE_CATEGORY,
+  descriptionContainsClearanceMemberNrp,
   formatMemberClearanceCashFlowDescription,
   isMemberClearanceCategory,
+  stripResignedNrpPrefix,
 } from '../utils/clearanceCashFlowFormat';
 
 export interface DepositSettlementDetail {
@@ -45,6 +47,8 @@ function isPostgrestColumnError(err: any): boolean {
     msg.includes('schema cache')
   );
 }
+
+const activeClearanceCashFlowLocks = new Map<string, Promise<boolean>>();
 
 export const settlementService = {
   /**
@@ -240,7 +244,7 @@ export const settlementService = {
 
   /**
    * Mencatat tepat 1 baris mutasi arus kas kliring anggota keluar (`KLIRING_ANGGOTA_KELUAR`)
-   * ke `public.cash_flow` secara idempoten.
+   * ke `public.cash_flow` secara idempoten dengan per-member mutex lock dan cek berlapis.
    */
   async recordClearanceCashFlow(params: {
     memberId: string;
@@ -261,94 +265,142 @@ export const settlementService = {
     const cfTable: any = supabase.from('cash_flow');
     if (!cfTable || typeof cfTable.insert !== 'function') return false;
 
-    // Idempotency guard: pastikan tidak menyisipkan baris ganda untuk member yang sama
-    if (typeof cfTable.select === 'function') {
-      try {
-        const selQ: any = cfTable.select('id, category, reference_id');
-        let res: any = null;
-        if (selQ && typeof selQ.eq === 'function') {
-          res = await selQ.eq('reference_id', params.memberId);
-        } else if (selQ && typeof selQ.then === 'function') {
-          res = await selQ;
-        }
-        const rows = Array.isArray(res?.data) ? res.data : [];
-        const alreadyRecorded = rows.some(
-          (r: any) =>
-            String(r?.reference_id || '') === String(params.memberId) &&
-            isMemberClearanceCategory(r?.category)
-        );
-        if (alreadyRecorded) return false;
-      } catch {
-        // Non-blocking fallback
-      }
+    const memberKey = String(params.memberId || '').trim();
+    if (memberKey && activeClearanceCashFlowLocks.has(memberKey)) {
+      await activeClearanceCashFlowLocks.get(memberKey);
+      return false;
     }
 
-    let memberNrp = params.memberNrp ?? null;
-    let memberName = params.memberName ?? null;
-    if (!memberNrp || !memberName) {
-      try {
-        const anggotaRef: any = supabase.from('anggota');
-        if (anggotaRef && typeof anggotaRef.select === 'function') {
-          const q: any = anggotaRef.select('id, nrp, nama');
-          if (q && typeof q.eq === 'function') {
-            const eqQ: any = q.eq('id', params.memberId);
-            const mRes: any =
-              typeof eqQ?.maybeSingle === 'function'
-                ? await eqQ.maybeSingle()
-                : typeof eqQ?.single === 'function'
-                  ? await eqQ.single()
-                  : await eqQ;
-            const mData = Array.isArray(mRes?.data) ? mRes.data[0] : mRes?.data;
-            if (mData) {
-              memberNrp = memberNrp ?? mData.nrp ?? null;
-              memberName = memberName ?? mData.nama ?? null;
+    const executeRecord = async (): Promise<boolean> => {
+      let memberNrp = params.memberNrp ?? null;
+      let memberName = params.memberName ?? null;
+      if (!memberNrp || !memberName) {
+        try {
+          const anggotaRef: any = supabase.from('anggota');
+          if (anggotaRef && typeof anggotaRef.select === 'function') {
+            const q: any = anggotaRef.select('id, nrp, nama');
+            if (q && typeof q.eq === 'function') {
+              const eqQ: any = q.eq('id', params.memberId);
+              const mRes: any =
+                typeof eqQ?.maybeSingle === 'function'
+                  ? await eqQ.maybeSingle()
+                  : typeof eqQ?.single === 'function'
+                    ? await eqQ.single()
+                    : await eqQ;
+              const mData = Array.isArray(mRes?.data) ? mRes.data[0] : mRes?.data;
+              if (mData) {
+                memberNrp = memberNrp ?? mData.nrp ?? null;
+                memberName = memberName ?? mData.nama ?? null;
+              }
             }
           }
+        } catch {
+          // Non-blocking fallback
         }
-      } catch {
-        // Non-blocking fallback
       }
-    }
 
-    const direction = netSettlement > 0 ? 'out' : 'in';
-    const amount = Math.round(Math.abs(netSettlement));
-    const description = formatMemberClearanceCashFlowDescription({
-      memberNrp,
-      memberName,
-      totalSavings,
-      totalDebtOffset,
-      netSettlement,
-    });
-    const createdAt = params.clearanceTimestamp || new Date().toISOString();
+      // Idempotency guard lapis 1 & 2: cek eksistensi berdasarkan reference_id maupun NRP anggota
+      if (typeof cfTable.select === 'function') {
+        try {
+          const queryByRef = async (cols: string) => {
+            const selQ: any = cfTable.select(cols);
+            if (selQ && typeof selQ.eq === 'function') {
+              return await selQ.eq('reference_id', params.memberId);
+            }
+            if (selQ && typeof selQ.then === 'function') {
+              return await selQ;
+            }
+            return null;
+          };
 
-    let insRes: any = await cfTable.insert({
-      direction,
-      category: MEMBER_CLEARANCE_CATEGORY,
-      amount,
-      reference_id: params.memberId,
-      description,
-      created_at: createdAt,
-    });
+          let res: any = await queryByRef('id, category, reference_id, description');
+          if (res?.error && isPostgrestColumnError(res.error)) {
+            res = await queryByRef('id, category, reference_id');
+          }
+          const rows = Array.isArray(res?.data) ? res.data : [];
+          const alreadyRecordedByRef = rows.some(
+            (r: any) =>
+              String(r?.reference_id || '') === String(params.memberId) &&
+              isMemberClearanceCategory(r?.category)
+          );
+          if (alreadyRecordedByRef) return false;
 
-    if (insRes?.error && isPostgrestColumnError(insRes.error)) {
-      insRes = await cfTable.insert({
+          const cleanNrp = stripResignedNrpPrefix(memberNrp);
+          if (cleanNrp && cleanNrp !== '-') {
+            const catSelQ: any = cfTable.select('id, category, reference_id, description');
+            let catRes: any = null;
+            if (catSelQ && typeof catSelQ.eq === 'function') {
+              catRes = await catSelQ.eq('category', MEMBER_CLEARANCE_CATEGORY);
+            } else if (catSelQ && typeof catSelQ.then === 'function') {
+              catRes = await catSelQ;
+            }
+            if (!(catRes?.error && isPostgrestColumnError(catRes.error))) {
+              const catRows = Array.isArray(catRes?.data) ? catRes.data : [];
+              const alreadyRecordedByNrp = catRows.some(
+                (r: any) =>
+                  isMemberClearanceCategory(r?.category) &&
+                  descriptionContainsClearanceMemberNrp(r?.description, memberNrp)
+              );
+              if (alreadyRecordedByNrp) return false;
+            }
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+      }
+
+      const direction = netSettlement > 0 ? 'out' : 'in';
+      const amount = Math.round(Math.abs(netSettlement));
+      const description = formatMemberClearanceCashFlowDescription({
+        memberNrp,
+        memberName,
+        totalSavings,
+        totalDebtOffset,
+        netSettlement,
+      });
+      const createdAt = params.clearanceTimestamp || new Date().toISOString();
+
+      let insRes: any = await cfTable.insert({
         direction,
         category: MEMBER_CLEARANCE_CATEGORY,
         amount,
         reference_id: params.memberId,
+        description,
         created_at: createdAt,
       });
+
+      if (insRes?.error && isPostgrestColumnError(insRes.error)) {
+        insRes = await cfTable.insert({
+          direction,
+          category: MEMBER_CLEARANCE_CATEGORY,
+          amount,
+          reference_id: params.memberId,
+          created_at: createdAt,
+        });
+      }
+
+      if (insRes?.error) {
+        console.warn(
+          'Gagal mencatat arus kas kliring anggota keluar:',
+          insRes.error?.message || insRes.error
+        );
+        return false;
+      }
+
+      return true;
+    };
+
+    if (!memberKey) {
+      return executeRecord();
     }
 
-    if (insRes?.error) {
-      console.warn(
-        'Gagal mencatat arus kas kliring anggota keluar:',
-        insRes.error?.message || insRes.error
-      );
-      return false;
-    }
-
-    return true;
+    const lockPromise = executeRecord().finally(() => {
+      if (activeClearanceCashFlowLocks.get(memberKey) === lockPromise) {
+        activeClearanceCashFlowLocks.delete(memberKey);
+      }
+    });
+    activeClearanceCashFlowLocks.set(memberKey, lockPromise);
+    return lockPromise;
   },
 
   /**

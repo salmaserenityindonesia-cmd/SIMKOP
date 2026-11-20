@@ -17,8 +17,10 @@ export default function SettlementClearance() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isProcessingClearance, setIsProcessingClearance] = useState(false);
 
   const printRef = useRef<HTMLDivElement>(null);
+  const processingClearanceRef = useRef(false);
 
   useEffect(() => {
     fetchMembers();
@@ -78,13 +80,20 @@ export default function SettlementClearance() {
   };
 
   const handleConfirmInstantPayoff = async (paymentMethod: string, notes: string) => {
-    if (!summary || !selectedMember) return;
-    await settlementService.processInstantPayoff(selectedMember.id, paymentMethod, notes, {
-      member: selectedMember,
-      summary,
-    });
-    setSuccess(`Kliring berhasil diproses. ${selectedMember.nama} telah ditandai keluar (RESIGNED).`);
-    resetAfterProcess();
+    if (!summary || !selectedMember || processingClearanceRef.current) return;
+    processingClearanceRef.current = true;
+    setIsProcessingClearance(true);
+    try {
+      await settlementService.processInstantPayoff(selectedMember.id, paymentMethod, notes, {
+        member: selectedMember,
+        summary,
+      });
+      setSuccess(`Kliring berhasil diproses. ${selectedMember.nama} telah ditandai keluar (RESIGNED).`);
+      resetAfterProcess();
+    } finally {
+      processingClearanceRef.current = false;
+      setIsProcessingClearance(false);
+    }
   };
 
   const handleConfirmDebtorTransition = async (notes: string) => {
@@ -137,10 +146,21 @@ export default function SettlementClearance() {
             </div>
             <button
               type="button"
-              onClick={() => handleConfirmInstantPayoff('Otomatis Lunas', 'Pengesahan final dari status READY_TO_RESIGN')}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
+              disabled={isProcessingClearance}
+              onClick={async () => {
+                setError(null);
+                try {
+                  await handleConfirmInstantPayoff(
+                    'Otomatis Lunas',
+                    'Pengesahan final dari status READY_TO_RESIGN'
+                  );
+                } catch (err: any) {
+                  setError(err?.message || 'Gagal mengesahkan pengunduran diri final.');
+                }
+              }}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
             >
-              Sahkan Pengunduran Diri Final
+              {isProcessingClearance ? 'Memproses...' : 'Sahkan Pengunduran Diri Final'}
             </button>
           </div>
         )}

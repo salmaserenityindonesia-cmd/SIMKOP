@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { ExternalLink, Receipt, RotateCcw, Search, X } from 'lucide-react';
+import { ChevronDown, ExternalLink, Filter, Receipt, RotateCcw, Search, X } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
 import ShuReferenceDetailModal, {
@@ -28,6 +28,7 @@ import {
   formatPosCashFlowDescription,
   isPosCashSaleCategory,
 } from '../../../utils/posCashFlowFormat';
+import { deduplicateClearanceRowsInMemory } from '../../../utils/clearanceCashFlowFormat';
 import { syncMatrixDepositsToCashFlow } from '../../../services/savingsMatrixService';
 import {
   getOutstandingStoreCreditSummary,
@@ -128,8 +129,163 @@ const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }
   beban_operasional: { bg: 'bg-red-50', text: 'text-red-800', label: 'Beban Operasional' },
 };
 
+const KATEGORI_BADGE_BY_LABEL: Record<string, { bg: string; text: string; label: string }> =
+  Object.values(KATEGORI_BADGE).reduce(
+    (acc, item) => {
+      const key = item.label.toLowerCase();
+      if (!acc[key]) {
+        acc[key] = item;
+      }
+      return acc;
+    },
+    {} as Record<string, { bg: string; text: string; label: string }>
+  );
+
+export interface CashFlowCategoryOption {
+  label: string;
+  count: number;
+  bg: string;
+  text: string;
+}
+
+export function getCashFlowCategoryMeta(kategori: string): {
+  bg: string;
+  text: string;
+  label: string;
+} {
+  const trimmed = String(kategori || '').trim();
+  if (!trimmed) {
+    return { bg: 'bg-slate-50', text: 'text-slate-700', label: 'Lainnya' };
+  }
+  return (
+    KATEGORI_BADGE[trimmed] ??
+    KATEGORI_BADGE[trimmed.toLowerCase()] ??
+    KATEGORI_BADGE[trimmed.toUpperCase()] ??
+    KATEGORI_BADGE_BY_LABEL[trimmed.toLowerCase()] ?? {
+      bg: 'bg-slate-50',
+      text: 'text-slate-700',
+      label: trimmed,
+    }
+  );
+}
+
+export function getNormalizedCategoryLabel(kategori: string): string {
+  return getCashFlowCategoryMeta(kategori).label;
+}
+
+export function buildCashFlowCategoryOptions(
+  transactions: CashFlowTransaction[]
+): CashFlowCategoryOption[] {
+  const map = new Map<string, CashFlowCategoryOption>();
+  for (const tx of transactions) {
+    const meta = getCashFlowCategoryMeta(tx.kategori);
+    const existing = map.get(meta.label);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      map.set(meta.label, {
+        label: meta.label,
+        count: 1,
+        bg: meta.bg,
+        text: meta.text,
+      });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'id'));
+}
+
+export function filterCashFlowTransactions(
+  transactions: CashFlowTransaction[],
+  searchQuery: string,
+  selectedCategories: string[]
+): CashFlowTransaction[] {
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const selectedSet = selectedCategories.length > 0 ? new Set(selectedCategories) : null;
+  if (!normalizedQuery && !selectedSet) {
+    return transactions;
+  }
+
+  return transactions.filter((t) => {
+    const normalizedCategoryLabel = getNormalizedCategoryLabel(t.kategori);
+    if (selectedSet && !selectedSet.has(normalizedCategoryLabel)) {
+      return false;
+    }
+    if (!normalizedQuery) {
+      return true;
+    }
+    const refMatch = String(t.referensi || '').toLowerCase().includes(normalizedQuery);
+    const descMatch = String(t.deskripsi || '').toLowerCase().includes(normalizedQuery);
+    const rawCatMatch = String(t.kategori || '').toLowerCase().includes(normalizedQuery);
+    const normCatMatch = normalizedCategoryLabel.toLowerCase().includes(normalizedQuery);
+    const refIdMatch = String(t.reference_id || '').toLowerCase().includes(normalizedQuery);
+    return refMatch || descMatch || rawCatMatch || normCatMatch || refIdMatch;
+  });
+}
+
+export function buildCashFlowExportSheetRows(params: {
+  startDate: string;
+  endDate: string;
+  transactions: CashFlowTransaction[];
+  inflowTotal: number;
+  outflowTotal: number;
+  netCashflow: number;
+  selectedCategories?: string[];
+  searchQuery?: string;
+}): Array<Array<string | number>> {
+  const rows: Array<Array<string | number>> = [
+    ['LAPORAN ARUS KAS SIMKOP'],
+    [`Periode: ${params.startDate} s/d ${params.endDate}`],
+  ];
+
+  if (params.selectedCategories && params.selectedCategories.length > 0) {
+    rows.push([`Filter Kategori: ${params.selectedCategories.join(', ')}`]);
+  }
+  const trimmedSearch = params.searchQuery?.trim();
+  if (trimmedSearch) {
+    rows.push([`Filter Pencarian: ${trimmedSearch}`]);
+  }
+
+  rows.push([]);
+  rows.push([
+    'Tanggal',
+    'Referensi',
+    'Deskripsi',
+    'Kategori',
+    'Unit',
+    'Kas Masuk',
+    'Kas Keluar',
+    'Saldo Berjalan',
+  ]);
+
+  for (const t of params.transactions) {
+    rows.push([
+      t.tanggal,
+      t.referensi,
+      t.deskripsi,
+      getNormalizedCategoryLabel(t.kategori),
+      t.unit_usaha,
+      t.kas_masuk,
+      t.kas_keluar,
+      t.saldo_berjalan,
+    ]);
+  }
+
+  rows.push([
+    '',
+    '',
+    '',
+    '',
+    'TOTAL',
+    params.inflowTotal,
+    params.outflowTotal,
+    params.netCashflow,
+  ]);
+
+  return rows;
+}
+
 export const KategoriBadge = ({ kategori }: { kategori: string }) => {
-  const cfg = KATEGORI_BADGE[kategori] ?? { bg: 'bg-slate-50', text: 'text-slate-700', label: kategori };
+  const cfg = getCashFlowCategoryMeta(kategori);
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
       {cfg.label}
@@ -186,6 +342,7 @@ export async function getCashFlowReport(
     }
   }
   const cfRows = cfQueryRes?.data;
+  const deduplicatedCfRows = deduplicateClearanceRowsInMemory<any>(cfRows ?? []);
 
   // Cross-check: also fetch sales.paid_cash for the period (retail inflow)
   // NOTE: actual column is 'sale_status' (enum), not 'status'
@@ -218,7 +375,7 @@ export async function getCashFlowReport(
   const taggedRows: Array<{ row: CashFlowTransaction; ts: number }> = [];
 
   // Build from cash_flow
-  for (const r of (cfRows ?? [])) {
+  for (const r of deduplicatedCfRows) {
     const dir = r.direction ?? r.type;
     const masuk = dir === 'in' ? Number(r.amount) : 0;
     const keluar = dir === 'out' ? Number(r.amount) : 0;
@@ -251,7 +408,7 @@ export async function getCashFlowReport(
 
   // Add sales paid_cash if not already in cash_flow
   // (some systems record via POS directly into sales, not cash_flow)
-  const posCfRows = (cfRows ?? []).filter((r: any) => isPosCashSaleCategory(r.category));
+  const posCfRows = deduplicatedCfRows.filter((r: any) => isPosCashSaleCategory(r.category));
   const hasPosCfWithoutRef = posCfRows.some((r: any) => !r.reference_id);
   const existingPosRefIds = new Set(
     posCfRows.map((r: any) => r.reference_id).filter(Boolean).map(String)
@@ -311,11 +468,22 @@ export async function getCashFlowReport(
   const enrichedRows = await enrichMemberClearanceCashFlowDescriptions(enrichedPos).catch(
     () => enrichedPos
   );
+  const dedupedEnrichedRows = deduplicateClearanceRowsInMemory(enrichedRows);
+  const finalTransactions =
+    dedupedEnrichedRows.length < enrichedRows.length
+      ? (() => {
+          let running = 0;
+          return dedupedEnrichedRows.map((tx) => {
+            running += tx.kas_masuk - tx.kas_keluar;
+            return { ...tx, saldo_berjalan: running };
+          });
+        })()
+      : dedupedEnrichedRows;
 
-  const inflowTotal = enrichedRows.reduce((s, r) => s + r.kas_masuk, 0);
-  const outflowTotal = enrichedRows.reduce((s, r) => s + r.kas_keluar, 0);
+  const inflowTotal = finalTransactions.reduce((s, r) => s + r.kas_masuk, 0);
+  const outflowTotal = finalTransactions.reduce((s, r) => s + r.kas_keluar, 0);
 
-  return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: enrichedRows };
+  return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: finalTransactions };
 }
 
 const classifyPosPaymentSource = (
@@ -934,6 +1102,8 @@ export interface LaporanKeuanganProps {
   initialActiveTab?: 'cashflow' | 'shu';
   initialCashFlowData?: CashFlowData | null;
   initialCashFlowSearchQuery?: string;
+  initialSelectedCategories?: string[];
+  initialCategoryDropdownOpen?: boolean;
   initialShuData?: ShuEstimationData | null;
   initialSelectedShuRef?: ShuReferenceRow | null;
   initialShuSearchQuery?: string;
@@ -955,6 +1125,8 @@ function LaporanKeuanganContent({
   initialActiveTab = 'cashflow',
   initialCashFlowData = null,
   initialCashFlowSearchQuery = '',
+  initialSelectedCategories = [],
+  initialCategoryDropdownOpen = false,
   initialShuData = null,
   initialSelectedShuRef = null,
   initialShuSearchQuery = '',
@@ -997,6 +1169,13 @@ function LaporanKeuanganContent({
   const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
     initialSelectedCashFlowRef ?? null
   );
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(
+    initialSelectedCategories
+  );
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState<boolean>(
+    initialCategoryDropdownOpen
+  );
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
 
   // State Pencarian, Pagination & Drill-Down Tabel Estimasi SHU
   const [shuSearchQuery, setShuSearchQuery] = useState<string>(
@@ -1050,9 +1229,36 @@ function LaporanKeuanganContent({
       setShuCurrentPage(1);
     } else if (urlTab === 'cashflow' || nextSearch) {
       setCashFlowSearchQuery(nextSearch);
+      setSelectedCategories([]);
       setCashFlowPage(1);
     }
   }, [urlDeepLinkKey, urlTab, urlRef, urlReceipt, urlDate]);
+
+  useEffect(() => {
+    if (!isCategoryDropdownOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        categoryDropdownRef.current &&
+        !categoryDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsCategoryDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isCategoryDropdownOpen]);
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -1088,17 +1294,46 @@ function LaporanKeuanganContent({
     setShuCurrentPage(1);
   }, [shuSearchQuery, shuPageSize, startDate, endDate, unit]);
 
-  const cashFlowTransactions = cashFlowData?.transactions ?? [];
+  const rawCashFlowTransactions = cashFlowData?.transactions ?? [];
+  const dedupedRawTransactions = deduplicateClearanceRowsInMemory(rawCashFlowTransactions);
+  const hadInMemoryClearanceDupes =
+    dedupedRawTransactions.length < rawCashFlowTransactions.length;
+  const cashFlowTransactions = hadInMemoryClearanceDupes
+    ? (() => {
+        let running = 0;
+        return dedupedRawTransactions.map((tx) => {
+          running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
+          return { ...tx, saldo_berjalan: running };
+        });
+      })()
+    : rawCashFlowTransactions;
+  const availableCategoryOptions = useMemo(
+    () => buildCashFlowCategoryOptions(cashFlowTransactions),
+    [cashFlowTransactions]
+  );
+
+  const toggleCategoryFilter = (categoryLabel: string) => {
+    setSelectedCategories((prev) =>
+      prev.includes(categoryLabel)
+        ? prev.filter((item) => item !== categoryLabel)
+        : [...prev, categoryLabel]
+    );
+    setCashFlowPage(1);
+  };
+
+  const handleClearCategoryFilters = () => {
+    setSelectedCategories([]);
+    setCashFlowPage(1);
+  };
+
   const normalizedCashFlowQuery = cashFlowSearchQuery.trim().toLowerCase();
-  const filteredCashFlowTransactions = normalizedCashFlowQuery
-    ? cashFlowTransactions.filter((t) => {
-      const refMatch = String(t.referensi || '').toLowerCase().includes(normalizedCashFlowQuery);
-      const descMatch = String(t.deskripsi || '').toLowerCase().includes(normalizedCashFlowQuery);
-      const catMatch = String(t.kategori || '').toLowerCase().includes(normalizedCashFlowQuery);
-      const refIdMatch = String(t.reference_id || '').toLowerCase().includes(normalizedCashFlowQuery);
-      return refMatch || descMatch || catMatch || refIdMatch;
-    })
-    : cashFlowTransactions;
+  const hasActiveCashFlowFilter =
+    Boolean(normalizedCashFlowQuery) || selectedCategories.length > 0;
+  const filteredCashFlowTransactions = filterCashFlowTransactions(
+    cashFlowTransactions,
+    cashFlowSearchQuery,
+    selectedCategories
+  );
   const totalCashFlowItems = filteredCashFlowTransactions.length;
   const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
   const safeCashFlowPage = Math.min(cashFlowPage, totalCashFlowPages);
@@ -1115,15 +1350,24 @@ function LaporanKeuanganContent({
     0
   );
   const filteredCashFlowNet = filteredCashFlowInflow - filteredCashFlowOutflow;
-  const displayedCashFlowInflow = normalizedCashFlowQuery
-    ? filteredCashFlowInflow
+  const effectiveInflowTotal = hadInMemoryClearanceDupes
+    ? cashFlowTransactions.reduce((sum, r) => sum + Number(r.kas_masuk || 0), 0)
     : (cashFlowData?.inflowTotal ?? 0);
-  const displayedCashFlowOutflow = normalizedCashFlowQuery
-    ? filteredCashFlowOutflow
+  const effectiveOutflowTotal = hadInMemoryClearanceDupes
+    ? cashFlowTransactions.reduce((sum, r) => sum + Number(r.kas_keluar || 0), 0)
     : (cashFlowData?.outflowTotal ?? 0);
-  const displayedCashFlowNet = normalizedCashFlowQuery
-    ? filteredCashFlowNet
+  const effectiveNetCashflow = hadInMemoryClearanceDupes
+    ? effectiveInflowTotal - effectiveOutflowTotal
     : (cashFlowData?.netCashflow ?? 0);
+  const displayedCashFlowInflow = hasActiveCashFlowFilter
+    ? filteredCashFlowInflow
+    : effectiveInflowTotal;
+  const displayedCashFlowOutflow = hasActiveCashFlowFilter
+    ? filteredCashFlowOutflow
+    : effectiveOutflowTotal;
+  const displayedCashFlowNet = hasActiveCashFlowFilter
+    ? filteredCashFlowNet
+    : effectiveNetCashflow;
 
   const shuReferenceRows = shuData?.shuReferenceRows ?? [];
   const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
@@ -1160,6 +1404,7 @@ function LaporanKeuanganContent({
   const handleResetReferenceFilter = () => {
     setShuSearchQuery('');
     setCashFlowSearchQuery('');
+    setSelectedCategories([]);
     setActiveHighlightRef('');
     setActiveHighlightReceipt('');
     setActiveHighlightDate('');
@@ -1273,14 +1518,19 @@ function LaporanKeuanganContent({
 
       if (cashFlowData) {
         const wsCf = wb.addWorksheet('Arus Kas');
-        wsCf.addRow(['LAPORAN ARUS KAS SIMKOP']);
-        wsCf.addRow([`Periode: ${startDate} s/d ${endDate}`]);
-        wsCf.addRow([]);
-        wsCf.addRow(['Tanggal', 'Referensi', 'Deskripsi', 'Kategori', 'Unit', 'Kas Masuk', 'Kas Keluar', 'Saldo Berjalan']);
-        for (const t of cashFlowData.transactions) {
-          wsCf.addRow([t.tanggal, t.referensi, t.deskripsi, t.kategori, t.unit_usaha, t.kas_masuk, t.kas_keluar, t.saldo_berjalan]);
+        const cfExportRows = buildCashFlowExportSheetRows({
+          startDate,
+          endDate,
+          transactions: filteredCashFlowTransactions,
+          inflowTotal: displayedCashFlowInflow,
+          outflowTotal: displayedCashFlowOutflow,
+          netCashflow: displayedCashFlowNet,
+          selectedCategories,
+          searchQuery: cashFlowSearchQuery.trim(),
+        });
+        for (const row of cfExportRows) {
+          wsCf.addRow(row);
         }
-        wsCf.addRow(['', '', '', '', 'TOTAL', cashFlowData.inflowTotal, cashFlowData.outflowTotal, cashFlowData.netCashflow]);
       }
 
       if (shuData) {
@@ -1554,7 +1804,7 @@ function LaporanKeuanganContent({
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-wider text-emerald-700">Total Kas Masuk</p>
                   <p className="text-2xl font-bold text-emerald-800 mt-1 tabular-nums" style={{ fontFamily: "'IBM Plex Serif', serif" }}>
-                    {formatRp(cashFlowData?.inflowTotal ?? 0)}
+                    {formatRp(effectiveInflowTotal)}
                   </p>
                   <p className="text-[12px] text-emerald-600 mt-1">Simpanan & penjualan tunai</p>
                 </div>
@@ -1571,7 +1821,7 @@ function LaporanKeuanganContent({
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-wider text-rose-700">Total Kas Keluar</p>
                   <p className="text-2xl font-bold text-rose-800 mt-1 tabular-nums" style={{ fontFamily: "'IBM Plex Serif', serif" }}>
-                    {formatRp(cashFlowData?.outflowTotal ?? 0)}
+                    {formatRp(effectiveOutflowTotal)}
                   </p>
                   <p className="text-[12px] text-rose-600 mt-1">Pencairan & restock toko</p>
                 </div>
@@ -1587,12 +1837,12 @@ function LaporanKeuanganContent({
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-[12px] font-semibold uppercase tracking-wider text-indigo-700">Saldo Kas Bersih Brankas</p>
-                  <p className={`text-2xl font-bold mt-1 tabular-nums ${(cashFlowData?.netCashflow ?? 0) >= 0 ? 'text-indigo-800' : 'text-rose-700'}`}
+                  <p className={`text-2xl font-bold mt-1 tabular-nums ${effectiveNetCashflow >= 0 ? 'text-indigo-800' : 'text-rose-700'}`}
                     style={{ fontFamily: "'IBM Plex Serif', serif" }}>
-                    {formatRp(cashFlowData?.netCashflow ?? 0)}
+                    {formatRp(effectiveNetCashflow)}
                   </p>
                   <p className="text-[12px] text-indigo-600 mt-1">
-                    {(cashFlowData?.netCashflow ?? 0) >= 0 ? '✓ Surplus kas operasional' : '⚠ Defisit kas'}
+                    {effectiveNetCashflow >= 0 ? '✓ Surplus kas operasional' : '⚠ Defisit kas'}
                   </p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
@@ -1644,21 +1894,126 @@ function LaporanKeuanganContent({
           </div>
 
           {/* Transaction Table */}
-          <div className="bg-white rounded-xl border border-outline-variant/30 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-outline-variant/20 flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="bg-white rounded-xl border border-outline-variant/30 shadow-sm">
+            <div className="px-5 py-4 border-b border-outline-variant/20 rounded-t-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
                   <span className="material-symbols-outlined text-secondary text-[20px]">receipt_long</span>
                   Mutasi Arus Kas Terperinci
                 </h2>
                 <span className="text-[12px] text-on-surface-variant">
-                  {normalizedCashFlowQuery
+                  {hasActiveCashFlowFilter
                     ? `${totalCashFlowItems} / ${cashFlowTransactions.length} transaksi`
                     : `${cashFlowTransactions.length} transaksi`}
                 </span>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto no-print">
+                <div className="relative" ref={categoryDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryDropdownOpen((prev) => !prev)}
+                    aria-expanded={isCategoryDropdownOpen}
+                    aria-haspopup="listbox"
+                    data-testid="cashflow-category-filter-trigger"
+                    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      selectedCategories.length > 0
+                        ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>
+                      {selectedCategories.length === 0
+                        ? 'Semua Kategori'
+                        : `${selectedCategories.length} Kategori Dipilih`}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 opacity-70 transition-transform ${
+                        isCategoryDropdownOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {isCategoryDropdownOpen && (
+                    <div
+                      data-testid="cashflow-category-filter-menu"
+                      role="listbox"
+                      aria-multiselectable="true"
+                      className="absolute left-0 md:left-auto md:right-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-xl z-30 p-3"
+                    >
+                      <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          Pilih Kategori Mutasi
+                        </span>
+                        <div className="flex items-center gap-2 text-xs">
+                          {availableCategoryOptions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedCategories(availableCategoryOptions.map((c) => c.label));
+                                setCashFlowPage(1);
+                              }}
+                              className="text-indigo-600 hover:underline font-medium cursor-pointer"
+                            >
+                              Pilih Semua
+                            </button>
+                          )}
+                          {selectedCategories.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleClearCategoryFilters}
+                              className="text-rose-600 hover:underline font-medium cursor-pointer"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {availableCategoryOptions.length === 0 ? (
+                        <p className="py-4 text-center text-xs text-slate-500">
+                          Tidak ada kategori pada periode ini
+                        </p>
+                      ) : (
+                        <div className="max-h-60 overflow-y-auto space-y-1 pr-1">
+                          {availableCategoryOptions.map((opt) => {
+                            const checked = selectedCategories.includes(opt.label);
+                            return (
+                              <label
+                                key={opt.label}
+                                className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${
+                                  checked
+                                    ? 'bg-indigo-50/80 text-indigo-900 font-semibold'
+                                    : 'hover:bg-slate-50 text-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleCategoryFilter(opt.label)}
+                                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 shrink-0"
+                                  />
+                                  <span
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold truncate ${opt.bg} ${opt.text}`}
+                                    title={opt.label}
+                                  >
+                                    {opt.label}
+                                  </span>
+                                </div>
+                                <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono shrink-0">
+                                  {opt.count}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="relative flex-1 md:w-80">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
@@ -1686,6 +2041,47 @@ function LaporanKeuanganContent({
                 )}
               </div>
             </div>
+
+            {selectedCategories.length > 0 && (
+              <div
+                data-testid="cashflow-active-category-chips"
+                className="px-5 py-2.5 bg-indigo-50/40 border-b border-outline-variant/20 flex flex-wrap items-center gap-2"
+              >
+                <span className="text-[11px] font-semibold text-slate-600">
+                  Filter Kategori:
+                </span>
+                {selectedCategories.map((label) => {
+                  const meta =
+                    availableCategoryOptions.find((o) => o.label === label) ??
+                    getCashFlowCategoryMeta(label);
+                  return (
+                    <span
+                      key={label}
+                      className={`inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-0.5 rounded-full text-[11px] font-semibold ${meta.bg} ${meta.text}`}
+                    >
+                      <span>{label}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleCategoryFilter(label)}
+                        aria-label={`Hapus filter kategori ${label}`}
+                        className="p-0.5 rounded-full hover:bg-black/10 transition-colors cursor-pointer no-print"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={handleClearCategoryFilters}
+                  data-testid="cashflow-clear-all-categories-btn"
+                  className="ml-auto text-xs font-semibold text-rose-600 hover:text-rose-700 hover:underline cursor-pointer no-print"
+                >
+                  Hapus Semua Filter
+                </button>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-surface-container-low border-b border-outline-variant/20">
@@ -1702,11 +2098,15 @@ function LaporanKeuanganContent({
                     <tr>
                       <td colSpan={8} className="text-center py-12 text-on-surface-variant text-sm">
                         <span className="material-symbols-outlined text-[36px] block mb-2 text-outline">
-                          {normalizedCashFlowQuery ? 'search_off' : 'inbox'}
+                          {hasActiveCashFlowFilter ? 'search_off' : 'inbox'}
                         </span>
-                        {normalizedCashFlowQuery
-                          ? 'Tidak ada mutasi arus kas yang cocok dengan pencarian'
-                          : 'Tidak ada transaksi pada periode ini'}
+                        {selectedCategories.length > 0 && normalizedCashFlowQuery
+                          ? 'Tidak ada mutasi arus kas yang cocok dengan filter kategori dan pencarian'
+                          : selectedCategories.length > 0
+                            ? 'Tidak ada mutasi arus kas untuk kategori yang dipilih'
+                            : normalizedCashFlowQuery
+                              ? 'Tidak ada mutasi arus kas yang cocok dengan pencarian'
+                              : 'Tidak ada transaksi pada periode ini'}
                       </td>
                     </tr>
                   ) : (
@@ -1755,7 +2155,14 @@ function LaporanKeuanganContent({
                 {totalCashFlowItems > 0 && (
                   <tfoot className="bg-primary/5 border-t-2 border-primary/20">
                     <tr>
-                      <td colSpan={5} className="px-4 py-3 font-bold text-primary text-sm">TOTAL</td>
+                      <td colSpan={5} className="px-4 py-3 font-bold text-primary text-sm">
+                        TOTAL
+                        {hasActiveCashFlowFilter && (
+                          <span className="ml-2 text-xs font-medium text-on-surface-variant">
+                            (Terfilter — {totalCashFlowItems} transaksi)
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right font-bold text-emerald-700 tabular-nums whitespace-nowrap">
                         {formatRp(displayedCashFlowInflow)}
                       </td>
@@ -1770,7 +2177,7 @@ function LaporanKeuanganContent({
                 )}
               </table>
             </div>
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl text-xs sm:text-sm text-slate-600">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t border-slate-100 bg-white rounded-b-2xl text-xs sm:text-sm text-slate-600 no-print">
               <div className="flex items-center gap-3">
                 <span>
                   Menampilkan{' '}
