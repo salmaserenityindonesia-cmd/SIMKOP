@@ -13,6 +13,9 @@ import LaporanKeuangan, {
   filterCashFlowTransactions,
   buildCashFlowExportSheetRows,
   getNormalizedCategoryLabel,
+  buildStartDateBoundaryIso,
+  formatDateDdMmYyyy,
+  computeOpeningBalanceFromRows,
   type CashFlowTransaction,
 } from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
@@ -2768,5 +2771,504 @@ describe('Multi-Category Filter on Mutasi Arus Kas Terperinci', () => {
     expect(html).toContain('0 / 4 transaksi');
     expect(html).toContain('Tidak ada mutasi arus kas untuk kategori yang dipilih');
     expect(html).not.toMatch(/<tfoot[\s\S]*?<\/tfoot>/);
+  });
+});
+
+describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
+  const createStatefulMockFrom = (
+    allCfRows: any[],
+    depositTxs: any[] = [],
+    allSalesRows: any[] = []
+  ) => {
+    return (table: string) => {
+      if (table === 'store_credit_payments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockImplementation(() => ({
+            range: vi.fn().mockResolvedValue({ data: depositTxs, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          })),
+        };
+      }
+      if (table === 'member_deposits' || table === 'lebaran_disbursement_cycles') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      if (table === 'sales') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            lt: vi.fn().mockImplementation((_col: string, boundary: string) => {
+              const filtered = allSalesRows.filter(
+                (r) =>
+                  String(r.created_at || '') < boundary &&
+                  r.sale_status === 'completed' &&
+                  Number(r.paid_cash || 0) > 0
+              );
+              const builder: any = {
+                eq: vi.fn().mockReturnThis(),
+                gt: vi.fn().mockReturnThis(),
+                order: vi.fn().mockReturnThis(),
+                range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                  data: filtered.slice(from, to + 1),
+                  error: null,
+                })),
+              };
+              return builder;
+            }),
+            gte: vi.fn().mockImplementation((_col: string, sVal: string) => ({
+              lte: vi.fn().mockImplementation((_col2: string, eVal: string) => ({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockResolvedValue({
+                    data: allSalesRows.filter(
+                      (r) =>
+                        String(r.created_at || '') >= sVal &&
+                        String(r.created_at || '') <= eVal &&
+                        r.sale_status === 'completed' &&
+                        Number(r.paid_cash || 0) > 0
+                    ),
+                    error: null,
+                  }),
+                }),
+              })),
+            })),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === '*') {
+              return {
+                eq: vi.fn().mockImplementation((col: string, val: any) => {
+                  const matched = allCfRows.filter((r) => r[col] === val);
+                  return {
+                    order: vi.fn().mockResolvedValue({ data: matched, error: null }),
+                    then: (resolve: any) => resolve({ data: matched, error: null }),
+                  };
+                }),
+              };
+            }
+            return {
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: allCfRows.slice(from, to + 1),
+                error: null,
+              })),
+              lt: vi.fn().mockImplementation((_col: string, boundary: string) => {
+                const prior = allCfRows.filter((r) => String(r.created_at || '') < boundary);
+                return {
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                      data: prior.slice(from, to + 1),
+                      error: null,
+                    })),
+                  }),
+                };
+              }),
+              gte: vi.fn().mockImplementation((_col: string, sVal: string) => ({
+                lte: vi.fn().mockImplementation((_col2: string, eVal: string) => ({
+                  order: vi.fn().mockImplementation(async () => ({
+                    data: allCfRows.filter(
+                      (r) =>
+                        String(r.created_at || '') >= sVal &&
+                        String(r.created_at || '') <= eVal
+                    ),
+                    error: null,
+                  })),
+                })),
+              })),
+            };
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          range: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      };
+    };
+  };
+
+  it('computes pure helpers buildStartDateBoundaryIso, formatDateDdMmYyyy, and computeOpeningBalanceFromRows accurately', () => {
+    expect(buildStartDateBoundaryIso('2026-11-01')).toBe('2026-11-01T00:00:00.000Z');
+    expect(buildStartDateBoundaryIso('2026-11-01T00:00:00.000Z')).toBe('2026-11-01T00:00:00.000Z');
+    expect(buildStartDateBoundaryIso('')).toBe('');
+
+    expect(formatDateDdMmYyyy('2026-11-01')).toBe('01/11/2026');
+    expect(formatDateDdMmYyyy('2026-03-01T00:00:00.000Z')).toBe('01/03/2026');
+
+    const opening = computeOpeningBalanceFromRows(
+      [
+        {
+          id: 'cf-open',
+          direction: 'in',
+          category: 'SALDO_AWAL_SIMPANAN',
+          amount: 25640000,
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+        {
+          id: 'cf-dup-1',
+          direction: 'out',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          amount: 5000000,
+          reference_id: 'mem-1',
+          created_at: '2026-06-10T10:00:00.000Z',
+        },
+        {
+          id: 'cf-dup-2',
+          direction: 'out',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          amount: 5000000,
+          reference_id: 'mem-1',
+          created_at: '2026-06-10T10:00:00.000Z',
+        },
+      ],
+      [
+        { id: 'sale-unsynced', paid_cash: 150000 },
+      ]
+    );
+    expect(opening).toBe(20790000);
+  });
+
+  it('Scenario 1 (cut-off date 2026-03-01..2026-03-01): keeps SALDO_AWAL_SIMPANAN inside period inflow with openingBalance 0 and closingBalance Rp 25.640.000', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows = [
+        {
+          id: 'cf-cutoff-mar',
+          created_at: '2026-03-01T00:00:00.000Z',
+          category: 'SALDO_AWAL_SIMPANAN',
+          direction: 'in',
+          amount: 25640000,
+          reference_id: null,
+        },
+      ];
+      const depositTxs = [
+        {
+          id: 'tx-open-mar',
+          member_deposit_id: 'md-1',
+          transaction_type: 'deposit',
+          amount: 25640000,
+          for_year: 2026,
+          for_month: 2,
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+      ];
+      (supabase.from as any).mockImplementation(createStatefulMockFrom(cfRows, depositTxs));
+
+      const report = await getCashFlowReport('2026-03-01', '2026-03-01', 'all');
+      expect(report.openingBalance).toBe(0);
+      expect(report.inflowTotal).toBe(25640000);
+      expect(report.outflowTotal).toBe(0);
+      expect(report.netCashflow).toBe(25640000);
+      expect(report.closingBalance).toBe(25640000);
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0].saldo_berjalan).toBe(25640000);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('Scenario 2 (2026-11-01..2026-11-20 with empty period): carries forward Rp 25.640.000 openingBalance so closingBalance stays Rp 25.640.000', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows = [
+        {
+          id: 'cf-cutoff-mar',
+          created_at: '2026-03-01T00:00:00.000Z',
+          category: 'SALDO_AWAL_SIMPANAN',
+          direction: 'in',
+          amount: 25640000,
+          reference_id: null,
+        },
+      ];
+      const depositTxs = [
+        {
+          id: 'tx-open-mar',
+          member_deposit_id: 'md-1',
+          transaction_type: 'deposit',
+          amount: 25640000,
+          for_year: 2026,
+          for_month: 2,
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+      ];
+      (supabase.from as any).mockImplementation(createStatefulMockFrom(cfRows, depositTxs));
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-20', 'all');
+      expect(report.openingBalance).toBe(25640000);
+      expect(report.inflowTotal).toBe(0);
+      expect(report.outflowTotal).toBe(0);
+      expect(report.netCashflow).toBe(0);
+      expect(report.closingBalance).toBe(25640000);
+      expect(report.transactions).toEqual([]);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('Scenario 3 (period mutations + prior clearance dedup): starts saldo_berjalan from deduplicated openingBalance and updates closingBalance', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows = [
+        {
+          id: 'cf-cutoff-mar',
+          created_at: '2026-03-01T00:00:00.000Z',
+          category: 'SALDO_AWAL_SIMPANAN',
+          direction: 'in',
+          amount: 25640000,
+          reference_id: null,
+        },
+        {
+          id: 'cf-prior-kliring-1',
+          created_at: '2026-06-15T10:00:00.000Z',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 5000000,
+          reference_id: 'mem-resign-1',
+        },
+        {
+          id: 'cf-prior-kliring-2',
+          created_at: '2026-06-15T10:00:00.000Z',
+          category: 'KLIRING_ANGGOTA_KELUAR',
+          direction: 'out',
+          amount: 5000000,
+          reference_id: 'mem-resign-1',
+        },
+        {
+          id: 'cf-nov-in-1',
+          created_at: '2026-11-05T09:00:00.000Z',
+          category: 'angsuran_pinjaman',
+          direction: 'in',
+          amount: 1000000,
+          description: 'Angsuran Pinjaman Nov',
+          reference_id: 'loan-nov-1',
+        },
+        {
+          id: 'cf-nov-out-1',
+          created_at: '2026-11-10T11:00:00.000Z',
+          category: 'beban_operasional',
+          direction: 'out',
+          amount: 400000,
+          description: 'Listrik & Operasional Nov',
+          reference_id: null,
+        },
+      ];
+      const depositTxs = [
+        {
+          id: 'tx-open-mar',
+          member_deposit_id: 'md-1',
+          transaction_type: 'deposit',
+          amount: 25640000,
+          for_year: 2026,
+          for_month: 2,
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+      ];
+      (supabase.from as any).mockImplementation(createStatefulMockFrom(cfRows, depositTxs));
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-20', 'all');
+      expect(report.openingBalance).toBe(20640000);
+      expect(report.inflowTotal).toBe(1000000);
+      expect(report.outflowTotal).toBe(400000);
+      expect(report.netCashflow).toBe(600000);
+      expect(report.closingBalance).toBe(21240000);
+      expect(report.transactions).toHaveLength(2);
+      expect(report.transactions[0].saldo_berjalan).toBe(21640000);
+      expect(report.transactions[1].saldo_berjalan).toBe(21240000);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('UI SSR (empty November period): renders Rp 0 period totals alongside Rp 25.640.000 Vault Balance, opening subtext, badge, and empty-state note', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-20"
+          initialCashFlowData={{
+            openingBalance: 25640000,
+            inflowTotal: 0,
+            outflowTotal: 0,
+            netCashflow: 0,
+            closingBalance: 25640000,
+            transactions: [],
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-testid="vault-balance-value"');
+    expect(html).toContain('Rp 25.640.000');
+    expect(html).toContain('data-testid="vault-opening-balance-subtext"');
+    expect(html).toContain('Saldo awal s/d 01/11/2026: Rp 25.640.000');
+    expect(html).toContain('data-testid="cashflow-opening-balance-badge"');
+    expect(html).toContain('Saldo Awal Sebelum Periode: Rp 25.640.000');
+    expect(html).toContain('data-testid="cashflow-empty-vault-note"');
+    expect(html).toContain('Tidak ada transaksi pada periode ini — Saldo Kas Brankas tetap Rp 25.640.000');
+  });
+
+  it('UI SSR (transactions present & negative balance styling): renders carry-forward row on page 1, cumulative tfoot, and rose colors when deficit', () => {
+    const positiveHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-20"
+          initialCashFlowData={{
+            openingBalance: 20640000,
+            inflowTotal: 1000000,
+            outflowTotal: 400000,
+            netCashflow: 600000,
+            closingBalance: 21240000,
+            transactions: [
+              {
+                id: 'tx-nov-1',
+                tanggal: '5/11/2026',
+                referensi: 'CF-NOV1',
+                deskripsi: 'Angsuran Pinjaman Nov',
+                kategori: 'angsuran_pinjaman',
+                unit_usaha: 'Umum',
+                kas_masuk: 1000000,
+                kas_keluar: 0,
+                saldo_berjalan: 21640000,
+                direction: 'in',
+                created_at: '2026-11-05T09:00:00.000Z',
+              },
+              {
+                id: 'tx-nov-2',
+                tanggal: '10/11/2026',
+                referensi: 'CF-NOV2',
+                deskripsi: 'Listrik & Operasional Nov',
+                kategori: 'beban_operasional',
+                unit_usaha: 'Umum',
+                kas_masuk: 0,
+                kas_keluar: 400000,
+                saldo_berjalan: 21240000,
+                direction: 'out',
+                created_at: '2026-11-10T11:00:00.000Z',
+              },
+            ],
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    expect(positiveHtml).toContain('data-testid="cashflow-opening-balance-row"');
+    expect(positiveHtml).toContain('SALDO-AWAL');
+    expect(positiveHtml).toContain('Saldo Awal Kumulatif Sebelum Periode (01/11/2026)');
+    expect(positiveHtml).toContain('Rp 20.640.000');
+    const tfootMatch = positiveHtml.match(/<tfoot[\s\S]*?<\/tfoot>/);
+    expect(tfootMatch).not.toBeNull();
+    expect(tfootMatch![0]).toContain('Rp 21.240.000');
+
+    const negativeHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-20"
+          initialCashFlowData={{
+            openingBalance: 1000000,
+            inflowTotal: 0,
+            outflowTotal: 2500000,
+            netCashflow: -2500000,
+            closingBalance: -1500000,
+            transactions: [
+              {
+                id: 'tx-def-1',
+                tanggal: '10/11/2026',
+                referensi: 'CF-DEF1',
+                deskripsi: 'Penarikan Simpanan Besar',
+                kategori: 'penarikan_simpanan',
+                unit_usaha: 'Umum',
+                kas_masuk: 0,
+                kas_keluar: 2500000,
+                saldo_berjalan: -1500000,
+                direction: 'out',
+                created_at: '2026-11-10T11:00:00.000Z',
+              },
+            ],
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    expect(negativeHtml).toContain('border-rose-200');
+    expect(negativeHtml).toContain('text-rose-700');
+    expect(negativeHtml).toContain('text-rose-600');
+    expect(negativeHtml).toContain('-1.500.000');
+  });
+
+  it('Excel export helper includes opening balance metadata and SALDO-AWAL carry-forward row when openingBalance is non-zero', () => {
+    const rows = buildCashFlowExportSheetRows({
+      startDate: '2026-11-01',
+      endDate: '2026-11-20',
+      openingBalance: 25640000,
+      transactions: [
+        {
+          id: 'cf-nov-1',
+          tanggal: '5/11/2026',
+          referensi: 'CF-NOV1',
+          deskripsi: 'Angsuran Pinjaman Nov',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: 26640000,
+        },
+      ],
+      inflowTotal: 1000000,
+      outflowTotal: 0,
+      netCashflow: 26640000,
+    });
+
+    expect(rows[0]).toEqual(['LAPORAN ARUS KAS SIMKOP']);
+    expect(rows[1]).toEqual(['Periode: 2026-11-01 s/d 2026-11-20']);
+    expect(rows[2]).toEqual(['Saldo Awal Sebelum Periode (< 01/11/2026): Rp 25.640.000']);
+    expect(rows[3]).toEqual([]);
+    expect(rows[4]).toEqual([
+      'Tanggal',
+      'Referensi',
+      'Deskripsi',
+      'Kategori',
+      'Unit',
+      'Kas Masuk',
+      'Kas Keluar',
+      'Saldo Berjalan',
+    ]);
+    expect(rows[5]).toEqual([
+      '< 01/11/2026',
+      'SALDO-AWAL',
+      'Saldo Awal Kumulatif Sebelum Periode (01/11/2026)',
+      'Saldo Bawaan',
+      'Semua Unit',
+      0,
+      0,
+      25640000,
+    ]);
+    expect(rows[6][1]).toBe('CF-NOV1');
+    expect(rows[7]).toEqual(['', '', '', '', 'TOTAL', 1000000, 0, 26640000]);
   });
 });

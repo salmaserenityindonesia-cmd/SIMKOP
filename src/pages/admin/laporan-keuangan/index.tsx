@@ -55,9 +55,11 @@ export interface CashFlowTransaction {
 }
 
 export interface CashFlowData {
+  openingBalance?: number;
   inflowTotal: number;
   outflowTotal: number;
   netCashflow: number;
+  closingBalance?: number;
   transactions: CashFlowTransaction[];
 }
 
@@ -87,6 +89,50 @@ export interface ShuEstimationData {
 
 const formatRp = (n: number): string =>
   'Rp ' + Math.round(n).toLocaleString('id-ID');
+
+export function buildStartDateBoundaryIso(startDate: string): string {
+  const trimmed = String(startDate || '').trim();
+  if (!trimmed) return '';
+  return trimmed.includes('T') ? trimmed : `${trimmed}T00:00:00.000Z`;
+}
+
+export function formatDateDdMmYyyy(dateStr: string): string {
+  const match = String(dateStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return String(dateStr || '');
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+export function computeOpeningBalanceFromRows(
+  priorCfRows: any[],
+  priorSalesRows: any[] = []
+): number {
+  const dedupedPriorCf = deduplicateClearanceRowsInMemory<any>(priorCfRows ?? []);
+  let balance = dedupedPriorCf.reduce((acc, row) => {
+    const dir = String(row?.direction ?? row?.type ?? '').toLowerCase();
+    const amt = Number(row?.amount || 0);
+    if (!Number.isFinite(amt)) return acc;
+    if (dir === 'in') return acc + amt;
+    if (dir === 'out') return acc - amt;
+    return acc;
+  }, 0);
+
+  const priorPosCfRows = dedupedPriorCf.filter((r: any) => isPosCashSaleCategory(r?.category));
+  const hasPriorPosCfWithoutRef = priorPosCfRows.some((r: any) => !r?.reference_id);
+  const existingPriorPosRefIds = new Set(
+    priorPosCfRows.map((r: any) => r?.reference_id).filter(Boolean).map(String)
+  );
+
+  if (!hasPriorPosCfWithoutRef) {
+    for (const s of (priorSalesRows ?? [])) {
+      const masuk = Number(s?.paid_cash ?? 0);
+      if (Number.isFinite(masuk) && masuk > 0 && !existingPriorPosRefIds.has(String(s?.id))) {
+        balance += masuk;
+      }
+    }
+  }
+
+  return balance;
+}
 
 const getLocalDateString = (d = new Date()) => {
   const yyyy = d.getFullYear();
@@ -229,6 +275,7 @@ export function buildCashFlowExportSheetRows(params: {
   inflowTotal: number;
   outflowTotal: number;
   netCashflow: number;
+  openingBalance?: number;
   selectedCategories?: string[];
   searchQuery?: string;
 }): Array<Array<string | number>> {
@@ -236,6 +283,15 @@ export function buildCashFlowExportSheetRows(params: {
     ['LAPORAN ARUS KAS SIMKOP'],
     [`Periode: ${params.startDate} s/d ${params.endDate}`],
   ];
+
+  const hasNonZeroOpening =
+    typeof params.openingBalance === 'number' && params.openingBalance !== 0;
+  const formattedStart = formatDateDdMmYyyy(params.startDate);
+  if (hasNonZeroOpening) {
+    rows.push([
+      `Saldo Awal Sebelum Periode (< ${formattedStart}): ${formatRp(params.openingBalance as number)}`,
+    ]);
+  }
 
   if (params.selectedCategories && params.selectedCategories.length > 0) {
     rows.push([`Filter Kategori: ${params.selectedCategories.join(', ')}`]);
@@ -256,6 +312,19 @@ export function buildCashFlowExportSheetRows(params: {
     'Kas Keluar',
     'Saldo Berjalan',
   ]);
+
+  if (hasNonZeroOpening) {
+    rows.push([
+      `< ${formattedStart}`,
+      'SALDO-AWAL',
+      `Saldo Awal Kumulatif Sebelum Periode (${formattedStart})`,
+      'Saldo Bawaan',
+      'Semua Unit',
+      0,
+      0,
+      params.openingBalance as number,
+    ]);
+  }
 
   for (const t of params.transactions) {
     rows.push([
@@ -306,6 +375,118 @@ const isMissingColumnErr = (err: any): boolean => {
   );
 };
 
+async function fetchPriorCashFlowRows(startBoundaryIso: string): Promise<any[]> {
+  if (!startBoundaryIso) return [];
+  const pageSize = 1000;
+
+  const queryWithColumns = async (
+    cols: string
+  ): Promise<{ data: any[]; error: any; unsupported?: boolean }> => {
+    const allRows: any[] = [];
+    let offset = 0;
+
+    while (true) {
+      const tableRef: any = supabase?.from?.('cash_flow');
+      if (!tableRef || typeof tableRef.select !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+      const selectQ: any = tableRef.select(cols);
+      if (!selectQ || typeof selectQ.lt !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+
+      let q: any = selectQ.lt('created_at', startBoundaryIso);
+      if (q && typeof q.order === 'function') {
+        q = q.order('created_at', { ascending: true });
+      }
+
+      if (q && typeof q.range === 'function') {
+        const res = await q.range(offset, offset + pageSize - 1);
+        if (res?.error) {
+          return { data: allRows, error: res.error };
+        }
+        const batch = Array.isArray(res?.data) ? res.data : [];
+        allRows.push(...batch);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      } else {
+        const res = await q;
+        if (res?.error) {
+          return { data: [], error: res.error };
+        }
+        return { data: Array.isArray(res?.data) ? res.data : [], error: null };
+      }
+    }
+
+    return { data: allRows, error: null };
+  };
+
+  const primary = await queryWithColumns(
+    'id, created_at, description, category, direction, amount, reference_id'
+  );
+  if (primary.unsupported) return [];
+  if (!primary.error) return primary.data;
+
+  const fallback = await queryWithColumns(
+    'id, created_at, category, direction, amount, reference_id'
+  );
+  if (fallback.unsupported) return [];
+  if (!fallback.error) return fallback.data;
+
+  console.error('prior cash_flow query error:', primary.error);
+  return [];
+}
+
+async function fetchPriorSalesRows(startBoundaryIso: string): Promise<any[]> {
+  if (!startBoundaryIso) return [];
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  let offset = 0;
+
+  while (true) {
+    const tableRef: any = supabase?.from?.('sales');
+    if (!tableRef || typeof tableRef.select !== 'function') {
+      return [];
+    }
+    const selectQ: any = tableRef.select('id, created_at, paid_cash');
+    if (!selectQ || typeof selectQ.lt !== 'function') {
+      return [];
+    }
+
+    let q: any = selectQ.lt('created_at', startBoundaryIso);
+    if (q && typeof q.eq === 'function') {
+      q = q.eq('sale_status', 'completed');
+    }
+    if (q && typeof q.gt === 'function') {
+      q = q.gt('paid_cash', 0);
+    }
+    if (q && typeof q.order === 'function') {
+      q = q.order('created_at', { ascending: true });
+    }
+
+    if (q && typeof q.range === 'function') {
+      const res = await q.range(offset, offset + pageSize - 1);
+      if (res?.error) {
+        console.error('prior sales query error:', res.error);
+        return allRows;
+      }
+      const batch = Array.isArray(res?.data) ? res.data : [];
+      allRows.push(...batch);
+      if (batch.length < pageSize) break;
+      offset += pageSize;
+    } else {
+      const res = await q;
+      if (res?.error) {
+        console.error('prior sales query error:', res.error);
+        return [];
+      }
+      return Array.isArray(res?.data) ? res.data : [];
+    }
+  }
+
+  return allRows;
+}
+
 export async function getCashFlowReport(
   startDate: string,
   endDate: string,
@@ -318,6 +499,13 @@ export async function getCashFlowReport(
   await syncMatrixDepositsToCashFlow().catch(() => { });
   await syncPosCashSalesToCashFlow().catch(() => { });
   await syncResignedMemberClearanceToCashFlow().catch(() => { });
+
+  const startBoundaryIso = buildStartDateBoundaryIso(startDate);
+  const [priorCfRows, priorSalesRows] = await Promise.all([
+    fetchPriorCashFlowRows(startBoundaryIso),
+    fetchPriorSalesRows(startBoundaryIso),
+  ]);
+  const openingBalance = computeOpeningBalanceFromRows(priorCfRows, priorSalesRows);
 
   // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
@@ -448,8 +636,8 @@ export async function getCashFlowReport(
   taggedRows.sort((a, b) => a.ts - b.ts);
   const rows = taggedRows.map((item) => item.row);
 
-  // Recalculate running saldo after sort
-  let saldo = 0;
+  // Recalculate running saldo after sort starting from cumulative pre-period openingBalance
+  let saldo = openingBalance;
   for (const r of rows) {
     saldo += r.kas_masuk - r.kas_keluar;
     r.saldo_berjalan = saldo;
@@ -472,7 +660,7 @@ export async function getCashFlowReport(
   const finalTransactions =
     dedupedEnrichedRows.length < enrichedRows.length
       ? (() => {
-          let running = 0;
+          let running = openingBalance;
           return dedupedEnrichedRows.map((tx) => {
             running += tx.kas_masuk - tx.kas_keluar;
             return { ...tx, saldo_berjalan: running };
@@ -482,8 +670,17 @@ export async function getCashFlowReport(
 
   const inflowTotal = finalTransactions.reduce((s, r) => s + r.kas_masuk, 0);
   const outflowTotal = finalTransactions.reduce((s, r) => s + r.kas_keluar, 0);
+  const netCashflow = inflowTotal - outflowTotal;
+  const closingBalance = openingBalance + netCashflow;
 
-  return { inflowTotal, outflowTotal, netCashflow: inflowTotal - outflowTotal, transactions: finalTransactions };
+  return {
+    openingBalance,
+    inflowTotal,
+    outflowTotal,
+    netCashflow,
+    closingBalance,
+    transactions: finalTransactions,
+  };
 }
 
 const classifyPosPaymentSource = (
@@ -1107,6 +1304,8 @@ export interface LaporanKeuanganProps {
   initialShuData?: ShuEstimationData | null;
   initialSelectedShuRef?: ShuReferenceRow | null;
   initialShuSearchQuery?: string;
+  initialStartDate?: string;
+  initialEndDate?: string;
 }
 
 interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
@@ -1130,6 +1329,8 @@ function LaporanKeuanganContent({
   initialShuData = null,
   initialSelectedShuRef = null,
   initialShuSearchQuery = '',
+  initialStartDate,
+  initialEndDate,
   urlTab = null,
   urlRef = '',
   urlReceipt = '',
@@ -1140,12 +1341,15 @@ function LaporanKeuanganContent({
   const inRouter = useInRouterContext();
   const initialSearchValue = (urlRef || urlReceipt).trim();
   const [activeTab, setActiveTab] = useState<'cashflow' | 'shu'>(urlTab ?? initialActiveTab);
+  const defaultStartDate = initialStartDate || startOfMonth;
+  const defaultEndDate = initialEndDate || todayStr;
   const [startDate, setStartDate] = useState(
-    urlDate && urlDate < startOfMonth ? urlDate : startOfMonth
+    urlDate && urlDate < defaultStartDate ? urlDate : defaultStartDate
   );
   const [endDate, setEndDate] = useState(
-    urlDate && urlDate > todayStr ? urlDate : todayStr
+    urlDate && urlDate > defaultEndDate ? urlDate : defaultEndDate
   );
+  const formattedStartDate = formatDateDdMmYyyy(startDate);
   const [unit, setUnit] = useState('all');
   const [loading, setLoading] = useState(false);
 
@@ -1295,12 +1499,13 @@ function LaporanKeuanganContent({
   }, [shuSearchQuery, shuPageSize, startDate, endDate, unit]);
 
   const rawCashFlowTransactions = cashFlowData?.transactions ?? [];
+  const openingCashBalance = Number(cashFlowData?.openingBalance ?? 0);
   const dedupedRawTransactions = deduplicateClearanceRowsInMemory(rawCashFlowTransactions);
   const hadInMemoryClearanceDupes =
     dedupedRawTransactions.length < rawCashFlowTransactions.length;
   const cashFlowTransactions = hadInMemoryClearanceDupes
     ? (() => {
-        let running = 0;
+        let running = openingCashBalance;
         return dedupedRawTransactions.map((tx) => {
           running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
           return { ...tx, saldo_berjalan: running };
@@ -1359,6 +1564,9 @@ function LaporanKeuanganContent({
   const effectiveNetCashflow = hadInMemoryClearanceDupes
     ? effectiveInflowTotal - effectiveOutflowTotal
     : (cashFlowData?.netCashflow ?? 0);
+  const endingVaultBalance = hadInMemoryClearanceDupes
+    ? openingCashBalance + effectiveInflowTotal - effectiveOutflowTotal
+    : (cashFlowData?.closingBalance ?? (openingCashBalance + effectiveNetCashflow));
   const displayedCashFlowInflow = hasActiveCashFlowFilter
     ? filteredCashFlowInflow
     : effectiveInflowTotal;
@@ -1367,7 +1575,7 @@ function LaporanKeuanganContent({
     : effectiveOutflowTotal;
   const displayedCashFlowNet = hasActiveCashFlowFilter
     ? filteredCashFlowNet
-    : effectiveNetCashflow;
+    : endingVaultBalance;
 
   const shuReferenceRows = shuData?.shuReferenceRows ?? [];
   const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
@@ -1525,6 +1733,7 @@ function LaporanKeuanganContent({
           inflowTotal: displayedCashFlowInflow,
           outflowTotal: displayedCashFlowOutflow,
           netCashflow: displayedCashFlowNet,
+          openingBalance: hasActiveCashFlowFilter ? 0 : openingCashBalance,
           selectedCategories,
           searchQuery: cashFlowSearchQuery.trim(),
         });
@@ -1832,21 +2041,27 @@ function LaporanKeuanganContent({
             </div>
 
             {/* Saldo Bersih */}
-            <div className="bg-white rounded-xl border border-indigo-200 p-5 shadow-sm relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-600 rounded-t-xl" />
+            <div className={`bg-white rounded-xl border p-5 shadow-sm relative overflow-hidden ${endingVaultBalance >= 0 ? 'border-indigo-200' : 'border-rose-200'}`}>
+              <div className={`absolute top-0 left-0 right-0 h-1 rounded-t-xl ${endingVaultBalance >= 0 ? 'bg-indigo-600' : 'bg-rose-600'}`} />
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-[12px] font-semibold uppercase tracking-wider text-indigo-700">Saldo Kas Bersih Brankas</p>
-                  <p className={`text-2xl font-bold mt-1 tabular-nums ${effectiveNetCashflow >= 0 ? 'text-indigo-800' : 'text-rose-700'}`}
-                    style={{ fontFamily: "'IBM Plex Serif', serif" }}>
-                    {formatRp(effectiveNetCashflow)}
+                  <p className={`text-[12px] font-semibold uppercase tracking-wider ${endingVaultBalance >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>Saldo Kas Bersih Brankas</p>
+                  <p
+                    data-testid="vault-balance-value"
+                    className={`text-2xl font-bold mt-1 tabular-nums ${endingVaultBalance >= 0 ? 'text-indigo-800' : 'text-rose-700'}`}
+                    style={{ fontFamily: "'IBM Plex Serif', serif" }}
+                  >
+                    {formatRp(endingVaultBalance)}
                   </p>
-                  <p className="text-[12px] text-indigo-600 mt-1">
-                    {effectiveNetCashflow >= 0 ? '✓ Surplus kas operasional' : '⚠ Defisit kas'}
+                  <p
+                    data-testid="vault-opening-balance-subtext"
+                    className={`text-[12px] mt-1 ${endingVaultBalance >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}
+                  >
+                    Saldo awal s/d {formattedStartDate}: {formatRp(openingCashBalance)}
                   </p>
                 </div>
-                <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-indigo-600" style={{ fontVariationSettings: "'FILL' 1" }}>account_balance_wallet</span>
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${endingVaultBalance >= 0 ? 'bg-indigo-100' : 'bg-rose-100'}`}>
+                  <span className={`material-symbols-outlined ${endingVaultBalance >= 0 ? 'text-indigo-600' : 'text-rose-600'}`} style={{ fontVariationSettings: "'FILL' 1" }}>account_balance_wallet</span>
                 </div>
               </div>
             </div>
@@ -1896,7 +2111,7 @@ function LaporanKeuanganContent({
           {/* Transaction Table */}
           <div className="bg-white rounded-xl border border-outline-variant/30 shadow-sm">
             <div className="px-5 py-4 border-b border-outline-variant/20 rounded-t-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <h2 className="text-base font-semibold text-on-surface flex items-center gap-2">
                   <span className="material-symbols-outlined text-secondary text-[20px]">receipt_long</span>
                   Mutasi Arus Kas Terperinci
@@ -1906,6 +2121,18 @@ function LaporanKeuanganContent({
                     ? `${totalCashFlowItems} / ${cashFlowTransactions.length} transaksi`
                     : `${cashFlowTransactions.length} transaksi`}
                 </span>
+                {openingCashBalance !== 0 && (
+                  <span
+                    data-testid="cashflow-opening-balance-badge"
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                      openingCashBalance >= 0
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                    }`}
+                  >
+                    Saldo Awal Sebelum Periode: {formatRp(openingCashBalance)}
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto no-print">
@@ -2106,50 +2333,94 @@ function LaporanKeuanganContent({
                             ? 'Tidak ada mutasi arus kas untuk kategori yang dipilih'
                             : normalizedCashFlowQuery
                               ? 'Tidak ada mutasi arus kas yang cocok dengan pencarian'
-                              : 'Tidak ada transaksi pada periode ini'}
+                              : openingCashBalance !== 0
+                                ? (
+                                  <span data-testid="cashflow-empty-vault-note">
+                                    Tidak ada transaksi pada periode ini — Saldo Kas Brankas tetap{' '}
+                                    {formatRp(endingVaultBalance)}
+                                  </span>
+                                )
+                                : 'Tidak ada transaksi pada periode ini'}
                       </td>
                     </tr>
                   ) : (
-                    paginatedCashFlow.map((t, i) => {
-                      const isHighlighted = highlightedCashFlowIds.has(t.id);
-                      return (
-                        <tr
-                          key={t.id}
-                          data-highlighted-ref={isHighlighted ? 'true' : undefined}
-                          className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
-                              ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
-                              : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
-                            }`}
-                        >
-                          <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedCashFlowRef(t)}
-                              title="Klik untuk melihat rincian sumber buku pembantu"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold hover:underline transition-colors cursor-pointer group"
+                    <>
+                      {openingCashBalance !== 0 &&
+                        !hasActiveCashFlowFilter &&
+                        safeCashFlowPage === 1 && (
+                          <tr
+                            data-testid="cashflow-opening-balance-row"
+                            className="bg-indigo-50/40 border-b border-indigo-100"
+                          >
+                            <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap font-medium">
+                              &lt; {formattedStartDate}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold">
+                                SALDO-AWAL
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-on-surface font-medium min-w-[240px]">
+                              Saldo Awal Kumulatif Sebelum Periode ({formattedStartDate})
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 border border-indigo-200 text-indigo-700">
+                                Saldo Bawaan
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-[12px] text-on-surface-variant">Semua Unit</td>
+                            <td className="px-4 py-3 text-right font-semibold text-on-surface-variant tabular-nums whitespace-nowrap">-</td>
+                            <td className="px-4 py-3 text-right font-semibold text-on-surface-variant tabular-nums whitespace-nowrap">-</td>
+                            <td
+                              className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${
+                                openingCashBalance >= 0 ? 'text-indigo-700' : 'text-rose-700'
+                              }`}
                             >
-                              <span>{t.referensi}</span>
-                              <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
-                            </button>
-                          </td>
-                          <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
-                            {t.deskripsi}
-                          </td>
-                          <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
-                          <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
-                          <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums whitespace-nowrap">
-                            {t.kas_masuk > 0 ? formatRp(t.kas_masuk) : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold text-rose-700 tabular-nums whitespace-nowrap">
-                            {t.kas_keluar > 0 ? formatRp(t.kas_keluar) : '-'}
-                          </td>
-                          <td className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${t.saldo_berjalan >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
-                            {formatRp(t.saldo_berjalan)}
-                          </td>
-                        </tr>
-                      );
-                    })
+                              {formatRp(openingCashBalance)}
+                            </td>
+                          </tr>
+                        )}
+                      {paginatedCashFlow.map((t, i) => {
+                        const isHighlighted = highlightedCashFlowIds.has(t.id);
+                        return (
+                          <tr
+                            key={t.id}
+                            data-highlighted-ref={isHighlighted ? 'true' : undefined}
+                            className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
+                                ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
+                                : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
+                              }`}
+                          >
+                            <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedCashFlowRef(t)}
+                                title="Klik untuk melihat rincian sumber buku pembantu"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-mono text-xs font-semibold hover:underline transition-colors cursor-pointer group"
+                              >
+                                <span>{t.referensi}</span>
+                                <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
+                              {t.deskripsi}
+                            </td>
+                            <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
+                            <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums whitespace-nowrap">
+                              {t.kas_masuk > 0 ? formatRp(t.kas_masuk) : '-'}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-rose-700 tabular-nums whitespace-nowrap">
+                              {t.kas_keluar > 0 ? formatRp(t.kas_keluar) : '-'}
+                            </td>
+                            <td className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${t.saldo_berjalan >= 0 ? 'text-indigo-700' : 'text-rose-700'}`}>
+                              {formatRp(t.saldo_berjalan)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </>
                   )}
                 </tbody>
                 {totalCashFlowItems > 0 && (
@@ -2169,7 +2440,11 @@ function LaporanKeuanganContent({
                       <td className="px-4 py-3 text-right font-bold text-rose-700 tabular-nums whitespace-nowrap">
                         {formatRp(displayedCashFlowOutflow)}
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-indigo-700 tabular-nums whitespace-nowrap">
+                      <td
+                        className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${
+                          displayedCashFlowNet >= 0 ? 'text-indigo-700' : 'text-rose-700'
+                        }`}
+                      >
                         {formatRp(displayedCashFlowNet)}
                       </td>
                     </tr>
