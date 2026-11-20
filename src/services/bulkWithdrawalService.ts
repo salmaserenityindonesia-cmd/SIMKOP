@@ -110,6 +110,65 @@ export function isLebaranDepositType(code?: string | null, name?: string | null)
 }
 
 /**
+ * Menormalkan string tanggal atau timestamp ISO menjadi format YYYY-MM-DD
+ */
+export function normalizeCutOffDateOnly(raw?: string | null): string | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(trimmed);
+  if (isNaN(parsed.getTime())) return null;
+  const yyyy = parsed.getFullYear();
+  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+  const dd = String(parsed.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/**
+ * Membentuk timestamp efektif pencairan (12:00 WIB) agar tanggal UTC dan WIB tetap sama
+ */
+export function buildEffectiveDisbursementTimestamp(dateOnly: string): string {
+  const cleanDate = normalizeCutOffDateOnly(dateOnly) || new Date().toISOString().slice(0, 10);
+  return `${cleanDate}T12:00:00+07:00`;
+}
+
+/**
+ * Mengambil tanggal pencairan efektif siklus dengan memprioritaskan cut_off_date
+ */
+export function resolveCycleEffectiveDate(
+  cycle?: Partial<LebaranDisbursementCycle> | null
+): string | null {
+  if (!cycle) return null;
+  return (
+    normalizeCutOffDateOnly(cycle.cut_off_date) ||
+    normalizeCutOffDateOnly(cycle.disbursement_date) ||
+    normalizeCutOffDateOnly(cycle.approved_at) ||
+    normalizeCutOffDateOnly(cycle.created_at) ||
+    null
+  );
+}
+
+/**
+ * Memformat tanggal efektif siklus ke format Indonesia tanpa pergeseran zona waktu
+ */
+export function formatCycleDisplayDate(
+  cycle?: Partial<LebaranDisbursementCycle> | null
+): string {
+  const dateOnly = resolveCycleEffectiveDate(cycle);
+  if (!dateOnly) return '-';
+  const [y, m, d] = dateOnly.split('-').map(Number);
+  if (!y || !m || !d) return '-';
+  const localDate = new Date(y, m - 1, d);
+  if (isNaN(localDate.getTime())) return '-';
+  return localDate.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
  * Memformat nominal rupiah ke format ringkas ribuan (`k`), misal 200000 -> "200k"
  */
 export function formatCompactK(amount: number): string {
@@ -174,7 +233,7 @@ export function buildDepositBreakdownSummary(
 export async function simulateLebaranDisbursement(): Promise<LebaranSimulationSummary> {
   // 0. Ambil siklus pencairan massal terakhir yang selesai untuk menentukan cut-off siklus aktif
   const lastCycle = await getLastCompletedLebaranCycle().catch(() => null);
-  const lastCutOffDate = lastCycle?.disbursement_date || lastCycle?.cut_off_date || null;
+  const lastCutOffDate = resolveCycleEffectiveDate(lastCycle);
   // 1. Ambil master deposit type untuk kategori 'LEBARAN'
   const { data: dTypes, error: dtError } = await supabase
     .from('deposit_types')
@@ -472,18 +531,20 @@ export async function createDisbursementDraft(
   }
 
   const simulation = await simulateLebaranDisbursement();
-  const dateOnly = payload.cutOffDate.slice(0, 10);
+  const dateOnly = normalizeCutOffDateOnly(payload.cutOffDate) || payload.cutOffDate.slice(0, 10);
+  const effectiveTimestamp = buildEffectiveDisbursementTimestamp(dateOnly);
 
   const draftRecord = {
     cycle_name: payload.cycleName.trim(),
     disbursement_date: dateOnly,
-    cut_off_date: payload.cutOffDate,
+    cut_off_date: effectiveTimestamp,
     source_type: 'MASSAL',
     total_members: simulation.totalMembers,
     total_amount: simulation.totalAmount,
     status: 'DRAFT',
     notes: payload.notes?.trim() || null,
-    created_by: payload.createdBy || null
+    created_by: payload.createdBy || null,
+    created_at: effectiveTimestamp
   };
 
   const { data, error } = await supabase
@@ -515,8 +576,9 @@ async function insertAggregateBulkCashFlow(params: {
   recipientCount: number;
   totalAmount: number;
   createdAt: string;
+  transactionDate?: string;
 }): Promise<void> {
-  const { cycleId, cycleName, recipientCount, totalAmount, createdAt } = params;
+  const { cycleId, cycleName, recipientCount, totalAmount, createdAt, transactionDate } = params;
   if (!cycleId || totalAmount <= 0) return;
 
   try {
@@ -528,6 +590,8 @@ async function insertAggregateBulkCashFlow(params: {
       recipientCount,
       totalAmount
     );
+    const resolvedTxDate =
+      transactionDate || normalizeCutOffDateOnly(createdAt) || createdAt.slice(0, 10);
 
     const res: any = await cfTable.insert([
       {
@@ -536,20 +600,33 @@ async function insertAggregateBulkCashFlow(params: {
         amount: Math.round(totalAmount),
         reference_id: cycleId,
         description: bulkDescription,
+        transaction_date: resolvedTxDate,
         created_at: createdAt,
       },
     ]);
 
     if (res?.error && isPostgrestColumnError(res.error)) {
-      await cfTable.insert([
+      const fb1: any = await cfTable.insert([
         {
           direction: 'out',
           category: 'penarikan_simpanan',
           amount: Math.round(totalAmount),
           reference_id: cycleId,
+          description: bulkDescription,
           created_at: createdAt,
         },
       ]);
+      if (fb1?.error && isPostgrestColumnError(fb1.error)) {
+        await cfTable.insert([
+          {
+            direction: 'out',
+            category: 'penarikan_simpanan',
+            amount: Math.round(totalAmount),
+            reference_id: cycleId,
+            created_at: createdAt,
+          },
+        ]);
+      }
     }
   } catch (err) {
     console.warn('Catatan: Gagal mencatat cash_flow agregat pencairan massal:', err);
@@ -593,11 +670,24 @@ async function consolidateBulkRpcCashFlow(params: {
             const updQ: any = cfTable.update({
               description: bulkDescription,
               amount: Math.round(totalAmount),
+              transaction_date: disbursementDate,
+              created_at: createdAt,
             });
             if (updQ && typeof updQ.eq === 'function') {
               const updRes: any = await updQ.eq('reference_id', cycleId);
               if (updRes?.error && isPostgrestColumnError(updRes.error)) {
-                await cfTable.update({ amount: Math.round(totalAmount) }).eq('reference_id', cycleId);
+                const fb1: any = await cfTable
+                  .update({
+                    description: bulkDescription,
+                    amount: Math.round(totalAmount),
+                    created_at: createdAt,
+                  })
+                  .eq('reference_id', cycleId);
+                if (fb1?.error && isPostgrestColumnError(fb1.error)) {
+                  await cfTable
+                    .update({ amount: Math.round(totalAmount), created_at: createdAt })
+                    .eq('reference_id', cycleId);
+                }
               }
             }
           }
@@ -684,6 +774,7 @@ async function consolidateBulkRpcCashFlow(params: {
       recipientCount,
       totalAmount,
       createdAt,
+      transactionDate: disbursementDate,
     });
   } catch (err) {
     console.warn('Catatan: Gagal mengonsolidasikan cash_flow pasca RPC:', err);
@@ -696,18 +787,21 @@ async function consolidateBulkRpcCashFlow(params: {
  */
 export async function approveAndExecuteDisbursement(
   cycleId: string,
-  approverId?: string
+  approverId?: string,
+  cutOffDate?: string
 ): Promise<ExecuteDisbursementResult> {
   if (!cycleId) {
     throw new Error('ID siklus pencairan wajib diisi.');
   }
 
-  // Ambil nama siklus terlebih dahulu agar tersedia untuk konsolidasi deskripsi cash_flow pasca RPC
+  // Ambil nama & tanggal cut-off siklus terlebih dahulu agar tersedia untuk RPC & sinkronisasi pasca RPC
   let resolvedCycleName: string | null = null;
+  let resolvedCycleCutOffDate: string | null = null;
+  let resolvedCycleDisbursementDate: string | null = null;
   try {
     const cycleTable: any = supabase?.from?.('lebaran_disbursement_cycles');
     if (cycleTable && typeof cycleTable.select === 'function') {
-      const selQ: any = cycleTable.select('id, cycle_name, cut_off_date');
+      const selQ: any = cycleTable.select('id, cycle_name, cut_off_date, disbursement_date');
       if (selQ && typeof selQ.eq === 'function') {
         const eqQ: any = selQ.eq('id', cycleId);
         const res =
@@ -720,11 +814,24 @@ export async function approveAndExecuteDisbursement(
         if (row?.cycle_name) {
           resolvedCycleName = String(row.cycle_name);
         }
+        if (row?.cut_off_date) {
+          resolvedCycleCutOffDate = String(row.cut_off_date);
+        }
+        if (row?.disbursement_date) {
+          resolvedCycleDisbursementDate = String(row.disbursement_date);
+        }
       }
     }
   } catch {
     // Non-blocking lookup
   }
+
+  const explicitOrCycleDate =
+    normalizeCutOffDateOnly(cutOffDate) ||
+    normalizeCutOffDateOnly(resolvedCycleCutOffDate) ||
+    normalizeCutOffDateOnly(resolvedCycleDisbursementDate);
+  const effectiveDateOnly = explicitOrCycleDate || new Date().toISOString().slice(0, 10);
+  const effectiveTimestamp = buildEffectiveDisbursementTimestamp(effectiveDateOnly);
 
   // Ambil simulasi nominatif terkini untuk data penerima
   let simulation: LebaranSimulationSummary | null = null;
@@ -734,37 +841,104 @@ export async function approveAndExecuteDisbursement(
     console.warn('Gagal menghitung simulasi penerima:', simErr);
   }
 
+  const executionStartedAtIso = new Date(Date.now() - 5000).toISOString();
+
   // 1. Coba panggil RPC atomik execute_bulk_lebaran_disbursement
   try {
-    const { data: rpcData, error: rpcError } = await supabase.rpc(
-      'execute_bulk_lebaran_disbursement',
-      {
+    let rpcResult: any = explicitOrCycleDate
+      ? await supabase.rpc('execute_bulk_lebaran_disbursement', {
+          p_cycle_id: cycleId,
+          p_approver_id: approverId || null,
+          p_cutoff_date: effectiveDateOnly,
+        })
+      : await supabase.rpc('execute_bulk_lebaran_disbursement', {
+          p_cycle_id: cycleId,
+          p_approver_id: approverId || null,
+        });
+
+    if (
+      explicitOrCycleDate &&
+      rpcResult?.error &&
+      (rpcResult.error.code === 'PGRST202' ||
+        rpcResult.error.code === '42883' ||
+        /p_cutoff_date|could not find the function|schema cache/i.test(
+          String(rpcResult.error.message || '')
+        ))
+    ) {
+      rpcResult = await supabase.rpc('execute_bulk_lebaran_disbursement', {
         p_cycle_id: cycleId,
-        p_approver_id: approverId || null
-      }
-    );
+        p_approver_id: approverId || null,
+      });
+    }
+
+    const { data: rpcData, error: rpcError } = rpcResult || {};
 
     if (!rpcError && rpcData?.success) {
       const nowIso = new Date().toISOString();
-      const today = nowIso.slice(0, 10);
       const finalMembers = Number(rpcData.total_members || simulation?.totalMembers || 0);
       const finalAmount = Number(rpcData.total_amount || simulation?.totalAmount || 0);
+      const finalCycleName = String(rpcData.cycle_name || resolvedCycleName || 'Simpanan Lebaran');
 
-      // Pastikan tanggal pencairan hari eksekusi, source_type, dan status tercatat pada siklus
+      // Pastikan tanggal pencairan memakai tanggal cut-off efektif, source_type, dan status tercatat pada siklus
       try {
-        await supabase
-          .from('lebaran_disbursement_cycles')
-          .update({
-            disbursement_date: today,
-            source_type: 'MASSAL',
-            status: 'COMPLETED',
-            total_members: finalMembers,
-            total_amount: finalAmount,
-            updated_at: nowIso
-          })
-          .eq('id', cycleId);
+        const cycTable: any = supabase?.from?.('lebaran_disbursement_cycles');
+        if (cycTable && typeof cycTable.update === 'function') {
+          const syncRes: any = await cycTable
+            .update({
+              disbursement_date: effectiveDateOnly,
+              cut_off_date: effectiveTimestamp,
+              approved_at: effectiveTimestamp,
+              created_at: effectiveTimestamp,
+              source_type: 'MASSAL',
+              status: 'COMPLETED',
+              total_members: finalMembers,
+              total_amount: finalAmount,
+              updated_at: nowIso,
+            })
+            .eq('id', cycleId);
+
+          if (syncRes?.error) {
+            await cycTable
+              .update({
+                cut_off_date: effectiveTimestamp,
+                approved_at: effectiveTimestamp,
+                created_at: effectiveTimestamp,
+                source_type: 'MASSAL',
+                status: 'COMPLETED',
+                total_members: finalMembers,
+                total_amount: finalAmount,
+                updated_at: nowIso,
+              })
+              .eq('id', cycleId);
+          }
+        }
       } catch (cycleSyncErr) {
         console.warn('Catatan: Gagal menyinkronkan metadata siklus setelah RPC:', cycleSyncErr);
+      }
+
+      // Defense-in-depth bila database masih menjalankan RPC lama 2-argumen yang memakai NOW()/CURRENT_DATE
+      if (explicitOrCycleDate) {
+        try {
+          const dtTable: any = supabase?.from?.('deposit_transactions');
+          if (dtTable && typeof dtTable.update === 'function') {
+            const updQ: any = dtTable.update({
+              transaction_date: effectiveDateOnly,
+              created_at: effectiveTimestamp,
+            });
+            if (
+              updQ &&
+              typeof updQ.eq === 'function' &&
+              typeof updQ.gte === 'function'
+            ) {
+              await updQ
+                .eq('transaction_type', 'withdrawal')
+                .eq('description', `Pencairan Massal Simpanan Lebaran - ${finalCycleName}`)
+                .gte('created_at', executionStartedAtIso);
+            }
+          }
+        } catch (txSyncErr) {
+          console.warn('Catatan: Gagal menyinkronkan tanggal mutasi penarikan pasca RPC:', txSyncErr);
+        }
       }
 
       // Pastikan penerima tercatat di lebaran_disbursement_items jika ada data nominatif
@@ -784,7 +958,7 @@ export async function approveAndExecuteDisbursement(
               member_name: m.nama || null,
               bank_account: m.bankAccount || null,
               amount_disbursed: m.saldoLebaran,
-              created_at: nowIso
+              created_at: effectiveTimestamp
             }));
             await supabase.from('lebaran_disbursement_items').insert(itemsPayload);
           }
@@ -795,11 +969,11 @@ export async function approveAndExecuteDisbursement(
 
       await consolidateBulkRpcCashFlow({
         cycleId,
-        cycleName: String(rpcData.cycle_name || resolvedCycleName || 'Simpanan Lebaran'),
+        cycleName: finalCycleName,
         recipientCount: finalMembers,
         totalAmount: finalAmount,
-        disbursementDate: today,
-        createdAt: nowIso,
+        disbursementDate: effectiveDateOnly,
+        createdAt: effectiveTimestamp,
       });
 
       return {
@@ -834,13 +1008,14 @@ export async function approveAndExecuteDisbursement(
   }
 
   const sim = simulation || await simulateLebaranDisbursement();
-  const disbursementTimestamp = new Date().toISOString();
-  const today = disbursementTimestamp.slice(0, 10);
-  const cutOffDateObj = cycle.cut_off_date ? new Date(cycle.cut_off_date) : new Date();
-  const yearStr = isNaN(cutOffDateObj.getTime())
-    ? new Date().getFullYear().toString()
-    : cutOffDateObj.getFullYear().toString();
-  const dateOnly = today;
+  const fallbackDateOnly =
+    normalizeCutOffDateOnly(cutOffDate) ||
+    normalizeCutOffDateOnly(cycle.cut_off_date) ||
+    normalizeCutOffDateOnly(cycle.disbursement_date) ||
+    new Date().toISOString().slice(0, 10);
+  const disbursementTimestamp = buildEffectiveDisbursementTimestamp(fallbackDateOnly);
+  const yearStr = fallbackDateOnly.slice(0, 4);
+  const dateOnly = fallbackDateOnly;
 
   const itemsPayload: any[] = [];
   let actualDisbursedCount = 0;
@@ -864,7 +1039,7 @@ export async function approveAndExecuteDisbursement(
         payment_method: 'transfer',
         notes: 'Pencairan Massal Simpanan Lebaran',
         created_by: approverId || null,
-        created_at: new Date().toISOString()
+        created_at: disbursementTimestamp
       }])
       .select()
       .single();
@@ -904,6 +1079,7 @@ export async function approveAndExecuteDisbursement(
       recipientCount: actualDisbursedCount,
       totalAmount: actualDisbursedTotal,
       createdAt: disbursementTimestamp,
+      transactionDate: dateOnly,
     });
   }
 
@@ -912,13 +1088,15 @@ export async function approveAndExecuteDisbursement(
     .from('lebaran_disbursement_cycles')
     .update({
       disbursement_date: dateOnly,
+      cut_off_date: disbursementTimestamp,
       source_type: 'MASSAL',
       status: 'COMPLETED',
       approved_by: approverId || null,
       approved_at: disbursementTimestamp,
+      created_at: disbursementTimestamp,
       total_members: sim.totalMembers,
       total_amount: sim.totalAmount,
-      updated_at: disbursementTimestamp
+      updated_at: new Date().toISOString()
     })
     .eq('id', cycleId);
 
@@ -980,16 +1158,21 @@ export async function getLebaranDisbursementCycles(): Promise<LebaranDisbursemen
       .select('*')
       .order('disbursement_date', { ascending: false });
 
+    let rows: LebaranDisbursementCycle[];
     if (error) {
       const { data: fbData, error: fbError } = await supabase
         .from('lebaran_disbursement_cycles')
         .select('*')
         .order('created_at', { ascending: false });
       if (fbError) throw fbError;
-      return (fbData || []) as LebaranDisbursementCycle[];
+      rows = (fbData || []) as LebaranDisbursementCycle[];
+    } else {
+      rows = (data || []) as LebaranDisbursementCycle[];
     }
 
-    return (data || []) as LebaranDisbursementCycle[];
+    return [...rows].sort((a, b) =>
+      (resolveCycleEffectiveDate(b) || '').localeCompare(resolveCycleEffectiveDate(a) || '')
+    );
   } catch (err: any) {
     console.error('Error fetching lebaran cycles:', err);
     throw new Error(`Gagal memuat daftar siklus pencairan simpanan lebaran: ${err.message}`);
@@ -1424,6 +1607,10 @@ async function executeReplayClientFallback(): Promise<ReplayExecutionResult> {
 
 export const bulkWithdrawalService = {
   isLebaranDepositType,
+  normalizeCutOffDateOnly,
+  buildEffectiveDisbursementTimestamp,
+  resolveCycleEffectiveDate,
+  formatCycleDisplayDate,
   simulateLebaranDisbursement,
   createDisbursementDraft,
   approveAndExecuteDisbursement,

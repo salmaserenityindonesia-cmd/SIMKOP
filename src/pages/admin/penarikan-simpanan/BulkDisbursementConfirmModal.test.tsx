@@ -43,6 +43,10 @@ describe('BulkDisbursementConfirmModal', () => {
 
     // Submit button text
     expect(html).toContain('Konfirmasi &amp; Eksekusi Sekarang');
+
+    // Cut-off date label and helper text
+    expect(html).toContain('Tanggal Pencairan / Cut-off');
+    expect(html).toContain('Tanggal ini akan dicatat sebagai tanggal resmi pencairan di Buku Simpanan, Arus Kas, dan batas awal siklus Lebaran berikutnya.');
   });
 
   it('renders error message when error prop is present', () => {

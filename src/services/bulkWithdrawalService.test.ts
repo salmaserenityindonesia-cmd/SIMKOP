@@ -7,6 +7,10 @@ import {
   getLebaranDisbursementCycles,
   getLastCompletedLebaranCycle,
   isLebaranDepositType,
+  normalizeCutOffDateOnly,
+  buildEffectiveDisbursementTimestamp,
+  resolveCycleEffectiveDate,
+  formatCycleDisplayDate,
   formatCompactK,
   buildDepositBreakdownSummary,
   bulkWithdrawalService
@@ -953,6 +957,295 @@ describe('bulkWithdrawalService', () => {
       expect(updatedCycle).not.toBeNull();
       expect(updatedCycle.total_members).toBe(2);
       expect(updatedCycle.total_amount).toBe(600000);
+    });
+  });
+
+  describe('Cut-Off Date Enforcement & Formatting', () => {
+    it('prioritizes cut_off_date over disbursement_date and formats Indonesian date without timezone shift', () => {
+      expect(normalizeCutOffDateOnly('2026-03-01T12:00:00+07:00')).toBe('2026-03-01');
+      expect(buildEffectiveDisbursementTimestamp('2026-03-01')).toBe('2026-03-01T12:00:00+07:00');
+      expect(
+        resolveCycleEffectiveDate({
+          cut_off_date: '2026-03-01T00:00:00+00:00',
+          disbursement_date: '2026-11-20',
+          created_at: '2026-11-20T09:34:54Z',
+        })
+      ).toBe('2026-03-01');
+      expect(
+        formatCycleDisplayDate({
+          cut_off_date: '2026-03-01T00:00:00+00:00',
+          disbursement_date: '2026-11-20',
+        })
+      ).toBe('1 Maret 2026');
+    });
+
+    it('stores cut_off_date as effective disbursement_date and 12:00+07 timestamp in createDisbursementDraft', async () => {
+      let capturedDraft: any = null;
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') {
+          return createMockChain([{ id: 'dt-lebaran', code: 'SL', name: 'Simpanan Lebaran' }]);
+        }
+        if (table === 'member_deposits') {
+          return createMockChain([{ id: 'md-01', member_id: 'm-1', deposit_type_id: 'dt-lebaran' }]);
+        }
+        if (table === 'anggota') {
+          return createMockChain([{ id: 'm-1', nrp: '123', nama: 'Wawan', status: 'aktif' }]);
+        }
+        if (table === 'deposit_transactions') {
+          return createMockChain([{ member_deposit_id: 'md-01', amount: 2400000, transaction_type: 'deposit' }]);
+        }
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              capturedDraft = rows[0];
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn(() =>
+                    Promise.resolve({
+                      data: { id: 'cycle-draft-cutoff', ...rows[0] },
+                      error: null,
+                    })
+                  ),
+                })),
+              };
+            }),
+          };
+        }
+        return createMockChain([]);
+      });
+
+      await createDisbursementDraft({
+        cycleName: 'Pencairan THR Idul Fitri 2026',
+        cutOffDate: '2026-03-01',
+      });
+
+      expect(capturedDraft).not.toBeNull();
+      expect(capturedDraft.disbursement_date).toBe('2026-03-01');
+      expect(capturedDraft.cut_off_date).toBe('2026-03-01T12:00:00+07:00');
+      expect(capturedDraft.created_at).toBe('2026-03-01T12:00:00+07:00');
+    });
+
+    it('passes p_cutoff_date to RPC and falls back cleanly on PGRST202 while enforcing 2026-03-01 across all tables', async () => {
+      const rpcCalls: Array<{ fn: string; params: any }> = [];
+      (supabase.rpc as any).mockImplementation((fn: string, params: any) => {
+        rpcCalls.push({ fn, params });
+        if (rpcCalls.length === 1) {
+          return Promise.resolve({
+            data: null,
+            error: { code: 'PGRST202', message: 'Could not find the function execute_bulk_lebaran_disbursement(p_approver_id, p_cutoff_date, p_cycle_id) in the schema cache' },
+          });
+        }
+        return Promise.resolve({
+          data: {
+            success: true,
+            cycle_id: 'cycle-0301',
+            cycle_name: 'Pencairan THR Idul Fitri 2026',
+            total_members: 1,
+            total_amount: 2400000,
+          },
+          error: null,
+        });
+      });
+
+      let updatedCycle: any = null;
+      let updatedDepositTxs: any = null;
+      let insertedItems: any[] = [];
+      let insertedCashFlow: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(() =>
+                  Promise.resolve({
+                    data: {
+                      id: 'cycle-0301',
+                      cycle_name: 'Pencairan THR Idul Fitri 2026',
+                      cut_off_date: '2026-03-01T12:00:00+07:00',
+                      disbursement_date: '2026-03-01',
+                    },
+                    error: null,
+                  })
+                ),
+              })),
+            })),
+            update: vi.fn((payload: any) => {
+              updatedCycle = payload;
+              return {
+                eq: vi.fn(() => Promise.resolve({ data: null, error: null })),
+              };
+            }),
+          };
+        }
+        if (table === 'deposit_types') {
+          return createMockChain([{ id: 'dt-lebaran', code: 'SL', name: 'Simpanan Lebaran' }]);
+        }
+        if (table === 'member_deposits') {
+          return createMockChain([{ id: 'md-01', member_id: 'm-1', deposit_type_id: 'dt-lebaran' }]);
+        }
+        if (table === 'anggota') {
+          return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+        }
+        if (table === 'deposit_transactions') {
+          const chain: any = {
+            select: vi.fn(() => chain),
+            in: vi.fn(() => Promise.resolve({ data: [{ member_deposit_id: 'md-01', amount: 2400000, transaction_type: 'deposit' }], error: null })),
+            eq: vi.fn(() => chain),
+            gte: vi.fn(() => Promise.resolve({ data: null, error: null })),
+            update: vi.fn((payload: any) => {
+              updatedDepositTxs = payload;
+              return chain;
+            }),
+            then: (onRes: any, onRej: any) => Promise.resolve({ data: [], error: null }).then(onRes, onRej),
+          };
+          return chain;
+        }
+        if (table === 'lebaran_disbursement_items') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
+              })),
+            })),
+            insert: vi.fn((rows: any[]) => {
+              insertedItems = rows;
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => Promise.resolve({ data: [], error: null })),
+            })),
+            insert: vi.fn((rows: any[]) => {
+              insertedCashFlow.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-0301', 'admin-1', '2026-03-01');
+
+      expect(res.executionMode).toBe('rpc');
+      expect(rpcCalls).toHaveLength(2);
+      expect(rpcCalls[0].params).toEqual({
+        p_cycle_id: 'cycle-0301',
+        p_approver_id: 'admin-1',
+        p_cutoff_date: '2026-03-01',
+      });
+      expect(rpcCalls[1].params).toEqual({
+        p_cycle_id: 'cycle-0301',
+        p_approver_id: 'admin-1',
+      });
+
+      expect(updatedCycle).toMatchObject({
+        disbursement_date: '2026-03-01',
+        cut_off_date: '2026-03-01T12:00:00+07:00',
+        approved_at: '2026-03-01T12:00:00+07:00',
+        created_at: '2026-03-01T12:00:00+07:00',
+        status: 'COMPLETED',
+      });
+      expect(updatedDepositTxs).toEqual({
+        transaction_date: '2026-03-01',
+        created_at: '2026-03-01T12:00:00+07:00',
+      });
+      expect(insertedItems).toHaveLength(1);
+      expect(insertedItems[0].created_at).toBe('2026-03-01T12:00:00+07:00');
+      expect(insertedCashFlow).toHaveLength(1);
+      expect(insertedCashFlow[0]).toMatchObject({
+        transaction_date: '2026-03-01',
+        created_at: '2026-03-01T12:00:00+07:00',
+        amount: 2400000,
+        reference_id: 'cycle-0301',
+      });
+    });
+
+    it('writes cut-off date timestamps in client_fallback mode across cycle, items, deposit_transactions, and cash_flow', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: null,
+        error: { message: 'RPC unavailable' },
+      });
+
+      const mockCycle = {
+        id: 'cycle-fb-0301',
+        cycle_name: 'Pencairan THR Idul Fitri 2026',
+        cut_off_date: '2026-03-01T00:00:00+00:00',
+        status: 'DRAFT',
+      };
+      let insertedTx: any = null;
+      let insertedItems: any[] = [];
+      let insertedCf: any[] = [];
+      let updatedCycle: any = null;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn(() => Promise.resolve({ data: mockCycle, error: null })),
+                maybeSingle: vi.fn(() => Promise.resolve({ data: mockCycle, error: null })),
+              })),
+            })),
+            update: vi.fn((payload: any) => {
+              updatedCycle = payload;
+              return { eq: vi.fn(() => Promise.resolve({ data: payload, error: null })) };
+            }),
+          };
+        }
+        if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
+        if (table === 'member_deposits') return createMockChain([{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-leb' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => Promise.resolve({ data: [{ member_deposit_id: 'md-1', amount: 2400000, transaction_type: 'deposit' }], error: null })),
+            })),
+            insert: vi.fn((rows: any[]) => {
+              insertedTx = rows[0];
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn(() => Promise.resolve({ data: { id: 'tx-1', ...rows[0] }, error: null })),
+                })),
+              };
+            }),
+          };
+        }
+        if (table === 'lebaran_disbursement_items') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              insertedItems = rows;
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              insertedCf.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-fb-0301', 'admin-1', '2026-03-01');
+      expect(res.executionMode).toBe('client_fallback');
+      expect(insertedTx.transaction_date).toBe('2026-03-01');
+      expect(insertedTx.created_at).toBe('2026-03-01T12:00:00+07:00');
+      expect(insertedItems[0].created_at).toBe('2026-03-01T12:00:00+07:00');
+      expect(insertedCf[0].transaction_date).toBe('2026-03-01');
+      expect(insertedCf[0].created_at).toBe('2026-03-01T12:00:00+07:00');
+      expect(updatedCycle).toMatchObject({
+        disbursement_date: '2026-03-01',
+        cut_off_date: '2026-03-01T12:00:00+07:00',
+        approved_at: '2026-03-01T12:00:00+07:00',
+        created_at: '2026-03-01T12:00:00+07:00',
+      });
     });
   });
 });

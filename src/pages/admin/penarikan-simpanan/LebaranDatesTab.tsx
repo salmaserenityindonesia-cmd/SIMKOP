@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { 
   bulkWithdrawalService,
+  formatCycleDisplayDate,
   LebaranDisbursementCycle
 } from '../../../services/bulkWithdrawalService';
 import CycleRecipientsModal from './CycleRecipientsModal';
@@ -133,12 +134,7 @@ export default function LebaranDatesTab({ onCyclesUpdated }: LebaranDatesTabProp
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {cyclesHistory.map((cycle, idx) => {
-                  const dateStr = cycle.disbursement_date || (cycle.cut_off_date ? cycle.cut_off_date.slice(0, 10) : cycle.created_at.slice(0, 10));
-                  const displayDate = dateStr ? new Date(dateStr).toLocaleDateString('id-ID', {
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric'
-                  }) : '-';
+                  const displayDate = formatCycleDisplayDate(cycle);
 
                   // Badge Sumber
                   const src = cycle.source_type || 'MASSAL';

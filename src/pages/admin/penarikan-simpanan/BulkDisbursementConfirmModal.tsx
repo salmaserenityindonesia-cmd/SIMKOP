@@ -25,15 +25,16 @@ export default function BulkDisbursementConfirmModal({
   defaultCutOffDate
 }: BulkDisbursementConfirmModalProps) {
   const currentYear = new Date().getFullYear();
+  const normalizedDefaultDate = defaultCutOffDate ? defaultCutOffDate.slice(0, 10) : '';
   const [cycleName, setCycleName] = useState(defaultCycleName || `Pencairan THR Idul Fitri ${currentYear}`);
-  const [cutOffDate, setCutOffDate] = useState(defaultCutOffDate || new Date().toISOString().slice(0, 10));
+  const [cutOffDate, setCutOffDate] = useState(normalizedDefaultDate || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
   const [verificationInput, setVerificationInput] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setCycleName(defaultCycleName || `Pencairan THR Idul Fitri ${currentYear}`);
-      setCutOffDate(defaultCutOffDate || new Date().toISOString().slice(0, 10));
+      setCutOffDate((defaultCutOffDate ? defaultCutOffDate.slice(0, 10) : '') || new Date().toISOString().slice(0, 10));
       setNotes('');
       setVerificationInput('');
     }
@@ -154,7 +155,7 @@ export default function BulkDisbursementConfirmModal({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label htmlFor="cutoff-date-input" className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Tanggal Cut-off <span className="text-red-500">*</span>
+                  Tanggal Pencairan / Cut-off <span className="text-red-500">*</span>
                 </label>
                 <input
                   id="cutoff-date-input"
@@ -165,6 +166,9 @@ export default function BulkDisbursementConfirmModal({
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-800 text-sm font-medium focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all disabled:bg-slate-100"
                   required
                 />
+                <p className="text-[11px] text-slate-500 mt-1.5 leading-relaxed">
+                  Tanggal ini akan dicatat sebagai tanggal resmi pencairan di Buku Simpanan, Arus Kas, dan batas awal siklus Lebaran berikutnya.
+                </p>
               </div>
 
               <div>

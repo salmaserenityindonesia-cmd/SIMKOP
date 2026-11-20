@@ -3,7 +3,9 @@ import { X, Users, Search, Download, Landmark, Coins } from 'lucide-react';
 import { 
   LebaranDisbursementCycle, 
   LebaranDisbursementItem, 
-  bulkWithdrawalService 
+  bulkWithdrawalService,
+  formatCycleDisplayDate,
+  resolveCycleEffectiveDate
 } from '../../../services/bulkWithdrawalService';
 
 interface CycleRecipientsModalProps {
@@ -76,7 +78,7 @@ export default function CycleRecipientsModal({
 
   const handleExportCSV = () => {
     if (filteredRecipients.length === 0) return;
-    const cycleDate = cycle?.disbursement_date || (cycle?.cut_off_date ? cycle.cut_off_date.slice(0, 10) : 'siklus');
+    const cycleDate = resolveCycleEffectiveDate(cycle) || 'siklus';
     const headers = ['No', 'NRP', 'Nama Anggota', 'Nomor Rekening', 'Nominal Dicairkan (Rp)'];
     const rows = filteredRecipients.map((r, idx) => [
       idx + 1,
@@ -99,11 +101,7 @@ export default function CycleRecipientsModal({
 
   if (!isOpen || !cycle) return null;
 
-  const displayDate = cycle.disbursement_date 
-    ? new Date(cycle.disbursement_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
-    : cycle.cut_off_date 
-      ? new Date(cycle.cut_off_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
-      : '-';
+  const displayDate = formatCycleDisplayDate(cycle);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">

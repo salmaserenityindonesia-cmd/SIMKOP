@@ -18,6 +18,8 @@ import { supabase } from '../../../lib/supabaseClient';
 import { exportToExcel } from '../../../lib/exportUtils';
 import { 
   bulkWithdrawalService,
+  formatCycleDisplayDate,
+  resolveCycleEffectiveDate,
   LebaranSimulationSummary,
   LebaranSimulationMember,
   LebaranDisbursementCycle
@@ -171,7 +173,11 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
         cycleId = newCycle.id;
       }
 
-      const result = await bulkWithdrawalService.approveAndExecuteDisbursement(cycleId, currentUserId);
+      const result = await bulkWithdrawalService.approveAndExecuteDisbursement(
+        cycleId,
+        currentUserId || undefined,
+        payload.cutOffDate
+      );
 
       setSuccessMessage(
         `Sukses! Siklus "${payload.cycleName}" berhasil dieksekusi (${result.executionMode === 'rpc' ? 'Engine Database Atomik' : 'Proses Terstruktur'}). Total ${result.totalMembers} anggota telah dicairkan senilai Rp ${result.totalAmount.toLocaleString('id-ID')}.`
@@ -212,7 +218,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
             <p className="font-semibold text-base md:text-lg mt-1 text-white">
               {lastCycle ? (
                 <>
-                  Pencairan Terakhir: <span className="underline decoration-emerald-400 decoration-2">{lastCycle.cycle_name}</span> ({new Date(lastCycle.disbursement_date || lastCycle.cut_off_date || lastCycle.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })})
+                  Pencairan Terakhir: <span className="underline decoration-emerald-400 decoration-2">{lastCycle.cycle_name}</span> ({formatCycleDisplayDate(lastCycle)})
                 </>
               ) : (
                 'Belum ada riwayat siklus pencairan lebaran yang tercatat'
@@ -562,7 +568,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
         isSubmitting={isExecuting}
         error={executionError}
         defaultCycleName={targetCycleForExecution?.cycle_name}
-        defaultCutOffDate={targetCycleForExecution?.cut_off_date}
+        defaultCutOffDate={resolveCycleEffectiveDate(targetCycleForExecution) || undefined}
       />
     </div>
   );
