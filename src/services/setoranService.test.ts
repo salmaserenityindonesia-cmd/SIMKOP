@@ -339,14 +339,6 @@ vi.mock('./savingsRateService', async () => {
   };
 });
 
-vi.mock('./savingsMatrixService', async () => {
-  const actual = await vi.importActual<typeof import('./savingsMatrixService')>('./savingsMatrixService');
-  return {
-    ...actual,
-    getInitialSavingsCutOffDate: vi.fn(async () => '2026-10-01'),
-  };
-});
-
 vi.mock('./loanMatrixService', async () => {
   const actual = await vi.importActual<typeof import('./loanMatrixService')>('./loanMatrixService');
   return {
@@ -682,5 +674,138 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('resolves 2026-01-01 fiscal cut-off from system_settings without clamping to 2026-03-01 and surfaces Jan & Feb 2026 arrears', async () => {
+    const wajibPaidJanNov = Array.from({ length: 11 }, (_, idx) => ({
+      id: `tx-wajib-${idx + 1}`,
+      member_deposit_id: 'md-wajib',
+      transaction_type: 'deposit',
+      amount: 200000,
+      for_month: idx + 1,
+      for_year: 2026,
+      description: `Setoran Simpanan Wajib (${idx + 1}/2026)`,
+    }));
+    const belanjaPaidMarNov = Array.from({ length: 9 }, (_, idx) => ({
+      id: `tx-belanja-${idx + 3}`,
+      member_deposit_id: 'md-belanja',
+      transaction_type: 'deposit',
+      amount: 50000,
+      for_month: idx + 3,
+      for_year: 2026,
+      description: `Setoran Simpanan Belanja (${idx + 3}/2026)`,
+    }));
+    const lebaranPaidMarNov = Array.from({ length: 9 }, (_, idx) => ({
+      id: `tx-lebaran-${idx + 3}`,
+      member_deposit_id: 'md-lebaran',
+      transaction_type: 'deposit',
+      amount: 200000,
+      for_month: idx + 3,
+      for_year: 2026,
+      description: `Setoran Simpanan Lebaran (${idx + 3}/2026)`,
+    }));
+
+    resetTables({
+      system_settings: [{ key: 'initial_savings_effective_date', value: '2026-01-01' }],
+      loans: [],
+      loan_schedules: [],
+      savings_rate_tiers: [
+        {
+          id: 'tier-wajib',
+          deposit_type_code: 'WAJIB',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000,
+        },
+        {
+          id: 'tier-belanja',
+          deposit_type_code: 'BELANJA',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 50000,
+        },
+        {
+          id: 'tier-lebaran',
+          deposit_type_code: 'LEBARAN',
+          start_year: 2026,
+          start_month: 1,
+          end_year: null,
+          end_month: null,
+          monthly_rate: 200000,
+        },
+      ],
+      deposit_transactions: [
+        {
+          id: 'tx-pokok-full',
+          member_deposit_id: 'md-pokok',
+          transaction_type: 'deposit',
+          amount: 500000,
+          for_month: null,
+          for_year: null,
+          description: 'Saldo Awal Simpanan (Per 1 Jan 2026)',
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+        ...wajibPaidJanNov,
+        ...belanjaPaidMarNov,
+        ...lebaranPaidMarNov,
+      ],
+    });
+
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+
+    expect(summary.savingsCutoffDate).toBe('2026-01-01');
+
+    const belanja = summary.items.find((i) => i.code === 'BELANJA');
+    expect(belanja).toBeDefined();
+    expect(belanja!.totalDue).toBe(100000);
+    expect(belanja!.arrearsAmount).toBe(100000);
+    expect(belanja!.unpaidMonths.map((m) => m.label)).toEqual(['Jan 2026', 'Feb 2026']);
+
+    const lebaran = summary.items.find((i) => i.code === 'LEBARAN');
+    expect(lebaran).toBeDefined();
+    expect(lebaran!.totalDue).toBe(400000);
+    expect(lebaran!.arrearsAmount).toBe(400000);
+    expect(lebaran!.unpaidMonths.map((m) => m.label)).toEqual(['Jan 2026', 'Feb 2026']);
+
+    expect(summary.totalTunggakan).toBe(500000);
+  });
+
+  it('resolves 2026-01-01 cut-off from Saldo Awal Cut-Off transaction created_at when system_settings is empty', async () => {
+    resetTables({
+      system_settings: [],
+      loans: [],
+      loan_schedules: [],
+      deposit_transactions: [
+        {
+          id: 'tx-pokok-cutoff',
+          member_deposit_id: 'md-pokok',
+          transaction_type: 'deposit',
+          amount: 500000,
+          for_month: null,
+          for_year: null,
+          description: 'Saldo Awal Cut-Off',
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+    expect(summary.savingsCutoffDate).toBe('2026-01-01');
+  });
+
+  it('falls back to start of active fiscal year (2026-01-01) when system_settings and opening-balance transactions are absent', async () => {
+    resetTables({
+      system_settings: [],
+      loans: [],
+      loan_schedules: [],
+      deposit_transactions: [],
+    });
+
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+    expect(summary.savingsCutoffDate).toBe('2026-01-01');
   });
 });

@@ -415,7 +415,7 @@ export function parseCutoffDateInfo(dateStr?: string | null): CutoffDateInfo | n
   };
 }
 
-async function resolveCutoffDateInfo(transactions?: any[] | null): Promise<CutoffDateInfo | null> {
+export async function resolveCutoffDateInfo(transactions?: any[] | null): Promise<CutoffDateInfo | null> {
   let rawCutoffDateStr: string | null = null;
   try {
     const settingsQuery: any = supabase.from('system_settings').select('key, value');

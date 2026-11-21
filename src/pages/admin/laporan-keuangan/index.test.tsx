@@ -12,6 +12,8 @@ import LaporanKeuangan, {
   buildCashFlowCategoryOptions,
   filterCashFlowTransactions,
   sortCashFlowTransactionsByDate,
+  extractPeriodSortKey,
+  formatTimeHhMmSs,
   buildCashFlowExportSheetRows,
   getNormalizedCategoryLabel,
   buildStartDateBoundaryIso,
@@ -4115,5 +4117,194 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(newestRowSegment).toContain('Rp 21.240.000');
     const oldestRowSegment = descHtml.slice(idxOldest);
     expect(oldestRowSegment).toContain('Rp 21.640.000');
+  });
+
+  it('extractPeriodSortKey parses Indonesian and English bracketed periods and returns 0 when absent', () => {
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Jan 2026] — 00010001 - Budi')).toBe(202601);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Mei 2026] — 00010001 - Budi')).toBe(202605);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Ags 2026] — 00010001 - Budi')).toBe(202608);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Okt 2026] — 00010001 - Budi')).toBe(202610);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Des 2026] — 00010001 - Budi')).toBe(202612);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [May 2026] — 00010001 - Budi')).toBe(202605);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Aug 2026] — 00010001 - Budi')).toBe(202608);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Oct 2026] — 00010001 - Budi')).toBe(202610);
+    expect(extractPeriodSortKey('Setoran Simpanan Wajib [Dec 2026] — 00010001 - Budi')).toBe(202612);
+    expect(extractPeriodSortKey('Penjualan Tunai INV-20261122-001')).toBe(0);
+    expect(extractPeriodSortKey(undefined)).toBe(0);
+  });
+
+  it('sortCashFlowTransactionsByDate orders same-timestamp batch deposits Jan->Nov (ASC) and Nov->Jan (DESC), plus member NRP and deposit type ties', () => {
+    const sameTs = '2026-11-22T02:00:00.000Z';
+    const shuffledMonths: CashFlowTransaction[] = [
+      {
+        id: 'uuid-sep',
+        tanggal: '22/11/2026',
+        referensi: 'CF-SEP',
+        deskripsi: 'Setoran Simpanan Wajib [Sep 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-feb',
+        tanggal: '22/11/2026',
+        referensi: 'CF-FEB',
+        deskripsi: 'Setoran Simpanan Wajib [Feb 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-nov',
+        tanggal: '22/11/2026',
+        referensi: 'CF-NOV',
+        deskripsi: 'Setoran Simpanan Wajib [Nov 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-jan-m2',
+        tanggal: '22/11/2026',
+        referensi: 'CF-JAN-M2',
+        deskripsi: 'Setoran Simpanan Pokok [Jan 2026] — 00010002 - Ani',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 100000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-jan-l',
+        tanggal: '22/11/2026',
+        referensi: 'CF-JAN-L',
+        deskripsi: 'Setoran Simpanan Lebaran [Jan 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-jan-w',
+        tanggal: '22/11/2026',
+        referensi: 'CF-JAN-W',
+        deskripsi: 'Setoran Simpanan Wajib [Jan 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-jan-b',
+        tanggal: '22/11/2026',
+        referensi: 'CF-JAN-B',
+        deskripsi: 'Setoran Simpanan Belanja [Jan 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 50000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+      {
+        id: 'uuid-jan-p',
+        tanggal: '22/11/2026',
+        referensi: 'CF-JAN-P',
+        deskripsi: 'Setoran Simpanan Pokok [Jan 2026] — 00010001 - Budi',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 100000,
+        kas_keluar: 0,
+        saldo_berjalan: 0,
+        created_at: sameTs,
+      },
+    ];
+
+    const ascIds = sortCashFlowTransactionsByDate(shuffledMonths, 'asc').map((r) => r.id);
+    expect(ascIds).toEqual([
+      'uuid-jan-p',
+      'uuid-jan-w',
+      'uuid-jan-b',
+      'uuid-jan-l',
+      'uuid-jan-m2',
+      'uuid-feb',
+      'uuid-sep',
+      'uuid-nov',
+    ]);
+
+    const descIds = sortCashFlowTransactionsByDate(shuffledMonths, 'desc').map((r) => r.id);
+    expect(descIds).toEqual([
+      'uuid-nov',
+      'uuid-sep',
+      'uuid-feb',
+      'uuid-jan-m2',
+      'uuid-jan-l',
+      'uuid-jan-b',
+      'uuid-jan-w',
+      'uuid-jan-p',
+    ]);
+  });
+
+  it('UI SSR (TANGGAL column): displays HH:mm:ss sub-text on transaction rows and omits it on SALDO-AWAL row', () => {
+    const txCreatedAt = '2026-11-22T02:15:42.000Z';
+    const expectedTime = formatTimeHhMmSs(txCreatedAt);
+    expect(expectedTime).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-30"
+          initialCashFlowData={{
+            openingBalance: 1000000,
+            inflowTotal: 200000,
+            outflowTotal: 0,
+            netCashflow: 200000,
+            closingBalance: 1200000,
+            transactions: [
+              {
+                id: 'tx-time-1',
+                tanggal: '22/11/2026',
+                referensi: 'CF-TIME1',
+                deskripsi: 'Setoran Simpanan Wajib [Nov 2026] — 00010001 - Budi',
+                kategori: 'Setoran Simpanan',
+                unit_usaha: 'Umum',
+                kas_masuk: 200000,
+                kas_keluar: 0,
+                saldo_berjalan: 1200000,
+                created_at: txCreatedAt,
+              },
+            ],
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    const openingIdx = html.indexOf('data-testid="cashflow-opening-balance-row"');
+    const openingRowEndIdx = html.indexOf('</tr>', openingIdx);
+    expect(openingIdx).toBeGreaterThan(-1);
+    expect(openingRowEndIdx).toBeGreaterThan(openingIdx);
+
+    const openingRowSlice = html.slice(openingIdx, openingRowEndIdx);
+    expect(openingRowSlice).not.toContain('data-testid="cashflow-row-time"');
+
+    const txRowSlice = html.slice(openingRowEndIdx);
+    expect(txRowSlice).toContain('data-testid="cashflow-row-time"');
+    expect(txRowSlice).toContain(expectedTime);
   });
 });

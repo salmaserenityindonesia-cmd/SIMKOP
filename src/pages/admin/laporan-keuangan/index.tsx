@@ -280,6 +280,75 @@ export function filterCashFlowTransactions(
   });
 }
 
+export const MONTH_INDEX_MAP: Record<string, number> = {
+  jan: 1,
+  januari: 1,
+  feb: 2,
+  februari: 2,
+  mar: 3,
+  maret: 3,
+  apr: 4,
+  april: 4,
+  mei: 5,
+  may: 5,
+  jun: 6,
+  juni: 6,
+  jul: 7,
+  juli: 7,
+  ags: 8,
+  agu: 8,
+  agustus: 8,
+  aug: 8,
+  sep: 9,
+  september: 9,
+  okt: 10,
+  oktober: 10,
+  oct: 10,
+  nov: 11,
+  november: 11,
+  des: 12,
+  desember: 12,
+  dec: 12,
+};
+
+export function extractPeriodSortKey(desc?: string): number {
+  if (!desc) return 0;
+  const match = String(desc).match(/\[([A-Za-z]+)\s+(\d{4})\]/);
+  if (!match) return 0;
+  const monthNum = MONTH_INDEX_MAP[match[1].toLowerCase()] || 0;
+  const yearNum = Number(match[2]) || 0;
+  if (monthNum <= 0 || yearNum <= 0) return 0;
+  return yearNum * 100 + monthNum;
+}
+
+export function extractMemberSortKey(desc?: string): string {
+  if (!desc) return '';
+  const dashIdx = desc.indexOf('—');
+  if (dashIdx === -1) return '';
+  return desc
+    .slice(dashIdx + 1)
+    .replace(/\s*\((?:Ref:|Rp\s)[^)]*\)\s*$/i, '')
+    .trim();
+}
+
+export function extractDepositTypeSortOrder(desc?: string): number {
+  if (!desc) return 0;
+  const lower = desc.toLowerCase();
+  if (lower.includes('simpanan pokok')) return 1;
+  if (lower.includes('simpanan wajib')) return 2;
+  if (lower.includes('simpanan belanja')) return 3;
+  if (lower.includes('simpanan lebaran')) return 4;
+  return 0;
+}
+
+export function formatTimeHhMmSs(isoOrDateStr?: string): string {
+  if (!isoOrDateStr) return '';
+  const d = new Date(isoOrDateStr);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function parseCashFlowTransactionTime(tx: CashFlowTransaction): number {
   if (tx.created_at) {
     const ms = new Date(tx.created_at).getTime();
@@ -295,20 +364,56 @@ function parseCashFlowTransactionTime(tx: CashFlowTransaction): number {
   return Number.isNaN(fallbackMs) ? 0 : fallbackMs;
 }
 
+export function compareCashFlowChronological(
+  a: CashFlowTransaction,
+  b: CashFlowTransaction
+): number {
+  const timeA = parseCashFlowTransactionTime(a);
+  const timeB = parseCashFlowTransactionTime(b);
+  if (timeA !== timeB) {
+    return timeA - timeB;
+  }
+
+  const periodA = extractPeriodSortKey(a.deskripsi);
+  const periodB = extractPeriodSortKey(b.deskripsi);
+  if (periodA !== periodB) {
+    return periodA - periodB;
+  }
+
+  const memberA = extractMemberSortKey(a.deskripsi);
+  const memberB = extractMemberSortKey(b.deskripsi);
+  if (memberA !== memberB) {
+    return memberA.localeCompare(memberB, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+  }
+
+  const typeA = extractDepositTypeSortOrder(a.deskripsi);
+  const typeB = extractDepositTypeSortOrder(b.deskripsi);
+  if (typeA !== typeB) {
+    return typeA - typeB;
+  }
+
+  if (periodA > 0 || periodB > 0) {
+    const descCmp = (a.deskripsi || '').localeCompare(b.deskripsi || '');
+    if (descCmp !== 0) {
+      return descCmp;
+    }
+  }
+
+  return String(a.id).localeCompare(String(b.id));
+}
+
 export function sortCashFlowTransactionsByDate(
   transactions: CashFlowTransaction[],
   sortOrder: 'asc' | 'desc'
 ): CashFlowTransaction[] {
-  return [...transactions].sort((a, b) => {
-    const timeA = parseCashFlowTransactionTime(a);
-    const timeB = parseCashFlowTransactionTime(b);
-    if (timeA !== timeB) {
-      return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
-    }
-    return sortOrder === 'asc'
-      ? String(a.id).localeCompare(String(b.id))
-      : String(b.id).localeCompare(String(a.id));
-  });
+  return [...transactions].sort((a, b) =>
+    sortOrder === 'asc'
+      ? compareCashFlowChronological(a, b)
+      : -compareCashFlowChronological(a, b)
+  );
 }
 
 export function buildCashFlowExportSheetRows(params: {
@@ -710,16 +815,12 @@ export async function getCashFlowReport(
     () => enrichedPos
   );
   const dedupedEnrichedRows = deduplicateClearanceRowsInMemory(enrichedRows);
-  const finalTransactions =
-    dedupedEnrichedRows.length < enrichedRows.length
-      ? (() => {
-          let running = openingBalance;
-          return dedupedEnrichedRows.map((tx) => {
-            running += tx.kas_masuk - tx.kas_keluar;
-            return { ...tx, saldo_berjalan: running };
-          });
-        })()
-      : dedupedEnrichedRows;
+  const sortedEnrichedRows = [...dedupedEnrichedRows].sort(compareCashFlowChronological);
+  let running = openingBalance;
+  const finalTransactions = sortedEnrichedRows.map((tx) => {
+    running += tx.kas_masuk - tx.kas_keluar;
+    return { ...tx, saldo_berjalan: running };
+  });
 
   const inflowTotal = finalTransactions.reduce((s, r) => s + r.kas_masuk, 0);
   const outflowTotal = finalTransactions.reduce((s, r) => s + r.kas_keluar, 0);
@@ -1577,10 +1678,12 @@ function LaporanKeuanganContent({
   const cashFlowTransactions = hadInMemoryClearanceDupes
     ? (() => {
         let running = openingCashBalance;
-        return dedupedRawTransactions.map((tx) => {
-          running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
-          return { ...tx, saldo_berjalan: running };
-        });
+        return [...dedupedRawTransactions]
+          .sort(compareCashFlowChronological)
+          .map((tx) => {
+            running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
+            return { ...tx, saldo_berjalan: running };
+          });
       })()
     : rawCashFlowTransactions;
   const availableCategoryOptions = useMemo(
@@ -2546,7 +2649,17 @@ function LaporanKeuanganContent({
                                 : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
                               }`}
                           >
-                            <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">{t.tanggal}</td>
+                            <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap align-top">
+                              <div>{t.tanggal}</div>
+                              {formatTimeHhMmSs(t.created_at) && (
+                                <div
+                                  data-testid="cashflow-row-time"
+                                  className="text-[11px] font-mono text-slate-400 leading-tight mt-0.5"
+                                >
+                                  {formatTimeHhMmSs(t.created_at)}
+                                </div>
+                              )}
+                            </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <button
                                 type="button"

@@ -964,6 +964,189 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       );
     });
 
+    it('handleGlobalCheckAllUntilCurrentMonth sorts batch items (memberNrp ASC -> depositTypeOrder -> month ASC) with sequential +10ms created_at timestamps', async () => {
+      const insertedDepositPayloads: any[] = [];
+      const insertedCashFlowPayloads: any[] = [];
+
+      const fromMock = vi.mocked(supabase.from);
+      fromMock.mockImplementation((table: string): any => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 200000 },
+                { id: 'dt-b', code: 'BELANJA', name: 'Simpanan Belanja', default_amount: 50000 },
+                { id: 'dt-l', code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 200000 },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-1-w', member_id: 'm-1', deposit_type_id: 'dt-w' },
+                  { id: 'md-1-b', member_id: 'm-1', deposit_type_id: 'dt-b' },
+                  { id: 'md-1-l', member_id: 'm-1', deposit_type_id: 'dt-l' },
+                  { id: 'md-2-w', member_id: 'm-2', deposit_type_id: 'dt-w' },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  in: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedDepositPayloads.push(...payload);
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: payload.map((row, idx) => ({
+                    id: `tx-seq-${idx + 1}`,
+                    member_deposit_id: row.member_deposit_id,
+                    amount: row.amount,
+                    for_month: row.for_month,
+                    for_year: row.for_year,
+                    reference_no: null,
+                    created_at: row.created_at,
+                  })),
+                  error: null,
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedCashFlowPayloads.push(...payload);
+              return Promise.resolve({ data: payload, error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      // Provide deliberately unsorted items across members, types, and months
+      const plan = {
+        items: [
+          {
+            memberId: 'm-2',
+            memberNrp: '00020002',
+            memberName: 'Zaki',
+            depositTypeCode: 'WAJIB' as const,
+            month: 1,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi',
+            depositTypeCode: 'LEBARAN' as const,
+            month: 2,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi',
+            depositTypeCode: 'WAJIB' as const,
+            month: 3,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi',
+            depositTypeCode: 'WAJIB' as const,
+            month: 1,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi',
+            depositTypeCode: 'BELANJA' as const,
+            month: 1,
+            year: 2026,
+            amount: 50000,
+            targetAmount: 50000,
+          },
+        ],
+        affectedMemberCount: 2,
+        totalItems: 5,
+        totalAmount: 850000,
+      };
+
+      try {
+        await handleGlobalCheckAllUntilCurrentMonth({
+          plan,
+          selectedYear: 2026,
+          targetMonths: [1, 2, 3],
+          rangeLabel: 'Jan-26 s/d Mar-26',
+          setIsBulkChecking: vi.fn(),
+          setBulkCheckProgress: vi.fn(),
+          setBulkCheckSummary: vi.fn(),
+        });
+      } finally {
+        fromMock.mockReset();
+        fromMock.mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                { amount: 100000, transaction_type: 'deposit' },
+                { amount: 20000, transaction_type: 'withdrawal' },
+              ],
+              error: null,
+            }),
+          }),
+        } as any);
+      }
+
+      // Expected order:
+      // 1. m-1 (00010001) WAJIB Jan
+      // 2. m-1 (00010001) WAJIB Mar
+      // 3. m-1 (00010001) BELANJA Jan
+      // 4. m-1 (00010001) LEBARAN Feb
+      // 5. m-2 (00020002) WAJIB Jan
+      expect(insertedDepositPayloads.map((p) => `${p.member_deposit_id}:m${p.for_month}`)).toEqual([
+        'md-1-w:m1',
+        'md-1-w:m3',
+        'md-1-b:m1',
+        'md-1-l:m2',
+        'md-2-w:m1',
+      ]);
+
+      expect(insertedCashFlowPayloads).toHaveLength(5);
+      for (let i = 0; i < 5; i += 1) {
+        expect(insertedCashFlowPayloads[i].created_at).toBe(insertedDepositPayloads[i].created_at);
+        if (i > 0) {
+          const prevMs = new Date(insertedCashFlowPayloads[i - 1].created_at).getTime();
+          const currMs = new Date(insertedCashFlowPayloads[i].created_at).getTime();
+          expect(currMs - prevMs).toBe(10);
+        }
+      }
+    });
+
     it('exports fetchComplianceData as alias to fetchComplianceMatrixData', () => {
       expect(fetchComplianceData).toBe(fetchComplianceMatrixData);
     });

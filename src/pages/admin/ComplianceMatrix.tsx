@@ -705,6 +705,29 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
     }
 
     // 5. Batch insert ke public.deposit_transactions & public.cash_flow
+    const DEPOSIT_TYPE_SORT_ORDER: Record<string, number> = {
+      POKOK: 1,
+      WAJIB: 2,
+      BELANJA: 3,
+      LEBARAN: 4,
+    };
+    rowsToInsert.sort((a, b) => {
+      const nrpCmp = String(a.memberNrp || '').localeCompare(String(b.memberNrp || ''), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+      if (nrpCmp !== 0) return nrpCmp;
+
+      const typeCmp =
+        (DEPOSIT_TYPE_SORT_ORDER[a.depositTypeCode] ?? 99) -
+        (DEPOSIT_TYPE_SORT_ORDER[b.depositTypeCode] ?? 99);
+      if (typeCmp !== 0) return typeCmp;
+
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
+
+    const baseTimestamp = Date.now();
     const totalMembersToProcess = new Set(rowsToInsert.map((r) => r.memberId)).size;
     const processedMemberIds = new Set<string>();
     const succeededMemberIds = new Set<string>();
@@ -719,9 +742,13 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
 
     for (let i = 0; i < rowsToInsert.length; i += INSERT_CHUNK) {
       const chunk = rowsToInsert.slice(i, i + INSERT_CHUNK);
-      const chunkMetaByKey = new Map<string, ResolvedInsertItem>();
-      const txPayload = chunk.map((r) => {
-        chunkMetaByKey.set(`${r.memberDepositId}|${r.year}|${r.month}`, r);
+      const chunkMetaByKey = new Map<string, ResolvedInsertItem & { createdAtIso: string }>();
+      const txPayload = chunk.map((r, idx) => {
+        const itemCreatedAtIso = new Date(baseTimestamp + (i + idx) * 10).toISOString();
+        chunkMetaByKey.set(`${r.memberDepositId}|${r.year}|${r.month}`, {
+          ...r,
+          createdAtIso: itemCreatedAtIso,
+        });
         return {
           member_deposit_id: r.memberDepositId,
           transaction_type: 'deposit',
@@ -729,6 +756,7 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
           for_month: r.month,
           for_year: r.year,
           description: `Centang Setoran Rutin Matriks (${r.depositTypeCode})`,
+          created_at: itemCreatedAtIso,
         };
       });
 
@@ -742,7 +770,6 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
       }
 
       const insertedList = Array.isArray(insertedTxs) ? insertedTxs : [];
-      const createdAtIso = new Date().toISOString();
       const cashFlowPayload: Array<{
         direction: 'in';
         category: string;
@@ -752,7 +779,8 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
         created_at: string;
       }> = [];
 
-      for (const txRow of insertedList) {
+      for (let cfIdx = 0; cfIdx < insertedList.length; cfIdx += 1) {
+        const txRow = insertedList[cfIdx];
         const roundedAmt = Math.round(Number(txRow?.amount || 0));
         if (!txRow?.id || roundedAmt <= 0) continue;
         const fy = Number(txRow.for_year || 0);
@@ -774,7 +802,10 @@ export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
           amount: roundedAmt,
           reference_id: String(txRow.id),
           description,
-          created_at: createdAtIso,
+          created_at:
+            meta?.createdAtIso ||
+            txRow.created_at ||
+            new Date(baseTimestamp + (i + cfIdx) * 10).toISOString(),
         });
 
         insertedCount += 1;

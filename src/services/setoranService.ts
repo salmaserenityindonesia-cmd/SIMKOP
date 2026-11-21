@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import { fetchAllPaged, matchDepositType, parseCutoffDateInfo } from './complianceService';
+import { fetchAllPaged, matchDepositType, parseCutoffDateInfo, resolveCutoffDateInfo } from './complianceService';
 import { ensureMandatoryDepositsAndEnroll } from './depositManagementService';
 import { getInitialLoansCutOffDate, parseLoanCutoffDateInfo } from './loanMatrixService';
 import {
@@ -12,7 +12,6 @@ import {
   SavingsRateTier,
   MemberLebaranRate
 } from './savingsRateService';
-import { getInitialSavingsCutOffDate } from './savingsMatrixService';
 import { getKoperasiProfile, KoperasiProfile } from './settingsService';
 import {
   buildMemberDepositTypeSummary,
@@ -262,6 +261,29 @@ function resolveSchedulePeriod(
 }
 
 /**
+ * Resolves the effective savings cut-off date for /admin/setoran in full parity
+ * with /admin/compliance-matrix (without clamping to 2026-03-01).
+ * Priority:
+ * 1. `system_settings` (`key = 'initial_savings_effective_date'`)
+ * 2. Opening-balance transaction (`Saldo Awal Simpanan` / `Saldo Awal Cut-Off`) date/created_at
+ * 3. Fallback to start of active fiscal year (`${selectedYear}-01-01`)
+ */
+export async function resolveSetoranSavingsCutoffDate(
+  memberTxs: any[],
+  selectedYear: number
+): Promise<string> {
+  const cutoffInfo = await resolveCutoffDateInfo(memberTxs).catch(() => null);
+  if (cutoffInfo?.dateStr) {
+    return cutoffInfo.dateStr;
+  }
+  const fallbackYear =
+    Number.isInteger(selectedYear) && selectedYear > 1900
+      ? selectedYear
+      : new Date().getFullYear();
+  return `${fallbackYear}-01-01`;
+}
+
+/**
  * Calculates cumulative unpaid & partial obligations (savings + Pokok + active loans)
  * from the post-cut-off effective period up to `(selectedYear, selectedMonth)`.
  */
@@ -391,7 +413,7 @@ export async function calculateMemberCumulativeBills(
   }
 
   // 4. Resolve savings cut-off date & scan start period
-  const savingsCutoffDate = await getInitialSavingsCutOffDate(allMemberTxs);
+  const savingsCutoffDate = await resolveSetoranSavingsCutoffDate(allMemberTxs, selectedYear);
   const savingsCutoffInfo = parseCutoffDateInfo(savingsCutoffDate);
 
   let savingsStartPeriodIndex: number;
