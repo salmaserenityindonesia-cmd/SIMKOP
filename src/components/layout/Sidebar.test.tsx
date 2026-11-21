@@ -58,6 +58,12 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     const simpananLabels = simpananGroup!.items.map((i) => i.label);
     expect(simpananLabels).toContain('Pencairan Simpanan');
     expect(simpananLabels).toContain('Laporan Pencairan');
+    expect(simpananLabels).toContain('Buku Besar Simp. Belanja');
+    expect(simpananLabels).not.toContain('Buku Besar Belanja');
+    const bukuBesarSimpBelanjaItem = simpananGroup!.items.find(
+      (i) => i.href === '/admin/buku-besar-belanja'
+    );
+    expect(bukuBesarSimpBelanjaItem?.label).toBe('Buku Besar Simp. Belanja');
     expect(allHrefs).toContain('/admin/buku-besar-belanja');
     expect(allHrefs).toContain('/admin/pengajuan-pinjaman');
     expect(allHrefs).toContain('/admin/approval');
@@ -95,6 +101,19 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     expect(html).toContain('Pinjaman &amp; Pembiayaan');
     expect(html).toContain('/admin/loan-matrix');
     expect(html).toContain('Matriks Pinjaman');
+  });
+
+  it('renders "Buku Besar Simp. Belanja" under Simpanan & Buku Besar and keeps /admin/buku-besar-belanja route', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/buku-besar-belanja']}>
+        <Sidebar userRole="admin" />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Simpanan &amp; Buku Besar');
+    expect(html).toContain('/admin/buku-besar-belanja');
+    expect(html).toContain('Buku Besar Simp. Belanja');
+    expect(html).not.toContain('Buku Besar Belanja');
   });
 
   it('hides adminOnly items and empty adminOnly groups when user role is not admin', () => {

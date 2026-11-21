@@ -8,10 +8,13 @@ import {
   isSavingsWithdrawalCategory,
 } from '../utils/withdrawalCashFlowFormat';
 import {
+  formatMatrixCancellationCashFlowDescription,
   formatMatrixDepositCashFlowDescription,
   formatMatrixDepositPeriodLabel,
   formatMatrixDepositShortPeriod,
+  isCancellationReversalCategory,
   isSavingsDepositCategory,
+  parseCancellationReversalDescription,
 } from '../utils/depositCashFlowFormat';
 import {
   formatStoreCreditCashFlowDescription,
@@ -216,6 +219,27 @@ export interface IndividualDepositBreakdown {
   amount: number;
 }
 
+export interface DepositCancellationReversalBreakdown {
+  originalTransactionId: string | null;
+  memberId?: string;
+  memberNrp: string;
+  memberName: string;
+  pangkat?: string | null;
+  depositTypeCode: string;
+  depositTypeName: string;
+  forMonth: number | null;
+  forYear: number | null;
+  periodLabel: string;
+  shortPeriodLabel: string;
+  amount: number;
+  cancelReason: string;
+  adminName: string;
+  canceledAt: string;
+  originalReferenceNo: string | null;
+  originalPaymentMethod: string | null;
+  originalCreatedAt: string | null;
+}
+
 export interface MemberDepositBatchItem {
   id: string;
   memberId?: string;
@@ -379,6 +403,11 @@ export type CashFlowReferenceBreakdown =
       kind: 'individual_deposit';
       journal: JournalMetadata;
       individualDeposit: IndividualDepositBreakdown;
+    }
+  | {
+      kind: 'deposit_cancellation_reversal';
+      journal: JournalMetadata;
+      cancellationReversal: DepositCancellationReversalBreakdown;
     }
   | {
       kind: 'MEMBER_DEPOSIT_BATCH';
@@ -2088,6 +2117,81 @@ async function resolveMemberDepositBatchData(params: {
   };
 }
 
+async function safeFetchAuditLogsByRecordIds(
+  recordIds: string[]
+): Promise<any[]> {
+  const uniqueIds = Array.from(new Set(recordIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+  const fullCols =
+    'id, table_name, action, record_id, entity_id, old_data, performer_name, notes, created_at';
+  const fallbackCols =
+    'id, action, record_id, old_data, performer_name, notes, created_at';
+
+  const rows = await safeFetchByColumnIn<any>(
+    'audit_logs',
+    fullCols,
+    'record_id',
+    uniqueIds,
+    fallbackCols
+  );
+  if (rows.length > 0) return rows;
+
+  if (uniqueIds.length === 1) {
+    let singleRes = await safeFetchListByEq<any>(
+      'audit_logs',
+      fullCols,
+      'record_id',
+      uniqueIds[0]
+    );
+    if (singleRes.error && isPostgrestColumnError(singleRes.error)) {
+      singleRes = await safeFetchListByEq<any>(
+        'audit_logs',
+        fallbackCols,
+        'record_id',
+        uniqueIds[0]
+      );
+    }
+    if (!singleRes.error && singleRes.data.length > 0) {
+      return singleRes.data;
+    }
+  }
+
+  return [];
+}
+
+function isAuditDefaultSystemNote(note?: string | null): boolean {
+  const lower = String(note || '').trim().toLowerCase();
+  if (!lower) return true;
+  return (
+    lower.includes('setoran matriks') ||
+    lower.includes('penghapusan / batal centang') ||
+    lower.includes('pembatalan / batal centang') ||
+    lower.includes('rekonsiliasi otomatis')
+  );
+}
+
+function pickBestCancellationAuditLog(logs: any[], recordId: string): any | null {
+  const matching = (logs || []).filter(
+    (l: any) => String(l?.record_id || '') === recordId
+  );
+  if (matching.length === 0) return null;
+
+  const deleteLogs = matching.filter(
+    (l: any) => String(l?.action || 'DELETE').toUpperCase() === 'DELETE'
+  );
+  const pool = deleteLogs.length > 0 ? deleteLogs : matching;
+
+  return [...pool].sort((a, b) => {
+    const aCustom = !isAuditDefaultSystemNote(a?.notes) ? 1 : 0;
+    const bCustom = !isAuditDefaultSystemNote(b?.notes) ? 1 : 0;
+    if (aCustom !== bCustom) return bCustom - aCustom;
+    const aPerf = a?.performer_name ? 1 : 0;
+    const bPerf = b?.performer_name ? 1 : 0;
+    if (aPerf !== bPerf) return bPerf - aPerf;
+    return String(b?.created_at || '').localeCompare(String(a?.created_at || ''));
+  })[0];
+}
+
 export async function getCashFlowReferenceBreakdown(
   cashFlowRow: CashFlowAuditInput
 ): Promise<CashFlowReferenceBreakdown> {
@@ -2949,6 +3053,130 @@ export async function getCashFlowReferenceBreakdown(
       kind: 'MEMBER_DEPOSIT_BATCH',
       journal,
       memberDepositBatch,
+    };
+  }
+
+  // ── Cabang D2c: Jurnal Balik / Pembatalan Setoran Matriks (KOREKSI_PEMBATALAN)
+  if (isCancellationReversalCategory(cashFlowRow.category)) {
+    const parsed = parseCancellationReversalDescription(cashFlowRow.description);
+    const refTxId = cashFlowRow.reference_id ? String(cashFlowRow.reference_id) : null;
+
+    let auditLog: any = null;
+    if (refTxId) {
+      const logs = await safeFetchAuditLogsByRecordIds([refTxId]);
+      auditLog = pickBestCancellationAuditLog(logs, refTxId);
+    }
+
+    const oldTx =
+      auditLog?.old_data && typeof auditLog.old_data === 'object' ? auditLog.old_data : null;
+    const memberDepositId = String(
+      oldTx?.member_deposit_id || auditLog?.entity_id || ''
+    ).trim();
+
+    let memberId: string | undefined;
+    let nrp = parsed.memberNrp || '-';
+    let nama = parsed.memberName || 'Anggota';
+    let pangkat: string | null = null;
+    let depositTypeName = parsed.depositTypeName || 'Simpanan Anggota';
+    let depositTypeCode = parsed.depositTypeCode || '-';
+
+    if (memberDepositId) {
+      const { data: md } = await safeFetchSingleById<any>(
+        'member_deposits',
+        'id, member_id, deposit_type_id',
+        memberDepositId
+      );
+      if (md) {
+        if (md.member_id) memberId = String(md.member_id);
+        const [memberRes, typeRes] = await Promise.all([
+          md.member_id
+            ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, pangkat', String(md.member_id))
+            : Promise.resolve({ data: null, error: null }),
+          md.deposit_type_id
+            ? safeFetchSingleById<any>('deposit_types', 'id, code, name', String(md.deposit_type_id))
+            : Promise.resolve({ data: null, error: null }),
+        ]);
+        if (memberRes.data) {
+          if (memberRes.data.id) memberId = String(memberRes.data.id);
+          if (memberRes.data.nrp) nrp = String(memberRes.data.nrp);
+          if (memberRes.data.nama) nama = String(memberRes.data.nama);
+          pangkat = memberRes.data.pangkat ?? null;
+        }
+        if (typeRes.data) {
+          if (typeRes.data.name) depositTypeName = String(typeRes.data.name);
+          if (typeRes.data.code) depositTypeCode = String(typeRes.data.code);
+        }
+      }
+    }
+
+    const forMonth =
+      parsed.forMonth ??
+      (oldTx?.for_month !== null && oldTx?.for_month !== undefined && oldTx?.for_month !== ''
+        ? Number(oldTx.for_month)
+        : null);
+    const forYear =
+      parsed.forYear ??
+      (oldTx?.for_year !== null && oldTx?.for_year !== undefined && oldTx?.for_year !== ''
+        ? Number(oldTx.for_year)
+        : null);
+
+    const computedPeriod = formatMatrixDepositPeriodLabel(forMonth, forYear);
+    const computedShort = formatMatrixDepositShortPeriod(forMonth, forYear);
+    const periodLabel = computedPeriod !== '-' ? computedPeriod : parsed.periodLabel || '-';
+    const shortPeriodLabel =
+      computedShort !== '-' ? computedShort : parsed.shortPeriodLabel || '-';
+
+    const auditNote =
+      auditLog?.notes && !isAuditDefaultSystemNote(auditLog.notes)
+        ? String(auditLog.notes).trim()
+        : null;
+    const cancelReason =
+      parsed.cancelReason ||
+      auditNote ||
+      (auditLog?.notes ? String(auditLog.notes).trim() : null) ||
+      'Koreksi / Pembatalan Setoran';
+    const adminName =
+      parsed.adminName ||
+      (auditLog?.performer_name ? String(auditLog.performer_name).trim() : null) ||
+      'Pengelola';
+
+    const amount = Math.round(Number(oldTx?.amount ?? journal.amount));
+
+    if (isBlankOrDashDescription(journal.description)) {
+      journal.description = formatMatrixCancellationCashFlowDescription({
+        depositTypeName,
+        month: forMonth,
+        year: forYear,
+        memberNrp: nrp,
+        memberName: nama,
+        cancelReason,
+        adminName,
+      });
+    }
+
+    return {
+      kind: 'deposit_cancellation_reversal',
+      journal,
+      cancellationReversal: {
+        originalTransactionId: refTxId || (oldTx?.id ? String(oldTx.id) : null),
+        memberId,
+        memberNrp: nrp,
+        memberName: nama,
+        pangkat,
+        depositTypeCode,
+        depositTypeName,
+        forMonth,
+        forYear,
+        periodLabel,
+        shortPeriodLabel,
+        amount,
+        cancelReason,
+        adminName,
+        canceledAt: String(journal.createdAt || auditLog?.created_at || ''),
+        originalReferenceNo: oldTx?.reference_no ? String(oldTx.reference_no) : null,
+        originalPaymentMethod: oldTx?.payment_method ? String(oldTx.payment_method) : null,
+        originalCreatedAt: oldTx?.created_at ? String(oldTx.created_at) : null,
+      },
     };
   }
 
@@ -3848,40 +4076,79 @@ export async function enrichWithdrawalCashFlowDescriptions<
 }
 
 /**
- * Melengkapi deskripsi baris mutasi `cash_flow` berkategori Setoran Simpanan yang
- * kolom `description`-nya masih kosong atau bernilai `'-'` secara batch dari relasi
- * `deposit_transactions` -> `member_deposits` -> `anggota` & `deposit_types`.
+ * Melengkapi deskripsi baris mutasi `cash_flow` berkategori Setoran Simpanan
+ * maupun Jurnal Balik Pembatalan (`KOREKSI_PEMBATALAN`) yang kolom `description`-nya
+ * masih kosong atau bernilai `'-'` secara batch dari relasi `deposit_transactions` / `audit_logs`
+ * -> `member_deposits` -> `anggota` & `deposit_types`.
  */
 export async function enrichDepositCashFlowDescriptions<
   T extends WithdrawalCashFlowRowLike & { kas_masuk?: number }
 >(rows: T[]): Promise<T[]> {
-  const needsEnrichment = rows.some(
+  const needsDepositEnrichment = rows.some(
     (r) => isSavingsDepositCategory(r.kategori) && isBlankOrDashDescription(r.deskripsi)
   );
-  if (!needsEnrichment) return rows;
+  const needsReversalEnrichment = rows.some(
+    (r) => isCancellationReversalCategory(r.kategori) && isBlankOrDashDescription(r.deskripsi)
+  );
+  if (!needsDepositEnrichment && !needsReversalEnrichment) return rows;
 
   try {
-    const targetRows = rows.filter(
-      (r) => isSavingsDepositCategory(r.kategori) && isBlankOrDashDescription(r.deskripsi)
-    );
-    const refIds = Array.from(
-      new Set(targetRows.map((r) => r.reference_id).filter((id): id is string => Boolean(id)))
-    );
-    if (refIds.length === 0) return rows;
+    const depositTargetRows = needsDepositEnrichment
+      ? rows.filter(
+          (r) => isSavingsDepositCategory(r.kategori) && isBlankOrDashDescription(r.deskripsi)
+        )
+      : [];
+    const reversalTargetRows = needsReversalEnrichment
+      ? rows.filter(
+          (r) => isCancellationReversalCategory(r.kategori) && isBlankOrDashDescription(r.deskripsi)
+        )
+      : [];
 
-    const txRows = await safeFetchByIds<any>(
-      'deposit_transactions',
-      'id, member_deposit_id, amount, for_month, for_year, reference_no, description',
-      refIds,
-      'id, member_deposit_id, amount, for_month, for_year, description'
+    const depositRefIds = Array.from(
+      new Set(
+        depositTargetRows.map((r) => r.reference_id).filter((id): id is string => Boolean(id))
+      )
     );
+    const reversalRefIds = Array.from(
+      new Set(
+        reversalTargetRows.map((r) => r.reference_id).filter((id): id is string => Boolean(id))
+      )
+    );
+    if (depositRefIds.length === 0 && reversalRefIds.length === 0) return rows;
+
+    const [txRows, auditLogRows] = await Promise.all([
+      depositRefIds.length > 0
+        ? safeFetchByIds<any>(
+            'deposit_transactions',
+            'id, member_deposit_id, amount, for_month, for_year, reference_no, description',
+            depositRefIds,
+            'id, member_deposit_id, amount, for_month, for_year, description'
+          )
+        : Promise.resolve([]),
+      reversalRefIds.length > 0
+        ? safeFetchAuditLogsByRecordIds(reversalRefIds)
+        : Promise.resolve([]),
+    ]);
+
     const txMap = new Map<string, any>();
     for (const tx of txRows) {
       if (tx?.id) txMap.set(String(tx.id), tx);
     }
+    const auditByRecordMap = new Map<string, any>();
+    for (const refId of reversalRefIds) {
+      const best = pickBestCancellationAuditLog(auditLogRows, refId);
+      if (best) auditByRecordMap.set(refId, best);
+    }
 
     const mdIds = Array.from(
-      new Set(txRows.map((t: any) => String(t?.member_deposit_id || '')).filter(Boolean))
+      new Set(
+        [
+          ...txRows.map((t: any) => String(t?.member_deposit_id || '')),
+          ...Array.from(auditByRecordMap.values()).map((log: any) =>
+            String(log?.old_data?.member_deposit_id || log?.entity_id || '')
+          ),
+        ].filter(Boolean)
+      )
     );
     const mdRows = await safeFetchByIds<any>(
       'member_deposits',
@@ -3915,27 +4182,56 @@ export async function enrichDepositCashFlowDescriptions<
     }
 
     return rows.map((row) => {
-      if (!isSavingsDepositCategory(row.kategori) || !isBlankOrDashDescription(row.deskripsi)) {
+      if (!isBlankOrDashDescription(row.deskripsi)) {
         return row;
       }
-      const tx = row.reference_id ? txMap.get(String(row.reference_id)) : undefined;
-      if (!tx) return row;
 
-      const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
-      const member = md?.member_id ? memberMap.get(String(md.member_id)) : undefined;
-      const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+      if (isSavingsDepositCategory(row.kategori)) {
+        const tx = row.reference_id ? txMap.get(String(row.reference_id)) : undefined;
+        if (!tx) return row;
 
-      return {
-        ...row,
-        deskripsi: formatMatrixDepositCashFlowDescription({
-          depositTypeName: dt?.name || null,
-          month: tx?.for_month ?? null,
-          year: tx?.for_year ?? null,
-          memberNrp: member?.nrp || null,
-          memberName: member?.nama || null,
-          referenceNo: tx?.reference_no ?? null,
-        }),
-      };
+        const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
+        const member = md?.member_id ? memberMap.get(String(md.member_id)) : undefined;
+        const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+
+        return {
+          ...row,
+          deskripsi: formatMatrixDepositCashFlowDescription({
+            depositTypeName: dt?.name || null,
+            month: tx?.for_month ?? null,
+            year: tx?.for_year ?? null,
+            memberNrp: member?.nrp || null,
+            memberName: member?.nama || null,
+            referenceNo: tx?.reference_no ?? null,
+          }),
+        };
+      }
+
+      if (isCancellationReversalCategory(row.kategori)) {
+        const log = row.reference_id ? auditByRecordMap.get(String(row.reference_id)) : undefined;
+        if (!log) return row;
+
+        const oldTx = log?.old_data && typeof log.old_data === 'object' ? log.old_data : {};
+        const mdId = String(oldTx?.member_deposit_id || log?.entity_id || '');
+        const md = mdId ? mdMap.get(mdId) : undefined;
+        const member = md?.member_id ? memberMap.get(String(md.member_id)) : undefined;
+        const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+
+        return {
+          ...row,
+          deskripsi: formatMatrixCancellationCashFlowDescription({
+            depositTypeName: dt?.name || null,
+            month: oldTx?.for_month ?? null,
+            year: oldTx?.for_year ?? null,
+            memberNrp: member?.nrp || null,
+            memberName: member?.nama || null,
+            cancelReason: log?.notes || null,
+            adminName: log?.performer_name || null,
+          }),
+        };
+      }
+
+      return row;
     });
   } catch (err) {
     console.warn('Warning enrichDepositCashFlowDescriptions:', err);

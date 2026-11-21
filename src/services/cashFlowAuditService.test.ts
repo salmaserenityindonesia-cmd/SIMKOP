@@ -2962,4 +2962,160 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
       amount: 200000,
     });
   });
+
+  it('loads KOREKSI_PEMBATALAN (deposit_cancellation_reversal) breakdown from description and enriches original receipt/member info from audit_logs', async () => {
+    const auditLogs = [
+      {
+        id: 'audit-del-1',
+        table_name: 'deposit_transactions',
+        action: 'DELETE',
+        record_id: 'tx-donny-nov26',
+        entity_id: 'md-donny-w',
+        performer_name: 'Admin Keuangan',
+        notes: 'Salah input bulan',
+        old_data: {
+          id: 'tx-donny-nov26',
+          member_deposit_id: 'md-donny-w',
+          amount: 200000,
+          for_month: 11,
+          for_year: 2026,
+          reference_no: 'KW-2026/11/00060019',
+          payment_method: 'potong_gaji',
+          created_at: '2026-11-20T08:00:00.000Z',
+        },
+        created_at: '2026-11-21T10:00:00.000Z',
+      },
+    ];
+    const memberDeposits = [
+      { id: 'md-donny-w', member_id: 'mem-donny', deposit_type_id: 'dt-wajib' },
+    ];
+    const anggotaRows = [
+      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Bripka' },
+    ];
+    const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'audit_logs') return buildTableMock(auditLogs);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      return buildTableMock([]);
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'rev-1111-4000-8000-000000000001',
+      referensi: 'CF-REV11111',
+      category: 'KOREKSI_PEMBATALAN',
+      amount: 200000,
+      direction: 'out',
+      reference_id: 'tx-donny-nov26',
+      description:
+        'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Keuangan)',
+      created_at: '2026-11-21T10:00:05.000Z',
+    });
+
+    expect(res.kind).toBe('deposit_cancellation_reversal');
+    if (res.kind === 'deposit_cancellation_reversal') {
+      expect(res.cancellationReversal).toMatchObject({
+        originalTransactionId: 'tx-donny-nov26',
+        memberId: 'mem-donny',
+        memberNrp: '00060019',
+        memberName: 'DONNY ILHAM PAMBUDI',
+        pangkat: 'Bripka',
+        depositTypeCode: 'WAJIB',
+        depositTypeName: 'Simpanan Wajib',
+        forMonth: 11,
+        forYear: 2026,
+        periodLabel: 'Nov 2026',
+        shortPeriodLabel: 'Nov-26',
+        amount: 200000,
+        cancelReason: 'Salah input bulan',
+        adminName: 'Admin Keuangan',
+        originalReferenceNo: 'KW-2026/11/00060019',
+        originalPaymentMethod: 'potong_gaji',
+      });
+    }
+
+    // Fallback when audit_logs is empty: still parses all fields from description
+    (supabase.from as any).mockImplementation(() => buildTableMock([]));
+    const fallbackRes = await getCashFlowReferenceBreakdown({
+      id: 'rev-2222-4000-8000-000000000002',
+      category: 'KOREKSI_PEMBATALAN',
+      amount: 50000,
+      direction: 'out',
+      reference_id: null,
+      description:
+        'Pembatalan Setoran Simpanan Belanja Bulanan [Okt 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Penyesuaian Data" (Oleh: Operator)',
+      created_at: '2026-11-21T10:05:00.000Z',
+    });
+
+    expect(fallbackRes.kind).toBe('deposit_cancellation_reversal');
+    if (fallbackRes.kind === 'deposit_cancellation_reversal') {
+      expect(fallbackRes.cancellationReversal).toMatchObject({
+        memberNrp: '00060019',
+        memberName: 'DONNY ILHAM PAMBUDI',
+        depositTypeCode: 'BELANJA',
+        depositTypeName: 'Simpanan Belanja Bulanan',
+        forMonth: 10,
+        forYear: 2026,
+        periodLabel: 'Okt 2026',
+        shortPeriodLabel: 'Okt-26',
+        amount: 50000,
+        cancelReason: 'Penyesuaian Data',
+        adminName: 'Operator',
+      });
+    }
+  });
+
+  it('enrichDepositCashFlowDescriptions enriches blank KOREKSI_PEMBATALAN descriptions from audit_logs', async () => {
+    const auditLogs = [
+      {
+        id: 'audit-del-2',
+        action: 'DELETE',
+        record_id: 'tx-rev-99',
+        entity_id: 'md-donny-w',
+        performer_name: 'Admin Audit',
+        notes: 'Salah input bulan',
+        old_data: {
+          member_deposit_id: 'md-donny-w',
+          for_month: 11,
+          for_year: 2026,
+        },
+        created_at: '2026-11-21T10:00:00.000Z',
+      },
+    ];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'audit_logs') return buildTableMock(auditLogs);
+      if (table === 'member_deposits') {
+        return buildTableMock([
+          { id: 'md-donny-w', member_id: 'mem-donny', deposit_type_id: 'dt-wajib' },
+        ]);
+      }
+      if (table === 'anggota') {
+        return buildTableMock([
+          { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI' },
+        ]);
+      }
+      if (table === 'deposit_types') {
+        return buildTableMock([
+          { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+        ]);
+      }
+      return buildTableMock([]);
+    });
+
+    const enriched = await enrichDepositCashFlowDescriptions([
+      {
+        id: 'cf-rev-blank',
+        kategori: 'KOREKSI_PEMBATALAN',
+        deskripsi: '-',
+        kas_keluar: 200000,
+        reference_id: 'tx-rev-99',
+      },
+    ]);
+
+    expect(enriched[0].deskripsi).toBe(
+      'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Audit)'
+    );
+  });
 });

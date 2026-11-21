@@ -3311,4 +3311,220 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(html).toContain('data-testid="fiscal-year-closed-banner"');
     expect(html).toContain('/admin/tutup-buku');
   });
+
+  it('renders KOREKSI_PEMBATALAN badge as "Koreksi / Pembatalan" with rose styling and integrates into multi-category filter', () => {
+    const html = renderToStaticMarkup(<KategoriBadge kategori="KOREKSI_PEMBATALAN" />);
+    expect(html).toContain('Koreksi / Pembatalan');
+    expect(html).toContain('bg-rose-50');
+    expect(html).toContain('text-rose-700');
+    expect(html).toContain('border-rose-200');
+    expect(getNormalizedCategoryLabel('KOREKSI_PEMBATALAN')).toBe('Koreksi / Pembatalan');
+    expect(getNormalizedCategoryLabel('koreksi_pembatalan')).toBe('Koreksi / Pembatalan');
+
+    const sampleTxs: CashFlowTransaction[] = [
+      {
+        id: 'cf-setoran-1',
+        tanggal: '20/11/2026',
+        referensi: 'CF-SET00001',
+        deskripsi: 'Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI',
+        kategori: 'Setoran Simpanan',
+        unit_usaha: 'Umum',
+        kas_masuk: 200000,
+        kas_keluar: 0,
+        saldo_berjalan: 17840000,
+        direction: 'in',
+        created_at: '2026-11-20T09:00:00.000Z',
+      },
+      {
+        id: 'cf-batal-1',
+        tanggal: '21/11/2026',
+        referensi: 'CF-BAT00001',
+        deskripsi:
+          'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin)',
+        kategori: 'KOREKSI_PEMBATALAN',
+        unit_usaha: 'Umum',
+        kas_masuk: 0,
+        kas_keluar: 200000,
+        saldo_berjalan: 17640000,
+        direction: 'out',
+        created_at: '2026-11-21T10:00:00.000Z',
+      },
+    ];
+
+    const options = buildCashFlowCategoryOptions(sampleTxs);
+    expect(options.map((o) => o.label)).toContain('Koreksi / Pembatalan');
+
+    const filtered = filterCashFlowTransactions(sampleTxs, '', ['Koreksi / Pembatalan']);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe('cf-batal-1');
+  });
+
+  it('getCashFlowReport preserves original Setoran Simpanan row alongside KOREKSI_PEMBATALAN reversal entry and updates running balance', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const priorCfRows = [
+        {
+          id: 'cf-open-base',
+          created_at: '2026-03-01T00:00:00.000Z',
+          category: 'SALDO_AWAL_SIMPANAN',
+          direction: 'in',
+          amount: 17640000,
+          reference_id: null,
+        },
+      ];
+      const periodCfRows = [
+        {
+          id: 'cf-setoran-nov26',
+          created_at: '2026-11-20T08:00:00.000Z',
+          category: 'Setoran Simpanan',
+          direction: 'in',
+          amount: 200000,
+          reference_id: 'tx-donny-nov26',
+          description: 'Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI',
+        },
+        {
+          id: 'cf-reversal-nov26',
+          created_at: '2026-11-21T10:00:00.000Z',
+          category: 'KOREKSI_PEMBATALAN',
+          direction: 'out',
+          amount: 200000,
+          reference_id: 'tx-donny-nov26',
+          description:
+            'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin)',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return { eq: vi.fn().mockResolvedValue({ data: priorCfRows, error: null }) };
+              }
+              return {
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: priorCfRows, error: null }),
+                }),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: periodCfRows, error: null }),
+                  }),
+                }),
+                range: vi.fn().mockResolvedValue({ data: [...priorCfRows, ...periodCfRows], error: null }),
+              };
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'tx-open-1',
+                    member_deposit_id: 'md-1',
+                    transaction_type: 'deposit',
+                    amount: 17640000,
+                    for_year: 2026,
+                    for_month: 2,
+                    description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+                    created_at: '2026-03-01T00:00:00.000Z',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+      expect(report.openingBalance).toBe(17640000);
+      expect(report.inflowTotal).toBe(200000);
+      expect(report.outflowTotal).toBe(200000);
+      expect(report.closingBalance).toBe(17640000);
+      expect(report.transactions).toHaveLength(2);
+      expect(report.transactions[0]).toMatchObject({
+        kategori: 'Setoran Simpanan',
+        kas_masuk: 200000,
+        saldo_berjalan: 17840000,
+      });
+      expect(report.transactions[1]).toMatchObject({
+        kategori: 'KOREKSI_PEMBATALAN',
+        kas_keluar: 200000,
+        saldo_berjalan: 17640000,
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('getShuEstimation excludes KOREKSI_PEMBATALAN from opex calculation', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({
+                      data: [
+                        { amount: 200000, category: 'KOREKSI_PEMBATALAN', direction: 'out' },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.opex).toBe(0);
+      expect(shu.estimatedShu).toBe(0);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

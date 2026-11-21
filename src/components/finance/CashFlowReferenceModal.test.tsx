@@ -932,4 +932,80 @@ describe('CashFlowReferenceModal Component', () => {
     );
     expect(html).toContain('Telusuri di Buku Besar Simpanan');
   });
+
+  it('renders KOREKSI_PEMBATALAN (deposit_cancellation_reversal) audit card with reason box, member details, and matrix link', () => {
+    const reversalBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'deposit_cancellation_reversal',
+      journal: {
+        id: 'rev-1111-2222-3333-444455556666',
+        refCode: 'CF-REV11111',
+        category: 'KOREKSI_PEMBATALAN',
+        direction: 'out',
+        amount: 200000,
+        description:
+          'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Keuangan)',
+        unitUsaha: 'Umum',
+        referenceId: 'tx-donny-nov26',
+        createdAt: '2026-11-21T10:00:00.000Z',
+      },
+      cancellationReversal: {
+        originalTransactionId: 'tx-donny-nov26',
+        memberId: 'mem-donny',
+        memberNrp: '00060019',
+        memberName: 'DONNY ILHAM PAMBUDI',
+        pangkat: 'Bripka',
+        depositTypeCode: 'WAJIB',
+        depositTypeName: 'Simpanan Wajib',
+        forMonth: 11,
+        forYear: 2026,
+        periodLabel: 'Nov 2026',
+        shortPeriodLabel: 'Nov-26',
+        amount: 200000,
+        cancelReason: 'Salah input bulan',
+        adminName: 'Admin Keuangan',
+        canceledAt: '2026-11-21T10:00:00.000Z',
+        originalReferenceNo: 'KW-2026/11/00060019',
+        originalPaymentMethod: 'potong_gaji',
+        originalCreatedAt: '2026-11-20T08:00:00.000Z',
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CashFlowReferenceModal
+          cashFlowItem={{
+            ...baseOpeningItem,
+            id: 'rev-1111-2222-3333-444455556666',
+            referensi: 'CF-REV11111',
+            kategori: 'KOREKSI_PEMBATALAN',
+            deskripsi:
+              'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Keuangan)',
+            kas_masuk: 0,
+            kas_keluar: 200000,
+            direction: 'out',
+          }}
+          onClose={() => {}}
+          initialBreakdown={reversalBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Kategori: Koreksi / Pembatalan');
+    expect(html).toContain('data-testid="cancellation-reversal-card"');
+    expect(html).toContain('Bukti Jurnal Balik / Pembatalan Setoran');
+    expect(html).toContain('Simpanan Wajib');
+    expect(html).toContain('Nov 2026 (Nov-26)');
+    expect(html).toContain('DONNY ILHAM PAMBUDI');
+    expect(html).toContain('00060019');
+    expect(html).toContain('-Rp 200.000');
+    expect(html).toContain('Admin Keuangan');
+    expect(html).toContain('KW-2026/11/00060019');
+    expect(html).toContain('Potong Gaji');
+    expect(html).toContain('data-testid="cancellation-reason-box"');
+    expect(html).toContain('Alasan Pembatalan');
+    expect(html).toContain('Salah input bulan');
+    expect(html).toContain(
+      'href="/admin/compliance-matrix?search=00060019&amp;type=WAJIB&amp;period=Nov-26"'
+    );
+  });
 });

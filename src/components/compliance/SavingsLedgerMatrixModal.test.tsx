@@ -628,7 +628,7 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('Simpan Setoran');
     });
 
-    it('renders uncheck confirmation modal requiring reason and warning about audit logs', () => {
+    it('renders uncheck confirmation modal requiring reason (min 3 chars) and warning about reversal journal & audit logs', () => {
       const html = renderToStaticMarkup(
         <SavingsLedgerMatrixModal
           memberId="m-123"
@@ -649,9 +649,13 @@ describe('SavingsLedgerMatrixModal Component & FIFO Matching Tests', () => {
       expect(html).toContain('data-testid="uncheck-modal"');
       expect(html).toContain('Konfirmasi Pembatalan Setoran');
       expect(html).toContain('Periode Nov-26');
+      expect(html).toContain('Jurnal Balik (Koreksi / Pembatalan)');
       expect(html).toContain('Jejak Audit (Audit Logs)');
+      expect(html).toContain('minimal 3 karakter');
+      expect(html).toContain('minLength="3"');
       expect(html).toContain('data-testid="uncheck-reason-input"');
       expect(html).toContain('data-testid="uncheck-confirm-btn"');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-testid="uncheck-confirm-btn"/);
       expect(html).toContain('Konfirmasi Pembatalan');
     });
 

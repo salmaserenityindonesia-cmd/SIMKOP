@@ -935,6 +935,10 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       await expect(
         cancelMonthDepositWithReason('md-1', 2026, 5, '   ')
       ).rejects.toThrow('Alasan pembatalan wajib diisi');
+
+      await expect(
+        cancelMonthDepositWithReason('md-1', 2026, 5, 'ab')
+      ).rejects.toThrow('Alasan pembatalan minimal 3 karakter');
     });
 
     it('captures existing transaction, logs explicit DELETE audit trail, and deletes row', async () => {
@@ -1749,10 +1753,35 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(cashFlowInserts).toHaveLength(1);
     });
 
-    it('cancelMonthDepositWithReason deletes matching cash_flow entry by reference_id when unchecking a month', async () => {
-      const deletedCashFlowRefs: string[] = [];
+    it('cancelMonthDepositWithReason preserves original cash_flow and inserts KOREKSI_PEMBATALAN reversal entry when unchecking an active month', async () => {
+      let cashFlowDeleteCalled = false;
+      const cashFlowInserts: any[] = [];
+      let depositTxDeleted = false;
+
+      vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'admin-donny-canceller',
+            email: 'admin@simkop.id',
+            user_metadata: { nama: 'Admin Keuangan' }
+          } as any
+        },
+        error: null
+      });
 
       vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'system_settings') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { key: 'initial_savings_effective_date', value: '2026-03-01' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
         if (table === 'deposit_transactions') {
           return {
             select: vi.fn().mockReturnValue({
@@ -1762,11 +1791,11 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
                     data: [
                       {
                         id: 'tx-cancel-301',
-                        member_deposit_id: 'md-bagus-wajib',
+                        member_deposit_id: 'md-donny-wajib',
                         amount: 200000,
-                        for_month: 3,
+                        for_month: 11,
                         for_year: 2026,
-                        reference_no: 'KW-2026/03/00050543'
+                        reference_no: 'KW-2026/11/00060019'
                       }
                     ],
                     error: null
@@ -1774,12 +1803,19 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
                 })
               })
             }),
-            delete: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null })
+            }),
+            delete: vi.fn().mockImplementation(() => {
+              depositTxDeleted = true;
+              return {
+                in: vi.fn().mockResolvedValue({ error: null }),
                 eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockResolvedValue({ error: null })
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ error: null })
+                  })
                 })
-              })
+              };
             })
           };
         }
@@ -1795,13 +1831,51 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
             })
           };
         }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'md-donny-wajib', member_id: 'm-donny', deposit_type_id: 'dt-wajib' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'm-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
         if (table === 'cash_flow') {
           return {
-            delete: vi.fn().mockReturnValue({
-              in: vi.fn().mockImplementation((_col: string, ids: string[]) => {
-                deletedCashFlowRefs.push(...ids);
-                return Promise.resolve({ error: null });
-              })
+            delete: vi.fn().mockImplementation(() => {
+              cashFlowDeleteCalled = true;
+              return { in: vi.fn().mockResolvedValue({ error: null }) };
+            }),
+            insert: vi.fn().mockImplementation((row: any) => {
+              cashFlowInserts.push(row);
+              return Promise.resolve({ data: [row], error: null });
             })
           };
         }
@@ -1809,15 +1883,99 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       });
 
       const res = await cancelMonthDepositWithReason(
-        'md-bagus-wajib',
+        'md-donny-wajib',
         2026,
-        3,
-        'Koreksi salah centang periode'
+        11,
+        'Salah input bulan'
       );
 
-      expect(res.success).toBe(true);
-      expect(res.cancelledCount).toBe(1);
-      expect(deletedCashFlowRefs).toEqual(['tx-cancel-301']);
+      expect(res).toEqual({ success: true, cancelledCount: 1, reversedAmount: 200000 });
+      expect(depositTxDeleted).toBe(true);
+      expect(cashFlowDeleteCalled).toBe(false);
+      expect(cashFlowInserts).toHaveLength(1);
+      expect(cashFlowInserts[0]).toMatchObject({
+        direction: 'out',
+        category: 'KOREKSI_PEMBATALAN',
+        amount: 200000,
+        reference_id: 'tx-cancel-301',
+        description:
+          'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Keuangan)'
+      });
+      expect(cashFlowInserts[0].created_at).toBeDefined();
+    });
+
+    it('cancelMonthDepositWithReason skips cash_flow reversal insert for pre-cutoff period (Feb 2026)', async () => {
+      const cashFlowInserts: any[] = [];
+
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'system_settings') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { key: 'initial_savings_effective_date', value: '2026-03-01' },
+                  error: null
+                })
+              })
+            })
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({
+                    data: [
+                      {
+                        id: 'tx-feb-2026',
+                        member_deposit_id: 'md-donny-wajib',
+                        amount: 200000,
+                        for_month: 2,
+                        for_year: 2026,
+                        description: 'Setoran Rutin Feb 2026'
+                      }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            }),
+            delete: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ error: null })
+            })
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((row: any) => {
+              cashFlowInserts.push(row);
+              return Promise.resolve({ data: [row], error: null });
+            })
+          };
+        }
+        return {};
+      });
+
+      const res = await cancelMonthDepositWithReason(
+        'md-donny-wajib',
+        2026,
+        2,
+        'Koreksi periode pra cut-off',
+        {
+          memberNrp: '00060019',
+          memberName: 'DONNY ILHAM PAMBUDI',
+          depositTypeName: 'Simpanan Wajib'
+        }
+      );
+
+      expect(res).toEqual({ success: true, cancelledCount: 1, reversedAmount: 200000 });
+      expect(cashFlowInserts).toHaveLength(0);
     });
 
     it('syncMatrixDepositsToCashFlow backfills missing post-cutoff matrix deposits idempotently while excluding cut-off and KW-SETOR entries', async () => {
@@ -2146,7 +2304,7 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
         'Uji proteksi saldo awal'
       );
 
-      expect(res).toEqual({ success: true, cancelledCount: 0 });
+      expect(res).toEqual({ success: true, cancelledCount: 0, reversedAmount: 0 });
       expect(deleteCalled).toBe(false);
       expect(auditInserted).toBe(false);
     });

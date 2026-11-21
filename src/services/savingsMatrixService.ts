@@ -11,6 +11,8 @@ import {
 } from './savingsRateService';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
 import {
+  CANCELLATION_REVERSAL_CATEGORY,
+  formatMatrixCancellationCashFlowDescription,
   formatMatrixDepositCashFlowDescription,
   isOpeningOrMigrationDepositDescription
 } from '../utils/depositCashFlowFormat';
@@ -1920,6 +1922,153 @@ async function resolveDepositContextForCashFlow(
   return { memberNrp, memberName, depositTypeName };
 }
 
+async function resolveCurrentAdminInfo(): Promise<{ id: string | null; name: string }> {
+  let userId: string | null = null;
+  let adminName = 'Pengelola';
+  try {
+    if (supabase?.auth && typeof supabase.auth.getUser === 'function') {
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user) {
+        userId = authData.user.id || null;
+        adminName =
+          authData.user.user_metadata?.nama ||
+          authData.user.user_metadata?.name ||
+          authData.user.user_metadata?.full_name ||
+          authData.user.email ||
+          'Pengelola';
+      }
+    }
+  } catch {
+    // fallback to default name
+  }
+
+  if (userId && (adminName === 'Pengelola' || adminName.includes('@'))) {
+    const pengelolaRow = await matrixSafeFetchSingleById<any>('pengelola', 'id, nama', userId);
+    if (pengelolaRow?.nama) {
+      adminName = String(pengelolaRow.nama);
+    }
+  }
+
+  return { id: userId, name: adminName };
+}
+
+async function insertMatrixCancellationCashFlowRow(params: {
+  txId?: string | null;
+  amount: number;
+  month: number;
+  year: number;
+  cancelReason: string;
+  adminName?: string | null;
+  createdAt?: string | null;
+  memberNrp?: string | null;
+  memberName?: string | null;
+  depositTypeName?: string | null;
+}): Promise<void> {
+  const roundedAmount = Math.round(Number(params.amount || 0));
+  if (roundedAmount <= 0) return;
+
+  try {
+    const cfTable: any = supabase?.from?.('cash_flow');
+    if (!cfTable || typeof cfTable.insert !== 'function') return;
+
+    const description = formatMatrixCancellationCashFlowDescription({
+      depositTypeName: params.depositTypeName,
+      month: params.month,
+      year: params.year,
+      memberNrp: params.memberNrp,
+      memberName: params.memberName,
+      cancelReason: params.cancelReason,
+      adminName: params.adminName,
+    });
+    const createdAt = params.createdAt || new Date().toISOString();
+
+    const res: any = await cfTable.insert({
+      direction: 'out',
+      category: CANCELLATION_REVERSAL_CATEGORY,
+      amount: roundedAmount,
+      reference_id: params.txId || null,
+      description,
+      created_at: createdAt,
+    });
+
+    if (res?.error && isPostgrestColumnError(res.error)) {
+      await cfTable.insert({
+        direction: 'out',
+        category: CANCELLATION_REVERSAL_CATEGORY,
+        amount: roundedAmount,
+        reference_id: params.txId || null,
+        created_at: createdAt,
+      });
+    }
+  } catch (err) {
+    console.warn('Catatan: Gagal mencatat jurnal balik pembatalan setoran matriks:', err);
+  }
+}
+
+export async function recordMatrixCancellationReversalsForTxs(params: {
+  memberDepositId: string;
+  txs: Array<{
+    id?: string;
+    amount?: number;
+    for_year?: number | null;
+    for_month?: number | null;
+    description?: string | null;
+    transaction_type?: string | null;
+  }>;
+  reason: string;
+  memberNrp?: string;
+  memberName?: string;
+  depositTypeName?: string;
+  adminName?: string;
+}): Promise<number> {
+  if (!params.memberDepositId || !Array.isArray(params.txs) || params.txs.length === 0) {
+    return 0;
+  }
+
+  const effectiveCutOffDate =
+    (await getInitialSavingsCutOffDate()) || OFFICIAL_CUTOFF_DATE;
+
+  const eligibleTxs = params.txs.filter((tx) => {
+    if (isProtectedSavingsTransaction(tx, effectiveCutOffDate)) return false;
+    const fy = Number(tx?.for_year);
+    const fm = Number(tx?.for_month);
+    if (!Number.isInteger(fy) || !Number.isInteger(fm) || fm < 1 || fm > 12) return false;
+    if (isMonthBeforeCutOff(fy, fm, effectiveCutOffDate)) return false;
+    return Math.round(Number(tx?.amount || 0)) > 0;
+  });
+
+  if (eligibleTxs.length === 0) return 0;
+
+  const [ctx, adminInfo] = await Promise.all([
+    resolveDepositContextForCashFlow(params.memberDepositId, {
+      memberNrp: params.memberNrp,
+      memberName: params.memberName,
+      depositTypeName: params.depositTypeName,
+    }),
+    params.adminName?.trim()
+      ? Promise.resolve({ id: null, name: params.adminName.trim() })
+      : resolveCurrentAdminInfo(),
+  ]);
+
+  let recorded = 0;
+  for (const tx of eligibleTxs) {
+    await insertMatrixCancellationCashFlowRow({
+      txId: tx.id ? String(tx.id) : null,
+      amount: Number(tx.amount || 0),
+      month: Number(tx.for_month),
+      year: Number(tx.for_year),
+      cancelReason: params.reason.trim(),
+      adminName: adminInfo.name,
+      memberNrp: ctx.memberNrp,
+      memberName: ctx.memberName,
+      depositTypeName: ctx.depositTypeName,
+    });
+    recorded += 1;
+  }
+
+  return recorded;
+}
+
 async function insertMatrixDepositCashFlowRow(params: {
   txId: string;
   amount: number;
@@ -2135,20 +2284,31 @@ export async function saveMonthDepositWithEvidence(
 /**
  * Membatalkan (uncheck) setoran bulanan individual pada matriks simpanan:
  * Mengambil transaksi aktif, mencatat audit log eksplisit ke public.audit_logs
- * dengan alasan pembatalan dan identitas admin, lalu menghapus transaksi dari deposit_transactions
- * beserta entri public.cash_flow yang merujuk padanya.
+ * dengan alasan pembatalan dan identitas admin, menghapus transaksi dari deposit_transactions
+ * agar saldo anggota akurat, lalu menyisipkan 1 baris Jurnal Balik (Reversal Entry)
+ * `KOREKSI_PEMBATALAN` ke `public.cash_flow` tanpa menghapus baris setoran asli.
  */
 export async function cancelMonthDepositWithReason(
   memberDepositId: string,
   year: number,
   month: number,
-  reason: string
-): Promise<{ success: boolean; cancelledCount: number }> {
+  reason: string,
+  options?: {
+    memberNrp?: string;
+    memberName?: string;
+    depositTypeName?: string;
+    adminName?: string;
+  }
+): Promise<{ success: boolean; cancelledCount: number; reversedAmount?: number }> {
   if (!memberDepositId || !year || !month) {
     throw new Error('memberDepositId, year, dan month wajib diisi');
   }
-  if (!reason || reason.trim() === '') {
+  const trimmedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (!trimmedReason) {
     throw new Error('Alasan pembatalan wajib diisi');
+  }
+  if (trimmedReason.length < 3) {
+    throw new Error('Alasan pembatalan minimal 3 karakter');
   }
 
   // 1. Ambil transaksi yang akan dihapus
@@ -2182,27 +2342,13 @@ export async function cancelMonthDepositWithReason(
   );
 
   if (deletableTxs.length === 0) {
-    return { success: true, cancelledCount: 0 };
+    return { success: true, cancelledCount: 0, reversedAmount: 0 };
   }
 
   // 2. Ambil admin yang sedang login
-  let currentUserId: string | null = null;
-  let currentUserName: string = 'Pengelola';
-  try {
-    if (supabase.auth && typeof supabase.auth.getUser === 'function') {
-      const { data: authData } = await supabase.auth.getUser();
-      if (authData?.user) {
-        currentUserId = authData.user.id;
-        currentUserName =
-          authData.user.user_metadata?.nama ||
-          authData.user.user_metadata?.name ||
-          authData.user.email ||
-          'Pengelola';
-      }
-    }
-  } catch {
-    // fallback
-  }
+  const adminInfo = await resolveCurrentAdminInfo();
+  const currentUserId = adminInfo.id;
+  const currentUserName = options?.adminName?.trim() || adminInfo.name;
 
   // 3. Catat audit log eksplisit ke audit_logs untuk setiap transaksi yang dibatalkan
   for (const tx of deletableTxs) {
@@ -2216,7 +2362,7 @@ export async function cancelMonthDepositWithReason(
         old_data: tx,
         performed_by: currentUserId,
         performer_name: currentUserName,
-        notes: reason.trim(),
+        notes: trimmedReason,
         created_at: new Date().toISOString()
       };
       await supabase.from('audit_logs').insert(auditPayload);
@@ -2231,7 +2377,7 @@ export async function cancelMonthDepositWithReason(
         const tableRef: any = supabase.from('deposit_transactions');
         if (typeof tableRef.update === 'function') {
           const updBuilder = tableRef.update({
-            description: reason.trim()
+            description: trimmedReason
           });
           if (typeof updBuilder.eq === 'function') {
             await updBuilder.eq('id', tx.id);
@@ -2266,9 +2412,32 @@ export async function cancelMonthDepositWithReason(
     }
   }
 
-  // 4b. Hapus entri arus kas (cash_flow) terkait agar total kas masuk akurat
-  if (cancelledTxIds.length > 0) {
-    await deleteCashFlowByReferenceIds(cancelledTxIds);
+  // 4b. Catat 1 baris Jurnal Balik (Reversal Entry) ke public.cash_flow (baris setoran asli tetap utuh)
+  const canceledAmount = deletableTxs.reduce(
+    (sum: number, tx: any) => sum + Math.round(Number(tx?.amount || 0)),
+    0
+  );
+  if (canceledAmount > 0) {
+    const effectiveCutOffDate =
+      (await getInitialSavingsCutOffDate()) || OFFICIAL_CUTOFF_DATE;
+    if (!isMonthBeforeCutOff(year, month, effectiveCutOffDate)) {
+      const ctx = await resolveDepositContextForCashFlow(memberDepositId, {
+        memberNrp: options?.memberNrp,
+        memberName: options?.memberName,
+        depositTypeName: options?.depositTypeName,
+      });
+      await insertMatrixCancellationCashFlowRow({
+        txId: cancelledTxIds[0] || null,
+        amount: canceledAmount,
+        month,
+        year,
+        cancelReason: trimmedReason,
+        adminName: currentUserName,
+        memberNrp: ctx.memberNrp,
+        memberName: ctx.memberName,
+        depositTypeName: ctx.depositTypeName,
+      });
+    }
   }
 
   // 4c. Pastikan catatan audit log untuk transaksi yang baru dihapus memuat alasan admin
@@ -2278,7 +2447,7 @@ export async function cancelMonthDepositWithReason(
         const auditTable: any = supabase.from('audit_logs');
         if (typeof auditTable.update === 'function') {
           const auditUpd = auditTable.update({
-            notes: reason.trim()
+            notes: trimmedReason
           });
           if (typeof auditUpd.eq === 'function') {
             const qTbl = auditUpd.eq('table_name', 'deposit_transactions');
@@ -2296,7 +2465,7 @@ export async function cancelMonthDepositWithReason(
     }
   }
 
-  return { success: true, cancelledCount: deletableTxs.length };
+  return { success: true, cancelledCount: deletableTxs.length, reversedAmount: canceledAmount };
 }
 
 /**

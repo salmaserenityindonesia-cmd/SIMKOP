@@ -41,7 +41,7 @@ import {
   isSystemDefaultDescription,
   isMonthBeforeCutOff,
   getInitialSavingsCutOffDate,
-  deleteMatrixDepositCashFlowByTxIds,
+  recordMatrixCancellationReversalsForTxs,
   syncMatrixDepositsToCashFlow,
   isProtectedSavingsTransaction,
   CheckMonthPayload,
@@ -757,6 +757,23 @@ export default function SavingsLedgerMatrixModal({
     setEvidenceModalOpen(true);
   };
 
+  const resolveActiveDepositTypeName = (): string => {
+    const matchingDepositType = depositTypes.find((dt) => {
+      const c = String(dt.code || '').toUpperCase();
+      const n = String(dt.name || '').toLowerCase();
+      if (activeTab === 'WAJIB') return c === 'WAJIB' || c === 'SW' || n.includes('wajib');
+      if (activeTab === 'BELANJA') return c === 'BELANJA' || c === 'SB' || n.includes('belanja');
+      return c === 'LEBARAN' || c === 'SL' || n.includes('lebaran') || n.includes('hari raya');
+    });
+    const fallbackTypeName =
+      activeTab === 'WAJIB'
+        ? 'Simpanan Wajib'
+        : activeTab === 'BELANJA'
+        ? 'Simpanan Belanja Bulanan'
+        : 'Simpanan Hari Raya (Lebaran)';
+    return matchingDepositType?.name || fallbackTypeName;
+  };
+
   // Handler simpan bukti setoran
   const handleSubmitEvidence = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -775,19 +792,6 @@ export default function SavingsLedgerMatrixModal({
       const previousAmt = currentCheckedSet.has(key)
         ? (currentMonthAmounts.get(key) ?? selectedCellForEvidence.rate)
         : 0;
-      const matchingDepositType = depositTypes.find((dt) => {
-        const c = String(dt.code || '').toUpperCase();
-        const n = String(dt.name || '').toLowerCase();
-        if (activeTab === 'WAJIB') return c === 'WAJIB' || c === 'SW' || n.includes('wajib');
-        if (activeTab === 'BELANJA') return c === 'BELANJA' || c === 'SB' || n.includes('belanja');
-        return c === 'LEBARAN' || c === 'SL' || n.includes('lebaran') || n.includes('hari raya');
-      });
-      const fallbackTypeName =
-        activeTab === 'WAJIB'
-          ? 'Simpanan Wajib'
-          : activeTab === 'BELANJA'
-          ? 'Simpanan Belanja Bulanan'
-          : 'Simpanan Hari Raya (Lebaran)';
 
       await saveMonthDepositWithEvidence({
         memberDepositId,
@@ -800,7 +804,7 @@ export default function SavingsLedgerMatrixModal({
         description: `Setoran Matriks ${activeTab} ${MONTH_NAMES[month - 1]} ${year}`,
         memberNrp,
         memberName,
-        depositTypeName: matchingDepositType?.name || fallbackTypeName
+        depositTypeName: resolveActiveDepositTypeName()
       });
 
       setCheckedMonths(prev => {
@@ -839,7 +843,8 @@ export default function SavingsLedgerMatrixModal({
   // Handler konfirmasi pembatalan uncheck
   const handleConfirmUncheck = async () => {
     if (!selectedCellForUncheck) return;
-    if (!uncheckReason.trim()) return;
+    const trimmedReason = uncheckReason.trim();
+    if (trimmedReason.length < 3) return;
 
     const { year, month, key } = selectedCellForUncheck;
     const memberDepositId = memberDepositMap[activeTab];
@@ -853,7 +858,12 @@ export default function SavingsLedgerMatrixModal({
         memberDepositId,
         year,
         month,
-        uncheckReason.trim()
+        trimmedReason,
+        {
+          memberNrp,
+          memberName,
+          depositTypeName: resolveActiveDepositTypeName()
+        }
       );
 
       setCheckedMonths(prev => {
@@ -867,8 +877,10 @@ export default function SavingsLedgerMatrixModal({
         return { ...prev, [activeTab]: nextMap };
       });
       if (res.cancelledCount > 0) {
+        const deductedAmt =
+          res.reversedAmount && res.reversedAmount > 0 ? res.reversedAmount : removedAmt;
         setDbBalances(prev => {
-          const nextBal = (prev[activeTab] || 0) - removedAmt;
+          const nextBal = (prev[activeTab] || 0) - deductedAmt;
           baselineBalancesRef.current[activeTab] = nextBal;
           return { ...prev, [activeTab]: nextBal };
         });
@@ -982,7 +994,14 @@ export default function SavingsLedgerMatrixModal({
       );
 
       if (obsoleteIds.length > 0) {
-        await deleteMatrixDepositCashFlowByTxIds(obsoleteIds);
+        await recordMatrixCancellationReversalsForTxs({
+          memberDepositId,
+          txs: obsoleteRoutineTxs,
+          reason: 'Penyesuaian Sinkronisasi Matriks Simpanan',
+          memberNrp,
+          memberName,
+          depositTypeName: resolveActiveDepositTypeName()
+        });
         const delQuery: any = supabase.from('deposit_transactions').delete();
         if (typeof delQuery?.in === 'function') {
           const { error: delErr } = await delQuery.in('id', obsoleteIds);
@@ -1108,6 +1127,7 @@ export default function SavingsLedgerMatrixModal({
     setSyncing(true);
     try {
       const effectiveCutoff = hasCutoffMode ? cutoffDate : null;
+      let deletableTxs: any[] = [];
       let deletableIds: string[] = [];
 
       const dtTable: any = supabase?.from?.('deposit_transactions');
@@ -1116,15 +1136,24 @@ export default function SavingsLedgerMatrixModal({
         if (selQ && typeof selQ.eq === 'function') {
           const res: any = await selQ.eq('member_deposit_id', memberDepositId);
           const rows = Array.isArray(res?.data) ? res.data : [];
-          deletableIds = rows
-            .filter((t: any) => !isProtectedSavingsTransaction(t, effectiveCutoff))
+          deletableTxs = rows.filter(
+            (t: any) => !isProtectedSavingsTransaction(t, effectiveCutoff)
+          );
+          deletableIds = deletableTxs
             .map((t: any) => String(t?.id || ''))
             .filter(Boolean);
         }
       }
 
       if (deletableIds.length > 0) {
-        await deleteMatrixDepositCashFlowByTxIds(deletableIds);
+        await recordMatrixCancellationReversalsForTxs({
+          memberDepositId,
+          txs: deletableTxs,
+          reason: 'Batal Centang Semua (Matriks Simpanan)',
+          memberNrp,
+          memberName,
+          depositTypeName: resolveActiveDepositTypeName()
+        });
 
         const delQuery: any = supabase.from('deposit_transactions').delete();
         if (typeof delQuery?.in === 'function') {
@@ -1769,22 +1798,28 @@ export default function SavingsLedgerMatrixModal({
 
             <div className="p-6 space-y-4">
               <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-800 leading-relaxed">
-                <strong>Perhatian:</strong> Tindakan ini akan membatalkan centang dan menghapus mutasi transaksi setoran untuk periode ini. Riwayat pembatalan akan dicatat permanen dalam <strong>Jejak Audit (Audit Logs)</strong>.
+                <strong>Perhatian:</strong> Tindakan ini akan membatalkan centang dan menghapus mutasi transaksi setoran untuk periode ini. Baris setoran asli tetap dipertahankan dan sistem akan mencatat <strong>Jurnal Balik (Koreksi / Pembatalan)</strong> di Laporan Keuangan Arus Kas serta menyimpannya dalam <strong>Jejak Audit (Audit Logs)</strong>.
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Alasan Pembatalan <span className="text-rose-500">* (Wajib diisi)</span>
+                  Alasan Pembatalan <span className="text-rose-500">* (Wajib diisi, minimal 3 karakter)</span>
                 </label>
                 <textarea
                   data-testid="uncheck-reason-input"
                   rows={3}
+                  minLength={3}
                   value={uncheckReason}
                   onChange={e => setUncheckReason(e.target.value)}
-                  placeholder="Jelaskan alasan pembatalan centang (misal: koreksi data salah input, pembatalan transfer, atau mutasi ganda)..."
+                  placeholder="Jelaskan alasan pembatalan centang (misal: Salah input bulan, koreksi nominal, atau mutasi ganda)..."
                   required
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-colors"
                 />
+                {uncheckReason.trim().length > 0 && uncheckReason.trim().length < 3 && (
+                  <p className="mt-1 text-[11px] font-medium text-rose-600">
+                    Alasan pembatalan minimal 3 karakter.
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
@@ -1804,7 +1839,7 @@ export default function SavingsLedgerMatrixModal({
                 <button
                   type="button"
                   onClick={handleConfirmUncheck}
-                  disabled={!uncheckReason.trim() || unchecking}
+                  disabled={uncheckReason.trim().length < 3 || unchecking}
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors shadow-sm disabled:opacity-50"
                   data-testid="uncheck-confirm-btn"
                 >

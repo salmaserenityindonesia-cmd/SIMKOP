@@ -141,7 +141,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Rekening Koran Simpanan', icon: BookOpen, href: '/admin/rekening-koran-simpanan' },
       { label: 'Pencairan Simpanan', icon: ArrowUpRight, href: '/admin/penarikan-simpanan' },
       { label: 'Laporan Pencairan', icon: FileSpreadsheet, href: '/admin/laporan-penarikan' },
-      { label: 'Buku Besar Belanja', icon: ShoppingBag, href: '/admin/buku-besar-belanja' },
+      { label: 'Buku Besar Simp. Belanja', icon: ShoppingBag, href: '/admin/buku-besar-belanja' },
     ],
   },
   {
