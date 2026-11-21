@@ -8,10 +8,13 @@ import {
   isSavingsWithdrawalCategory,
 } from '../utils/withdrawalCashFlowFormat';
 import {
+  buildMemberDepositTypeSummary,
   formatMatrixCancellationCashFlowDescription,
   formatMatrixDepositCashFlowDescription,
   formatMatrixDepositPeriodLabel,
   formatMatrixDepositShortPeriod,
+  hasMemberDepositTypeComponents,
+  injectDepositTypesIntoMemberDepositDescription,
   isCancellationReversalCategory,
   isSavingsDepositCategory,
   parseCancellationReversalDescription,
@@ -1592,6 +1595,16 @@ export function extractMemberNameFromDepositDescription(
   description?: string | null
 ): string | null {
   const desc = String(description || '');
+  const typedExactMatch = desc.match(
+    /^Setoran\s+Anggota\s*\([^)]+\)\s*[—–-]\s*(.+?)\s*\(\d{5,}\)/i
+  );
+  if (typedExactMatch?.[1]) return typedExactMatch[1].trim();
+
+  const typedFallbackMatch = desc.match(
+    /^Setoran\s+Anggota\s*\([^)]+\)\s*[—–-]\s*(.+?)\s*\(/i
+  );
+  if (typedFallbackMatch?.[1]) return typedFallbackMatch[1].trim();
+
   const exactMatch = desc.match(/^Setoran\s+Anggota\s+(.+?)\s*\(\d{5,}\)/i);
   if (exactMatch?.[1]) return exactMatch[1].trim();
 
@@ -1605,6 +1618,9 @@ export function extractPaymentMethodFromDepositDescription(
   description?: string | null
 ): string | null {
   const desc = String(description || '');
+  const nrpAnchoredMatch = desc.match(/\(\d{5,}\)\s*-\s*([^[\]]+?)(?:\s*\[|$)/i);
+  if (nrpAnchoredMatch?.[1]) return nrpAnchoredMatch[1].trim();
+
   const match = desc.match(/\)\s*-\s*([^[\]]+?)(?:\s*\[|$)/i);
   return match?.[1] ? match[1].trim() : null;
 }
@@ -5541,4 +5557,420 @@ export async function enrichMemberClearanceCashFlowDescriptions<
     console.warn('Warning enrichMemberClearanceCashFlowDescriptions:', err);
     return rows;
   }
+}
+
+export interface EnrichMemberDepositDescriptionsResult {
+  updatedCount: number;
+  skippedCount: number;
+  resolvedDescriptions: Record<string, string>;
+}
+
+let activeMemberDepositEnrichPromise: Promise<EnrichMemberDepositDescriptionsResult> | null =
+  null;
+
+async function runEnrichMemberDepositCashFlowDescriptions(): Promise<EnrichMemberDepositDescriptionsResult> {
+  const emptyResult: EnrichMemberDepositDescriptionsResult = {
+    updatedCount: 0,
+    skippedCount: 0,
+    resolvedDescriptions: {},
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return emptyResult;
+    }
+
+    const cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, created_at, description, category, direction, amount, reference_id'
+    );
+    if (cfRes.error) {
+      return emptyResult;
+    }
+
+    const memberDepositRows = (cfRes.data || []).filter((r: any) =>
+      isMemberDepositBatchCategory(r?.category)
+    );
+    const targetRows = memberDepositRows.filter(
+      (r: any) => r?.id && !hasMemberDepositTypeComponents(r?.description)
+    );
+    let skippedCount = memberDepositRows.length - targetRows.length;
+
+    if (targetRows.length === 0) {
+      return { updatedCount: 0, skippedCount, resolvedDescriptions: {} };
+    }
+
+    const rowMeta = targetRows.map((cfRow: any) => ({
+      cfRow,
+      cfId: String(cfRow.id),
+      receiptCode: extractReceiptCodeFromCashFlow(cfRow?.reference_id, cfRow?.description),
+      rawRefId: String(cfRow?.reference_id || '').trim(),
+      memberNrpHint: extractMemberNrpFromDepositDescription(cfRow?.description),
+      cfAmount: Math.round(Number(cfRow?.amount || 0)),
+      matchedTxs: [] as any[],
+      matchedLoanRepayments: [] as any[],
+      resolvedMember: null as any | null,
+    }));
+
+    const uniqueReceiptCodes = Array.from(
+      new Set(
+        rowMeta
+          .map((entry) => entry.receiptCode)
+          .filter((code): code is string => Boolean(code))
+      )
+    );
+
+    const txByRef =
+      uniqueReceiptCodes.length > 0
+        ? await safeFetchByColumnIn<any>(
+            'deposit_transactions',
+            DEPOSIT_TX_FULL_COLS,
+            'reference_no',
+            uniqueReceiptCodes,
+            DEPOSIT_TX_NO_DATE_COLS
+          )
+        : [];
+    const validDepositTxsByRef = txByRef.filter(
+      (tx: any) => !tx?.transaction_type || tx.transaction_type === 'deposit'
+    );
+
+    for (const entry of rowMeta) {
+      if (entry.receiptCode) {
+        entry.matchedTxs = validDepositTxsByRef.filter((tx: any) =>
+          depositTxMatchesReceipt(tx, entry.receiptCode!)
+        );
+      }
+    }
+
+    const needsFullTxScan = rowMeta.some((entry) => {
+      const sum = entry.matchedTxs.reduce(
+        (s, t) => s + Math.round(Number(t?.amount || 0)),
+        0
+      );
+      return entry.matchedTxs.length === 0 || (entry.cfAmount > 0 && sum < entry.cfAmount);
+    });
+
+    if (needsFullTxScan) {
+      const allTxs = await fetchAllDepositTransactionsResilient();
+      const depositTxsAll = allTxs.filter(
+        (row: any) => !row?.transaction_type || row.transaction_type === 'deposit'
+      );
+
+      for (const entry of rowMeta) {
+        if (!entry.receiptCode) continue;
+        const sum = entry.matchedTxs.reduce(
+          (s, t) => s + Math.round(Number(t?.amount || 0)),
+          0
+        );
+        if (entry.matchedTxs.length === 0 || (entry.cfAmount > 0 && sum < entry.cfAmount)) {
+          const scanned = depositTxsAll.filter((tx: any) =>
+            depositTxMatchesReceipt(tx, entry.receiptCode!)
+          );
+          if (scanned.length > entry.matchedTxs.length) {
+            entry.matchedTxs = scanned;
+          }
+        }
+      }
+
+      for (const entry of rowMeta) {
+        if (entry.matchedTxs.length > 0) continue;
+        if (!entry.rawRefId || !UUID_REGEX.test(entry.rawRefId)) continue;
+        const txById = depositTxsAll.find(
+          (tx: any) => String(tx?.id || '') === entry.rawRefId
+        );
+        if (txById) {
+          const txRef = String(txById?.reference_no || '').trim().toUpperCase();
+          if (txRef) {
+            const batchMatches = depositTxsAll.filter((row: any) =>
+              depositTxMatchesReceipt(row, txRef)
+            );
+            entry.matchedTxs = batchMatches.length > 0 ? batchMatches : [txById];
+          } else {
+            entry.matchedTxs = [txById];
+          }
+        }
+      }
+
+      const entriesNeedingMemberFallback = rowMeta.filter(
+        (entry) =>
+          entry.matchedTxs.length === 0 &&
+          (Boolean(entry.memberNrpHint) ||
+            (Boolean(entry.rawRefId) && UUID_REGEX.test(entry.rawRefId)))
+      );
+
+      if (entriesNeedingMemberFallback.length > 0) {
+        const [allMembersRes, allMdsRes] = await Promise.all([
+          safeFetchAllPaged<any>('anggota', 'id, nrp, nama'),
+          safeFetchAllPaged<any>('member_deposits', 'id, member_id, deposit_type_id'),
+        ]);
+        const allMembers = allMembersRes.data || [];
+        const allMds = allMdsRes.data || [];
+
+        for (const entry of entriesNeedingMemberFallback) {
+          let resolvedMember: any = null;
+          if (entry.rawRefId && UUID_REGEX.test(entry.rawRefId)) {
+            resolvedMember =
+              allMembers.find((m: any) => String(m?.id || '') === entry.rawRefId) ?? null;
+          }
+          if (!resolvedMember && entry.memberNrpHint) {
+            const cleanHint = stripResignedNrpPrefix(entry.memberNrpHint);
+            resolvedMember =
+              allMembers.find(
+                (m: any) => stripResignedNrpPrefix(m?.nrp) === cleanHint
+              ) ?? null;
+          }
+          if (!resolvedMember?.id) continue;
+          entry.resolvedMember = resolvedMember;
+
+          const memberMdIds = new Set(
+            allMds
+              .filter((md: any) => String(md?.member_id || '') === String(resolvedMember.id))
+              .map((md: any) => String(md.id))
+              .filter(Boolean)
+          );
+          if (memberMdIds.size === 0) continue;
+
+          const cfDateCandidates = getDateCandidates(entry.cfRow?.created_at);
+          const sameDayMemberTxs = depositTxsAll.filter((row: any) => {
+            if (!memberMdIds.has(String(row?.member_deposit_id || ''))) return false;
+            if (isOpeningDepositTransaction(row)) return false;
+            const descLower = String(row?.description || '').toLowerCase();
+            if (descLower.includes('saldo awal')) return false;
+
+            if (cfDateCandidates.length === 0) return true;
+            const txDateCandidates = getDateCandidates(
+              row?.transaction_date || row?.created_at
+            );
+            return hasCommonDate(cfDateCandidates, txDateCandidates);
+          });
+
+          entry.matchedTxs = selectBestMatchedDepositRowsForAmount(
+            sameDayMemberTxs,
+            entry.cfAmount,
+            String(entry.cfRow?.created_at || '')
+          );
+        }
+      }
+    }
+
+    const needsLoanRepayments = rowMeta.some((entry) => {
+      if (!entry.receiptCode) return false;
+      const sum = entry.matchedTxs.reduce(
+        (s, t) => s + Math.round(Number(t?.amount || 0)),
+        0
+      );
+      return entry.matchedTxs.length === 0 || (entry.cfAmount > 0 && sum < entry.cfAmount);
+    });
+
+    if (needsLoanRepayments) {
+      const allRepayments = await fetchAllLoanRepaymentsResilient();
+      for (const entry of rowMeta) {
+        if (!entry.receiptCode) continue;
+        const sum = entry.matchedTxs.reduce(
+          (s, t) => s + Math.round(Number(t?.amount || 0)),
+          0
+        );
+        if (entry.matchedTxs.length === 0 || (entry.cfAmount > 0 && sum < entry.cfAmount)) {
+          entry.matchedLoanRepayments = allRepayments.filter((rep: any) =>
+            loanRepaymentMatchesReceipt(rep, entry.receiptCode!)
+          );
+        }
+      }
+    }
+
+    const mdIds = Array.from(
+      new Set(
+        rowMeta
+          .flatMap((entry) => entry.matchedTxs)
+          .map((tx: any) => String(tx?.member_deposit_id || ''))
+          .filter(Boolean)
+      )
+    );
+    const mdRows =
+      mdIds.length > 0
+        ? await safeFetchByIds<any>('member_deposits', 'id, member_id, deposit_type_id', mdIds)
+        : [];
+    const mdMap = new Map<string, any>();
+    for (const md of mdRows) {
+      if (md?.id) mdMap.set(String(md.id), md);
+    }
+
+    const dtIds = Array.from(
+      new Set(
+        [
+          ...mdRows.map((md: any) => String(md?.deposit_type_id || '')),
+          ...rowMeta
+            .flatMap((entry) => entry.matchedTxs)
+            .map((tx: any) => String(tx?.deposit_type_id || '')),
+        ].filter(Boolean)
+      )
+    );
+
+    const blankMemberIds = Array.from(
+      new Set(
+        rowMeta
+          .filter((entry) => isBlankOrDashDescription(entry.cfRow?.description))
+          .flatMap((entry) => {
+            const ids: string[] = [];
+            if (entry.resolvedMember?.id) ids.push(String(entry.resolvedMember.id));
+            for (const tx of entry.matchedTxs) {
+              const md = tx?.member_deposit_id
+                ? mdMap.get(String(tx.member_deposit_id))
+                : undefined;
+              if (md?.member_id) ids.push(String(md.member_id));
+            }
+            return ids;
+          })
+          .filter(Boolean)
+      )
+    );
+
+    const [dtRows, blankMemberRows] = await Promise.all([
+      dtIds.length > 0
+        ? safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
+        : Promise.resolve([]),
+      blankMemberIds.length > 0
+        ? safeFetchByIds<any>('anggota', 'id, nrp, nama', blankMemberIds)
+        : Promise.resolve([]),
+    ]);
+
+    const dtMap = new Map<string, any>();
+    for (const dt of dtRows) {
+      if (dt?.id) dtMap.set(String(dt.id), dt);
+    }
+    const blankMemberMap = new Map<string, any>();
+    for (const m of blankMemberRows) {
+      if (m?.id) blankMemberMap.set(String(m.id), m);
+    }
+
+    let updatedCount = 0;
+    const resolvedDescriptions: Record<string, string> = {};
+    const cfTable: any = supabase?.from?.('cash_flow');
+
+    for (const entry of rowMeta) {
+      const componentSources: Array<{
+        code?: string | null;
+        name?: string | null;
+        category?: string | null;
+      }> = [];
+
+      for (const tx of entry.matchedTxs) {
+        const md = tx?.member_deposit_id
+          ? mdMap.get(String(tx.member_deposit_id))
+          : undefined;
+        const dt =
+          tx?.deposit_types ||
+          md?.deposit_types ||
+          (md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined) ||
+          (tx?.deposit_type_id ? dtMap.get(String(tx.deposit_type_id)) : undefined);
+        componentSources.push({
+          code: dt?.code ?? null,
+          name:
+            dt?.name ??
+            (tx?.description && String(tx.description).trim() !== '-'
+              ? String(tx.description)
+              : null),
+        });
+      }
+
+      if (entry.matchedLoanRepayments.length > 0) {
+        componentSources.push({
+          code: 'PINJAMAN',
+          name: 'Angsuran Pinjaman',
+          category: 'loan',
+        });
+      }
+
+      const typeSummary = buildMemberDepositTypeSummary(componentSources);
+      if (!typeSummary) {
+        skippedCount += 1;
+        continue;
+      }
+
+      let fallbackMeta:
+        | {
+            memberName?: string | null;
+            memberNrp?: string | null;
+            paymentMethodLabel?: string | null;
+            receiptNo?: string | null;
+          }
+        | undefined;
+
+      if (isBlankOrDashDescription(entry.cfRow?.description)) {
+        const firstTx = entry.matchedTxs[0];
+        const firstMd = firstTx?.member_deposit_id
+          ? mdMap.get(String(firstTx.member_deposit_id))
+          : undefined;
+        const memberObj =
+          entry.resolvedMember ||
+          (firstMd?.member_id ? blankMemberMap.get(String(firstMd.member_id)) : undefined);
+        const rawPayMethod = String(
+          firstTx?.payment_method ||
+            entry.matchedLoanRepayments[0]?.payment_method ||
+            ''
+        )
+          .trim()
+          .toLowerCase();
+        fallbackMeta = {
+          memberName: memberObj?.nama ?? null,
+          memberNrp: memberObj?.nrp ? stripResignedNrpPrefix(memberObj.nrp) : null,
+          paymentMethodLabel:
+            rawPayMethod === 'transfer_bank'
+              ? 'Transfer Bank'
+              : rawPayMethod === 'tunai'
+              ? 'Tunai'
+              : null,
+          receiptNo: entry.receiptCode,
+        };
+      }
+
+      const origDesc = String(entry.cfRow?.description || '').trim();
+      const newDescription = injectDepositTypesIntoMemberDepositDescription(
+        entry.cfRow?.description,
+        typeSummary,
+        fallbackMeta
+      );
+
+      if (!newDescription || newDescription === origDesc) {
+        skippedCount += 1;
+        continue;
+      }
+
+      resolvedDescriptions[entry.cfId] = newDescription;
+
+      if (cfTable && typeof cfTable.update === 'function') {
+        const updQ: any = cfTable.update({ description: newDescription });
+        if (updQ && typeof updQ.eq === 'function') {
+          const updRes: any = await updQ.eq('id', entry.cfRow.id);
+          if (!updRes?.error) {
+            updatedCount += 1;
+          }
+        }
+      }
+    }
+
+    return { updatedCount, skippedCount, resolvedDescriptions };
+  } catch (err) {
+    console.warn('Warning enrichMemberDepositCashFlowDescriptions:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Memperbarui kolom `description` pada baris `public.cash_flow` berkategori `SETORAN_ANGGOTA`
+ * yang belum mencantumkan komponen jenis simpanan berdasarkan rincian `deposit_transactions`
+ * dan `loan_repayments` terkait nomor kwitansi (`KW-SETOR-...`). Idempoten & aman dijalankan berulang.
+ */
+export async function enrichMemberDepositCashFlowDescriptions(): Promise<EnrichMemberDepositDescriptionsResult> {
+  if (activeMemberDepositEnrichPromise) {
+    return activeMemberDepositEnrichPromise;
+  }
+
+  const runPromise = runEnrichMemberDepositCashFlowDescriptions().finally(() => {
+    if (activeMemberDepositEnrichPromise === runPromise) {
+      activeMemberDepositEnrichPromise = null;
+    }
+  });
+  activeMemberDepositEnrichPromise = runPromise;
+  return runPromise;
 }

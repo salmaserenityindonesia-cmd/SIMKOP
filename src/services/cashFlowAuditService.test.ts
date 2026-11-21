@@ -4,8 +4,11 @@ import {
   deduplicateClearanceCashFlow,
   enrichDepositCashFlowDescriptions,
   enrichMemberClearanceCashFlowDescriptions,
+  enrichMemberDepositCashFlowDescriptions,
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
+  extractMemberNameFromDepositDescription,
+  extractPaymentMethodFromDepositDescription,
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
   getTraceBackDepositRows,
@@ -3117,5 +3120,189 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
     expect(enriched[0].deskripsi).toBe(
       'Pembatalan Setoran Simpanan Wajib [Nov 2026] — 00060019 - DONNY ILHAM PAMBUDI | Alasan: "Salah input bulan" (Oleh: Admin Audit)'
     );
+  });
+
+  it('extractMemberNameFromDepositDescription and extractPaymentMethodFromDepositDescription support both legacy and enriched formats', () => {
+    const legacy =
+      'Setoran Anggota ZUH RISSA NUR (00060124) - Tunai [KW-SETOR-20261121-1837]';
+    const enriched =
+      'Setoran Anggota (Wajib, Belanja, Lebaran) — ZUH RISSA NUR (00060124) - Transfer Bank [KW-SETOR-20261121-1837]';
+
+    expect(extractMemberNameFromDepositDescription(legacy)).toBe('ZUH RISSA NUR');
+    expect(extractPaymentMethodFromDepositDescription(legacy)).toBe('Tunai');
+
+    expect(extractMemberNameFromDepositDescription(enriched)).toBe('ZUH RISSA NUR');
+    expect(extractPaymentMethodFromDepositDescription(enriched)).toBe('Transfer Bank');
+  });
+
+  it('enrichMemberDepositCashFlowDescriptions backfills CF-CF7E7572 & CF-A2B66A65 idempotently and handles null reference_no fallback', async () => {
+    const anggotaRows = [
+      { id: 'mem-zuh', nrp: '00060124', nama: 'ZUH RISSA NUR', pangkat: 'Bripda' },
+      { id: 'mem-andi', nrp: '00050999', nama: 'ANDI WIJAYA', pangkat: 'Briptu' },
+      { id: 'mem-hist', nrp: '00040111', nama: 'BUDI HARTO', pangkat: 'Aipda' },
+    ];
+    const depositTypes = [
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+    ];
+    const memberDeposits = [
+      { id: 'md-zuh-w', member_id: 'mem-zuh', deposit_type_id: 'dt-wajib' },
+      { id: 'md-zuh-b', member_id: 'mem-zuh', deposit_type_id: 'dt-belanja' },
+      { id: 'md-zuh-l', member_id: 'mem-zuh', deposit_type_id: 'dt-lebaran' },
+      { id: 'md-andi-w', member_id: 'mem-andi', deposit_type_id: 'dt-wajib' },
+      { id: 'md-hist-b', member_id: 'mem-hist', deposit_type_id: 'dt-belanja' },
+    ];
+    const depositTransactions = [
+      {
+        id: 'tx-zuh-1',
+        member_deposit_id: 'md-zuh-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        reference_no: 'KW-SETOR-20261121-1837',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Wajib (Nov 2026)',
+        created_at: '2026-11-21T08:00:00.000Z',
+      },
+      {
+        id: 'tx-zuh-2',
+        member_deposit_id: 'md-zuh-b',
+        transaction_type: 'deposit',
+        amount: 50000,
+        reference_no: 'KW-SETOR-20261121-1837',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Belanja (Nov 2026)',
+        created_at: '2026-11-21T08:00:01.000Z',
+      },
+      {
+        id: 'tx-zuh-3',
+        member_deposit_id: 'md-zuh-l',
+        transaction_type: 'deposit',
+        amount: 100000,
+        reference_no: 'KW-SETOR-20261121-1837',
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Lebaran (Nov 2026)',
+        created_at: '2026-11-21T08:00:02.000Z',
+      },
+      {
+        id: 'tx-andi-1',
+        member_deposit_id: 'md-andi-w',
+        transaction_type: 'deposit',
+        amount: 200000,
+        reference_no: 'KW-SETOR-20261121-1840',
+        payment_method: 'transfer_bank',
+        description: 'Setoran Simpanan Wajib (Nov 2026)',
+        created_at: '2026-11-21T09:00:00.000Z',
+      },
+      {
+        id: 'tx-hist-1',
+        member_deposit_id: 'md-hist-b',
+        transaction_type: 'deposit',
+        amount: 75000,
+        reference_no: null,
+        payment_method: 'tunai',
+        description: 'Setoran Simpanan Belanja (Nov 2026)',
+        created_at: '2026-11-19T10:00:00.000Z',
+      },
+    ];
+    const cashFlowRows = [
+      {
+        id: 'cf7e7572-0000-4000-8000-000000000001',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 350000,
+        reference_id: 'KW-SETOR-20261121-1837',
+        description:
+          'Setoran Anggota ZUH RISSA NUR (00060124) - Tunai [KW-SETOR-20261121-1837]',
+        created_at: '2026-11-21T08:00:05.000Z',
+      },
+      {
+        id: 'a2b66a65-0000-4000-8000-000000000002',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 200000,
+        reference_id: null,
+        description:
+          'Setoran Anggota ANDI WIJAYA (00050999) - Transfer Bank [KW-SETOR-20261121-1840]',
+        created_at: '2026-11-21T09:00:05.000Z',
+      },
+      {
+        id: 'hist-0001-4000-8000-000000000003',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 75000,
+        reference_id: null,
+        description:
+          'Setoran Anggota BUDI HARTO (00040111) - Tunai [KW-SETOR-20261119-7777]',
+        created_at: '2026-11-19T10:00:05.000Z',
+      },
+    ];
+
+    const updatedPayloads: Array<{ id: string; description: string }> = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') return buildTableMock(anggotaRows);
+      if (table === 'deposit_types') return buildTableMock(depositTypes);
+      if (table === 'member_deposits') return buildTableMock(memberDeposits);
+      if (table === 'deposit_transactions') return buildTableMock(depositTransactions);
+      if (table === 'cash_flow') {
+        const base = buildTableMock(cashFlowRows);
+        return {
+          ...base,
+          update: vi.fn((payload: any) => ({
+            eq: vi.fn(async (_col: string, id: string) => {
+              const row = cashFlowRows.find((r) => r.id === id);
+              if (row && typeof payload.description === 'string') {
+                row.description = payload.description;
+                updatedPayloads.push({ id, description: payload.description });
+              }
+              return { data: null, error: null };
+            }),
+          })),
+        };
+      }
+      return buildTableMock([]);
+    });
+
+    const firstRun = await enrichMemberDepositCashFlowDescriptions();
+    expect(firstRun.updatedCount).toBe(3);
+    expect(firstRun.skippedCount).toBe(0);
+    expect(cashFlowRows[0].description).toBe(
+      'Setoran Anggota (Wajib, Belanja, Lebaran) — ZUH RISSA NUR (00060124) - Tunai [KW-SETOR-20261121-1837]'
+    );
+    expect(cashFlowRows[1].description).toBe(
+      'Setoran Anggota (Wajib) — ANDI WIJAYA (00050999) - Transfer Bank [KW-SETOR-20261121-1840]'
+    );
+    expect(cashFlowRows[2].description).toBe(
+      'Setoran Anggota (Belanja) — BUDI HARTO (00040111) - Tunai [KW-SETOR-20261119-7777]'
+    );
+    expect(updatedPayloads).toHaveLength(3);
+
+    // Idempotent second run skips all already-enriched rows
+    const secondRun = await enrichMemberDepositCashFlowDescriptions();
+    expect(secondRun.updatedCount).toBe(0);
+    expect(secondRun.skippedCount).toBe(3);
+    expect(updatedPayloads).toHaveLength(3);
+
+    // Verify getCashFlowReferenceBreakdown still resolves MEMBER_DEPOSIT_BATCH with the enriched description
+    const breakdown = await getCashFlowReferenceBreakdown({
+      id: cashFlowRows[0].id,
+      referensi: 'CF-CF7E7572',
+      category: cashFlowRows[0].category,
+      amount: cashFlowRows[0].amount,
+      direction: 'in',
+      reference_id: cashFlowRows[0].reference_id,
+      description: cashFlowRows[0].description,
+      created_at: cashFlowRows[0].created_at,
+    });
+    expect(breakdown.kind).toBe('MEMBER_DEPOSIT_BATCH');
+    if (breakdown.kind === 'MEMBER_DEPOSIT_BATCH') {
+      expect(breakdown.memberDepositBatch.member).toMatchObject({
+        nrp: '00060124',
+        nama: 'ZUH RISSA NUR',
+      });
+      expect(breakdown.memberDepositBatch.items).toHaveLength(3);
+      expect(breakdown.memberDepositBatch.isMatched).toBe(true);
+    }
   });
 });

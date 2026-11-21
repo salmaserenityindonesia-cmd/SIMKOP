@@ -494,8 +494,9 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
       category: 'SETORAN_ANGGOTA',
       reference_id: receipt.receiptNo,
     });
-    expect(cashFlowInserts[0].payload.description).toContain('Transfer Bank');
-    expect(cashFlowInserts[0].payload.description).toContain(receipt.receiptNo);
+    expect(cashFlowInserts[0].payload.description).toBe(
+      `Setoran Anggota (Wajib) — Budi Santoso (88010023) - Transfer Bank [${receipt.receiptNo}]`
+    );
   });
 
   it('allocates FIFO loan schedules with tunai payment method, updates loan_schedules & sisa_pinjaman, and suffixes multi-row receipt_number', async () => {
@@ -547,6 +548,64 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
     const loanRow = tables.loans.find((l) => l.id === 'loan-1');
     expect(loanRow.sisa_pinjaman).toBe(1700000); // 3.000.000 - 1.300.000
     expect(loanRow.status).toBe('active');
+
+    const cashFlowInserts = insertedLog.filter((l) => l.table === 'cash_flow');
+    expect(cashFlowInserts).toHaveLength(1);
+    expect(cashFlowInserts[0].payload.description).toBe(
+      `Setoran Anggota (Angsuran Pinjaman) — Budi Santoso (88010023) - Tunai [${receipt.receiptNo}]`
+    );
+  });
+
+  it('orders unique paid deposit type components canonically (Pokok, Wajib, Belanja, Lebaran) in cash_flow.description', async () => {
+    const summary = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+    const pokok = summary.items.find((i) => i.code === 'POKOK')!;
+    const wajib = summary.items.find((i) => i.code === 'WAJIB')!;
+    const belanja = summary.items.find((i) => i.code === 'BELANJA')!;
+    const lebaran = summary.items.find((i) => i.code === 'LEBARAN')!;
+
+    // Submit out of order (Lebaran, Belanja, Wajib) to verify canonical ordering
+    const receipt1 = await processMemberPayment({
+      member: summary.member,
+      items: [
+        { item: lebaran, payAmount: lebaran.totalDue },
+        { item: belanja, payAmount: belanja.totalDue },
+        { item: wajib, payAmount: wajib.totalDue },
+      ],
+      paymentMethod: 'tunai',
+      cashierId: 'cashier-1',
+      cashierName: 'Siti Kasir',
+      selectedYear: 2026,
+      selectedMonth: 11,
+    });
+
+    const cf1 = insertedLog.filter((l) => l.table === 'cash_flow')[0];
+    expect(cf1.payload.description).toBe(
+      `Setoran Anggota (Wajib, Belanja, Lebaran) — Budi Santoso (88010023) - Tunai [${receipt1.receiptNo}]`
+    );
+
+    // Reset and submit all four types in reverse order
+    resetTables();
+    const summary2 = await calculateMemberCumulativeBills('mem-1', 2026, 11);
+    const receipt2 = await processMemberPayment({
+      member: summary2.member,
+      items: [
+        { item: summary2.items.find((i) => i.code === 'LEBARAN')!, payAmount: 50000 },
+        { item: summary2.items.find((i) => i.code === 'BELANJA')!, payAmount: 25000 },
+        { item: summary2.items.find((i) => i.code === 'WAJIB')!, payAmount: 200000 },
+        { item: summary2.items.find((i) => i.code === 'POKOK')!, payAmount: 300000 },
+        { item: pokok, payAmount: 0 }, // Zero payAmount must not duplicate Pokok
+      ],
+      paymentMethod: 'transfer_bank',
+      cashierId: 'cashier-1',
+      cashierName: 'Siti Kasir',
+      selectedYear: 2026,
+      selectedMonth: 11,
+    });
+
+    const cf2 = insertedLog.filter((l) => l.table === 'cash_flow')[0];
+    expect(cf2.payload.description).toBe(
+      `Setoran Anggota (Pokok, Wajib, Belanja, Lebaran) — Budi Santoso (88010023) - Transfer Bank [${receipt2.receiptNo}]`
+    );
   });
 
   it('rejects empty/zero payment amounts cleanly', async () => {

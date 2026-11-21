@@ -3527,4 +3527,221 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
       }
     }
   });
+
+  it('getCashFlowReport backfills SETORAN_ANGGOTA (CF-CF7E7572) with deposit type components, supports search & Excel export, and renders components cleanly without ellipsis truncation', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows = [
+        {
+          id: 'cf7e7572-1111-4000-8000-000000000001',
+          created_at: '2026-11-21T08:00:05.000Z',
+          category: 'SETORAN_ANGGOTA',
+          direction: 'in',
+          amount: 350000,
+          reference_id: 'KW-SETOR-20261121-1837',
+          description:
+            'Setoran Anggota ZUH RISSA NUR (00060124) - Tunai [KW-SETOR-20261121-1837]',
+        },
+      ];
+      const depositTxs = [
+        {
+          id: 'tx-zuh-w',
+          member_deposit_id: 'md-zuh-w',
+          transaction_type: 'deposit',
+          amount: 200000,
+          reference_no: 'KW-SETOR-20261121-1837',
+          payment_method: 'tunai',
+          description: 'Setoran Simpanan Wajib (Nov 2026)',
+          created_at: '2026-11-21T08:00:00.000Z',
+        },
+        {
+          id: 'tx-zuh-b',
+          member_deposit_id: 'md-zuh-b',
+          transaction_type: 'deposit',
+          amount: 50000,
+          reference_no: 'KW-SETOR-20261121-1837',
+          payment_method: 'tunai',
+          description: 'Setoran Simpanan Belanja (Nov 2026)',
+          created_at: '2026-11-21T08:00:01.000Z',
+        },
+        {
+          id: 'tx-zuh-l',
+          member_deposit_id: 'md-zuh-l',
+          transaction_type: 'deposit',
+          amount: 100000,
+          reference_no: 'KW-SETOR-20261121-1837',
+          payment_method: 'tunai',
+          description: 'Setoran Simpanan Lebaran (Nov 2026)',
+          created_at: '2026-11-21T08:00:02.000Z',
+        },
+      ];
+      const memberDeposits = [
+        { id: 'md-zuh-w', member_id: 'mem-zuh', deposit_type_id: 'dt-wajib' },
+        { id: 'md-zuh-b', member_id: 'mem-zuh', deposit_type_id: 'dt-belanja' },
+        { id: 'md-zuh-l', member_id: 'mem-zuh', deposit_type_id: 'dt-lebaran' },
+      ];
+      const depositTypes = [
+        { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+        { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja' },
+        { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return { eq: vi.fn().mockResolvedValue({ data: [], error: null }) };
+              }
+              return {
+                range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                  data: cfRows.slice(from, to + 1),
+                  error: null,
+                })),
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockImplementation(async () => ({
+                      data: [...cfRows],
+                      error: null,
+                    })),
+                  }),
+                }),
+              };
+            }),
+            update: vi.fn((payload: any) => ({
+              eq: vi.fn(async (_col: string, id: string) => {
+                const row = cfRows.find((r) => r.id === id);
+                if (row && typeof payload.description === 'string') {
+                  row.description = payload.description;
+                }
+                return { data: null, error: null };
+              }),
+            })),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+                data: depositTxs.filter((tx: any) => vals.includes(tx[col])),
+                error: null,
+              })),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: depositTxs.slice(from, to + 1),
+                error: null,
+              })),
+            })),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+                data: memberDeposits.filter((md: any) => vals.includes(md[col])),
+                error: null,
+              })),
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: memberDeposits.slice(from, to + 1),
+                error: null,
+              })),
+            })),
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockImplementation(() => ({
+              in: vi.fn().mockImplementation(async (col: string, vals: any[]) => ({
+                data: depositTypes.filter((dt: any) => vals.includes(dt[col])),
+                error: null,
+              })),
+              range: vi.fn().mockResolvedValue({ data: depositTypes, error: null }),
+            })),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+      expect(report.transactions).toHaveLength(1);
+      const expectedDesc =
+        'Setoran Anggota (Wajib, Belanja, Lebaran) — ZUH RISSA NUR (00060124) - Tunai [KW-SETOR-20261121-1837]';
+      expect(report.transactions[0]).toMatchObject({
+        referensi: 'CF-CF7E7572',
+        kategori: 'SETORAN_ANGGOTA',
+        deskripsi: expectedDesc,
+      });
+
+      // Search box filtering matches deposit type component keywords
+      expect(filterCashFlowTransactions(report.transactions, 'Lebaran', [])).toHaveLength(1);
+      expect(filterCashFlowTransactions(report.transactions, 'Belanja', [])).toHaveLength(1);
+      expect(filterCashFlowTransactions(report.transactions, 'Pokok', [])).toHaveLength(0);
+
+      // Excel export outputs full enriched description
+      const sheetRows = buildCashFlowExportSheetRows({
+        startDate: '2026-11-01',
+        endDate: '2026-11-30',
+        transactions: report.transactions,
+        inflowTotal: report.inflowTotal,
+        outflowTotal: report.outflowTotal,
+        netCashflow: report.netCashflow,
+      });
+      const txRow = sheetRows.find((r) => r[1] === 'CF-CF7E7572');
+      expect(txRow?.[2]).toBe(expectedDesc);
+
+      // UI SSR renders full description with line-clamp-2 (not truncate on td), tooltip title, and deposit component badges
+      const html = renderToStaticMarkup(
+        <MemoryRouter>
+          <LaporanKeuangan
+            initialActiveTab="cashflow"
+            initialStartDate="2026-11-01"
+            initialEndDate="2026-11-30"
+            initialCashFlowData={report}
+          />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('CF-CF7E7572');
+      expect(html).toContain(`title="${expectedDesc}"`);
+      expect(html).toContain('line-clamp-2');
+      expect(html).toContain('data-testid="cashflow-deposit-components"');
+      expect(html).toContain('Jenis Simpanan:');
+      expect(html).toContain('>Wajib</span>');
+      expect(html).toContain('>Belanja</span>');
+      expect(html).toContain('>Lebaran</span>');
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

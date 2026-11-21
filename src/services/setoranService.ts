@@ -14,6 +14,10 @@ import {
 } from './savingsRateService';
 import { getInitialSavingsCutOffDate } from './savingsMatrixService';
 import { getKoperasiProfile, KoperasiProfile } from './settingsService';
+import {
+  buildMemberDepositTypeSummary,
+  formatMemberDepositCashFlowDescription,
+} from '../utils/depositCashFlowFormat';
 
 export type SetoranPaymentMethod = 'tunai' | 'transfer_bank';
 
@@ -1310,7 +1314,28 @@ export async function processMemberPayment(
   }
 
   // 2. Record combined inflow in cash_flow
-  const cashFlowDescription = `Setoran Anggota ${member.nama} (${member.nrp}) - ${paymentMethodLabel} [${receiptNo}]`;
+  const paidComponentSources =
+    receiptLines.length > 0
+      ? receiptLines
+          .filter((line) => line.amount > 0)
+          .map((line) => ({
+            code: line.code,
+            name: line.itemName,
+            category: line.category,
+          }))
+      : payableItems.map(({ item }) => ({
+          code: item.code,
+          name: item.name,
+          category: item.category,
+        }));
+  const typeSummary = buildMemberDepositTypeSummary(paidComponentSources);
+  const cashFlowDescription = formatMemberDepositCashFlowDescription({
+    typeSummary,
+    memberName: member.nama,
+    memberNrp: member.nrp,
+    paymentMethodLabel,
+    receiptNo,
+  });
   await insertCashFlowResilient(
     totalPaid,
     cashFlowDescription,

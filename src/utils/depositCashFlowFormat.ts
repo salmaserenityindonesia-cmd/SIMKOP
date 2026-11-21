@@ -332,3 +332,196 @@ export function isOpeningOrMigrationDepositDescription(
     lower.includes('belum teralokasi')
   );
 }
+
+const MEMBER_DEPOSIT_TYPE_PRIORITY: Record<string, number> = {
+  Pokok: 1,
+  Wajib: 2,
+  Belanja: 3,
+  Lebaran: 4,
+  'Angsuran Pinjaman': 6,
+};
+
+/**
+ * Normalizes a deposit type code or name into a concise Indonesian short label
+ * (`Pokok`, `Wajib`, `Belanja`, `Lebaran`, `Angsuran Pinjaman`, or cleaned custom name).
+ */
+export function normalizeDepositTypeShortName(
+  codeOrName?: string | null,
+  fallbackName?: string | null
+): string | null {
+  const code = String(codeOrName || '').trim().toUpperCase();
+  const combined = `${codeOrName || ''} ${fallbackName || ''}`.trim().toLowerCase();
+
+  if (!combined) return null;
+
+  if (code === 'POKOK' || code === 'SP' || combined.includes('pokok')) {
+    return 'Pokok';
+  }
+  if (code === 'WAJIB' || code === 'SW' || combined.includes('wajib')) {
+    return 'Wajib';
+  }
+  if (
+    code === 'BELANJA' ||
+    code === 'SB' ||
+    combined.includes('belanja') ||
+    combined.includes('toko')
+  ) {
+    return 'Belanja';
+  }
+  if (
+    code === 'LEBARAN' ||
+    code === 'SL' ||
+    code === 'SHR' ||
+    code === 'HARI_RAYA' ||
+    code === 'THR' ||
+    combined.includes('lebaran') ||
+    combined.includes('hari raya')
+  ) {
+    return 'Lebaran';
+  }
+  if (
+    code === 'PINJAMAN' ||
+    combined.includes('pinjaman') ||
+    combined.includes('angsuran')
+  ) {
+    return 'Angsuran Pinjaman';
+  }
+
+  const fbTrimmed = String(fallbackName || '').trim();
+  const rawCandidate =
+    fbTrimmed && fbTrimmed !== '-' ? fbTrimmed : String(codeOrName || '').trim();
+  if (!rawCandidate || rawCandidate === '-') return null;
+
+  const cleaned = rawCandidate
+    .replace(/^setoran\s+/i, '')
+    .replace(/^simpanan\s+/i, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .trim();
+
+  if (!cleaned || cleaned === '-') return null;
+  return cleaned;
+}
+
+/**
+ * Deduplicates and canonically orders member deposit component short labels
+ * (`Pokok`, `Wajib`, `Belanja`, `Lebaran`, custom types, `Angsuran Pinjaman`).
+ */
+export function buildMemberDepositTypeSummary(
+  inputs: Array<{ code?: string | null; name?: string | null; category?: string | null }>
+): string {
+  const uniqueByLower = new Map<string, string>();
+
+  for (const item of inputs) {
+    const shortName =
+      item?.category === 'loan'
+        ? 'Angsuran Pinjaman'
+        : normalizeDepositTypeShortName(item?.code, item?.name);
+    if (!shortName) continue;
+    const key = shortName.toLowerCase();
+    if (!uniqueByLower.has(key)) {
+      uniqueByLower.set(key, shortName);
+    }
+  }
+
+  const sorted = Array.from(uniqueByLower.values()).sort((a, b) => {
+    const prioA = MEMBER_DEPOSIT_TYPE_PRIORITY[a] ?? 5;
+    const prioB = MEMBER_DEPOSIT_TYPE_PRIORITY[b] ?? 5;
+    if (prioA !== prioB) return prioA - prioB;
+    return a.localeCompare(b, 'id');
+  });
+
+  return sorted.join(', ');
+}
+
+/**
+ * Checks whether a `SETORAN_ANGGOTA` description already embeds deposit type components
+ * like `Setoran Anggota (Wajib, Belanja) — ...`.
+ */
+export function hasMemberDepositTypeComponents(description?: string | null): boolean {
+  return /^Setoran\s+Anggota\s*\([^)]+\)/i.test(String(description || '').trim());
+}
+
+/**
+ * Formats a `SETORAN_ANGGOTA` cash_flow description including deposit type components:
+ * `Setoran Anggota (${typeSummary}) — ${nama} (${nrp}) - ${metode} [${kwitansi}]`.
+ */
+export function formatMemberDepositCashFlowDescription(params: {
+  typeSummary?: string | null;
+  memberName?: string | null;
+  memberNrp?: string | null;
+  paymentMethodLabel?: string | null;
+  receiptNo?: string | null;
+}): string {
+  const nama = String(params.memberName || '').trim() || 'Anggota';
+  const nrp = String(params.memberNrp || '').trim();
+  const nrpSeg = nrp && nrp !== '-' ? ` (${nrp})` : '';
+  const method = String(params.paymentMethodLabel || '').trim();
+  const methodSeg = method ? ` - ${method}` : '';
+  const receipt = String(params.receiptNo || '').trim();
+  const receiptSeg = receipt ? ` [${receipt}]` : '';
+  const tail = `${nama}${nrpSeg}${methodSeg}${receiptSeg}`;
+
+  const summary = String(params.typeSummary || '').trim();
+  if (summary) {
+    return `Setoran Anggota (${summary}) — ${tail}`;
+  }
+  return `Setoran Anggota ${tail}`;
+}
+
+/**
+ * Idempotently injects resolved deposit type components into an existing `SETORAN_ANGGOTA`
+ * description without duplicating components or altering already-enriched entries.
+ */
+export function injectDepositTypesIntoMemberDepositDescription(
+  originalDescription: string | null | undefined,
+  typeSummary: string,
+  fallbackMeta?: {
+    memberName?: string | null;
+    memberNrp?: string | null;
+    paymentMethodLabel?: string | null;
+    receiptNo?: string | null;
+  }
+): string {
+  const summary = String(typeSummary || '').trim();
+  const orig = String(originalDescription || '').trim();
+
+  if (!summary) return orig;
+  if (hasMemberDepositTypeComponents(orig)) return orig;
+
+  if (!orig || orig === '-') {
+    return formatMemberDepositCashFlowDescription({
+      typeSummary: summary,
+      ...fallbackMeta,
+    });
+  }
+
+  if (/^Setoran\s+Anggota\b/i.test(orig)) {
+    const rest = orig.replace(/^Setoran\s+Anggota(?:\s*[—–-]\s*|\s+)/i, '').trim();
+    if (rest) {
+      return `Setoran Anggota (${summary}) — ${rest}`;
+    }
+    return formatMemberDepositCashFlowDescription({
+      typeSummary: summary,
+      ...fallbackMeta,
+    });
+  }
+
+  return `Setoran Anggota (${summary}) — ${orig}`;
+}
+
+/**
+ * Extracts individual deposit type component labels from an enriched
+ * `Setoran Anggota (Wajib, Belanja, Lebaran) — ...` description.
+ */
+export function parseMemberDepositDescriptionComponents(
+  description?: string | null
+): string[] {
+  const match = String(description || '')
+    .trim()
+    .match(/^Setoran\s+Anggota\s*\(([^)]+)\)\s*[—–-]/i);
+  if (!match?.[1]) return [];
+  return match[1]
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

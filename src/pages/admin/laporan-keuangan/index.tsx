@@ -18,6 +18,7 @@ import {
   consolidateBulkLebaranCashFlow,
   enrichDepositCashFlowDescriptions,
   enrichMemberClearanceCashFlowDescriptions,
+  enrichMemberDepositCashFlowDescriptions,
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   enrichWithdrawalCashFlowDescriptions,
@@ -28,6 +29,7 @@ import {
   formatPosCashFlowDescription,
   isPosCashSaleCategory,
 } from '../../../utils/posCashFlowFormat';
+import { parseMemberDepositDescriptionComponents } from '../../../utils/depositCashFlowFormat';
 import { deduplicateClearanceRowsInMemory } from '../../../utils/clearanceCashFlowFormat';
 import { syncMatrixDepositsToCashFlow } from '../../../services/savingsMatrixService';
 import {
@@ -509,6 +511,11 @@ export async function getCashFlowReport(
   await syncMatrixDepositsToCashFlow().catch(() => { });
   await syncPosCashSalesToCashFlow().catch(() => { });
   await syncResignedMemberClearanceToCashFlow().catch(() => { });
+  const memberDepositEnrichRes = await enrichMemberDepositCashFlowDescriptions().catch(() => ({
+    updatedCount: 0,
+    skippedCount: 0,
+    resolvedDescriptions: {} as Record<string, string>,
+  }));
 
   const startBoundaryIso = buildStartDateBoundaryIso(startDate);
   const [priorCfRows, priorSalesRows] = await Promise.all([
@@ -580,6 +587,9 @@ export async function getCashFlowReport(
     const isOpeningSavings =
       r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
     const rawDescription = typeof r.description === 'string' ? r.description.trim() : '';
+    const enrichedMemberDesc =
+      memberDepositEnrichRes?.resolvedDescriptions?.[String(r.id)] || '';
+    const effectiveDescription = enrichedMemberDesc || rawDescription;
     taggedRows.push({
       ts: parseTimestamp(r.created_at),
       row: {
@@ -587,8 +597,8 @@ export async function getCashFlowReport(
         tanggal: new Date(r.created_at).toLocaleDateString('id-ID'),
         referensi: `CF-${r.id.slice(0, 8).toUpperCase()}`,
         deskripsi:
-          rawDescription !== ''
-            ? rawDescription
+          effectiveDescription !== ''
+            ? effectiveDescription
             : isOpeningSavings
               ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
               : '-',
@@ -2474,8 +2484,40 @@ function LaporanKeuanganContent({
                                 <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
                               </button>
                             </td>
-                            <td className="px-4 py-3 text-on-surface min-w-[240px] max-w-[420px] truncate" title={t.deskripsi}>
-                              {t.deskripsi}
+                            <td
+                              className="px-4 py-3 text-on-surface min-w-[260px] max-w-[440px] whitespace-normal align-top"
+                              title={t.deskripsi}
+                            >
+                              {(() => {
+                                const depositComponents = parseMemberDepositDescriptionComponents(
+                                  t.deskripsi
+                                );
+                                return (
+                                  <div className="space-y-1">
+                                    <div className="line-clamp-2 break-words text-[13px] leading-snug">
+                                      {t.deskripsi}
+                                    </div>
+                                    {depositComponents.length > 0 && (
+                                      <div
+                                        data-testid="cashflow-deposit-components"
+                                        className="flex flex-wrap items-center gap-1"
+                                      >
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                          Jenis Simpanan:
+                                        </span>
+                                        {depositComponents.map((comp) => (
+                                          <span
+                                            key={comp}
+                                            className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200/70 text-[10px] font-semibold leading-none"
+                                          >
+                                            {comp}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3"><KategoriBadge kategori={t.kategori} /></td>
                             <td className="px-4 py-3 text-[12px] text-on-surface-variant">{t.unit_usaha}</td>
