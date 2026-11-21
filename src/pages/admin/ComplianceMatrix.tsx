@@ -46,8 +46,13 @@ import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
 import {
   bulkCheckAllUpToCurrentMonth,
-  BulkCheckProgress
+  BulkCheckProgress,
+  resolveDepositTypeCode
 } from '../../services/savingsMatrixService';
+import {
+  formatMatrixDepositCashFlowDescription,
+  isOpeningOrMigrationDepositDescription
+} from '../../utils/depositCashFlowFormat';
 import {
   clearTierCache,
   getRateTiers,
@@ -76,7 +81,12 @@ export interface ComplianceMatrixProps {
   initialBulkChecking?: boolean;
   initialBulkCheckTargetType?: 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
   initialBulkCheckProgress?: { current: number; total: number; currentMemberName: string };
-  initialBulkCheckSummary?: { totalSuccess: number; totalFailed: number } | null;
+  initialBulkCheckSummary?: {
+    totalSuccess: number;
+    totalFailed: number;
+    insertedCount?: number;
+    totalAmount?: number;
+  } | null;
   initialShowImportModal?: boolean;
   initialShowExportDropdown?: boolean;
   initialIsExporting?: boolean;
@@ -274,6 +284,571 @@ export const loadComplianceAvailableYearsData = async (
   } catch (err) {
     console.error('Error fetching savings compliance available years:', err);
     return [];
+  }
+};
+
+export type BulkCheckTargetType = 'WAJIB' | 'BELANJA' | 'LEBARAN' | 'ALL';
+
+export interface FiscalTargetMonthRange {
+  targetMonths: number[];
+  firstMonth: number | null;
+  lastMonth: number | null;
+  isFutureYear: boolean;
+  rangeLabel: string;
+}
+
+export interface BulkCheckPlanItem {
+  memberId: string;
+  memberNrp: string;
+  memberName: string;
+  depositTypeCode: 'WAJIB' | 'BELANJA' | 'LEBARAN';
+  month: number;
+  year: number;
+  amount: number;
+  targetAmount: number;
+}
+
+export interface BulkCheckPlanSummary {
+  items: BulkCheckPlanItem[];
+  affectedMemberCount: number;
+  totalItems: number;
+  totalAmount: number;
+}
+
+export interface BulkCheckExecutionSummary {
+  totalSuccess: number;
+  totalFailed: number;
+  insertedCount?: number;
+  totalAmount?: number;
+}
+
+export function computeBulkCheckTargetMonths(
+  visibleMonths: number[],
+  selectedYear: number,
+  now: Date = new Date()
+): FiscalTargetMonthRange {
+  const currentFiscalYear = now.getFullYear();
+  const currentMonthIndex = now.getMonth() + 1;
+
+  if (selectedYear > currentFiscalYear) {
+    return {
+      targetMonths: [],
+      firstMonth: null,
+      lastMonth: null,
+      isFutureYear: true,
+      rangeLabel: '',
+    };
+  }
+
+  const maxTargetMonth = selectedYear < currentFiscalYear ? 12 : currentMonthIndex;
+  const firstVisiblePostCutOffMonth = visibleMonths.length > 0 ? visibleMonths[0] : null;
+  if (firstVisiblePostCutOffMonth === null) {
+    return {
+      targetMonths: [],
+      firstMonth: null,
+      lastMonth: null,
+      isFutureYear: false,
+      rangeLabel: '',
+    };
+  }
+
+  const targetMonths = visibleMonths.filter(
+    (m) => m >= firstVisiblePostCutOffMonth && m <= maxTargetMonth
+  );
+  if (targetMonths.length === 0) {
+    return {
+      targetMonths: [],
+      firstMonth: null,
+      lastMonth: null,
+      isFutureYear: false,
+      rangeLabel: '',
+    };
+  }
+
+  const firstMonth = targetMonths[0];
+  const lastMonth = targetMonths[targetMonths.length - 1];
+  const yrSuffix = String(selectedYear).slice(-2);
+  const firstLabel = `${MONTHS[firstMonth - 1]}-${yrSuffix}`;
+  const lastLabel = `${MONTHS[lastMonth - 1]}-${yrSuffix}`;
+  const rangeLabel = firstMonth === lastMonth ? firstLabel : `${firstLabel} s/d ${lastLabel}`;
+
+  return {
+    targetMonths,
+    firstMonth,
+    lastMonth,
+    isFutureYear: false,
+    rangeLabel,
+  };
+}
+
+export function buildBulkCheckPlan(params: {
+  rows: ComplianceMatrixRow[];
+  targetType: BulkCheckTargetType;
+  targetMonths: number[];
+  selectedYear: number;
+  rateTiers: SavingsRateTier[];
+  targets: { wajib: number; belanja: number; lebaran: number };
+}): BulkCheckPlanSummary {
+  const { rows, targetType, targetMonths, selectedYear, rateTiers, targets } = params;
+  if (!rows.length || !targetMonths.length) {
+    return { items: [], affectedMemberCount: 0, totalItems: 0, totalAmount: 0 };
+  }
+
+  const types: Array<'WAJIB' | 'BELANJA' | 'LEBARAN'> =
+    targetType === 'ALL' ? ['WAJIB', 'BELANJA', 'LEBARAN'] : [targetType];
+
+  const rateResolver = buildSavingsRateResolver(rateTiers, [
+    { code: 'WAJIB', default_amount: targets.wajib },
+    { code: 'BELANJA', default_amount: targets.belanja },
+    { code: 'LEBARAN', default_amount: targets.lebaran },
+  ]);
+
+  const items: BulkCheckPlanItem[] = [];
+  const affectedMembers = new Set<string>();
+  let totalAmount = 0;
+
+  for (const row of rows) {
+    if ((row.membership_status || '').toUpperCase() === 'SUSPENDED') continue;
+    if (((row as any).status || 'aktif').toLowerCase() !== 'aktif') continue;
+
+    for (const monthNum of targetMonths) {
+      const idx = monthNum - 1;
+      const monthData = row.months?.[idx] ?? null;
+      if (monthData?.isBeforeCutoff) continue;
+
+      for (const typeCode of types) {
+        const item =
+          typeCode === 'WAJIB'
+            ? monthData?.wajib
+            : typeCode === 'BELANJA'
+            ? monthData?.belanja
+            : monthData?.lebaran;
+        const existingPaid =
+          typeCode === 'WAJIB'
+            ? Number(monthData?.w || 0)
+            : typeCode === 'BELANJA'
+            ? Number(monthData?.b || 0)
+            : Number(monthData?.l || 0);
+
+        if (
+          item?.status === 'paid' ||
+          item?.status === 'covered_by_opening' ||
+          item?.status === 'frozen' ||
+          item?.status === 'not_applicable'
+        ) {
+          continue;
+        }
+
+        const explicitTarget = Number(item?.targetAmount || 0);
+        const targetAmount =
+          explicitTarget > 0
+            ? explicitTarget
+            : typeCode === 'LEBARAN'
+            ? rateResolver.resolveMemberRate(row.member_id, 'LEBARAN', selectedYear, monthNum)
+            : rateResolver.getRateForPeriod(typeCode, selectedYear, monthNum);
+
+        if (targetAmount <= 0 || existingPaid >= targetAmount) continue;
+
+        const amountToInsert = Math.round(targetAmount - existingPaid);
+        if (amountToInsert <= 0) continue;
+
+        items.push({
+          memberId: row.member_id,
+          memberNrp: row.nrp,
+          memberName: row.nama,
+          depositTypeCode: typeCode,
+          month: monthNum,
+          year: selectedYear,
+          amount: amountToInsert,
+          targetAmount,
+        });
+        affectedMembers.add(row.member_id);
+        totalAmount += amountToInsert;
+      }
+    }
+  }
+
+  return {
+    items,
+    affectedMemberCount: affectedMembers.size,
+    totalItems: items.length,
+    totalAmount,
+  };
+}
+
+function isBulkPostgrestColumnError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.code === 'PGRST204' ||
+    err?.code === '42703' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+}
+
+export const handleGlobalCheckAllUntilCurrentMonth = async (params: {
+  plan: BulkCheckPlanSummary;
+  selectedYear: number;
+  targetMonths: number[];
+  rangeLabel: string;
+  setIsBulkChecking: (loading: boolean) => void;
+  setBulkCheckProgress: (prog: { current: number; total: number; currentMemberName: string }) => void;
+  setBulkCheckSummary: (res: BulkCheckExecutionSummary | null) => void;
+  onComplete?: () => Promise<void> | void;
+  feedback?: any;
+}): Promise<BulkCheckExecutionSummary | null> => {
+  const {
+    plan,
+    selectedYear,
+    targetMonths,
+    rangeLabel,
+    setIsBulkChecking,
+    setBulkCheckProgress,
+    setBulkCheckSummary,
+    onComplete,
+    feedback,
+  } = params;
+
+  setIsBulkChecking(true);
+  setBulkCheckProgress({ current: 0, total: plan.affectedMemberCount, currentMemberName: '' });
+  setBulkCheckSummary(null);
+
+  try {
+    if (plan.items.length === 0 || targetMonths.length === 0) {
+      const emptyRes: BulkCheckExecutionSummary = {
+        totalSuccess: 0,
+        totalFailed: 0,
+        insertedCount: 0,
+        totalAmount: 0,
+      };
+      setBulkCheckSummary(emptyRes);
+      if (feedback?.showToast) {
+        feedback.showToast('Seluruh sel pada rentang bulan tersebut sudah lunas', 'info');
+      }
+      return emptyRes;
+    }
+
+    // 1. Ambil master jenis simpanan (WAJIB, BELANJA, LEBARAN)
+    const { data: depTypesData, error: depTypesErr } = await supabase
+      .from('deposit_types')
+      .select('id, code, name, default_amount');
+    if (depTypesErr) {
+      throw new Error(depTypesErr.message || 'Gagal memuat daftar jenis simpanan');
+    }
+
+    const depositTypeByCode = new Map<
+      'WAJIB' | 'BELANJA' | 'LEBARAN',
+      { id: string; name: string }
+    >();
+    for (const dt of depTypesData || []) {
+      const code = resolveDepositTypeCode(dt);
+      if (code && dt?.id && !depositTypeByCode.has(code)) {
+        depositTypeByCode.set(code, {
+          id: String(dt.id),
+          name: String(dt.name || `Simpanan ${code}`),
+        });
+      }
+    }
+
+    // 2. Ambil rekening member_deposits yang sudah ada
+    const uniqueMemberIds = Array.from(new Set(plan.items.map((i) => i.memberId)));
+    const memberDepositMap = new Map<string, string>();
+    const QUERY_CHUNK = 200;
+
+    for (let i = 0; i < uniqueMemberIds.length; i += QUERY_CHUNK) {
+      const memberChunk = uniqueMemberIds.slice(i, i + QUERY_CHUNK);
+      const { data: mdRows, error: mdErr } = await supabase
+        .from('member_deposits')
+        .select('id, member_id, deposit_type_id')
+        .in('member_id', memberChunk);
+      if (mdErr) {
+        throw new Error(mdErr.message || 'Gagal memuat rekening simpanan anggota');
+      }
+      for (const md of mdRows || []) {
+        if (md?.id && md?.member_id && md?.deposit_type_id) {
+          memberDepositMap.set(`${md.member_id}|${md.deposit_type_id}`, String(md.id));
+        }
+      }
+    }
+
+    // 3. Buat rekening member_deposits yang belum ada secara batch
+    const missingAccountKeys = new Set<string>();
+    const missingAccountsPayload: Array<{
+      member_id: string;
+      deposit_type_id: string;
+      is_terminated: boolean;
+    }> = [];
+
+    for (const item of plan.items) {
+      const dtInfo = depositTypeByCode.get(item.depositTypeCode);
+      if (!dtInfo) continue;
+      const key = `${item.memberId}|${dtInfo.id}`;
+      if (!memberDepositMap.has(key) && !missingAccountKeys.has(key)) {
+        missingAccountKeys.add(key);
+        missingAccountsPayload.push({
+          member_id: item.memberId,
+          deposit_type_id: dtInfo.id,
+          is_terminated: false,
+        });
+      }
+    }
+
+    const INSERT_CHUNK = 100;
+    for (let i = 0; i < missingAccountsPayload.length; i += INSERT_CHUNK) {
+      const chunk = missingAccountsPayload.slice(i, i + INSERT_CHUNK);
+      const { data: createdMds, error: createMdErr } = await supabase
+        .from('member_deposits')
+        .insert(chunk)
+        .select('id, member_id, deposit_type_id');
+      if (createMdErr) {
+        throw new Error(createMdErr.message || 'Gagal membuat rekening simpanan baru');
+      }
+      for (const md of createdMds || []) {
+        if (md?.id && md?.member_id && md?.deposit_type_id) {
+          memberDepositMap.set(`${md.member_id}|${md.deposit_type_id}`, String(md.id));
+        }
+      }
+    }
+
+    // 4. Guard idempotensi sisi server — jangan pernah menyentuh Saldo Awal Cut-Off
+    const involvedMemberDepositIds = Array.from(new Set(memberDepositMap.values()));
+    const existingPeriodSums = new Map<string, number>();
+
+    for (let i = 0; i < involvedMemberDepositIds.length; i += QUERY_CHUNK) {
+      const mdChunk = involvedMemberDepositIds.slice(i, i + QUERY_CHUNK);
+      const { data: existingTxs, error: existingTxErr } = await supabase
+        .from('deposit_transactions')
+        .select('id, member_deposit_id, for_year, for_month, amount, transaction_type, description')
+        .in('member_deposit_id', mdChunk)
+        .eq('for_year', selectedYear)
+        .in('for_month', targetMonths)
+        .eq('transaction_type', 'deposit');
+      if (existingTxErr) {
+        throw new Error(existingTxErr.message || 'Gagal memverifikasi mutasi simpanan eksisting');
+      }
+
+      for (const tx of existingTxs || []) {
+        if (isOpeningOrMigrationDepositDescription(tx.description)) continue;
+        const fy = Number(tx.for_year || 0);
+        const fm = Number(tx.for_month || 0);
+        if (!tx.member_deposit_id || fy <= 0 || fm <= 0) continue;
+        const periodKey = `${tx.member_deposit_id}|${fy}|${fm}`;
+        existingPeriodSums.set(
+          periodKey,
+          (existingPeriodSums.get(periodKey) || 0) + Number(tx.amount || 0)
+        );
+      }
+    }
+
+    interface ResolvedInsertItem {
+      memberId: string;
+      memberNrp: string;
+      memberName: string;
+      memberDepositId: string;
+      depositTypeCode: 'WAJIB' | 'BELANJA' | 'LEBARAN';
+      depositTypeName: string;
+      month: number;
+      year: number;
+      amount: number;
+    }
+
+    const rowsToInsert: ResolvedInsertItem[] = [];
+    const failedMemberIds = new Set<string>();
+
+    for (const item of plan.items) {
+      const dtInfo = depositTypeByCode.get(item.depositTypeCode);
+      if (!dtInfo) {
+        failedMemberIds.add(item.memberId);
+        continue;
+      }
+      const memberDepositId = memberDepositMap.get(`${item.memberId}|${dtInfo.id}`);
+      if (!memberDepositId) {
+        failedMemberIds.add(item.memberId);
+        continue;
+      }
+
+      const periodKey = `${memberDepositId}|${item.year}|${item.month}`;
+      const alreadyPaid = existingPeriodSums.get(periodKey) || 0;
+      if (alreadyPaid >= item.targetAmount) {
+        continue;
+      }
+
+      const finalAmount = Math.round(item.targetAmount - alreadyPaid);
+      if (finalAmount <= 0) continue;
+
+      existingPeriodSums.set(periodKey, alreadyPaid + finalAmount);
+      rowsToInsert.push({
+        memberId: item.memberId,
+        memberNrp: item.memberNrp,
+        memberName: item.memberName,
+        memberDepositId,
+        depositTypeCode: item.depositTypeCode,
+        depositTypeName: dtInfo.name,
+        month: item.month,
+        year: item.year,
+        amount: finalAmount,
+      });
+    }
+
+    if (rowsToInsert.length === 0) {
+      const noOpSummary: BulkCheckExecutionSummary = {
+        totalSuccess: 0,
+        totalFailed: failedMemberIds.size,
+        insertedCount: 0,
+        totalAmount: 0,
+      };
+      setBulkCheckSummary(noOpSummary);
+      if (feedback?.showToast) {
+        feedback.showToast('Seluruh sel pada rentang bulan tersebut sudah lunas', 'info');
+      }
+      return noOpSummary;
+    }
+
+    // 5. Batch insert ke public.deposit_transactions & public.cash_flow
+    const totalMembersToProcess = new Set(rowsToInsert.map((r) => r.memberId)).size;
+    const processedMemberIds = new Set<string>();
+    const succeededMemberIds = new Set<string>();
+    let insertedCount = 0;
+    let insertedTotalAmount = 0;
+
+    setBulkCheckProgress({
+      current: 0,
+      total: totalMembersToProcess,
+      currentMemberName: rowsToInsert[0]?.memberName || '',
+    });
+
+    for (let i = 0; i < rowsToInsert.length; i += INSERT_CHUNK) {
+      const chunk = rowsToInsert.slice(i, i + INSERT_CHUNK);
+      const chunkMetaByKey = new Map<string, ResolvedInsertItem>();
+      const txPayload = chunk.map((r) => {
+        chunkMetaByKey.set(`${r.memberDepositId}|${r.year}|${r.month}`, r);
+        return {
+          member_deposit_id: r.memberDepositId,
+          transaction_type: 'deposit',
+          amount: r.amount,
+          for_month: r.month,
+          for_year: r.year,
+          description: `Centang Setoran Rutin Matriks (${r.depositTypeCode})`,
+        };
+      });
+
+      const { data: insertedTxs, error: insertTxErr } = await supabase
+        .from('deposit_transactions')
+        .insert(txPayload)
+        .select('id, member_deposit_id, amount, for_month, for_year, reference_no, created_at');
+
+      if (insertTxErr) {
+        throw insertTxErr;
+      }
+
+      const insertedList = Array.isArray(insertedTxs) ? insertedTxs : [];
+      const createdAtIso = new Date().toISOString();
+      const cashFlowPayload: Array<{
+        direction: 'in';
+        category: string;
+        amount: number;
+        reference_id: string;
+        description: string;
+        created_at: string;
+      }> = [];
+
+      for (const txRow of insertedList) {
+        const roundedAmt = Math.round(Number(txRow?.amount || 0));
+        if (!txRow?.id || roundedAmt <= 0) continue;
+        const fy = Number(txRow.for_year || 0);
+        const fm = Number(txRow.for_month || 0);
+        const meta = chunkMetaByKey.get(`${txRow.member_deposit_id}|${fy}|${fm}`);
+
+        const description = formatMatrixDepositCashFlowDescription({
+          depositTypeName: meta?.depositTypeName || null,
+          month: fm,
+          year: fy,
+          memberNrp: meta?.memberNrp || null,
+          memberName: meta?.memberName || null,
+          referenceNo: txRow.reference_no || null,
+        });
+
+        cashFlowPayload.push({
+          direction: 'in',
+          category: 'Setoran Simpanan',
+          amount: roundedAmt,
+          reference_id: String(txRow.id),
+          description,
+          created_at: createdAtIso,
+        });
+
+        insertedCount += 1;
+        insertedTotalAmount += roundedAmt;
+        if (meta?.memberId) {
+          succeededMemberIds.add(meta.memberId);
+        }
+      }
+
+      if (cashFlowPayload.length > 0) {
+        const cfRes: any = await supabase.from('cash_flow').insert(cashFlowPayload);
+        if (cfRes?.error) {
+          if (isBulkPostgrestColumnError(cfRes.error)) {
+            const fallbackPayload = cashFlowPayload.map(({ description: _d, ...rest }) => rest);
+            const fallbackRes: any = await supabase.from('cash_flow').insert(fallbackPayload);
+            if (fallbackRes?.error) {
+              throw new Error(
+                `Gagal mencatat ke Arus Kas: ${fallbackRes.error.message || String(fallbackRes.error)}`
+              );
+            }
+          } else {
+            throw new Error(
+              `Gagal mencatat ke Arus Kas: ${cfRes.error.message || String(cfRes.error)}`
+            );
+          }
+        }
+      }
+
+      for (const r of chunk) {
+        processedMemberIds.add(r.memberId);
+      }
+      setBulkCheckProgress({
+        current: processedMemberIds.size,
+        total: totalMembersToProcess,
+        currentMemberName: chunk[chunk.length - 1]?.memberName || '',
+      });
+    }
+
+    const summary: BulkCheckExecutionSummary = {
+      totalSuccess: succeededMemberIds.size,
+      totalFailed: failedMemberIds.size,
+      insertedCount,
+      totalAmount: insertedTotalAmount,
+    };
+
+    setBulkCheckSummary(summary);
+    if (onComplete) {
+      await onComplete();
+    }
+    if (feedback?.showToast) {
+      feedback.showToast(
+        `Berhasil mencatat ${insertedCount} setoran (${formatCurrency(insertedTotalAmount)}) untuk periode ${rangeLabel}`,
+        'success'
+      );
+    }
+    return summary;
+  } catch (err: any) {
+    console.error('Global bulk check-all error:', err);
+    const failSummary: BulkCheckExecutionSummary = {
+      totalSuccess: 0,
+      totalFailed: Math.max(1, plan.affectedMemberCount),
+      insertedCount: 0,
+      totalAmount: 0,
+    };
+    setBulkCheckSummary(failSummary);
+    if (feedback?.showToast) {
+      feedback.showToast(
+        'Gagal memproses centang massal: ' + (err?.message || 'Terjadi kesalahan'),
+        'error'
+      );
+    }
+    return null;
+  } finally {
+    setIsBulkChecking(false);
   }
 };
 
@@ -477,7 +1052,7 @@ function ComplianceMatrixContent({
   const [bulkCheckProgress, setBulkCheckProgress] = useState<{ current: number; total: number; currentMemberName: string }>(
     initialBulkCheckProgress || { current: 0, total: 0, currentMemberName: '' }
   );
-  const [bulkCheckSummary, setBulkCheckSummary] = useState<{ totalSuccess: number; totalFailed: number } | null>(
+  const [bulkCheckSummary, setBulkCheckSummary] = useState<BulkCheckExecutionSummary | null>(
     initialBulkCheckSummary || null
   );
 
@@ -644,6 +1219,24 @@ function ComplianceMatrixContent({
         rowMatchesSavingsSearch(row, search || activeTraceRef, traceMatchedMemberIds)
       ),
     [data, search, activeTraceRef, traceMatchedMemberIds]
+  );
+
+  const bulkTargetRange = useMemo(
+    () => computeBulkCheckTargetMonths(visibleMonths, selectedYear),
+    [visibleMonths, selectedYear]
+  );
+
+  const bulkPlan = useMemo(
+    () =>
+      buildBulkCheckPlan({
+        rows: filteredData,
+        targetType: bulkCheckTargetType,
+        targetMonths: bulkTargetRange.targetMonths,
+        selectedYear,
+        rateTiers,
+        targets,
+      }),
+    [filteredData, bulkCheckTargetType, bulkTargetRange.targetMonths, selectedYear, rateTiers, targets]
   );
 
   // Reset page when search changes
@@ -1238,12 +1831,28 @@ function ComplianceMatrixContent({
 
           <button
             onClick={() => {
+              const mappedType: BulkCheckTargetType =
+                filterType === 'wajib'
+                  ? 'WAJIB'
+                  : filterType === 'belanja'
+                  ? 'BELANJA'
+                  : filterType === 'lebaran'
+                  ? 'LEBARAN'
+                  : 'ALL';
+              setBulkCheckTargetType(mappedType);
               setBulkCheckSummary(null);
               setShowCheckAllConfirmModal(true);
             }}
-            disabled={isBulkChecking}
-            title="Centang lunas semua anggota dari tanggal bergabung sampai bulan ini"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+            disabled={isBulkChecking || bulkTargetRange.isFutureYear || bulkTargetRange.targetMonths.length === 0}
+            title={
+              bulkTargetRange.isFutureYear
+                ? 'Tahun fiskal belum berjalan'
+                : bulkTargetRange.rangeLabel
+                ? `Centang lunas semua anggota periode ${bulkTargetRange.rangeLabel} (pasca cut-off Saldo Awal)`
+                : 'Tidak ada bulan aktif untuk dicentang pada tahun ini'
+            }
+            data-testid="bulk-check-all-btn"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckSquare className="w-4 h-4 text-emerald-600" />
             <span>Centang Semua s/d Bulan Ini</span>
@@ -1684,7 +2293,7 @@ function ComplianceMatrixContent({
                     Centang Semua Anggota s/d Bulan Ini
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Tandai lunas seluruh iuran anggota aktif dari tanggal bergabung s/d sekarang
+                    Tandai lunas seluruh iuran belum terbayar pasca cut-off Saldo Awal s/d bulan berjalan
                   </p>
                 </div>
               </div>
@@ -1775,6 +2384,11 @@ function ComplianceMatrixContent({
                       <div className="text-lg font-black text-emerald-900">
                         {bulkCheckSummary.totalSuccess}
                       </div>
+                      {typeof bulkCheckSummary.insertedCount === 'number' && (
+                        <div className="text-[11px] text-emerald-700 mt-0.5">
+                          {bulkCheckSummary.insertedCount} setoran baru
+                        </div>
+                      )}
                     </div>
                     <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
                       <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
@@ -1783,6 +2397,11 @@ function ComplianceMatrixContent({
                       <div className={`text-lg font-black ${bulkCheckSummary.totalFailed > 0 ? 'text-rose-600' : 'text-slate-700'}`}>
                         {bulkCheckSummary.totalFailed}
                       </div>
+                      {typeof bulkCheckSummary.totalAmount === 'number' && bulkCheckSummary.totalAmount > 0 && (
+                        <div className="text-[11px] text-slate-600 mt-0.5 font-mono">
+                          {formatCurrency(bulkCheckSummary.totalAmount)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1799,8 +2418,52 @@ function ComplianceMatrixContent({
                         Perhatian Sebelum Melakukan Centang Massal
                       </p>
                       <p className="text-emerald-800 leading-relaxed">
-                        Tindakan ini akan menandai <b>lunas</b> seluruh iuran bulanan dari tanggal awal bergabung masing-masing anggota aktif hingga bulan berjalan saat ini ({MONTHS[new Date().getMonth()]} {new Date().getFullYear()}).
+                        Tindakan ini akan mencatat setoran <b>lunas</b> hanya untuk sel bulan yang belum terbayar pada rentang{' '}
+                        <b>{bulkTargetRange.rangeLabel || `Tahun ${selectedYear}`}</b> (tahun fiskal {selectedYear}) ke buku simpanan &amp; arus kas.{' '}
+                        <b>Saldo Awal Cut-Off tidak akan diubah.</b>
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Preview Summary Card */}
+                  <div
+                    data-testid="bulk-check-preview"
+                    className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs"
+                  >
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                        Rentang Bulan
+                      </div>
+                      <div className="font-bold text-slate-900 mt-0.5">
+                        {bulkTargetRange.rangeLabel || '-'}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {bulkTargetRange.targetMonths.length} bulan
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                        Anggota Terdampak
+                      </div>
+                      <div className="font-bold text-slate-900 mt-0.5">
+                        {bulkPlan.affectedMemberCount} orang
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                        Item Setoran Baru
+                      </div>
+                      <div className="font-bold text-slate-900 mt-0.5">
+                        {bulkPlan.totalItems} item
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                        Total Nominal
+                      </div>
+                      <div className="font-bold text-emerald-700 mt-0.5 font-mono">
+                        {formatCurrency(bulkPlan.totalAmount)}
+                      </div>
                     </div>
                   </div>
 
@@ -1891,19 +2554,32 @@ function ComplianceMatrixContent({
                   </button>
                   <button
                     onClick={() => {
-                      handleBulkCheckAllUpToNow(
-                        bulkCheckTargetType,
+                      handleGlobalCheckAllUntilCurrentMonth({
+                        plan: bulkPlan,
+                        selectedYear,
+                        targetMonths: bulkTargetRange.targetMonths,
+                        rangeLabel: bulkTargetRange.rangeLabel,
                         setIsBulkChecking,
                         setBulkCheckProgress,
                         setBulkCheckSummary,
-                        async () => {
+                        onComplete: async () => {
                           clearTierCache();
-                          await fetchComplianceData(year, setLoading, setData, setTargets, setTotalSetoran, setRateTiers, setCutoffDate);
-                        }
-                      );
+                          await fetchComplianceData(
+                            year,
+                            setLoading,
+                            setData,
+                            setTargets,
+                            setTotalSetoran,
+                            setRateTiers,
+                            setCutoffDate
+                          );
+                        },
+                        feedback,
+                      });
                     }}
+                    disabled={bulkPlan.totalItems === 0 || bulkTargetRange.isFutureYear}
                     data-testid="start-check-all-btn"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <CheckSquare className="w-4 h-4" />
                     <span>Mulai Centang Semua</span>

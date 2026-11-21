@@ -1657,7 +1657,7 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
   });
 
   describe('Two-way Cash Flow Synchronization (Matrix Check, Uncheck & Backfill)', () => {
-    it('saveMonthDepositWithEvidence inserts Setoran Simpanan cash_flow for active period (Mar 2026) and skips pre-cutoff period (Feb 2026)', async () => {
+    it('saveMonthDepositWithEvidence inserts Setoran Simpanan cash_flow for Jan-26, Feb-26, and Mar-26 matrix check deposits and skips opening balance descriptions', async () => {
       const cashFlowInserts: any[] = [];
 
       vi.mocked(supabase.from).mockImplementation((table: string): any => {
@@ -1714,7 +1714,7 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
         return {};
       });
 
-      // 1. Active post-cutoff period (Mar 2026) must insert cash_flow
+      // 1. Mar 2026 matrix check deposit inserts cash_flow
       await saveMonthDepositWithEvidence({
         memberDepositId: 'md-bagus-wajib',
         year: 2026,
@@ -1727,7 +1727,45 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
         depositTypeName: 'Simpanan Wajib'
       });
 
-      expect(cashFlowInserts).toHaveLength(1);
+      // 2. Jan 2026 matrix check deposit ALSO inserts cash_flow even when cut-off defaults to 2026-03-01
+      await saveMonthDepositWithEvidence({
+        memberDepositId: 'md-bagus-wajib',
+        year: 2026,
+        month: 1,
+        amount: 200000,
+        referenceNo: 'KW-2026/01/00050543',
+        paymentMethod: 'tunai',
+        memberNrp: '00050543',
+        memberName: 'BAGUS BUDI PRASETYO',
+        depositTypeName: 'Simpanan Wajib'
+      });
+
+      // 3. Feb 2026 matrix check deposit ALSO inserts cash_flow
+      await saveMonthDepositWithEvidence({
+        memberDepositId: 'md-bagus-wajib',
+        year: 2026,
+        month: 2,
+        amount: 200000,
+        referenceNo: 'KW-2026/02/00050543',
+        paymentMethod: 'tunai',
+        memberNrp: '00050543',
+        memberName: 'BAGUS BUDI PRASETYO',
+        depositTypeName: 'Simpanan Wajib'
+      });
+
+      // 4. Opening / cut-off description must NOT insert duplicate Setoran Simpanan cash_flow
+      await saveMonthDepositWithEvidence({
+        memberDepositId: 'md-bagus-wajib',
+        year: 2026,
+        month: 2,
+        amount: 3200000,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        memberNrp: '00050543',
+        memberName: 'BAGUS BUDI PRASETYO',
+        depositTypeName: 'Simpanan Wajib'
+      });
+
+      expect(cashFlowInserts).toHaveLength(3);
       expect(cashFlowInserts[0]).toMatchObject({
         direction: 'in',
         category: 'Setoran Simpanan',
@@ -1737,20 +1775,82 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           'Setoran Simpanan Wajib [Mar 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/03/00050543)',
         created_at: '2026-11-19T08:30:00.000Z'
       });
-
-      // 2. Pre-cutoff period (Feb 2026) must NOT insert cash_flow
-      await saveMonthDepositWithEvidence({
-        memberDepositId: 'md-bagus-wajib',
-        year: 2026,
-        month: 2,
+      expect(cashFlowInserts[1]).toMatchObject({
+        direction: 'in',
+        category: 'Setoran Simpanan',
         amount: 200000,
-        referenceNo: 'KW-2026/02/00050543',
-        memberNrp: '00050543',
-        memberName: 'BAGUS BUDI PRASETYO',
-        depositTypeName: 'Simpanan Wajib'
+        reference_id: 'tx-2026-1',
+        description:
+          'Setoran Simpanan Wajib [Jan 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/01/00050543)',
+        created_at: '2026-11-19T08:30:00.000Z'
+      });
+      expect(cashFlowInserts[2]).toMatchObject({
+        direction: 'in',
+        category: 'Setoran Simpanan',
+        amount: 200000,
+        reference_id: 'tx-2026-2',
+        description:
+          'Setoran Simpanan Wajib [Feb 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/02/00050543)',
+        created_at: '2026-11-19T08:30:00.000Z'
+      });
+    });
+
+    it('saveMonthDepositWithEvidence throws explicit error instead of swallowing when cash_flow insert fails', async () => {
+      vi.mocked(supabase.from).mockImplementation((table: string): any => {
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null })
+                })
+              })
+            }),
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ error: null })
+                })
+              })
+            }),
+            insert: vi.fn().mockImplementation((row: any) => ({
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    id: 'tx-fail-cf',
+                    ...row,
+                    created_at: '2026-11-21T08:00:00.000Z'
+                  },
+                  error: null
+                })
+              })
+            }))
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockResolvedValue({
+              data: null,
+              error: { message: 'RLS violation on cash_flow' }
+            })
+          };
+        }
+        return {};
       });
 
-      expect(cashFlowInserts).toHaveLength(1);
+      await expect(
+        saveMonthDepositWithEvidence({
+          memberDepositId: 'md-bagus-wajib',
+          year: 2026,
+          month: 1,
+          amount: 200000,
+          referenceNo: 'KW-2026/01/00050543',
+          paymentMethod: 'tunai',
+          memberNrp: '00050543',
+          memberName: 'BAGUS BUDI PRASETYO',
+          depositTypeName: 'Simpanan Wajib'
+        })
+      ).rejects.toThrow('Gagal mencatat ke Arus Kas: RLS violation on cash_flow');
     });
 
     it('cancelMonthDepositWithReason preserves original cash_flow and inserts KOREKSI_PEMBATALAN reversal entry when unchecking an active month', async () => {
@@ -1978,12 +2078,12 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       expect(cashFlowInserts).toHaveLength(0);
     });
 
-    it('syncMatrixDepositsToCashFlow backfills missing post-cutoff matrix deposits idempotently while excluding cut-off and KW-SETOR entries', async () => {
+    it('syncMatrixDepositsToCashFlow backfills missing Jan-26 & Mar-26 matrix deposits idempotently without receipt collision while excluding cut-off, historical imports, and KW-SETOR entries', async () => {
       const cashFlowRows: any[] = [];
       const depositTxs = [
         {
           id: 'tx-bagus-mar26',
-          member_deposit_id: 'md-bagus',
+          member_deposit_id: 'md-bagus-wajib',
           transaction_type: 'deposit',
           amount: 200000,
           for_month: 3,
@@ -1993,10 +2093,36 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           payment_method: 'tunai',
           created_at: '2026-11-19T09:15:00.000Z'
         },
-        // Pre-cutoff Feb 2026 -> excluded
+        // Missed Jan-26 matrix check deposit (must sync even when cut-off is 2026-03-01)
+        {
+          id: 'tx-bagus-jan26-wajib',
+          member_deposit_id: 'md-bagus-wajib',
+          transaction_type: 'deposit',
+          amount: 200000,
+          for_month: 1,
+          for_year: 2026,
+          description: 'Setoran Matriks WAJIB Jan 2026',
+          reference_no: 'KW-2026/01/00050543',
+          payment_method: 'tunai',
+          created_at: '2026-11-21T09:15:00.000Z'
+        },
+        // Same-month Belanja matrix deposit sharing default KW-2026/01/00050543 receipt -> must NOT collide
+        {
+          id: 'tx-bagus-jan26-belanja',
+          member_deposit_id: 'md-bagus-belanja',
+          transaction_type: 'deposit',
+          amount: 50000,
+          for_month: 1,
+          for_year: 2026,
+          description: 'Setoran Matriks BELANJA Jan 2026',
+          reference_no: 'KW-2026/01/00050543',
+          payment_method: 'tunai',
+          created_at: '2026-11-21T09:16:00.000Z'
+        },
+        // Opening Cut-Off Feb 2026 -> excluded
         {
           id: 'tx-opening-feb26',
-          member_deposit_id: 'md-bagus',
+          member_deposit_id: 'md-bagus-wajib',
           transaction_type: 'deposit',
           amount: 1500000,
           for_month: 2,
@@ -2005,10 +2131,22 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           reference_no: null,
           created_at: '2026-03-01T00:00:00.000Z'
         },
+        // Historical pre-cutoff import row (not a Setoran) -> excluded (belongs in SALDO_AWAL_SIMPANAN)
+        {
+          id: 'tx-hist-import-jan26',
+          member_deposit_id: 'md-bagus-wajib',
+          transaction_type: 'deposit',
+          amount: 200000,
+          for_month: 1,
+          for_year: 2026,
+          description: 'Import Matriks Buku Besar',
+          reference_no: null,
+          created_at: '2026-02-01T00:00:00.000Z'
+        },
         // From /admin/terima-setoran (already creates SETORAN_ANGGOTA cash_flow) -> excluded
         {
           id: 'tx-setor-kasir',
-          member_deposit_id: 'md-bagus',
+          member_deposit_id: 'md-bagus-wajib',
           transaction_type: 'deposit',
           amount: 200000,
           for_month: 4,
@@ -2061,7 +2199,10 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({
-                data: [{ id: 'md-bagus', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' }],
+                data: [
+                  { id: 'md-bagus-wajib', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' },
+                  { id: 'md-bagus-belanja', member_id: 'm-bagus', deposit_type_id: 'dt-belanja' }
+                ],
                 error: null
               })
             })
@@ -2081,7 +2222,10 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({
-                data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+                data: [
+                  { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
+                  { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja Bulanan' }
+                ],
                 error: null
               })
             })
@@ -2091,8 +2235,8 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
       });
 
       const firstSync = await syncMatrixDepositsToCashFlow();
-      expect(firstSync).toEqual({ syncedCount: 1, skippedCount: 0 });
-      expect(cashFlowRows).toHaveLength(1);
+      expect(firstSync).toEqual({ syncedCount: 3, skippedCount: 0 });
+      expect(cashFlowRows).toHaveLength(3);
       expect(cashFlowRows[0]).toMatchObject({
         direction: 'in',
         category: 'Setoran Simpanan',
@@ -2102,11 +2246,29 @@ describe('savingsMatrixService - Evidence Documentation & Audit Trail', () => {
           'Setoran Simpanan Wajib [Mar 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/03/00050543)',
         created_at: '2026-11-19T09:15:00.000Z'
       });
+      expect(cashFlowRows[1]).toMatchObject({
+        direction: 'in',
+        category: 'Setoran Simpanan',
+        amount: 200000,
+        reference_id: 'tx-bagus-jan26-wajib',
+        description:
+          'Setoran Simpanan Wajib [Jan 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/01/00050543)',
+        created_at: '2026-11-21T09:15:00.000Z'
+      });
+      expect(cashFlowRows[2]).toMatchObject({
+        direction: 'in',
+        category: 'Setoran Simpanan',
+        amount: 50000,
+        reference_id: 'tx-bagus-jan26-belanja',
+        description:
+          'Setoran Simpanan Belanja Bulanan [Jan 2026] — 00050543 - BAGUS BUDI PRASETYO (KW-2026/01/00050543)',
+        created_at: '2026-11-21T09:16:00.000Z'
+      });
 
       // Second call must be idempotent
       const secondSync = await syncMatrixDepositsToCashFlow();
-      expect(secondSync).toEqual({ syncedCount: 0, skippedCount: 1 });
-      expect(cashFlowRows).toHaveLength(1);
+      expect(secondSync).toEqual({ syncedCount: 0, skippedCount: 3 });
+      expect(cashFlowRows).toHaveLength(3);
     });
   });
 

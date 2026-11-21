@@ -1055,202 +1055,59 @@ export async function getMembersComprehensiveReport(
   return result;
 }
 
+export const RESET_MEMBERS_CONFIRMATION_PHRASE = 'RESET ANGGOTA' as const;
+
 export interface ResetMembersResult {
   success: boolean;
   members_deleted?: number;
+  cash_flow_deleted?: number;
   loans_deleted?: number;
   deposits_deleted?: number;
   message?: string;
 }
 
-const RESET_DUMMY_UUID = '00000000-0000-0000-0000-000000000000';
-const RESET_FETCH_BATCH_SIZE = 500;
-const RESET_DELETE_IN_CHUNK_SIZE = 200;
-
-async function deleteIdsInChunks(tableName: string, ids: string[]): Promise<void> {
-  if (ids.length <= RESET_DELETE_IN_CHUNK_SIZE) {
-    const { error: delErr } = await supabase
-      .from(tableName)
-      .delete()
-      .in('id', ids);
-
-    if (delErr) {
-      throw new Error(`Gagal menghapus data pada tabel ${tableName}: ${delErr.message}`);
-    }
-    return;
+/**
+ * Mengosongkan seluruh data anggota dan mutasi terkait secara permanen melalui
+ * RPC PostgreSQL atomik `reset_all_members_data` (TRUNCATE ... RESTART IDENTITY CASCADE).
+ */
+export async function resetAllMembersData(
+  confirmationPhrase: string = RESET_MEMBERS_CONFIRMATION_PHRASE
+): Promise<ResetMembersResult> {
+  const trimmedPhrase = (confirmationPhrase ?? '').trim();
+  if (trimmedPhrase !== RESET_MEMBERS_CONFIRMATION_PHRASE) {
+    throw new Error(`Konfirmasi tidak valid. Ketik tepat: ${RESET_MEMBERS_CONFIRMATION_PHRASE}`);
   }
 
-  const chunks: string[][] = [];
-  for (let i = 0; i < ids.length; i += RESET_DELETE_IN_CHUNK_SIZE) {
-    chunks.push(ids.slice(i, i + RESET_DELETE_IN_CHUNK_SIZE));
-  }
+  const { data, error } = await supabase.rpc('reset_all_members_data', {
+    p_confirmation_phrase: trimmedPhrase,
+  });
 
-  const results = await Promise.all(
-    chunks.map((chunk) => supabase.from(tableName).delete().in('id', chunk))
-  );
-
-  for (const res of results) {
-    if (res.error) {
-      throw new Error(`Gagal menghapus data pada tabel ${tableName}: ${res.error.message}`);
-    }
-  }
-}
-
-async function sweepDepositTransactionsByMemberDeposit(): Promise<void> {
-  const PAGE_SIZE = 1000;
-  const PARENT_CHUNK_SIZE = 50;
-  const CONCURRENCY = 4;
-  let offset = 0;
-
-  while (true) {
-    const query: any = supabase.from('member_deposits').select('id');
-    const res =
-      typeof query?.range === 'function'
-        ? await query.range(offset, offset + PAGE_SIZE - 1)
-        : await query;
-
-    if (res?.error || !Array.isArray(res?.data) || res.data.length === 0) {
-      break;
-    }
-
-    const depIds: string[] = res.data
-      .map((row: { id?: string }) => row?.id)
-      .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
-
-    const parentChunks: string[][] = [];
-    for (let i = 0; i < depIds.length; i += PARENT_CHUNK_SIZE) {
-      parentChunks.push(depIds.slice(i, i + PARENT_CHUNK_SIZE));
-    }
-
-    for (let i = 0; i < parentChunks.length; i += CONCURRENCY) {
-      const group = parentChunks.slice(i, i + CONCURRENCY);
-      const delResults = await Promise.all(
-        group.map((chunk) =>
-          supabase.from('deposit_transactions').delete().in('member_deposit_id', chunk)
-        )
-      );
-
-      for (const delRes of delResults) {
-        if (delRes?.error) {
-          throw new Error(
-            `Gagal menghapus data pada tabel deposit_transactions: ${delRes.error.message}`
-          );
-        }
-      }
-    }
-
-    if (res.data.length < PAGE_SIZE || typeof query?.range !== 'function') {
-      break;
-    }
-    offset += PAGE_SIZE;
-  }
-}
-
-async function deleteAllRowsFromTable(tableName: string): Promise<void> {
-  let isFirstPass = true;
-
-  while (true) {
-    // Ambil maksimal 500 ID per batch agar aman dari timeout & batas max_rows PostgREST
-    const { data: batch, error: fetchErr } = await supabase
-      .from(tableName)
-      .select('id')
-      .neq('id', RESET_DUMMY_UUID)
-      .limit(RESET_FETCH_BATCH_SIZE);
-
-    if (fetchErr) {
-      throw new Error(`Gagal membaca tabel ${tableName}: ${fetchErr.message}`);
-    }
-    if (!batch || batch.length === 0) break;
-
-    const ids = batch.map((row: { id: string }) => row.id);
-    await deleteIdsInChunks(tableName, ids);
-
-    // Akselerasi pembersihan deposit_transactions berukuran besar per kelompok member_deposit_id
-    if (isFirstPass && tableName === 'deposit_transactions' && batch.length === RESET_FETCH_BATCH_SIZE) {
-      await sweepDepositTransactionsByMemberDeposit();
-    }
-
-    isFirstPass = false;
-  }
-}
-
-export async function resetAllMembersData(): Promise<ResetMembersResult> {
-  // 1. Prioritas 1: Panggil fungsi PostgreSQL RPC reset_members_and_financial_records
-  try {
-    const { data, error: rpcError } = await supabase.rpc('reset_members_and_financial_records');
-    if (!rpcError && data) {
-      await syncOpeningSavingsBalanceToCashFlow().catch((cfErr) => {
-        console.warn('Gagal menyinkronkan cash_flow setelah reset anggota:', cfErr);
-      });
-      return data as ResetMembersResult;
-    }
-    if (rpcError) {
-      console.warn(
-        'RPC reset_members_and_financial_records tidak tersedia atau gagal, beralih ke fallback client deletion:',
-        rpcError.message
+  if (error) {
+    const rawMsg = String(error.message || '');
+    if (
+      error.code === 'PGRST202' ||
+      rawMsg.includes('schema cache') ||
+      rawMsg.includes('Could not find the function')
+    ) {
+      throw new Error(
+        'Fungsi database reset_all_members_data belum terpasang di Supabase. Jalankan migrasi supabase/migrations/20261122_add_reset_all_members_rpc.sql di SQL Editor Supabase terlebih dahulu.'
       );
     }
-  } catch (rpcErr: any) {
-    console.warn(
-      'RPC reset_members_and_financial_records melempar exception, beralih ke fallback client deletion:',
-      rpcErr?.message
-    );
+    throw new Error(rawMsg || 'Gagal mengosongkan data anggota.');
   }
 
-  // 2. Prioritas 2 (Fallback Client Deletion):
-  // Hapus seluruh baris secara berurutan dari tabel cucu -> anak -> induk hingga 0 baris tersisa
-  try {
-    await deleteAllRowsFromTable('loan_repayments');
-    await deleteAllRowsFromTable('loan_installments');
-    await deleteAllRowsFromTable('loan_schedules');
-    await deleteAllRowsFromTable('loans');
+  await syncOpeningSavingsBalanceToCashFlow().catch((cfErr) => {
+    console.warn('Gagal menyinkronkan cash_flow setelah reset anggota:', cfErr);
+  });
 
-    await deleteAllRowsFromTable('deposit_transactions');
-    await deleteAllRowsFromTable('member_deposits');
-
-    await deleteAllRowsFromTable('lebaran_disbursement_items');
-    await deleteAllRowsFromTable('rekening_audit_logs');
-    await deleteAllRowsFromTable('member_clearance_logs');
-
-    // Lepaskan referensi anggota di transaksi kasir POS agar omzet tetap utuh
-    const { error: salesErr } = await supabase
-      .from('sales')
-      .update({ member_id: null })
-      .not('member_id', 'is', null);
-    if (salesErr) {
-      throw new Error(`Gagal melepas relasi member pada sales: ${salesErr.message}`);
-    }
-
-    await deleteAllRowsFromTable('anggota');
-    await deleteAllRowsFromTable('members');
-
-    const { error: auditErr } = await supabase.from('audit_logs').insert({
-      table_name: 'anggota',
-      action: 'RESET_ALL',
-      record_id: 'SYSTEM',
-      notes: 'Reset seluruh data anggota, simpanan, dan pinjaman.',
-    });
-    if (auditErr) {
-      console.warn('Gagal mencatat audit log reset anggota:', auditErr.message);
-    }
-
-    await syncOpeningSavingsBalanceToCashFlow().catch((cfErr) => {
-      console.warn('Gagal menyinkronkan cash_flow setelah reset anggota:', cfErr);
-    });
-
-    return {
-      success: true,
-      members_deleted: 0,
-      loans_deleted: 0,
-      deposits_deleted: 0,
-      message: 'Seluruh data anggota, rekening simpanan, dan pinjaman berhasil dikosongkan.',
-    };
-  } catch (fallbackErr: any) {
-    console.error('Fallback client deletion failed:', fallbackErr);
-    throw new Error(
-      `Gagal mereset data anggota dan pembukuan: ${fallbackErr?.message || 'Terjadi kesalahan sistem'}`
-    );
-  }
+  const payload = data && typeof data === 'object' ? (data as Record<string, any>) : {};
+  return {
+    success: payload.success ?? true,
+    members_deleted: typeof payload.members_deleted === 'number' ? payload.members_deleted : 0,
+    cash_flow_deleted: typeof payload.cash_flow_deleted === 'number' ? payload.cash_flow_deleted : 0,
+    message:
+      payload.message || 'Seluruh data anggota dan mutasi terkait berhasil dikosongkan.',
+  };
 }
 
 export {

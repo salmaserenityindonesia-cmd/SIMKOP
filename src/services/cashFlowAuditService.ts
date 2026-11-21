@@ -16,6 +16,7 @@ import {
   hasMemberDepositTypeComponents,
   injectDepositTypesIntoMemberDepositDescription,
   isCancellationReversalCategory,
+  isOpeningOrMigrationDepositDescription,
   isSavingsDepositCategory,
   parseCancellationReversalDescription,
 } from '../utils/depositCashFlowFormat';
@@ -374,6 +375,11 @@ export interface SyncResignedMemberClearanceResult {
   updatedCount: number;
   skippedCount: number;
   deletedCount?: number;
+}
+
+export interface SyncMatrixDepositsToCashFlowResult {
+  syncedCount: number;
+  skippedCount: number;
 }
 
 export type CashFlowReferenceBreakdown =
@@ -5972,5 +5978,262 @@ export async function enrichMemberDepositCashFlowDescriptions(): Promise<EnrichM
     }
   });
   activeMemberDepositEnrichPromise = runPromise;
+  return runPromise;
+}
+
+const DEFAULT_MATRIX_SYNC_CUTOFF_DATE = '2026-03-01';
+let activeMatrixDepositSyncPromise: Promise<SyncMatrixDepositsToCashFlowResult> | null = null;
+
+async function resolveRawSavingsCutOffDateForMatrixSync(): Promise<string> {
+  try {
+    const ssTable: any = supabase?.from?.('system_settings');
+    if (!ssTable || typeof ssTable.select !== 'function') {
+      return DEFAULT_MATRIX_SYNC_CUTOFF_DATE;
+    }
+
+    const extractCutOff = (raw: unknown): string | null => {
+      if (typeof raw !== 'string') return null;
+      const trimmed = raw.trim().slice(0, 10);
+      return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null;
+    };
+
+    const query: any = ssTable.select('key, value');
+    if (query && typeof query.eq === 'function') {
+      const eqQ = query.eq('key', 'initial_savings_effective_date');
+      const res =
+        typeof eqQ?.maybeSingle === 'function'
+          ? await eqQ.maybeSingle()
+          : typeof eqQ?.single === 'function'
+          ? await eqQ.single()
+          : await eqQ;
+      const rowData = Array.isArray(res?.data) ? res.data[0] : res?.data;
+      return extractCutOff(rowData?.value ? String(rowData.value) : null) || DEFAULT_MATRIX_SYNC_CUTOFF_DATE;
+    }
+
+    if (query && typeof query.then === 'function') {
+      const res = await query;
+      const rows = Array.isArray(res?.data) ? res.data : res?.data ? [res.data] : [];
+      const found = rows.find((r: any) => r?.key === 'initial_savings_effective_date');
+      return extractCutOff(found?.value ? String(found.value) : null) || DEFAULT_MATRIX_SYNC_CUTOFF_DATE;
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+  return DEFAULT_MATRIX_SYNC_CUTOFF_DATE;
+}
+
+async function runSyncMatrixDepositsToCashFlow(): Promise<SyncMatrixDepositsToCashFlowResult> {
+  const emptyResult: SyncMatrixDepositsToCashFlowResult = {
+    syncedCount: 0,
+    skippedCount: 0,
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return emptyResult;
+    }
+
+    const actualCutOffDate = await resolveRawSavingsCutOffDateForMatrixSync();
+
+    let txRes = await safeFetchAllPaged<any>(
+      'deposit_transactions',
+      'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, reference_no, payment_method, notes, created_at'
+    );
+    if (txRes.error && isPostgrestColumnError(txRes.error)) {
+      txRes = await safeFetchAllPaged<any>(
+        'deposit_transactions',
+        'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, created_at'
+      );
+    }
+    if (txRes.error) {
+      return emptyResult;
+    }
+
+    const candidateTxs = (txRes.data || []).filter((tx: any) => {
+      if (!tx?.id) return false;
+      if (tx?.transaction_type !== 'deposit') return false;
+      const amt = Math.round(Number(tx?.amount || 0));
+      if (amt <= 0) return false;
+
+      const fy =
+        tx?.for_year !== null && tx?.for_year !== undefined && tx?.for_year !== ''
+          ? Number(tx.for_year)
+          : NaN;
+      const fm =
+        tx?.for_month !== null && tx?.for_month !== undefined && tx?.for_month !== ''
+          ? Number(tx.for_month)
+          : NaN;
+
+      if (!Number.isInteger(fy) || fy <= 0 || !Number.isInteger(fm) || fm < 1 || fm > 12) {
+        return false;
+      }
+      if (isOpeningOrMigrationDepositDescription(tx?.description)) {
+        return false;
+      }
+      if (isOpeningDepositTransaction(tx, actualCutOffDate)) {
+        return false;
+      }
+
+      const refNoUpper = String(tx?.reference_no || '').trim().toUpperCase();
+      const notesUpper = String(tx?.notes || '').toUpperCase();
+      const descUpper = String(tx?.description || '').toUpperCase();
+      if (
+        refNoUpper.startsWith('KW-SETOR-') ||
+        notesUpper.includes('KW-SETOR-') ||
+        descUpper.includes('KW-SETOR-')
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    if (candidateTxs.length === 0) {
+      return emptyResult;
+    }
+
+    let cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, category, direction, reference_id, description'
+    );
+    if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+      cfRes = await safeFetchAllPaged<any>(
+        'cash_flow',
+        'id, category, direction, reference_id'
+      );
+    }
+    if (cfRes.error) {
+      return emptyResult;
+    }
+
+    const existingRefIds = new Set<string>();
+    const existingBatchSetoranReceipts = new Set<string>();
+    for (const cf of cfRes.data || []) {
+      if (cf?.reference_id) {
+        existingRefIds.add(String(cf.reference_id));
+      }
+      const catNorm = String(cf?.category || '').trim().toUpperCase().replace(/\s+/g, '_');
+      if (catNorm === 'SETORAN_ANGGOTA' && typeof cf?.description === 'string') {
+        const matches = cf.description.match(/\bKW-SETOR-[A-Z0-9\/-]+\b/gi) || [];
+        for (const code of matches) {
+          existingBatchSetoranReceipts.add(code.toUpperCase());
+        }
+      }
+    }
+
+    const missingTxs = candidateTxs.filter((tx: any) => {
+      if (existingRefIds.has(String(tx.id))) return false;
+      const refNoUpper = String(tx?.reference_no || '').trim().toUpperCase();
+      if (refNoUpper && existingBatchSetoranReceipts.has(refNoUpper)) return false;
+      return true;
+    });
+
+    const skippedCount = candidateTxs.length - missingTxs.length;
+    if (missingTxs.length === 0) {
+      return { syncedCount: 0, skippedCount };
+    }
+
+    const mdIds = Array.from(
+      new Set(missingTxs.map((tx: any) => String(tx?.member_deposit_id || '')).filter(Boolean))
+    );
+    const mdRows = await safeFetchByIds<any>(
+      'member_deposits',
+      'id, member_id, deposit_type_id',
+      mdIds
+    );
+    const mdMap = new Map<string, any>();
+    for (const md of mdRows) {
+      if (md?.id) mdMap.set(String(md.id), md);
+    }
+
+    const memberIds = Array.from(
+      new Set(mdRows.map((md: any) => String(md?.member_id || '')).filter(Boolean))
+    );
+    const dtIds = Array.from(
+      new Set(mdRows.map((md: any) => String(md?.deposit_type_id || '')).filter(Boolean))
+    );
+
+    const [memberRows, dtRows] = await Promise.all([
+      safeFetchByIds<any>('anggota', 'id, nrp, nama', memberIds),
+      safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds),
+    ]);
+
+    const memberMap = new Map<string, any>();
+    for (const m of memberRows) {
+      if (m?.id) memberMap.set(String(m.id), m);
+    }
+    const dtMap = new Map<string, any>();
+    for (const dt of dtRows) {
+      if (dt?.id) dtMap.set(String(dt.id), dt);
+    }
+
+    const cfTable: any = supabase?.from?.('cash_flow');
+    if (!cfTable || typeof cfTable.insert !== 'function') {
+      return { syncedCount: 0, skippedCount };
+    }
+
+    const cashFlowPayloads = missingTxs.map((tx: any) => {
+      const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
+      const member = md?.member_id ? memberMap.get(String(md.member_id)) : undefined;
+      const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
+
+      const description = formatMatrixDepositCashFlowDescription({
+        depositTypeName: dt?.name || null,
+        month: Number(tx.for_month),
+        year: Number(tx.for_year),
+        memberNrp: member?.nrp || null,
+        memberName: member?.nama || null,
+        referenceNo: tx?.reference_no || null,
+      });
+
+      return {
+        direction: 'in',
+        category: 'Setoran Simpanan',
+        amount: Math.round(Number(tx.amount)),
+        reference_id: tx.id,
+        description,
+        created_at: tx?.created_at || new Date().toISOString(),
+      };
+    });
+
+    let syncedCount = 0;
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < cashFlowPayloads.length; i += CHUNK_SIZE) {
+      const chunk = cashFlowPayloads.slice(i, i + CHUNK_SIZE);
+      let res: any = await cfTable.insert(chunk);
+      if (res?.error && isPostgrestColumnError(res.error)) {
+        const fallbackChunk = chunk.map(({ description: _desc, ...rest }) => rest);
+        res = await cfTable.insert(fallbackChunk);
+      }
+      if (res?.error) {
+        console.error('[syncMatrixDepositsToCashFlow] Insert gagal:', res.error);
+      } else {
+        syncedCount += chunk.length;
+      }
+    }
+
+    return { syncedCount, skippedCount };
+  } catch (err) {
+    console.warn('Warning syncMatrixDepositsToCashFlow:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Menyinkronkan (backfill idempoten) mutasi setoran matriks pada `public.deposit_transactions`
+ * yang belum tercatat di `public.cash_flow`, dengan in-flight promise lock agar bebas duplikasi
+ * akibat eksekusi paralel. Mengecualikan saldo awal/cut-off serta transaksi batch kasir (`KW-SETOR-...`).
+ */
+export async function syncMatrixDepositsToCashFlow(): Promise<SyncMatrixDepositsToCashFlowResult> {
+  if (activeMatrixDepositSyncPromise) {
+    return activeMatrixDepositSyncPromise;
+  }
+
+  const runPromise = runSyncMatrixDepositsToCashFlow().finally(() => {
+    if (activeMatrixDepositSyncPromise === runPromise) {
+      activeMatrixDepositSyncPromise = null;
+    }
+  });
+  activeMatrixDepositSyncPromise = runPromise;
   return runPromise;
 }

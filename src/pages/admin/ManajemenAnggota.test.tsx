@@ -84,12 +84,12 @@ vi.mock('../../services/memberService', () => ({
       sisa_pinjaman: 2500000,
     },
   ]),
+  RESET_MEMBERS_CONFIRMATION_PHRASE: 'RESET ANGGOTA',
   resetAllMembersData: vi.fn().mockResolvedValue({
     success: true,
     members_deleted: 1,
-    loans_deleted: 0,
-    deposits_deleted: 1,
-    message: 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+    cash_flow_deleted: 0,
+    message: 'Seluruh data anggota dan mutasi terkait berhasil dikosongkan.',
   }),
   syncInitialSavingsBalances: vi.fn().mockResolvedValue({
     updatedCount: 1,
@@ -348,11 +348,8 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       const html = renderToStaticMarkup(<ManajemenAnggota initialResetModalOpen={true} />);
 
       expect(html).toContain('Reset Seluruh Data Anggota');
-      expect(html).toContain(
-        'PERINGATAN: Tindakan ini akan mengosongkan seluruh master data anggota, rekening simpanan, pinjaman, dan riwayat mutasi terkait secara permanen.'
-      );
-      expect(html).toContain('sales.member_id = NULL');
-      expect(html).toContain('HAPUS SEMUA DATA ANGGOTA');
+      expect(html).toContain('TRUNCATE CASCADE');
+      expect(html).toContain('RESET ANGGOTA');
       expect(html).toContain('Ya, Kosongkan Sekarang');
       expect(html).toContain('Batal');
     });
@@ -369,9 +366,10 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(setIsResetting).toHaveBeenCalledWith(true);
       expect(setIsResetting).toHaveBeenLastCalledWith(false);
       expect(resetAllMembersData).toHaveBeenCalledTimes(1);
+      expect(resetAllMembersData).toHaveBeenCalledWith('RESET ANGGOTA');
       expect(onSuccess).toHaveBeenCalledTimes(1);
       expect(showToast).toHaveBeenCalledWith(
-        'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+        'Seluruh data anggota dan mutasi terkait berhasil dikosongkan.',
         'success'
       );
       expect(result.success).toBe(true);

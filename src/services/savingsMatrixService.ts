@@ -11,11 +11,17 @@ import {
 } from './savingsRateService';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
 import {
+  syncMatrixDepositsToCashFlow,
+  type SyncMatrixDepositsToCashFlowResult,
+} from './cashFlowAuditService';
+import {
   CANCELLATION_REVERSAL_CATEGORY,
   formatMatrixCancellationCashFlowDescription,
   formatMatrixDepositCashFlowDescription,
   isOpeningOrMigrationDepositDescription
 } from '../utils/depositCashFlowFormat';
+
+export { syncMatrixDepositsToCashFlow, type SyncMatrixDepositsToCashFlowResult };
 
 export const MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
@@ -1687,8 +1693,7 @@ export async function bulkCheckAllUpToCurrentMonth(
               if (!insertedRow?.id) continue;
               const rowYear = Number(insertedRow.for_year || 0);
               const rowMonth = Number(insertedRow.for_month || 0);
-              const cutOffGuard = initialSavingsCutOffDate || OFFICIAL_CUTOFF_DATE;
-              if (rowYear > 0 && rowMonth > 0 && !isMonthBeforeCutOff(rowYear, rowMonth, cutOffGuard)) {
+              if (rowYear > 0 && rowMonth > 0) {
                 await insertMatrixDepositCashFlowRow({
                   txId: String(insertedRow.id),
                   amount: Number(insertedRow.amount || 0),
@@ -1739,48 +1744,6 @@ function isPostgrestColumnError(err: any): boolean {
   );
 }
 
-async function matrixSafeFetchAllPaged<T = any>(
-  table: string,
-  columns: string
-): Promise<{ data: T[]; error: any }> {
-  try {
-    const pageSize = 1000;
-    let offset = 0;
-    const allRows: T[] = [];
-
-    while (true) {
-      const tableRef: any = supabase?.from?.(table);
-      if (!tableRef || typeof tableRef.select !== 'function') {
-        return { data: [], error: null };
-      }
-
-      const query: any = tableRef.select(columns);
-      if (query && typeof query.range === 'function') {
-        const res = await query.range(offset, offset + pageSize - 1);
-        if (res?.error) {
-          return { data: allRows, error: res.error };
-        }
-        const rows = Array.isArray(res?.data) ? res.data : [];
-        allRows.push(...rows);
-        if (rows.length < pageSize) break;
-        offset += pageSize;
-      } else if (query && typeof query.then === 'function') {
-        const res = await query;
-        if (res?.error) {
-          return { data: [], error: res.error };
-        }
-        return { data: Array.isArray(res?.data) ? res.data : [], error: null };
-      } else {
-        return { data: [], error: null };
-      }
-    }
-
-    return { data: allRows, error: null };
-  } catch (err) {
-    return { data: [], error: err };
-  }
-}
-
 async function matrixSafeFetchSingleById<T = any>(
   table: string,
   columns: string,
@@ -1803,46 +1766,6 @@ async function matrixSafeFetchSingleById<T = any>(
     return (row as T) ?? null;
   } catch {
     return null;
-  }
-}
-
-async function matrixSafeFetchByIds<T = any>(
-  table: string,
-  columns: string,
-  ids: string[]
-): Promise<T[]> {
-  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-  if (uniqueIds.length === 0) return [];
-
-  try {
-    const tableRef: any = supabase?.from?.(table);
-    if (!tableRef || typeof tableRef.select !== 'function') return [];
-
-    const results: T[] = [];
-    for (let i = 0; i < uniqueIds.length; i += 200) {
-      const chunk = uniqueIds.slice(i, i + 200);
-      const q: any = tableRef.select(columns);
-      if (!q || typeof q.in !== 'function') {
-        const idSet = new Set(uniqueIds);
-        const paged = await matrixSafeFetchAllPaged<T>(table, columns);
-        if (paged.data.length > 0) {
-          return paged.data.filter((r: any) => r?.id && idSet.has(String(r.id)));
-        }
-        const perId: T[] = [];
-        for (const id of uniqueIds) {
-          const singleRow = await matrixSafeFetchSingleById<T>(table, columns, id);
-          if (singleRow) perId.push(singleRow);
-        }
-        return perId;
-      }
-      const res = await q.in('id', chunk);
-      if (!res?.error && Array.isArray(res?.data)) {
-        results.push(...res.data);
-      }
-    }
-    return results;
-  } catch {
-    return [];
   }
 }
 
@@ -2069,7 +1992,7 @@ export async function recordMatrixCancellationReversalsForTxs(params: {
   return recorded;
 }
 
-async function insertMatrixDepositCashFlowRow(params: {
+export async function insertMatrixDepositCashFlowRow(params: {
   txId: string;
   amount: number;
   month: number;
@@ -2083,40 +2006,48 @@ async function insertMatrixDepositCashFlowRow(params: {
   const roundedAmount = Math.round(Number(params.amount || 0));
   if (!params.txId || roundedAmount <= 0) return;
 
-  try {
-    const cfTable: any = supabase?.from?.('cash_flow');
-    if (!cfTable || typeof cfTable.insert !== 'function') return;
+  const cfTable: any = supabase?.from?.('cash_flow');
+  if (!cfTable || typeof cfTable.insert !== 'function') return;
 
-    const description = formatMatrixDepositCashFlowDescription({
-      depositTypeName: params.depositTypeName,
-      month: params.month,
-      year: params.year,
-      memberNrp: params.memberNrp,
-      memberName: params.memberName,
-      referenceNo: params.referenceNo,
-    });
-    const createdAt = params.createdAt || new Date().toISOString();
+  const description = formatMatrixDepositCashFlowDescription({
+    depositTypeName: params.depositTypeName,
+    month: params.month,
+    year: params.year,
+    memberNrp: params.memberNrp,
+    memberName: params.memberName,
+    referenceNo: params.referenceNo,
+  });
+  const createdAt = params.createdAt || new Date().toISOString();
 
-    const res: any = await cfTable.insert({
+  const res: any = await cfTable.insert({
+    direction: 'in',
+    category: 'Setoran Simpanan',
+    amount: roundedAmount,
+    reference_id: params.txId,
+    description,
+    created_at: createdAt,
+  });
+
+  if (res?.error && isPostgrestColumnError(res.error)) {
+    const fallbackRes: any = await cfTable.insert({
       direction: 'in',
       category: 'Setoran Simpanan',
       amount: roundedAmount,
       reference_id: params.txId,
-      description,
       created_at: createdAt,
     });
-
-    if (res?.error && isPostgrestColumnError(res.error)) {
-      await cfTable.insert({
-        direction: 'in',
-        category: 'Setoran Simpanan',
-        amount: roundedAmount,
-        reference_id: params.txId,
-        created_at: createdAt,
-      });
+    if (fallbackRes?.error) {
+      console.error('[Matrix -> CashFlow] Insert gagal:', fallbackRes.error);
+      throw new Error(
+        `Gagal mencatat ke Arus Kas: ${fallbackRes.error.message || String(fallbackRes.error)}`
+      );
     }
-  } catch (err) {
-    console.warn('Catatan: Gagal mencatat cash_flow setoran matriks:', err);
+    return;
+  }
+
+  if (res?.error) {
+    console.error('[Matrix -> CashFlow] Insert gagal:', res.error);
+    throw new Error(`Gagal mencatat ke Arus Kas: ${res.error.message || String(res.error)}`);
   }
 }
 
@@ -2248,7 +2179,7 @@ export async function saveMonthDepositWithEvidence(
     insertedData = res?.data;
   }
 
-  // 4. Catat kas masuk ke public.cash_flow jika bukan saldo awal / pra-cut-off
+  // 4. Catat kas masuk ke public.cash_flow untuk setiap setoran non-saldo-awal
   const insertedRow = Array.isArray(insertedData) ? insertedData[0] : insertedData;
   const insertedTxId = insertedRow?.id ? String(insertedRow.id) : null;
   if (
@@ -2256,26 +2187,22 @@ export async function saveMonthDepositWithEvidence(
     Math.round(Number(payload.amount || 0)) > 0 &&
     !isOpeningOrMigrationDepositDescription(rowToInsert.description)
   ) {
-    const effectiveCutOffDate =
-      (await getInitialSavingsCutOffDate()) || OFFICIAL_CUTOFF_DATE;
-    if (!isMonthBeforeCutOff(payload.year, payload.month, effectiveCutOffDate)) {
-      const ctx = await resolveDepositContextForCashFlow(payload.memberDepositId, {
-        memberNrp: payload.memberNrp,
-        memberName: payload.memberName,
-        depositTypeName: payload.depositTypeName,
-      });
-      await insertMatrixDepositCashFlowRow({
-        txId: insertedTxId,
-        amount: payload.amount,
-        month: payload.month,
-        year: payload.year,
-        referenceNo: payload.referenceNo || insertedRow?.reference_no || null,
-        createdAt: insertedRow?.created_at || null,
-        memberNrp: ctx.memberNrp,
-        memberName: ctx.memberName,
-        depositTypeName: ctx.depositTypeName,
-      });
-    }
+    const ctx = await resolveDepositContextForCashFlow(payload.memberDepositId, {
+      memberNrp: payload.memberNrp,
+      memberName: payload.memberName,
+      depositTypeName: payload.depositTypeName,
+    });
+    await insertMatrixDepositCashFlowRow({
+      txId: insertedTxId,
+      amount: payload.amount,
+      month: payload.month,
+      year: payload.year,
+      referenceNo: payload.referenceNo || insertedRow?.reference_no || null,
+      createdAt: insertedRow?.created_at || null,
+      memberNrp: ctx.memberNrp,
+      memberName: ctx.memberName,
+      depositTypeName: ctx.depositTypeName,
+    });
   }
 
   return { success: true, data: insertedData };
@@ -2420,7 +2347,24 @@ export async function cancelMonthDepositWithReason(
   if (canceledAmount > 0) {
     const effectiveCutOffDate =
       (await getInitialSavingsCutOffDate()) || OFFICIAL_CUTOFF_DATE;
-    if (!isMonthBeforeCutOff(year, month, effectiveCutOffDate)) {
+    let shouldRecordReversal = !isMonthBeforeCutOff(year, month, effectiveCutOffDate);
+    if (!shouldRecordReversal && cancelledTxIds.length > 0) {
+      try {
+        const cfTable: any = supabase?.from?.('cash_flow');
+        if (cfTable && typeof cfTable.select === 'function') {
+          const selQ: any = cfTable.select('id');
+          if (selQ && typeof selQ.in === 'function') {
+            const cfCheckRes: any = await selQ.in('reference_id', cancelledTxIds);
+            if (Array.isArray(cfCheckRes?.data) && cfCheckRes.data.length > 0) {
+              shouldRecordReversal = true;
+            }
+          }
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+    }
+    if (shouldRecordReversal) {
       const ctx = await resolveDepositContextForCashFlow(memberDepositId, {
         memberNrp: options?.memberNrp,
         memberName: options?.memberName,
@@ -3009,216 +2953,6 @@ export async function getSavingsDiscrepancyBreakdown(
     withdrawals: items,
     totalSpent
   };
-}
-
-export interface SyncMatrixDepositsToCashFlowResult {
-  syncedCount: number;
-  skippedCount: number;
-}
-
-/**
- * Menyinkronkan (backfill idempoten) mutasi setoran matriks pada `public.deposit_transactions`
- * periode aktif pasca cut-off (>= Maret 2026) yang belum tercatat di `public.cash_flow`.
- * Mengecualikan saldo awal/cut-off serta transaksi dari kasir setoran gabungan (`KW-SETOR-...`).
- */
-export async function syncMatrixDepositsToCashFlow(): Promise<SyncMatrixDepositsToCashFlowResult> {
-  const emptyResult: SyncMatrixDepositsToCashFlowResult = {
-    syncedCount: 0,
-    skippedCount: 0
-  };
-
-  try {
-    if (!supabase || typeof supabase.from !== 'function') {
-      return emptyResult;
-    }
-
-    const effectiveCutOffDate =
-      (await getInitialSavingsCutOffDate()) || OFFICIAL_CUTOFF_DATE;
-
-    // 1. Ambil seluruh transaksi deposit_transactions (fallback kolom minimal jika schema lama)
-    let txRes = await matrixSafeFetchAllPaged<any>(
-      'deposit_transactions',
-      'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, reference_no, payment_method, notes, created_at'
-    );
-    if (txRes.error && isPostgrestColumnError(txRes.error)) {
-      txRes = await matrixSafeFetchAllPaged<any>(
-        'deposit_transactions',
-        'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, created_at'
-      );
-    }
-    if (txRes.error) {
-      return emptyResult;
-    }
-
-    // 2. Saring kandidat mutasi setoran matriks pasca cut-off
-    const candidateTxs = (txRes.data || []).filter((tx: any) => {
-      if (!tx?.id) return false;
-      if (tx?.transaction_type !== 'deposit') return false;
-      const amt = Math.round(Number(tx?.amount || 0));
-      if (amt <= 0) return false;
-
-      const fy =
-        tx?.for_year !== null && tx?.for_year !== undefined && tx?.for_year !== ''
-          ? Number(tx.for_year)
-          : NaN;
-      const fm =
-        tx?.for_month !== null && tx?.for_month !== undefined && tx?.for_month !== ''
-          ? Number(tx.for_month)
-          : NaN;
-
-      if (!Number.isInteger(fy) || !Number.isInteger(fm) || fm < 1 || fm > 12) {
-        return false;
-      }
-      if (isMonthBeforeCutOff(fy, fm, effectiveCutOffDate)) {
-        return false;
-      }
-      if (isOpeningOrMigrationDepositDescription(tx?.description)) {
-        return false;
-      }
-
-      // Hindari double-counting transaksi dari /admin/terima-setoran (SETORAN_ANGGOTA)
-      const refNoUpper = String(tx?.reference_no || '').trim().toUpperCase();
-      const notesUpper = String(tx?.notes || '').toUpperCase();
-      if (refNoUpper.startsWith('KW-SETOR-') || notesUpper.includes('KW-SETOR-')) {
-        return false;
-      }
-
-      return true;
-    });
-
-    if (candidateTxs.length === 0) {
-      return emptyResult;
-    }
-
-    // 3. Cek entri yang sudah ada di public.cash_flow
-    let cfRes = await matrixSafeFetchAllPaged<any>(
-      'cash_flow',
-      'id, category, direction, reference_id, description'
-    );
-    if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
-      cfRes = await matrixSafeFetchAllPaged<any>(
-        'cash_flow',
-        'id, category, direction, reference_id'
-      );
-    }
-    if (cfRes.error) {
-      return emptyResult;
-    }
-
-    const existingRefIds = new Set<string>();
-    const existingSetoranReceipts = new Set<string>();
-    for (const cf of cfRes.data || []) {
-      if (cf?.reference_id) {
-        existingRefIds.add(String(cf.reference_id));
-      }
-      const catNorm = String(cf?.category || '').trim().toUpperCase().replace(/\s+/g, '_');
-      if (
-        (catNorm === 'SETORAN_ANGGOTA' || catNorm === 'SETORAN_SIMPANAN' || catNorm === 'SIMPANAN') &&
-        typeof cf?.description === 'string'
-      ) {
-        const matches = cf.description.match(/\bKW-[A-Z0-9\/-]+\b/gi) || [];
-        for (const code of matches) {
-          existingSetoranReceipts.add(code.toUpperCase());
-        }
-      }
-    }
-
-    const missingTxs = candidateTxs.filter((tx: any) => {
-      if (existingRefIds.has(String(tx.id))) return false;
-      const refNoUpper = String(tx?.reference_no || '').trim().toUpperCase();
-      if (refNoUpper && existingSetoranReceipts.has(refNoUpper)) return false;
-      return true;
-    });
-
-    const skippedCount = candidateTxs.length - missingTxs.length;
-    if (missingTxs.length === 0) {
-      return { syncedCount: 0, skippedCount };
-    }
-
-    // 4. Batch-resolve metadata member_deposits, anggota, dan deposit_types
-    const mdIds = Array.from(
-      new Set(missingTxs.map((tx: any) => String(tx?.member_deposit_id || '')).filter(Boolean))
-    );
-    const mdRows = await matrixSafeFetchByIds<any>(
-      'member_deposits',
-      'id, member_id, deposit_type_id',
-      mdIds
-    );
-    const mdMap = new Map<string, any>();
-    for (const md of mdRows) {
-      if (md?.id) mdMap.set(String(md.id), md);
-    }
-
-    const memberIds = Array.from(
-      new Set(mdRows.map((md: any) => String(md?.member_id || '')).filter(Boolean))
-    );
-    const dtIds = Array.from(
-      new Set(mdRows.map((md: any) => String(md?.deposit_type_id || '')).filter(Boolean))
-    );
-
-    const [memberRows, dtRows] = await Promise.all([
-      matrixSafeFetchByIds<any>('anggota', 'id, nrp, nama', memberIds),
-      matrixSafeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
-    ]);
-
-    const memberMap = new Map<string, any>();
-    for (const m of memberRows) {
-      if (m?.id) memberMap.set(String(m.id), m);
-    }
-    const dtMap = new Map<string, any>();
-    for (const dt of dtRows) {
-      if (dt?.id) dtMap.set(String(dt.id), dt);
-    }
-
-    // 5. Susun dan sisipkan baris cash_flow per chunk
-    const cfTable: any = supabase?.from?.('cash_flow');
-    if (!cfTable || typeof cfTable.insert !== 'function') {
-      return { syncedCount: 0, skippedCount };
-    }
-
-    const cashFlowPayloads = missingTxs.map((tx: any) => {
-      const md = tx?.member_deposit_id ? mdMap.get(String(tx.member_deposit_id)) : undefined;
-      const member = md?.member_id ? memberMap.get(String(md.member_id)) : undefined;
-      const dt = md?.deposit_type_id ? dtMap.get(String(md.deposit_type_id)) : undefined;
-
-      const description = formatMatrixDepositCashFlowDescription({
-        depositTypeName: dt?.name || null,
-        month: Number(tx.for_month),
-        year: Number(tx.for_year),
-        memberNrp: member?.nrp || null,
-        memberName: member?.nama || null,
-        referenceNo: tx?.reference_no || null
-      });
-
-      return {
-        direction: 'in',
-        category: 'Setoran Simpanan',
-        amount: Math.round(Number(tx.amount)),
-        reference_id: tx.id,
-        description,
-        created_at: tx?.created_at || new Date().toISOString()
-      };
-    });
-
-    let syncedCount = 0;
-    const CHUNK_SIZE = 100;
-    for (let i = 0; i < cashFlowPayloads.length; i += CHUNK_SIZE) {
-      const chunk = cashFlowPayloads.slice(i, i + CHUNK_SIZE);
-      let res: any = await cfTable.insert(chunk);
-      if (res?.error && isPostgrestColumnError(res.error)) {
-        const fallbackChunk = chunk.map(({ description: _desc, ...rest }) => rest);
-        res = await cfTable.insert(fallbackChunk);
-      }
-      if (!res?.error) {
-        syncedCount += chunk.length;
-      }
-    }
-
-    return { syncedCount, skippedCount };
-  } catch (err) {
-    console.warn('Warning syncMatrixDepositsToCashFlow:', err);
-    return emptyResult;
-  }
 }
 
 

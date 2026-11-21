@@ -2,7 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle, Sparkles, Sliders } from 'lucide-react';
-import { getMembersComprehensiveReport, createMember, resetAllMembersData, syncInitialSavingsBalances } from '../../services/memberService';
+import {
+  getMembersComprehensiveReport,
+  createMember,
+  resetAllMembersData,
+  RESET_MEMBERS_CONFIRMATION_PHRASE,
+  syncInitialSavingsBalances,
+} from '../../services/memberService';
 import { getActiveLoanTypes, syncInitialLoanBalances } from '../../services/loanService';
 import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
@@ -65,13 +71,14 @@ export async function triggerMemberExportPdf(
 export async function triggerResetAllMembers(
   showToast: (msg: string, type: 'success' | 'error' | 'info') => void,
   setIsResetting?: (val: boolean) => void,
-  onSuccess?: () => Promise<void> | void
+  onSuccess?: () => Promise<void> | void,
+  confirmationPhrase: string = RESET_MEMBERS_CONFIRMATION_PHRASE
 ) {
   setIsResetting?.(true);
   try {
-    const res = await resetAllMembersData();
+    const res = await resetAllMembersData(confirmationPhrase);
     showToast(
-      res.message || 'Seluruh data anggota, simpanan, dan pinjaman berhasil dikosongkan.',
+      res.message || 'Seluruh data anggota dan mutasi terkait berhasil dikosongkan.',
       'success'
     );
     if (onSuccess) {
@@ -410,10 +417,17 @@ export default function ManajemenAnggota({
 
   const handleConfirmReset = async () => {
     try {
-      await triggerResetAllMembers(showToast, setIsResetting, async () => {
-        setIsResetModalOpen(false);
-        await fetchMembers();
-      });
+      await triggerResetAllMembers(
+        showToast,
+        setIsResetting,
+        async () => {
+          setAnggotaList([]);
+          setCurrentPage(1);
+          setIsResetModalOpen(false);
+          await fetchMembers();
+        },
+        RESET_MEMBERS_CONFIRMATION_PHRASE
+      );
     } catch {
       // Error is handled with toast inside triggerResetAllMembers
     }
@@ -1287,8 +1301,8 @@ export default function ManajemenAnggota({
       <DangerConfirmModal
         isOpen={isResetModalOpen}
         title="Reset Seluruh Data Anggota"
-        message="PERINGATAN: Tindakan ini akan mengosongkan seluruh master data anggota, rekening simpanan, pinjaman, dan riwayat mutasi terkait secara permanen. Transaksi kasir POS akan tetap dipertahankan dengan melepaskan relasi anggota (sales.member_id = NULL) sehingga omzet toko tidak berkurang."
-        confirmationKeyword="HAPUS SEMUA DATA ANGGOTA"
+        message="PERINGATAN: Tindakan ini akan mengosongkan tabel anggota beserta seluruh tabel anak terkait (rekening simpanan, mutasi simpanan, pinjaman, jadwal angsuran, transaksi penjualan terkait, distribusi SHU, serta entri arus kas terkait) secara permanen melalui TRUNCATE CASCADE dan mereset sequence ID kembali ke 1."
+        confirmationKeyword={RESET_MEMBERS_CONFIRMATION_PHRASE}
         confirmButtonLabel="Ya, Kosongkan Sekarang"
         isLoading={isResetting}
         onConfirm={handleConfirmReset}

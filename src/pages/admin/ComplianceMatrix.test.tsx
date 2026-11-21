@@ -11,9 +11,13 @@ import {
   fetchComplianceMatrixData,
   fetchComplianceData,
   handleBulkCheckAllUpToNow,
+  handleGlobalCheckAllUntilCurrentMonth,
+  computeBulkCheckTargetMonths,
+  buildBulkCheckPlan,
   handleExportSavingsMatrix,
   handleImportMatrixSuccess,
 } from './ComplianceMatrix';
+import { DEFAULT_RATE_TIERS } from '../../services/savingsRateService';
 import {
   getSavingsComplianceAvailableYears,
   getComplianceMatrixData,
@@ -46,13 +50,17 @@ vi.mock('../../components/compliance/SavingsMatrixImportModal', () => ({
 }));
 
 // Mock savingsMatrixService
-vi.mock('../../services/savingsMatrixService', () => ({
-  bulkCheckAllUpToCurrentMonth: vi.fn().mockImplementation(async (type, onProgress) => {
-    onProgress?.({ current: 5, total: 10, currentMemberName: 'Budi' });
-    onProgress?.({ current: 10, total: 10, currentMemberName: 'Siti' });
-    return { totalSuccess: 10, totalFailed: 0 };
-  }),
-}));
+vi.mock('../../services/savingsMatrixService', async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    bulkCheckAllUpToCurrentMonth: vi.fn().mockImplementation(async (type, onProgress) => {
+      onProgress?.({ current: 5, total: 10, currentMemberName: 'Budi' });
+      onProgress?.({ current: 10, total: 10, currentMemberName: 'Siti' });
+      return { totalSuccess: 10, totalFailed: 0 };
+    }),
+  };
+});
 
 // Mock layout
 vi.mock('../../components/layout/AdminLayout', () => ({
@@ -439,22 +447,40 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(html).not.toContain('data-testid="bulk-reconcile-modal"');
     });
 
-    it('renders toolbar button for Centang Semua s/d Bulan Ini with correct attributes', () => {
-      const html = renderToStaticMarkup(<ComplianceMatrix />);
+    it('renders toolbar button for Centang Semua s/d Bulan Ini with dynamic cut-off range title', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix initialYear="2026" initialCutoffDate="2026-01-01" />
+      );
       expect(html).toContain('Centang Semua s/d Bulan Ini');
-      expect(html).toContain('title="Centang lunas semua anggota dari tanggal bergabung sampai bulan ini"');
+      expect(html).toContain('data-testid="bulk-check-all-btn"');
+      expect(html).toContain('Centang lunas semua anggota periode Jan-26 s/d');
     });
 
-    it('renders bulk check-all confirmation modal with title, warning banner, and deposit type options', () => {
+    it('disables toolbar Centang Semua button with "Tahun fiskal belum berjalan" when selected year is in the future', () => {
+      const futureYear = (new Date().getFullYear() + 1).toString();
       const html = renderToStaticMarkup(
-        <ComplianceMatrix initialShowCheckAllConfirmModal={true} />
+        <ComplianceMatrix initialYear={futureYear} initialAvailableYears={[Number(futureYear), 2026]} />
+      );
+      expect(html).toContain('title="Tahun fiskal belum berjalan"');
+      expect(html).toMatch(/data-testid="bulk-check-all-btn"[^>]*disabled=""|disabled=""[^>]*data-testid="bulk-check-all-btn"/);
+    });
+
+    it('renders bulk check-all confirmation modal with title, cut-off warning banner, preview card, and deposit type options', () => {
+      const html = renderToStaticMarkup(
+        <ComplianceMatrix
+          initialYear="2026"
+          initialCutoffDate="2026-01-01"
+          initialShowCheckAllConfirmModal={true}
+        />
       );
 
       // Verify modal is visible
       expect(html).toContain('data-testid="bulk-check-all-modal"');
       expect(html).toContain('Centang Semua Anggota s/d Bulan Ini');
-      expect(html).toContain('Tandai lunas seluruh iuran anggota aktif dari tanggal bergabung s/d sekarang');
+      expect(html).toContain('pasca cut-off Saldo Awal s/d bulan berjalan');
+      expect(html).toContain('Saldo Awal Cut-Off tidak akan diubah');
       expect(html).toContain('data-testid="bulk-check-all-confirmation"');
+      expect(html).toContain('data-testid="bulk-check-preview"');
 
       // Verify deposit type radio options
       expect(html).toContain('Semua Jenis Simpanan');
@@ -561,6 +587,381 @@ describe('ComplianceMatrix Component - Dynamic Year Dropdown & Matrix Integratio
       expect(result).toBeNull();
       expect(consoleErrorSpy).toHaveBeenCalled();
       consoleErrorSpy.mockRestore();
+    });
+
+    it('computeBulkCheckTargetMonths computes dynamic range from first visible post-cut-off column to current month', () => {
+      const nov2026 = new Date(2026, 10, 22); // Nov 2026
+
+      // Cut-off Per 1 Jan 2026 -> Jan-26 s/d Nov-26 (11 months)
+      const janCutoff = computeBulkCheckTargetMonths(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        2026,
+        nov2026
+      );
+      expect(janCutoff.targetMonths).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      expect(janCutoff.rangeLabel).toBe('Jan-26 s/d Nov-26');
+      expect(janCutoff.isFutureYear).toBe(false);
+
+      // Cut-off Per 1 Mar 2026 -> Mar-26 s/d Nov-26 (9 months)
+      const marCutoff = computeBulkCheckTargetMonths(
+        [3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        2026,
+        nov2026
+      );
+      expect(marCutoff.targetMonths).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      expect(marCutoff.rangeLabel).toBe('Mar-26 s/d Nov-26');
+      expect(marCutoff.isFutureYear).toBe(false);
+
+      // Past fiscal year -> full 12 months
+      const pastYear = computeBulkCheckTargetMonths(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        2025,
+        nov2026
+      );
+      expect(pastYear.targetMonths).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+      expect(pastYear.rangeLabel).toBe('Jan-25 s/d Des-25');
+      expect(pastYear.isFutureYear).toBe(false);
+
+      // Future fiscal year -> disabled / empty
+      const futureYear = computeBulkCheckTargetMonths(
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        2027,
+        nov2026
+      );
+      expect(futureYear.targetMonths).toEqual([]);
+      expect(futureYear.isFutureYear).toBe(true);
+    });
+
+    it('buildBulkCheckPlan respects filter type, skips paid/covered/suspended, calculates partial shortfalls, and excludes Dec-26', () => {
+      const makeUnpaidMonth = (partialW = 0) => ({
+        w: partialW,
+        b: 0,
+        l: 0,
+        bal_w: 0,
+        bal_b: 0,
+        bal_l: 0,
+        wajib: { status: partialW > 0 ? 'partial' : 'unpaid', amount: partialW, targetAmount: 200000 },
+        belanja: { status: 'unpaid', amount: 0, targetAmount: 50000 },
+        lebaran: { status: 'unpaid', amount: 0, targetAmount: 200000 },
+      });
+
+      const activeRow: any = {
+        member_id: 'm-active',
+        nrp: '00010001',
+        nama: 'Anggota Aktif',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+        pokokLunas: true,
+        compliance: 0,
+        balances: { w: 0, b: 0, l: 0 },
+        months: Array.from({ length: 12 }, (_, idx) => {
+          if (idx === 0) {
+            // Jan already paid for WAJIB, unpaid for BELANJA & LEBARAN
+            return {
+              w: 200000,
+              b: 0,
+              l: 0,
+              bal_w: 200000,
+              bal_b: 0,
+              bal_l: 0,
+              wajib: { status: 'paid', amount: 200000, targetAmount: 200000 },
+              belanja: { status: 'unpaid', amount: 0, targetAmount: 50000 },
+              lebaran: { status: 'unpaid', amount: 0, targetAmount: 200000 },
+            };
+          }
+          if (idx === 1) {
+            // Feb partial 50.000 on WAJIB (shortfall 150.000)
+            return makeUnpaidMonth(50000);
+          }
+          if (idx === 10) {
+            // Nov (current month) is 'unbilled' in matrix view before payment -> must still be checked!
+            return {
+              w: 0,
+              b: 0,
+              l: 0,
+              bal_w: 0,
+              bal_b: 0,
+              bal_l: 0,
+              wajib: { status: 'unbilled', amount: 0, targetAmount: 200000 },
+              belanja: { status: 'unbilled', amount: 0, targetAmount: 50000 },
+              lebaran: { status: 'unbilled', amount: 0, targetAmount: 200000 },
+            };
+          }
+          return makeUnpaidMonth(0);
+        }),
+      };
+
+      const suspendedRow: any = {
+        ...activeRow,
+        member_id: 'm-susp',
+        nrp: '00020002',
+        nama: 'Anggota Beku',
+        membership_status: 'SUSPENDED',
+      };
+
+      const targetMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Jan-26 .. Nov-26 (excludes Dec-26)
+
+      const allPlan = buildBulkCheckPlan({
+        rows: [activeRow, suspendedRow],
+        targetType: 'ALL',
+        targetMonths,
+        selectedYear: 2026,
+        rateTiers: DEFAULT_RATE_TIERS,
+        targets: { wajib: 200000, belanja: 50000, lebaran: 200000 },
+      });
+
+      expect(allPlan.affectedMemberCount).toBe(1);
+      // 11 months * 3 types = 33 minus 1 paid (Jan WAJIB) = 32 items
+      expect(allPlan.totalItems).toBe(32);
+      // Verify Dec (12) is never included
+      expect(allPlan.items.some((i) => i.month === 12)).toBe(false);
+      // Verify Nov (11) IS included
+      expect(allPlan.items.filter((i) => i.month === 11)).toHaveLength(3);
+      // Verify Feb WAJIB shortfall is 150.000
+      const febWajib = allPlan.items.find((i) => i.month === 2 && i.depositTypeCode === 'WAJIB');
+      expect(febWajib?.amount).toBe(150000);
+
+      // Filtered to WAJIB only
+      const wajibPlan = buildBulkCheckPlan({
+        rows: [activeRow],
+        targetType: 'WAJIB',
+        targetMonths,
+        selectedYear: 2026,
+        rateTiers: DEFAULT_RATE_TIERS,
+        targets: { wajib: 200000, belanja: 50000, lebaran: 200000 },
+      });
+      expect(wajibPlan.totalItems).toBe(10); // Feb..Nov
+      expect(wajibPlan.items.every((i) => i.depositTypeCode === 'WAJIB')).toBe(true);
+    });
+
+    it('handleGlobalCheckAllUntilCurrentMonth performs idempotent batch inserts into deposit_transactions and cash_flow without touching Saldo Awal or calling delete', async () => {
+      const insertedDepositPayloads: any[] = [];
+      const insertedCashFlowPayloads: any[] = [];
+      const deleteCalls: string[] = [];
+
+      const fromMock = vi.mocked(supabase.from);
+      fromMock.mockImplementation((table: string): any => {
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                { id: 'dt-w', code: 'WAJIB', name: 'Simpanan Wajib', default_amount: 200000 },
+                { id: 'dt-b', code: 'BELANJA', name: 'Simpanan Belanja', default_amount: 50000 },
+                { id: 'dt-l', code: 'LEBARAN', name: 'Simpanan Lebaran', default_amount: 200000 },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'md-1-w', member_id: 'm-1', deposit_type_id: 'dt-w' },
+                  { id: 'md-1-b', member_id: 'm-1', deposit_type_id: 'dt-b' },
+                ],
+                error: null,
+              }),
+            }),
+            insert: vi.fn().mockReturnValue({
+              select: vi.fn().mockResolvedValue({
+                data: [{ id: 'md-1-l', member_id: 'm-1', deposit_type_id: 'dt-l' }],
+                error: null,
+              }),
+            }),
+            delete: vi.fn(() => {
+              deleteCalls.push('member_deposits');
+              return {};
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  in: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({
+                      // Jan WAJIB already exists in DB (should be skipped idempotently),
+                      // plus a Saldo Awal Cut-Off row that must NOT be ignored or touched.
+                      data: [
+                        {
+                          id: 'tx-existing-jan-w',
+                          member_deposit_id: 'md-1-w',
+                          for_year: 2026,
+                          for_month: 1,
+                          amount: 200000,
+                          transaction_type: 'deposit',
+                          description: 'Centang Setoran Rutin Matriks (WAJIB)',
+                        },
+                        {
+                          id: 'tx-saldo-awal',
+                          member_deposit_id: 'md-1-w',
+                          for_year: 2026,
+                          for_month: 1,
+                          amount: 3200000,
+                          transaction_type: 'deposit',
+                          description: 'Saldo Awal Simpanan Per 1 Jan 2026 (Cut-Off)',
+                        },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedDepositPayloads.push(...payload);
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: payload.map((row, idx) => ({
+                    id: `tx-new-${idx + 1}`,
+                    member_deposit_id: row.member_deposit_id,
+                    amount: row.amount,
+                    for_month: row.for_month,
+                    for_year: row.for_year,
+                    reference_no: null,
+                    created_at: '2026-11-22T01:00:00.000Z',
+                  })),
+                  error: null,
+                }),
+              };
+            }),
+            delete: vi.fn(() => {
+              deleteCalls.push('deposit_transactions');
+              return {};
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedCashFlowPayloads.push(...payload);
+              return Promise.resolve({ data: payload, error: null });
+            }),
+            delete: vi.fn(() => {
+              deleteCalls.push('cash_flow');
+              return {};
+            }),
+          };
+        }
+        return {};
+      });
+
+      const plan = {
+        items: [
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi Santoso',
+            depositTypeCode: 'WAJIB' as const,
+            month: 1,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi Santoso',
+            depositTypeCode: 'BELANJA' as const,
+            month: 1,
+            year: 2026,
+            amount: 50000,
+            targetAmount: 50000,
+          },
+          {
+            memberId: 'm-1',
+            memberNrp: '00010001',
+            memberName: 'Budi Santoso',
+            depositTypeCode: 'LEBARAN' as const,
+            month: 2,
+            year: 2026,
+            amount: 200000,
+            targetAmount: 200000,
+          },
+        ],
+        affectedMemberCount: 1,
+        totalItems: 3,
+        totalAmount: 450000,
+      };
+
+      const setIsBulkChecking = vi.fn();
+      const setBulkCheckProgress = vi.fn();
+      const setBulkCheckSummary = vi.fn();
+      const onComplete = vi.fn().mockResolvedValue(undefined);
+      const showToast = vi.fn();
+
+      let res: any;
+      try {
+        res = await handleGlobalCheckAllUntilCurrentMonth({
+          plan,
+          selectedYear: 2026,
+          targetMonths: [1, 2],
+          rangeLabel: 'Jan-26 s/d Feb-26',
+          setIsBulkChecking,
+          setBulkCheckProgress,
+          setBulkCheckSummary,
+          onComplete,
+          feedback: { showToast },
+        });
+      } finally {
+        fromMock.mockReset();
+        fromMock.mockReturnValue({
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                { amount: 100000, transaction_type: 'deposit' },
+                { amount: 20000, transaction_type: 'withdrawal' },
+              ],
+              error: null,
+            }),
+          }),
+        } as any);
+      }
+
+      expect(deleteCalls).toEqual([]);
+      // Only BELANJA (Jan) and LEBARAN (Feb) should be inserted; Jan WAJIB skipped by server guard
+      expect(insertedDepositPayloads).toHaveLength(2);
+      expect(insertedDepositPayloads[0]).toMatchObject({
+        member_deposit_id: 'md-1-b',
+        transaction_type: 'deposit',
+        amount: 50000,
+        for_month: 1,
+        for_year: 2026,
+      });
+      expect(insertedDepositPayloads[1]).toMatchObject({
+        member_deposit_id: 'md-1-l',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 2,
+        for_year: 2026,
+      });
+
+      // Verify paired cash_flow rows use `direction: 'in'`, `category: 'Setoran Simpanan'`, `reference_id`
+      expect(insertedCashFlowPayloads).toHaveLength(2);
+      expect(insertedCashFlowPayloads[0]).toMatchObject({
+        direction: 'in',
+        category: 'Setoran Simpanan',
+        amount: 50000,
+        reference_id: 'tx-new-1',
+      });
+      expect(insertedCashFlowPayloads[0].description).toContain('Setoran Simpanan Belanja [Jan 2026]');
+      expect(insertedCashFlowPayloads[0].description).toContain('00010001 - Budi Santoso');
+      expect(insertedCashFlowPayloads[0].created_at).toBeTruthy();
+
+      expect(res).toEqual({
+        totalSuccess: 1,
+        totalFailed: 0,
+        insertedCount: 2,
+        totalAmount: 250000,
+      });
+      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringContaining('2 setoran'),
+        'success'
+      );
     });
 
     it('exports fetchComplianceData as alias to fetchComplianceMatrixData', () => {

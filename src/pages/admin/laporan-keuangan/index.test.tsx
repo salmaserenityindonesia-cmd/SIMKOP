@@ -11,6 +11,7 @@ import LaporanKeuangan, {
   getHighlightedCashFlowRowIds,
   buildCashFlowCategoryOptions,
   filterCashFlowTransactions,
+  sortCashFlowTransactionsByDate,
   buildCashFlowExportSheetRows,
   getNormalizedCategoryLabel,
   buildStartDateBoundaryIso,
@@ -3743,5 +3744,376 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
         (supabase.from as any).mockImplementation(defaultFromImpl);
       }
     }
+  });
+
+  it("getCashFlowReport('2026-01-01', '2026-12-31', 'all') backfills missed Jan-26 Rp 200.000 matrix deposit for BAGUS BUDI PRASETYO (00050543) alongside SALDO_AWAL_SIMPANAN Rp 24.040.000 totaling Rp 24.240.000", async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows: any[] = [
+        {
+          id: 'cf-saldo-awal-1',
+          created_at: '2026-03-01T00:00:00.000Z',
+          category: 'SALDO_AWAL_SIMPANAN',
+          direction: 'in',
+          amount: 24040000,
+          reference_id: null,
+          description:
+            'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)',
+        },
+      ];
+      const depositTxs = [
+        {
+          id: 'tx-opening-all',
+          member_deposit_id: 'md-bagus-wajib',
+          transaction_type: 'deposit',
+          amount: 24040000,
+          for_month: 2,
+          for_year: 2026,
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+          created_at: '2026-03-01T00:00:00.000Z',
+        },
+        {
+          id: 'tx-bagus-jan26',
+          member_deposit_id: 'md-bagus-wajib',
+          transaction_type: 'deposit',
+          amount: 200000,
+          for_month: 1,
+          for_year: 2026,
+          description: 'Setoran Matriks WAJIB Jan 2026',
+          reference_no: null,
+          payment_method: 'tunai',
+          created_at: '2026-11-21T10:00:00.000Z',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'system_settings') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { key: 'initial_savings_effective_date', value: '2026-03-01' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({
+                      data: cfRows.filter((r) => r.category === 'SALDO_AWAL_SIMPANAN'),
+                      error: null,
+                    }),
+                  }),
+                };
+              }
+              return {
+                range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                  data: cfRows.slice(from, to + 1),
+                  error: null,
+                })),
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockImplementation(async () => ({
+                      data: [...cfRows],
+                      error: null,
+                    })),
+                  }),
+                }),
+              };
+            }),
+            insert: vi.fn().mockImplementation(async (rows: any[]) => {
+              const items = Array.isArray(rows) ? rows : [rows];
+              for (const r of items) {
+                cfRows.push({ id: `cf-inserted-${cfRows.length + 1}`, ...r });
+              }
+              return { data: items, error: null };
+            }),
+          };
+        }
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockImplementation(async (from: number, to: number) => ({
+                data: depositTxs.slice(from, to + 1),
+                error: null,
+              })),
+            }),
+          };
+        }
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({
+                data: [{ id: 'md-bagus-wajib', balance: 3400000 }],
+                error: null,
+              }),
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'md-bagus-wajib',
+                    member_id: 'm-bagus',
+                    deposit_type_id: 'dt-wajib',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      });
+
+      const report = await getCashFlowReport('2026-01-01', '2026-12-31', 'all');
+      expect(report.transactions).toHaveLength(2);
+      expect(report.transactions[0]).toMatchObject({
+        kategori: 'SALDO_AWAL_SIMPANAN',
+        kas_masuk: 24040000,
+      });
+      expect(report.transactions[1]).toMatchObject({
+        kategori: 'Setoran Simpanan',
+        deskripsi: 'Setoran Simpanan Wajib [Jan 2026] — 00050543 - BAGUS BUDI PRASETYO',
+        kas_masuk: 200000,
+        saldo_berjalan: 24240000,
+      });
+      expect(report.inflowTotal).toBe(24240000);
+      expect(report.outflowTotal).toBe(0);
+      expect(report.netCashflow).toBe(24240000);
+      expect(report.closingBalance).toBe(24240000);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('sortCashFlowTransactionsByDate sorts ASC/DESC by timestamp and id without mutating input or changing chronological saldo_berjalan', () => {
+    const baseRows: CashFlowTransaction[] = [
+      {
+        id: 'tx-2',
+        tanggal: '10/11/2026',
+        referensi: 'CF-TX02',
+        deskripsi: 'Transaksi Kedua (same timestamp tie-break)',
+        kategori: 'penjualan_tunai',
+        unit_usaha: 'Retail Toko',
+        kas_masuk: 500000,
+        kas_keluar: 0,
+        saldo_berjalan: 2500000,
+        direction: 'in',
+        created_at: '2026-11-10T09:00:00.000Z',
+      },
+      {
+        id: 'tx-1',
+        tanggal: '10/11/2026',
+        referensi: 'CF-TX01',
+        deskripsi: 'Transaksi Pertama (same timestamp tie-break)',
+        kategori: 'penjualan_tunai',
+        unit_usaha: 'Retail Toko',
+        kas_masuk: 1000000,
+        kas_keluar: 0,
+        saldo_berjalan: 2000000,
+        direction: 'in',
+        created_at: '2026-11-10T09:00:00.000Z',
+      },
+      {
+        id: 'tx-3',
+        tanggal: '15/11/2026',
+        referensi: 'CF-TX03',
+        deskripsi: 'Transaksi Terbaru',
+        kategori: 'beban_operasional',
+        unit_usaha: 'Umum',
+        kas_masuk: 0,
+        kas_keluar: 300000,
+        saldo_berjalan: 2200000,
+        direction: 'out',
+        created_at: '2026-11-15T14:30:00.000Z',
+      },
+    ];
+    const snapshotIds = baseRows.map((r) => r.id);
+
+    const asc = sortCashFlowTransactionsByDate(baseRows, 'asc');
+    expect(asc.map((r) => r.id)).toEqual(['tx-1', 'tx-2', 'tx-3']);
+    expect(asc.map((r) => r.saldo_berjalan)).toEqual([2000000, 2500000, 2200000]);
+
+    const desc = sortCashFlowTransactionsByDate(baseRows, 'desc');
+    expect(desc.map((r) => r.id)).toEqual(['tx-3', 'tx-2', 'tx-1']);
+    expect(desc.map((r) => r.saldo_berjalan)).toEqual([2200000, 2500000, 2000000]);
+
+    // Original array must not be mutated
+    expect(baseRows.map((r) => r.id)).toEqual(snapshotIds);
+
+    // Fallback parsing using dd/mm/yyyy tanggal when created_at is absent
+    const fallbackRows: CashFlowTransaction[] = [
+      {
+        id: 'fb-b',
+        tanggal: '20/11/2026',
+        referensi: 'CF-FB2',
+        deskripsi: 'Tanggal lebih baru tanpa created_at',
+        kategori: 'penjualan_tunai',
+        unit_usaha: 'Umum',
+        kas_masuk: 100000,
+        kas_keluar: 0,
+        saldo_berjalan: 1100000,
+      },
+      {
+        id: 'fb-a',
+        tanggal: '5/11/2026',
+        referensi: 'CF-FB1',
+        deskripsi: 'Tanggal lebih lama tanpa created_at',
+        kategori: 'penjualan_tunai',
+        unit_usaha: 'Umum',
+        kas_masuk: 1000000,
+        kas_keluar: 0,
+        saldo_berjalan: 1000000,
+      },
+    ];
+    expect(sortCashFlowTransactionsByDate(fallbackRows, 'asc').map((r) => r.id)).toEqual([
+      'fb-a',
+      'fb-b',
+    ]);
+    expect(sortCashFlowTransactionsByDate(fallbackRows, 'desc').map((r) => r.id)).toEqual([
+      'fb-b',
+      'fb-a',
+    ]);
+  });
+
+  it('UI SSR (TANGGAL sort header): renders ASC badge by default and DESC ordering with pinned SALDO-AWAL and accurate running balance', () => {
+    const sampleData = {
+      openingBalance: 20640000,
+      inflowTotal: 1000000,
+      outflowTotal: 400000,
+      netCashflow: 600000,
+      closingBalance: 21240000,
+      transactions: [
+        {
+          id: 'tx-sort-1',
+          tanggal: '5/11/2026',
+          referensi: 'CF-SORT-1',
+          deskripsi: 'Angsuran Pinjaman Awal',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 1000000,
+          kas_keluar: 0,
+          saldo_berjalan: 21640000,
+          direction: 'in' as const,
+          created_at: '2026-11-05T09:00:00.000Z',
+        },
+        {
+          id: 'tx-sort-2',
+          tanggal: '20/11/2026',
+          referensi: 'CF-SORT-2',
+          deskripsi: 'Biaya Operasional Terbaru',
+          kategori: 'beban_operasional',
+          unit_usaha: 'Umum',
+          kas_masuk: 0,
+          kas_keluar: 400000,
+          saldo_berjalan: 21240000,
+          direction: 'out' as const,
+          created_at: '2026-11-20T15:00:00.000Z',
+        },
+      ],
+    };
+
+    const ascHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-30"
+          initialCashFlowData={sampleData}
+        />
+      </MemoryRouter>
+    );
+
+    expect(ascHtml).toContain('data-testid="cashflow-sort-date-btn"');
+    expect(ascHtml).toContain('aria-sort="ascending"');
+    expect(ascHtml).toContain('TANGGAL');
+    expect(ascHtml).toContain('>ASC<');
+    expect(ascHtml.indexOf('CF-SORT-1')).toBeLessThan(ascHtml.indexOf('CF-SORT-2'));
+
+    const descHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <LaporanKeuangan
+          initialActiveTab="cashflow"
+          initialStartDate="2026-11-01"
+          initialEndDate="2026-11-30"
+          initialDateSortOrder="desc"
+          initialCashFlowData={sampleData}
+        />
+      </MemoryRouter>
+    );
+
+    expect(descHtml).toContain('data-testid="cashflow-sort-date-btn"');
+    expect(descHtml).toContain('aria-sort="descending"');
+    expect(descHtml).toContain('>DESC<');
+
+    // SALDO-AWAL remains pinned at the top above transaction rows even in DESC mode
+    const idxOpening = descHtml.indexOf('SALDO-AWAL');
+    const idxNewest = descHtml.indexOf('CF-SORT-2');
+    const idxOldest = descHtml.indexOf('CF-SORT-1');
+    expect(idxOpening).toBeGreaterThan(-1);
+    expect(idxOpening).toBeLessThan(idxNewest);
+    expect(idxNewest).toBeLessThan(idxOldest);
+
+    // Chronological running balances remain attached to their respective rows
+    const newestRowSegment = descHtml.slice(idxNewest, idxOldest);
+    expect(newestRowSegment).toContain('Rp 21.240.000');
+    const oldestRowSegment = descHtml.slice(idxOldest);
+    expect(oldestRowSegment).toContain('Rp 21.640.000');
   });
 });

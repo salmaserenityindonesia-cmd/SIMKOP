@@ -12,6 +12,7 @@ import {
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
   getTraceBackDepositRows,
+  syncMatrixDepositsToCashFlow,
   syncPosCashSalesToCashFlow,
   syncResignedMemberClearanceToCashFlow,
 } from './cashFlowAuditService';
@@ -3304,5 +3305,257 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
       expect(breakdown.memberDepositBatch.items).toHaveLength(3);
       expect(breakdown.memberDepositBatch.isMatched).toBe(true);
     }
+  });
+});
+
+describe('cashFlowAuditService - syncMatrixDepositsToCashFlow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('backfills missed Jan-26 Rp 200.000 deposit for BAGUS BUDI PRASETYO (00050543) idempotently and excludes cut-off & KW-SETOR entries', async () => {
+    const cashFlowRows: any[] = [
+      {
+        id: 'cf-opening-1',
+        category: 'SALDO_AWAL_SIMPANAN',
+        direction: 'in',
+        amount: 24040000,
+        reference_id: null,
+        description: 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)',
+        created_at: '2026-03-01T00:00:00.000Z',
+      },
+    ];
+    const depositTxs = [
+      {
+        id: 'tx-bagus-jan26',
+        member_deposit_id: 'md-bagus-wajib',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 1,
+        for_year: 2026,
+        description: 'Setoran Matriks WAJIB Jan 2026',
+        reference_no: null,
+        payment_method: 'tunai',
+        created_at: '2026-11-21T10:00:00.000Z',
+      },
+      {
+        id: 'tx-opening-cutoff',
+        member_deposit_id: 'md-bagus-wajib',
+        transaction_type: 'deposit',
+        amount: 3200000,
+        for_month: 2,
+        for_year: 2026,
+        description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        reference_no: null,
+        created_at: '2026-03-01T00:00:00.000Z',
+      },
+      {
+        id: 'tx-setor-kasir',
+        member_deposit_id: 'md-bagus-wajib',
+        transaction_type: 'deposit',
+        amount: 200000,
+        for_month: 4,
+        for_year: 2026,
+        description: 'Setoran Simpanan Wajib (Apr 2026)',
+        reference_no: 'KW-SETOR-20261121-0001',
+        notes: 'Metode: Tunai | Kwitansi: KW-SETOR-20261121-0001',
+        created_at: '2026-11-21T11:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { key: 'initial_savings_effective_date', value: '2026-03-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: depositTxs, error: null }),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async () => ({
+              data: [...cashFlowRows],
+              error: null,
+            })),
+          }),
+          insert: vi.fn().mockImplementation(async (rows: any[]) => {
+            const items = Array.isArray(rows) ? rows : [rows];
+            for (const r of items) {
+              cashFlowRows.push({ id: `cf-${cashFlowRows.length + 1}`, ...r });
+            }
+            return { data: items, error: null };
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'md-bagus-wajib', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const first = await syncMatrixDepositsToCashFlow();
+    expect(first).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(cashFlowRows).toHaveLength(2);
+    expect(cashFlowRows[1]).toMatchObject({
+      direction: 'in',
+      category: 'Setoran Simpanan',
+      amount: 200000,
+      reference_id: 'tx-bagus-jan26',
+      description: 'Setoran Simpanan Wajib [Jan 2026] — 00050543 - BAGUS BUDI PRASETYO',
+      created_at: '2026-11-21T10:00:00.000Z',
+    });
+
+    const second = await syncMatrixDepositsToCashFlow();
+    expect(second).toEqual({ syncedCount: 0, skippedCount: 1 });
+    expect(cashFlowRows).toHaveLength(2);
+  });
+
+  it('uses an in-flight promise lock so concurrent calls do not insert duplicate cash_flow rows', async () => {
+    const cashFlowRows: any[] = [];
+    let insertCalls = 0;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'system_settings') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { key: 'initial_savings_effective_date', value: '2026-01-01' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(
+              () =>
+                new Promise((resolve) =>
+                  setTimeout(
+                    () =>
+                      resolve({
+                        data: [
+                          {
+                            id: 'tx-bagus-jan26-lock',
+                            member_deposit_id: 'md-bagus-wajib',
+                            transaction_type: 'deposit',
+                            amount: 200000,
+                            for_month: 1,
+                            for_year: 2026,
+                            description: 'Setoran Matriks WAJIB Jan 2026',
+                            created_at: '2026-11-21T10:00:00.000Z',
+                          },
+                        ],
+                        error: null,
+                      }),
+                    15
+                  )
+                )
+            ),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async () => ({
+              data: [...cashFlowRows],
+              error: null,
+            })),
+          }),
+          insert: vi.fn().mockImplementation(async (rows: any[]) => {
+            insertCalls += 1;
+            const items = Array.isArray(rows) ? rows : [rows];
+            for (const r of items) {
+              cashFlowRows.push({ id: `cf-${cashFlowRows.length + 1}`, ...r });
+            }
+            return { data: items, error: null };
+          }),
+        };
+      }
+      if (table === 'member_deposits') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'md-bagus-wajib', member_id: 'm-bagus', deposit_type_id: 'dt-wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'deposit_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const [res1, res2] = await Promise.all([
+      syncMatrixDepositsToCashFlow(),
+      syncMatrixDepositsToCashFlow(),
+    ]);
+
+    expect(res1).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(res2).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(insertCalls).toBe(1);
+    expect(cashFlowRows).toHaveLength(1);
   });
 });

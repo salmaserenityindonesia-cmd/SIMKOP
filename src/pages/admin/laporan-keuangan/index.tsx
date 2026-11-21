@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { ChevronDown, ExternalLink, Filter, Receipt, RotateCcw, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ExternalLink, Filter, Receipt, RotateCcw, Search, X } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
 import ShuReferenceDetailModal, {
@@ -22,6 +22,7 @@ import {
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   enrichWithdrawalCashFlowDescriptions,
+  syncMatrixDepositsToCashFlow,
   syncPosCashSalesToCashFlow,
   syncResignedMemberClearanceToCashFlow,
 } from '../../../services/cashFlowAuditService';
@@ -31,7 +32,6 @@ import {
 } from '../../../utils/posCashFlowFormat';
 import { parseMemberDepositDescriptionComponents } from '../../../utils/depositCashFlowFormat';
 import { deduplicateClearanceRowsInMemory } from '../../../utils/clearanceCashFlowFormat';
-import { syncMatrixDepositsToCashFlow } from '../../../services/savingsMatrixService';
 import {
   getOutstandingStoreCreditSummary,
   syncStoreCreditPaymentsToCashFlow,
@@ -280,6 +280,37 @@ export function filterCashFlowTransactions(
   });
 }
 
+function parseCashFlowTransactionTime(tx: CashFlowTransaction): number {
+  if (tx.created_at) {
+    const ms = new Date(tx.created_at).getTime();
+    if (!Number.isNaN(ms)) {
+      return ms;
+    }
+  }
+  const dmyMatch = String(tx.tanggal || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    return Date.UTC(Number(dmyMatch[3]), Number(dmyMatch[2]) - 1, Number(dmyMatch[1]));
+  }
+  const fallbackMs = new Date(String(tx.tanggal || '')).getTime();
+  return Number.isNaN(fallbackMs) ? 0 : fallbackMs;
+}
+
+export function sortCashFlowTransactionsByDate(
+  transactions: CashFlowTransaction[],
+  sortOrder: 'asc' | 'desc'
+): CashFlowTransaction[] {
+  return [...transactions].sort((a, b) => {
+    const timeA = parseCashFlowTransactionTime(a);
+    const timeB = parseCashFlowTransactionTime(b);
+    if (timeA !== timeB) {
+      return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+    }
+    return sortOrder === 'asc'
+      ? String(a.id).localeCompare(String(b.id))
+      : String(b.id).localeCompare(String(a.id));
+  });
+}
+
 export function buildCashFlowExportSheetRows(params: {
   startDate: string;
   endDate: string;
@@ -508,7 +539,9 @@ export async function getCashFlowReport(
   await syncStoreCreditPaymentsToCashFlow().catch(() => { });
   await syncOpeningSavingsBalanceToCashFlow().catch(() => { });
   await consolidateBulkLebaranCashFlow().catch(() => { });
-  await syncMatrixDepositsToCashFlow().catch(() => { });
+  await syncMatrixDepositsToCashFlow().catch((err) => {
+    console.error('[LaporanKeuangan] syncMatrixDepositsToCashFlow gagal:', err);
+  });
   await syncPosCashSalesToCashFlow().catch(() => { });
   await syncResignedMemberClearanceToCashFlow().catch(() => { });
   const memberDepositEnrichRes = await enrichMemberDepositCashFlowDescriptions().catch(() => ({
@@ -1333,6 +1366,7 @@ export interface LaporanKeuanganProps {
   initialStartDate?: string;
   initialEndDate?: string;
   initialClosedFiscalYear?: FiscalYearClosingRecord | null;
+  initialDateSortOrder?: 'asc' | 'desc';
 }
 
 interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
@@ -1359,6 +1393,7 @@ function LaporanKeuanganContent({
   initialStartDate,
   initialEndDate,
   initialClosedFiscalYear = null,
+  initialDateSortOrder = 'asc',
   urlTab = null,
   urlRef = '',
   urlReceipt = '',
@@ -1403,6 +1438,7 @@ function LaporanKeuanganContent({
   );
   const [cashFlowPage, setCashFlowPage] = useState<number>(1);
   const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
+  const [dateSortOrder, setDateSortOrder] = useState<'asc' | 'desc'>(initialDateSortOrder);
   const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
     initialSelectedCashFlowRef ?? null
   );
@@ -1574,12 +1610,16 @@ function LaporanKeuanganContent({
     cashFlowSearchQuery,
     selectedCategories
   );
-  const totalCashFlowItems = filteredCashFlowTransactions.length;
+  const sortedCashFlowTransactions = useMemo(
+    () => sortCashFlowTransactionsByDate(filteredCashFlowTransactions, dateSortOrder),
+    [filteredCashFlowTransactions, dateSortOrder]
+  );
+  const totalCashFlowItems = sortedCashFlowTransactions.length;
   const totalCashFlowPages = Math.max(1, Math.ceil(totalCashFlowItems / cashFlowPageSize));
   const safeCashFlowPage = Math.min(cashFlowPage, totalCashFlowPages);
   const cashFlowStartIndex = (safeCashFlowPage - 1) * cashFlowPageSize;
   const cashFlowEndIndex = Math.min(cashFlowStartIndex + cashFlowPageSize, totalCashFlowItems);
-  const paginatedCashFlow = filteredCashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
+  const paginatedCashFlow = sortedCashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
 
   const filteredCashFlowInflow = filteredCashFlowTransactions.reduce(
     (sum, r) => sum + Number(r.kas_masuk || 0),
@@ -1664,7 +1704,7 @@ function LaporanKeuanganContent({
     if (lastAutoPagedKeyRef.current === autoPageKey) return;
 
     if (activeTab === 'cashflow' && highlightedCashFlowIds.size > 0) {
-      const idx = filteredCashFlowTransactions.findIndex((r) =>
+      const idx = sortedCashFlowTransactions.findIndex((r) =>
         highlightedCashFlowIds.has(r.id)
       );
       if (idx >= 0) {
@@ -1691,7 +1731,7 @@ function LaporanKeuanganContent({
     activeTab,
     highlightedCashFlowIds,
     highlightedShuIds,
-    filteredCashFlowTransactions,
+    sortedCashFlowTransactions,
     filteredShuRows,
     cashFlowPageSize,
     cashFlowPage,
@@ -1764,7 +1804,7 @@ function LaporanKeuanganContent({
         const cfExportRows = buildCashFlowExportSheetRows({
           startDate,
           endDate,
-          transactions: filteredCashFlowTransactions,
+          transactions: sortedCashFlowTransactions,
           inflowTotal: displayedCashFlowInflow,
           outflowTotal: displayedCashFlowOutflow,
           netCashflow: displayedCashFlowNet,
@@ -2394,7 +2434,41 @@ function LaporanKeuanganContent({
               <table className="w-full text-sm">
                 <thead className="bg-surface-container-low border-b border-outline-variant/20">
                   <tr>
-                    {['Tanggal', 'Referensi', 'Deskripsi', 'Kategori', 'Unit', 'Kas Masuk (Rp)', 'Kas Keluar (Rp)', 'Saldo Berjalan (Rp)'].map(h => (
+                    <th
+                      aria-sort={dateSortOrder === 'asc' ? 'ascending' : 'descending'}
+                      className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap select-none"
+                    >
+                      <button
+                        type="button"
+                        data-testid="cashflow-sort-date-btn"
+                        onClick={() => {
+                          setDateSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+                          setCashFlowPage(1);
+                        }}
+                        title={
+                          dateSortOrder === 'asc'
+                            ? 'Urutan: Terlama ke Terbaru (ASC) — Klik untuk ubah ke Terbaru ke Terlama (DESC)'
+                            : 'Urutan: Terbaru ke Terlama (DESC) — Klik untuk ubah ke Terlama ke Terbaru (ASC)'
+                        }
+                        className="inline-flex items-center gap-1.5 px-2 py-1 -ml-2 rounded-lg hover:bg-slate-200/70 hover:text-slate-800 transition-colors cursor-pointer group"
+                      >
+                        <span>TANGGAL</span>
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200/80 text-[10px] font-mono">
+                          {dateSortOrder === 'asc' ? (
+                            <>
+                              <ArrowUp className="w-3 h-3" />
+                              <span>ASC</span>
+                            </>
+                          ) : (
+                            <>
+                              <ArrowDown className="w-3 h-3" />
+                              <span>DESC</span>
+                            </>
+                          )}
+                        </span>
+                      </button>
+                    </th>
+                    {['Referensi', 'Deskripsi', 'Kategori', 'Unit', 'Kas Masuk (Rp)', 'Kas Keluar (Rp)', 'Saldo Berjalan (Rp)'].map(h => (
                       <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant whitespace-nowrap">
                         {h}
                       </th>
