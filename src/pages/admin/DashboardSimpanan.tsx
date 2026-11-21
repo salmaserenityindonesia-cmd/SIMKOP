@@ -265,7 +265,7 @@ export default function DashboardSimpanan({
   };
 
   const yearOptions = useMemo(() => {
-    const startYear = 2026;
+    const startYear = Math.min(2026, dataset?.cutoffYear ?? 2026);
     const endYear = Math.max(currentYear + 1, targetYear + 1, 2026);
     const list: number[] = [];
     for (let y = startYear; y <= endYear; y++) {
@@ -275,7 +275,7 @@ export default function DashboardSimpanan({
       list.unshift(targetYear);
     }
     return list;
-  }, [currentYear, targetYear]);
+  }, [currentYear, targetYear, dataset?.cutoffYear]);
 
   const depositTypeOptions = useMemo(() => {
     if (dataset?.availableDepositTypes && dataset.availableDepositTypes.length > 0) {
@@ -405,6 +405,13 @@ export default function DashboardSimpanan({
     exportToExcel(data, `Tagihan_Simpanan_${targetMonth}_${targetYear}`);
   };
 
+  const effectiveCutoffMonth = dataset?.cutoffMonth ?? 1;
+  const effectiveCutoffYear = dataset?.cutoffYear ?? targetYear;
+  const cutoffTitle = `${
+    FULL_MONTH_NAMES[effectiveCutoffMonth - 1] || `Bulan ${effectiveCutoffMonth}`
+  } ${effectiveCutoffYear}`;
+  const periodTitle = `${FULL_MONTH_NAMES[targetMonth - 1] || `Bulan ${targetMonth}`} ${targetYear}`;
+
   const handleExportPDF = () => {
     const headers = [
       'NRP',
@@ -426,16 +433,14 @@ export default function DashboardSimpanan({
       formatCurrency(row.remainingArrears),
       formatBillStatusLabel(row),
     ]);
-    const periodName = `${FULL_MONTH_NAMES[targetMonth - 1] || `Bulan ${targetMonth}`} ${targetYear}`;
     exportToPDF(
       headers,
       data,
       `Tagihan_Simpanan_${targetMonth}_${targetYear}`,
-      `Tagihan & Agregat Tunggakan Simpanan — ${periodName}`
+      `Tagihan & Agregat Tunggakan Simpanan — Cut-Off ${cutoffTitle} s/d ${periodTitle}`
     );
   };
 
-  const periodTitle = `${FULL_MONTH_NAMES[targetMonth - 1] || `Bulan ${targetMonth}`} ${targetYear}`;
   const currentMonthSelectedInBill =
     selectedBill && !selectedBill.isPokok
       ? selectedBill.unpaidMonths.find(
@@ -451,7 +456,7 @@ export default function DashboardSimpanan({
             Tagihan &amp; Agregat Tunggakan Simpanan
           </h1>
           <p className="text-[var(--color-text-secondary)]">
-            Kontrol tagihan berjalan &amp; akumulasi tunggakan per anggota per jenis simpanan (Cut-Off Maret 2026 s/d {periodTitle})
+            Kontrol tagihan berjalan &amp; akumulasi tunggakan per anggota per jenis simpanan (Cut-Off {cutoffTitle} s/d {periodTitle})
           </p>
         </div>
         <div className="flex gap-2">
@@ -526,7 +531,7 @@ export default function DashboardSimpanan({
         <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-center gap-2">
           <Calendar className="w-4 h-4 shrink-0" />
           <span>
-            Periode yang dipilih berada sebelum batas sah cut-off (<strong>Maret 2026</strong>).
+            Periode yang dipilih berada sebelum batas sah cut-off (<strong>{cutoffTitle}</strong>).
             Simpanan rutin bulanan sebelum cut-off telah dirangkum pada Saldo Awal.
           </span>
         </div>

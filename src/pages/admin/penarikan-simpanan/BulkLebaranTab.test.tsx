@@ -30,12 +30,18 @@ describe('BulkLebaranTab Component', () => {
     expect(html).toContain('Rata-Rata Tabungan / Anggota');
 
     // Filters & Actions
+    expect(html).toContain('Tanggal Pencairan / Cut-Off');
+    expect(html).toContain('id="mass-cutoff-date-input"');
     expect(html).toContain('Refresh Simulasi');
     expect(html).toContain('Ekspor Nominatif');
     expect(html).toContain('Eksekusi Pencairan Massal');
 
     // Table Headers
     expect(html).toContain('Daftar Nominatif Penerima Pencairan Simpanan Lebaran');
+    expect(html).toContain('Saldo Saat Ini');
+    expect(html).toContain('Saldo Hak Cair (s/d Cut-Off)');
+    expect(html).toContain('Sisa Tabungan Pasca-Cair');
+    expect(html).toContain('Rincian Komponen Cair');
 
     // Verify Tab 2 is clean: historical date form & replay controls are moved out
     expect(html).not.toContain('Tambah Tanggal Pencairan Terlewat / Historis');

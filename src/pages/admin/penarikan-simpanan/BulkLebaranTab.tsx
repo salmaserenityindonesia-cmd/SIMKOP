@@ -30,9 +30,18 @@ interface BulkLebaranTabProps {
   onCyclesUpdated?: () => void;
 }
 
+function getLocalTodayDateString(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps) {
   const [simulation, setSimulation] = useState<LebaranSimulationSummary | null>(null);
   const [lastCycle, setLastCycle] = useState<LebaranDisbursementCycle | null>(null);
+  const [massCutoffDate, setMassCutoffDate] = useState<string>(() => getLocalTodayDateString());
   
   const [isLoadingSimulation, setIsLoadingSimulation] = useState(false);
   const [isLoadingLastCycle, setIsLoadingLastCycle] = useState(false);
@@ -50,23 +59,29 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [targetCycleForExecution, setTargetCycleForExecution] = useState<LebaranDisbursementCycle | null>(null);
 
-  // Load Initial Data
+  // Load Initial Last Cycle on mount
   useEffect(() => {
-    loadAllData();
+    loadLastCycle();
   }, []);
+
+  // Re-run Simulation whenever Cut-Off Date changes
+  useEffect(() => {
+    loadSimulation(massCutoffDate);
+  }, [massCutoffDate]);
 
   const loadAllData = async () => {
     await Promise.all([
-      loadSimulation(),
+      loadSimulation(massCutoffDate),
       loadLastCycle()
     ]);
   };
 
-  const loadSimulation = async () => {
+  const loadSimulation = async (targetDate?: string) => {
     setIsLoadingSimulation(true);
     setExecutionError(null);
     try {
-      const sim = await bulkWithdrawalService.simulateLebaranDisbursement();
+      const effectiveCutOff = targetDate ?? massCutoffDate;
+      const sim = await bulkWithdrawalService.simulateLebaranDisbursement(effectiveCutOff);
       setSimulation(sim);
     } catch (err: any) {
       console.error('Error loading lebaran simulation:', err);
@@ -129,13 +144,15 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
       'Pangkat': m.pangkat,
       'Nomor Rekening': m.bankAccount,
       'Nama Bank': m.bankName,
-      'Saldo Lebaran (Rp)': m.saldoLebaran,
-      'Rincian History Tabungan': m.depositHistorySummary || '-',
+      'Saldo Saat Ini (Rp)': m.currentTotalBalance ?? m.saldoLebaran,
+      'Hak Cair s/d Cut-Off (Rp)': m.eligibleAmount ?? m.saldoLebaran,
+      'Sisa Pasca-Cair (Rp)': m.remainingAfterDisbursement ?? 0,
+      'Rincian Komponen Cair': m.breakdownSummary || m.depositHistorySummary || '-',
       'Status Pinjaman Aktif': m.hasActiveLoan ? 'ADA PINJAMAN' : 'BEBAS PINJAMAN',
       'Sisa Hutang Pinjaman (Rp)': m.activeLoanRemaining
     }));
 
-    exportToExcel(rows, `Nominatif_Pencairan_Lebaran_${new Date().toISOString().slice(0, 10)}`);
+    exportToExcel(rows, `Nominatif_Pencairan_Lebaran_${massCutoffDate || new Date().toISOString().slice(0, 10)}`);
   };
 
   // Open Execution Modal
@@ -320,7 +337,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
           </p>
           <p className="text-xs text-emerald-700 mt-2 flex items-center gap-1 font-medium">
             <Wallet className="w-3.5 h-3.5 text-emerald-600" />
-            100% Saldo simpanan lebaran dicairkan
+            Hak cair terkumpul s/d {formatCycleDisplayDate({ cut_off_date: massCutoffDate })}
           </p>
         </div>
 
@@ -343,7 +360,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
           </p>
           <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
             <Info className="w-3.5 h-3.5 text-purple-500" />
-            Akumulasi setoran simpanan lebaran
+            Hak cair rata-rata per anggota s/d cut-off
           </p>
         </div>
       </div>
@@ -352,7 +369,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         {/* Search & Filter */}
         <div className="flex flex-wrap items-center gap-3 flex-1">
-          <div className="relative min-w-[260px] flex-1 max-w-md">
+          <div className="relative min-w-[240px] flex-1 max-w-sm">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
               type="text"
@@ -363,6 +380,29 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
                 setCurrentPage(1);
               }}
               className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:bg-white outline-none transition-all"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 bg-emerald-50/70 border border-emerald-200 rounded-xl px-3 py-1.5">
+            <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+            <label
+              htmlFor="mass-cutoff-date-input"
+              className="text-xs font-bold text-emerald-900 whitespace-nowrap"
+            >
+              Tanggal Pencairan / Cut-Off
+            </label>
+            <input
+              id="mass-cutoff-date-input"
+              type="date"
+              value={massCutoffDate}
+              onChange={(e) => {
+                const nextDate = e.target.value;
+                if (nextDate) {
+                  setMassCutoffDate(nextDate);
+                  setCurrentPage(1);
+                }
+              }}
+              className="bg-white border border-emerald-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
             />
           </div>
 
@@ -403,7 +443,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
         {/* Buttons */}
         <div className="flex items-center gap-2.5">
           <button
-            onClick={loadSimulation}
+            onClick={() => loadSimulation(massCutoffDate)}
             disabled={isLoadingSimulation}
             className="px-4 py-2 border border-slate-200 text-slate-700 font-medium rounded-xl text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5 cursor-pointer"
             title="Refresh data nominatif simulasi"
@@ -441,7 +481,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
               Daftar Nominatif Penerima Pencairan Simpanan Lebaran
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Menampilkan {paginatedMembers.length} dari {filteredMembers.length} anggota yang berhak menerima pencairan THR
+              Menampilkan {paginatedMembers.length} dari {filteredMembers.length} anggota yang berhak menerima pencairan THR (Cut-Off: {formatCycleDisplayDate({ cut_off_date: massCutoffDate })})
             </p>
           </div>
           <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-lg">
@@ -454,10 +494,6 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
             <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-xs font-medium">Memuat dan menghitung nominatif saldo simpanan lebaran...</p>
           </div>
-        ) : filteredMembers.length === 0 ? (
-          <div className="py-16 text-center text-slate-400 text-sm">
-            Tidak ada anggota yang memenuhi kriteria pencarian / filter saldo simpanan lebaran.
-          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
@@ -466,61 +502,84 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
                   <th className="py-3 px-4 w-12 text-center">No</th>
                   <th className="py-3 px-4">Anggota</th>
                   <th className="py-3 px-4">Rekening Tujuan</th>
-                  <th className="py-3 px-4 text-right">Saldo Lebaran (Cair)</th>
-                  <th className="py-3 px-4 text-right">Rincian History Tabungan</th>
+                  <th className="py-3 px-4 text-right">Saldo Saat Ini</th>
+                  <th className="py-3 px-4 text-right">Saldo Hak Cair (s/d Cut-Off)</th>
+                  <th className="py-3 px-4 text-right">Sisa Tabungan Pasca-Cair</th>
+                  <th className="py-3 px-4 text-right">Rincian Komponen Cair</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {paginatedMembers.map((member, idx) => {
-                  const globalIdx = (currentPage - 1) * pageSize + idx + 1;
-                  return (
-                    <tr key={member.memberId} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-mono">
-                        {globalIdx}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-800">{member.nama}</div>
-                        <div className="text-xs text-slate-500 font-mono">
-                          NRP: {member.nrp} • {member.pangkat}
-                        </div>
-                        {member.hasActiveLoan && (
-                          <div className="mt-1">
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-medium rounded-md"
-                              title={`Sisa Hutang: Rp ${member.activeLoanRemaining.toLocaleString('id-ID')}`}
-                            >
-                              <ShieldAlert className="w-3 h-3 text-amber-600" />
-                              Ada pinjaman aktif
+                {filteredMembers.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-16 text-center text-slate-400 text-sm">
+                      Tidak ada anggota yang memenuhi kriteria pencarian / filter saldo simpanan lebaran.
+                    </td>
+                  </tr>
+                ) : (
+                  paginatedMembers.map((member, idx) => {
+                    const globalIdx = (currentPage - 1) * pageSize + idx + 1;
+                    const currentBalance = member.currentTotalBalance ?? member.saldoLebaran;
+                    const eligibleAmt = member.eligibleAmount ?? member.saldoLebaran;
+                    const remainingAmt = member.remainingAfterDisbursement ?? 0;
+                    return (
+                      <tr key={member.memberId} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3.5 px-4 text-center text-slate-400 text-xs font-mono">
+                          {globalIdx}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="font-semibold text-slate-800">{member.nama}</div>
+                          <div className="text-xs text-slate-500 font-mono">
+                            NRP: {member.nrp} • {member.pangkat}
+                          </div>
+                          {member.hasActiveLoan && (
+                            <div className="mt-1">
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-medium rounded-md"
+                                title={`Sisa Hutang: Rp ${member.activeLoanRemaining.toLocaleString('id-ID')}`}
+                              >
+                                <ShieldAlert className="w-3 h-3 text-amber-600" />
+                                Ada pinjaman aktif
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {member.bankAccount ? (
+                            <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-slate-700">
+                              <Landmark className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{member.bankName || 'Bank'}</span>
+                              <span className="font-bold text-slate-900">{member.bankAccount}</span>
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-medium rounded">
+                              <AlertTriangle className="w-3 h-3 text-amber-500" /> Belum ada rekening
                             </span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {member.bankAccount ? (
-                          <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-slate-700">
-                            <Landmark className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{member.bankName || 'Bank'}</span>
-                            <span className="font-bold text-slate-900">{member.bankAccount}</span>
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-medium rounded">
-                            <AlertTriangle className="w-3 h-3 text-amber-500" /> Belum ada rekening
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <span className="font-semibold text-slate-600 text-sm">
+                            Rp {currentBalance.toLocaleString('id-ID')}
                           </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="font-black text-emerald-600 text-base">
-                          Rp {member.saldoLebaran.toLocaleString('id-ID')}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-indigo-800 font-mono text-xs font-semibold">
-                          <span>{member.depositHistorySummary || '-'}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <span className="font-black text-emerald-600 text-base">
+                            Rp {eligibleAmt.toLocaleString('id-ID')}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <span className="font-bold text-indigo-700 text-sm">
+                            Rp {remainingAmt.toLocaleString('id-ID')}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="inline-flex flex-wrap items-center justify-end gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50/90 border border-indigo-200/80 text-indigo-800 font-mono text-xs font-semibold">
+                            <span>{member.breakdownSummary || member.depositHistorySummary || '-'}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -565,10 +624,21 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
         onConfirm={handleConfirmDisbursement}
         totalMembers={targetCycleForExecution ? targetCycleForExecution.total_members : (simulation?.totalMembers || 0)}
         totalAmount={targetCycleForExecution ? targetCycleForExecution.total_amount : (simulation?.totalAmount || 0)}
+        totalRemaining={targetCycleForExecution ? 0 : (simulation?.totalRemainingAfterDisbursement || 0)}
+        isSimulating={isLoadingSimulation}
         isSubmitting={isExecuting}
         error={executionError}
         defaultCycleName={targetCycleForExecution?.cycle_name}
-        defaultCutOffDate={resolveCycleEffectiveDate(targetCycleForExecution) || undefined}
+        defaultCutOffDate={
+          targetCycleForExecution
+            ? (resolveCycleEffectiveDate(targetCycleForExecution) || massCutoffDate)
+            : massCutoffDate
+        }
+        onCutOffDateChange={(nextDate) => {
+          if (!targetCycleForExecution && nextDate) {
+            setMassCutoffDate(nextDate);
+          }
+        }}
       />
     </div>
   );

@@ -1247,5 +1247,169 @@ describe('bulkWithdrawalService', () => {
         created_at: '2026-03-01T12:00:00+07:00',
       });
     });
+
+    it('calculates cut-off eligible balance (Saldo Awal + Jan-Feb 2026 = 2.400.000) while preserving Mar-Nov 2026 (1.800.000)', async () => {
+      const mockTxs = [
+        {
+          member_deposit_id: 'md-01',
+          amount: 2000000,
+          transaction_type: 'deposit',
+          for_year: 2026,
+          for_month: 2,
+          transaction_date: '2026-03-01',
+          created_at: '2026-03-01T00:00:00Z',
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        },
+        ...Array.from({ length: 11 }, (_, idx) => {
+          const month = idx + 1;
+          const mm = String(month).padStart(2, '0');
+          return {
+            member_deposit_id: 'md-01',
+            amount: 200000,
+            transaction_type: 'deposit',
+            for_year: 2026,
+            for_month: month,
+            transaction_date: `2026-${mm}-10`,
+            created_at: `2026-${mm}-10T05:00:00Z`,
+            description: `Setoran Rutin Bulan ${mm}/2026`,
+          };
+        }),
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
+        if (table === 'member_deposits') return createMockChain([{ id: 'md-01', member_id: 'mem-1', deposit_type_id: 'dt-leb' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'mem-1', nrp: '112233', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Serka', bank_account_number: '123456', status: 'aktif' }]);
+        if (table === 'deposit_transactions') return createMockChain(mockTxs);
+        if (table === 'loans') return createMockChain([]);
+        return createMockChain([]);
+      });
+
+      const sim = await simulateLebaranDisbursement('2026-03-12');
+
+      expect(sim.cutOffDate).toBe('2026-03-12');
+      expect(sim.totalMembers).toBe(1);
+      expect(sim.totalAmount).toBe(2400000);
+      expect(sim.totalCurrentBalance).toBe(4200000);
+      expect(sim.totalRemainingAfterDisbursement).toBe(1800000);
+      expect(sim.averageAmount).toBe(2400000);
+
+      expect(sim.members[0]).toMatchObject({
+        nama: 'DONNY ILHAM PAMBUDI',
+        saldoLebaran: 2400000,
+        currentTotalBalance: 4200000,
+        eligibleAmount: 2400000,
+        remainingAfterDisbursement: 1800000,
+      });
+      expect(sim.members[0].breakdownSummary).toContain('Saldo Awal');
+      expect(sim.members[0].breakdownSummary).toContain('2 bln');
+      expect(sim.members[0].breakdownSummary).toContain('Jan–Feb 2026');
+    });
+
+    it('withdraws only eligibleAmount (2.400.000) and records 2026-03-12 in client_fallback mode', async () => {
+      (supabase.rpc as any).mockResolvedValue({
+        data: null,
+        error: { message: 'RPC unavailable' },
+      });
+
+      const mockCycle = {
+        id: 'cycle-fb-0312',
+        cycle_name: 'Pencairan THR Idul Fitri 2026',
+        cut_off_date: '2026-03-12T12:00:00+07:00',
+        status: 'DRAFT',
+      };
+      const mockTxs = [
+        {
+          member_deposit_id: 'md-1',
+          amount: 2000000,
+          transaction_type: 'deposit',
+          for_year: 2026,
+          for_month: 2,
+          transaction_date: '2026-03-01',
+          description: 'Saldo Awal Cut-Off (s/d Feb 2026)',
+        },
+        ...Array.from({ length: 11 }, (_, idx) => {
+          const month = idx + 1;
+          const mm = String(month).padStart(2, '0');
+          return {
+            member_deposit_id: 'md-1',
+            amount: 200000,
+            transaction_type: 'deposit',
+            for_year: 2026,
+            for_month: month,
+            transaction_date: `2026-${mm}-10`,
+            description: `Setoran Rutin Bulan ${mm}/2026`,
+          };
+        }),
+      ];
+
+      let insertedTx: any = null;
+      let insertedItems: any[] = [];
+      let insertedCf: any[] = [];
+      let updatedCycle: any = null;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'lebaran_disbursement_cycles') {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                single: vi.fn(() => Promise.resolve({ data: mockCycle, error: null })),
+                maybeSingle: vi.fn(() => Promise.resolve({ data: mockCycle, error: null })),
+              })),
+            })),
+            update: vi.fn((payload: any) => {
+              updatedCycle = payload;
+              return { eq: vi.fn(() => Promise.resolve({ data: payload, error: null })) };
+            }),
+          };
+        }
+        if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
+        if (table === 'member_deposits') return createMockChain([{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-leb' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn(() => ({
+              in: vi.fn(() => Promise.resolve({ data: mockTxs, error: null })),
+            })),
+            insert: vi.fn((rows: any[]) => {
+              insertedTx = rows[0];
+              return {
+                select: vi.fn(() => ({
+                  single: vi.fn(() => Promise.resolve({ data: { id: 'tx-1', ...rows[0] }, error: null })),
+                })),
+              };
+            }),
+          };
+        }
+        if (table === 'lebaran_disbursement_items') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              insertedItems = rows;
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn((rows: any[]) => {
+              insertedCf.push(...rows);
+              return Promise.resolve({ data: rows, error: null });
+            }),
+          };
+        }
+        return createMockChain([]);
+      });
+
+      const res = await approveAndExecuteDisbursement('cycle-fb-0312', 'admin-1', '2026-03-12');
+      expect(res.executionMode).toBe('client_fallback');
+      expect(res.totalAmount).toBe(2400000);
+      expect(insertedTx.amount).toBe(2400000);
+      expect(insertedTx.transaction_date).toBe('2026-03-12');
+      expect(insertedTx.created_at).toBe('2026-03-12T12:00:00+07:00');
+      expect(insertedItems[0].amount_disbursed).toBe(2400000);
+      expect(insertedCf[0].amount).toBe(2400000);
+      expect(insertedCf[0].transaction_date).toBe('2026-03-12');
+      expect(updatedCycle.total_amount).toBe(2400000);
+    });
   });
 });

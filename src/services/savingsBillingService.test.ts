@@ -704,4 +704,111 @@ describe('savingsBillingService — Aggregate Arrears & Billing', () => {
     expect(cfLogs[0].payload.category).toBe('Setoran Simpanan');
     expect(cfLogs[0].payload.direction).toBe('in');
   });
+
+  it('resolves Jan-2026 cut-off from system_settings and calculates 11-month arrears (Jan-26 s/d Nov-26)', async () => {
+    resetTables({
+      anggota: [
+        {
+          id: 'mem-bagus',
+          nama: 'BAGUS BUDI PRASETYO',
+          nrp: '00050543',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+          created_at: '2026-01-01T00:00:00Z',
+          joined_at: null,
+        },
+      ],
+      member_deposits: [
+        { id: 'md-bagus-lebaran', member_id: 'mem-bagus', deposit_type_id: 'dt-lebaran' },
+        { id: 'md-bagus-belanja', member_id: 'mem-bagus', deposit_type_id: 'dt-belanja' },
+      ],
+      member_lebaran_rates: [
+        {
+          id: 'mlr-bagus',
+          member_id: 'mem-bagus',
+          effective_year: 2026,
+          effective_month: 1,
+          monthly_rate: 200000,
+        },
+      ],
+      system_settings: [{ key: 'initial_savings_effective_date', value: '2026-01-01' }],
+    });
+
+    const dataset = await getAggregateSavingsBills(11, 2026);
+    expect(dataset.cutoffYear).toBe(2026);
+    expect(dataset.cutoffMonth).toBe(1);
+    expect(dataset.cutoffDate).toBe('2026-01-01');
+
+    const lebaranRow = dataset.rows.find(
+      (r) => r.member_id === 'mem-bagus' && r.deposit_code === 'LEBARAN'
+    );
+    const belanjaRow = dataset.rows.find(
+      (r) => r.member_id === 'mem-bagus' && r.deposit_code === 'BELANJA'
+    );
+
+    expect(lebaranRow).toBeDefined();
+    expect(lebaranRow!.unpaidMonthsCount).toBe(11);
+    expect(lebaranRow!.previousArrearsMonthsCount).toBe(10);
+    expect(lebaranRow!.previousArrearsAmount).toBe(2000000);
+    expect(lebaranRow!.currentMonthDue).toBe(200000);
+    expect(lebaranRow!.remainingArrears).toBe(2200000);
+    expect(lebaranRow!.unpaidMonthsSummary).toBe('Jan-26 s/d Nov-26');
+    expect(lebaranRow!.status).toBe('MENUNGGAK');
+
+    expect(belanjaRow).toBeDefined();
+    expect(belanjaRow!.unpaidMonthsCount).toBe(11);
+    expect(belanjaRow!.previousArrearsMonthsCount).toBe(10);
+    expect(belanjaRow!.previousArrearsAmount).toBe(500000);
+    expect(belanjaRow!.currentMonthDue).toBe(50000);
+    expect(belanjaRow!.remainingArrears).toBe(550000);
+    expect(belanjaRow!.unpaidMonthsSummary).toBe('Jan-26 s/d Nov-26');
+    expect(belanjaRow!.status).toBe('MENUNGGAK');
+  });
+
+  it('resolves Jan-2026 cut-off from opening balance transaction description when system_settings is empty', async () => {
+    resetTables({
+      system_settings: [],
+      deposit_transactions: [
+        {
+          id: 'tx-opening-jan',
+          member_deposit_id: 'md-wajib-1',
+          transaction_type: 'deposit',
+          amount: 1000000,
+          for_year: null,
+          for_month: null,
+          description: 'Saldo Awal Cut-Off per 2026-01-01',
+        },
+      ],
+    });
+
+    const dataset = await getAggregateSavingsBills(11, 2026);
+    expect(dataset.cutoffYear).toBe(2026);
+    expect(dataset.cutoffMonth).toBe(1);
+    expect(dataset.cutoffDate).toBe('2026-01-01');
+
+    const wajibRow = dataset.rows.find(
+      (r) => r.member_id === 'mem-1' && r.deposit_code === 'WAJIB'
+    );
+    expect(wajibRow!.unpaidMonthsCount).toBe(11);
+    expect(wajibRow!.previousArrearsMonthsCount).toBe(10);
+    expect(wajibRow!.unpaidMonthsSummary).toBe('Jan-26 s/d Nov-26');
+  });
+
+  it('falls back to January of selectedYear when neither system_settings nor opening transactions exist', async () => {
+    resetTables({
+      system_settings: [],
+      deposit_transactions: [],
+    });
+
+    const dataset = await getAggregateSavingsBills(11, 2026);
+    expect(dataset.cutoffYear).toBe(2026);
+    expect(dataset.cutoffMonth).toBe(1);
+    expect(dataset.cutoffDate).toBe('2026-01-01');
+
+    const wajibRow = dataset.rows.find(
+      (r) => r.member_id === 'mem-1' && r.deposit_code === 'WAJIB'
+    );
+    expect(wajibRow!.unpaidMonthsCount).toBe(11);
+    expect(wajibRow!.unpaidMonthsSummary).toBe('Jan-26 s/d Nov-26');
+  });
 });

@@ -216,4 +216,137 @@ describe('DashboardSimpanan (/admin/simpanan)', () => {
     expect(formatBillStatusLabel(sampleRows[0])).toBe('Menunggak (9 Bln)');
     expect(formatBillStatusLabel(sampleRows[1])).toBe('Lunas');
   });
+
+  it('renders dynamic Jan-2026 cut-off subtitle, 11-month arrears badges, and KPI total without hardcoded Maret 2026', () => {
+    const janCutoffRows: SavingsAggregateBillRow[] = [
+      {
+        id: 'mem-bagus:dt-lebaran',
+        member_id: 'mem-bagus',
+        member_deposit_id: 'md-bagus-lebaran',
+        deposit_type_id: 'dt-lebaran',
+        deposit_code: 'LEBARAN',
+        deposit_name: 'Simpanan Hari Raya (Lebaran)',
+        isPokok: false,
+        anggota: { id: 'mem-bagus', nama: 'BAGUS BUDI PRASETYO', nrp: '00050543' },
+        selectedYear: 2026,
+        selectedMonth: 11,
+        currentMonthDue: 200000,
+        currentMonthPaid: 0,
+        currentMonthRemaining: 200000,
+        previousArrearsAmount: 2000000,
+        previousArrearsMonthsCount: 10,
+        totalAggregateBill: 2200000,
+        remainingArrears: 2200000,
+        totalPaidAllUnpaid: 0,
+        unpaidMonths: [
+          {
+            year: 2026,
+            month: 1,
+            periodIndex: 2026 * 12 + 1,
+            label: 'Jan-26',
+            fullLabel: 'Januari 2026',
+            expectedAmount: 200000,
+            paidAmount: 0,
+            remaining: 200000,
+            isArrears: true,
+          },
+        ],
+        unpaidMonthsCount: 11,
+        unpaidMonthsSummary: 'Jan-26 s/d Nov-26',
+        unpaidMonthsFullList: 'Jan-26, Feb-26, Mar-26, Apr-26, Mei-26, Jun-26, Jul-26, Ags-26, Sep-26, Okt-26, Nov-26',
+        status: 'MENUNGGAK',
+      },
+      {
+        id: 'mem-bagus:dt-belanja',
+        member_id: 'mem-bagus',
+        member_deposit_id: 'md-bagus-belanja',
+        deposit_type_id: 'dt-belanja',
+        deposit_code: 'BELANJA',
+        deposit_name: 'Simpanan Belanja Bulanan',
+        isPokok: false,
+        anggota: { id: 'mem-bagus', nama: 'BAGUS BUDI PRASETYO', nrp: '00050543' },
+        selectedYear: 2026,
+        selectedMonth: 11,
+        currentMonthDue: 50000,
+        currentMonthPaid: 0,
+        currentMonthRemaining: 50000,
+        previousArrearsAmount: 500000,
+        previousArrearsMonthsCount: 10,
+        totalAggregateBill: 550000,
+        remainingArrears: 550000,
+        totalPaidAllUnpaid: 0,
+        unpaidMonths: [
+          {
+            year: 2026,
+            month: 1,
+            periodIndex: 2026 * 12 + 1,
+            label: 'Jan-26',
+            fullLabel: 'Januari 2026',
+            expectedAmount: 50000,
+            paidAmount: 0,
+            remaining: 50000,
+            isArrears: true,
+          },
+        ],
+        unpaidMonthsCount: 11,
+        unpaidMonthsSummary: 'Jan-26 s/d Nov-26',
+        unpaidMonthsFullList: 'Jan-26, Feb-26, Mar-26, Apr-26, Mei-26, Jun-26, Jul-26, Ags-26, Sep-26, Okt-26, Nov-26',
+        status: 'MENUNGGAK',
+      },
+    ];
+
+    const janDataset: SavingsBillingDataset = {
+      rows: janCutoffRows,
+      cutoffDate: '2026-01-01',
+      cutoffYear: 2026,
+      cutoffMonth: 1,
+      totalActiveMembersCount: 1,
+      availableDepositTypes: [
+        { code: 'BELANJA', name: 'Simpanan Belanja Bulanan' },
+        { code: 'LEBARAN', name: 'Simpanan Hari Raya (Lebaran)' },
+      ],
+      isSelectedPeriodBeforeCutoff: false,
+    };
+
+    const html = renderToStaticMarkup(
+      <DashboardSimpanan
+        initialDataset={janDataset}
+        initialTargetMonth={11}
+        initialTargetYear={2026}
+      />
+    );
+
+    expect(html).toContain('(Cut-Off Januari 2026 s/d November 2026)');
+    expect(html).not.toContain('Maret 2026');
+    expect(html).toContain('BAGUS BUDI PRASETYO');
+    expect(html).toContain('Menunggak 11 bln: Jan-26 s/d Nov-26');
+    expect(html).toContain('Menunggak (11 Bln)');
+    expect(html).toContain('10 bln lalu');
+    expect(html).toContain('2.750.000');
+    expect(html).toContain('2.200.000');
+    expect(html).toContain('550.000');
+  });
+
+  it('renders dynamic cut-off month in before-cutoff warning banner', () => {
+    const beforeCutoffDataset: SavingsBillingDataset = {
+      rows: [],
+      cutoffDate: '2026-01-01',
+      cutoffYear: 2026,
+      cutoffMonth: 1,
+      totalActiveMembersCount: 1,
+      availableDepositTypes: [],
+      isSelectedPeriodBeforeCutoff: true,
+    };
+
+    const html = renderToStaticMarkup(
+      <DashboardSimpanan
+        initialDataset={beforeCutoffDataset}
+        initialTargetMonth={12}
+        initialTargetYear={2025}
+      />
+    );
+
+    expect(html).toContain('<strong>Januari 2026</strong>');
+    expect(html).not.toContain('Maret 2026');
+  });
 });

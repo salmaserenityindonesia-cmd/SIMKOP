@@ -1,7 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
-import { fetchAllPaged, parseCutoffDateInfo } from './complianceService';
+import { fetchAllPaged, resolveCutoffDateInfo } from './complianceService';
 import { ensureMandatoryDepositsAndEnroll } from './depositManagementService';
-import { getInitialSavingsCutOffDate, OFFICIAL_CUTOFF_DATE } from './savingsMatrixService';
 import {
   getActivePokokTariff,
   getMemberLebaranRates,
@@ -18,7 +17,7 @@ import {
 } from '../utils/depositCashFlowFormat';
 
 export const BILLING_CUTOFF_YEAR = 2026;
-export const BILLING_CUTOFF_MONTH = 3; // Maret 2026
+export const BILLING_CUTOFF_MONTH = 1; // Default fallback: Januari (awal tahun fiskal)
 
 const FULL_MONTH_NAMES_ID = [
   'Januari',
@@ -303,7 +302,7 @@ async function fetchAllDepositTransactionsResilient(): Promise<any[]> {
 
 /**
  * Menghitung tagihan & agregat tunggakan simpanan per anggota aktif per jenis simpanan
- * mulai dari batas cut-off Maret 2026 (atau tanggal bergabung pasca cut-off)
+ * mulai dari batas cut-off aktual / awal tahun fiskal (atau tanggal bergabung pasca cut-off)
  * hingga periode (selectedMonth, selectedYear) yang dipilih.
  */
 export async function getAggregateSavingsBills(
@@ -351,16 +350,14 @@ export async function getAggregateSavingsBills(
     rateTiers = await getRateTiers(undefined, false).catch(() => []);
   }
 
-  // Tentukan tanggal cut-off resmi (minimal Maret 2026)
-  const rawCutoffDateStr =
-    (await getInitialSavingsCutOffDate(allTransactions).catch(() => OFFICIAL_CUTOFF_DATE)) ||
-    OFFICIAL_CUTOFF_DATE;
-  const parsedCutoff = parseCutoffDateInfo(rawCutoffDateStr);
-  const minCutoffIndex = BILLING_CUTOFF_YEAR * 12 + BILLING_CUTOFF_MONTH;
-  const resolvedCutoffIndex = parsedCutoff ? Math.max(minCutoffIndex, parsedCutoff.periodIndex) : minCutoffIndex;
-  const cutoffYear = Math.floor((resolvedCutoffIndex - 1) / 12);
-  const cutoffMonth = ((resolvedCutoffIndex - 1) % 12) + 1;
-  const cutoffDate = `${cutoffYear}-${String(cutoffMonth).padStart(2, '0')}-01`;
+  // Tentukan tanggal cut-off aktual selaras dengan /admin/compliance-matrix & /admin/setoran
+  // Prioritas: system_settings (initial_savings_effective_date) -> transaksi Saldo Awal -> fallback 1 Januari tahun terpilih
+  const cutoffInfo = await resolveCutoffDateInfo(allTransactions).catch(() => null);
+  const cutoffYear = cutoffInfo ? cutoffInfo.year : safeYear;
+  const cutoffMonth = cutoffInfo ? cutoffInfo.month : BILLING_CUTOFF_MONTH;
+  const resolvedCutoffIndex = cutoffYear * 12 + cutoffMonth;
+  const cutoffDate =
+    cutoffInfo?.dateStr || `${cutoffYear}-${String(cutoffMonth).padStart(2, '0')}-01`;
 
   // Indeks rekening simpanan anggota & jenis simpanan
   const dtById = new Map<string, any>();
@@ -465,7 +462,7 @@ export async function getAggregateSavingsBills(
 
   for (const member of activeMembers) {
     const memberId = String(member.id);
-    // Abaikan created_at agar anggota hasil impor massal tetap ditagih sejak cut-off Maret 2026;
+    // Abaikan created_at agar anggota hasil impor massal tetap ditagih sejak cut-off aktual / awal tahun fiskal;
     // hanya maju jika ada joined_at eksplisit pasca cut-off dan belum memiliki mutasi awal.
     let memberStartIndex = resolvedCutoffIndex;
     const explicitJoin = parseYearMonth((member as any).joined_at || (member as any).tgl_awal_anggota);

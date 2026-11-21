@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, AlertCircle, X, ShieldAlert, ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
 
 export interface BulkDisbursementConfirmModalProps {
@@ -11,6 +11,9 @@ export interface BulkDisbursementConfirmModalProps {
   error?: string | null;
   defaultCycleName?: string;
   defaultCutOffDate?: string;
+  onCutOffDateChange?: (date: string) => void;
+  totalRemaining?: number;
+  isSimulating?: boolean;
 }
 
 export default function BulkDisbursementConfirmModal({
@@ -22,7 +25,10 @@ export default function BulkDisbursementConfirmModal({
   isSubmitting = false,
   error = null,
   defaultCycleName,
-  defaultCutOffDate
+  defaultCutOffDate,
+  onCutOffDateChange,
+  totalRemaining = 0,
+  isSimulating = false
 }: BulkDisbursementConfirmModalProps) {
   const currentYear = new Date().getFullYear();
   const normalizedDefaultDate = defaultCutOffDate ? defaultCutOffDate.slice(0, 10) : '';
@@ -30,21 +36,38 @@ export default function BulkDisbursementConfirmModal({
   const [cutOffDate, setCutOffDate] = useState(normalizedDefaultDate || new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
   const [verificationInput, setVerificationInput] = useState('');
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       setCycleName(defaultCycleName || `Pencairan THR Idul Fitri ${currentYear}`);
       setCutOffDate((defaultCutOffDate ? defaultCutOffDate.slice(0, 10) : '') || new Date().toISOString().slice(0, 10));
       setNotes('');
       setVerificationInput('');
     }
+    wasOpenRef.current = isOpen;
   }, [isOpen, defaultCycleName, defaultCutOffDate, currentYear]);
+
+  useEffect(() => {
+    if (isOpen && defaultCutOffDate) {
+      const nextDate = defaultCutOffDate.slice(0, 10);
+      if (nextDate && nextDate !== cutOffDate) {
+        setCutOffDate(nextDate);
+      }
+    }
+  }, [isOpen, defaultCutOffDate]);
 
   if (!isOpen) return null;
 
   const REQUIRED_CONFIRM_PHRASE = 'CAIRKAN LEBARAN';
   const isPhraseMatched = verificationInput.trim() === REQUIRED_CONFIRM_PHRASE;
-  const isReadyToSubmit = isPhraseMatched && cycleName.trim().length > 0 && cutOffDate.length > 0 && !isSubmitting;
+  const isReadyToSubmit =
+    isPhraseMatched &&
+    cycleName.trim().length > 0 &&
+    cutOffDate.length > 0 &&
+    totalAmount > 0 &&
+    !isSubmitting &&
+    !isSimulating;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,9 +120,18 @@ export default function BulkDisbursementConfirmModal({
             <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <p className="font-bold text-red-900">PERINGATAN KRITIS</p>
-              <p className="leading-relaxed">
-                Tindakan ini akan mencairkan 100% saldo simpanan lebaran untuk seluruh anggota aktif dan mereset saldo menjadi Rp 0.
-              </p>
+              {totalRemaining > 0 ? (
+                <>
+                  <p className="leading-relaxed">
+                    Tindakan ini akan mencairkan saldo hak cair s/d tanggal cut-off untuk seluruh anggota aktif. Sebesar{' '}
+                    <strong>Rp {totalRemaining.toLocaleString('id-ID')}</strong> tetap tersimpan di tabungan Lebaran untuk siklus berikutnya dan status lunas bulan yang sudah dibayar tetap terjaga.
+                  </p>
+                </>
+              ) : (
+                <p className="leading-relaxed">
+                  Tindakan ini akan mencairkan 100% saldo simpanan lebaran untuk seluruh anggota aktif dan mereset saldo menjadi Rp 0.
+                </p>
+              )}
               <p className="text-xs text-red-700">
                 Mutasi penarikan akan dicatat ke buku transaksi simpanan masing-masing anggota secara permanen.
               </p>
@@ -115,23 +147,43 @@ export default function BulkDisbursementConfirmModal({
           )}
 
           {/* Execution Summary Cards */}
-          <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
-            <div>
-              <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
-                Total Anggota Penerima
-              </span>
-              <p className="text-xl font-bold text-slate-800 mt-0.5">
-                {totalMembers.toLocaleString('id-ID')} Anggota
-              </p>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+                  Total Anggota Penerima
+                </span>
+                <p className="text-xl font-bold text-slate-800 mt-0.5">
+                  {totalMembers.toLocaleString('id-ID')} Anggota
+                </p>
+              </div>
+              <div>
+                <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
+                  Total Dana Dicairkan
+                </span>
+                <p className="text-xl font-bold text-emerald-600 mt-0.5">
+                  Rp {totalAmount.toLocaleString('id-ID')}
+                </p>
+              </div>
             </div>
-            <div>
-              <span className="text-xs font-semibold uppercase text-slate-500 tracking-wider">
-                Total Dana Dicairkan
-              </span>
-              <p className="text-xl font-bold text-emerald-600 mt-0.5">
-                Rp {totalAmount.toLocaleString('id-ID')}
-              </p>
-            </div>
+            {(totalRemaining > 0 || isSimulating) && (
+              <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
+                {totalRemaining > 0 && (
+                  <span className="text-slate-600 font-medium">
+                    Sisa tersimpan pasca-cair:{' '}
+                    <strong className="text-indigo-700">
+                      Rp {totalRemaining.toLocaleString('id-ID')}
+                    </strong>
+                  </span>
+                )}
+                {isSimulating && (
+                  <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Menghitung ulang nominal cut-off...
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Form Fields: Cycle Name & Cut-off Date */}
@@ -161,7 +213,11 @@ export default function BulkDisbursementConfirmModal({
                   id="cutoff-date-input"
                   type="date"
                   value={cutOffDate}
-                  onChange={(e) => setCutOffDate(e.target.value)}
+                  onChange={(e) => {
+                    const nextDate = e.target.value;
+                    setCutOffDate(nextDate);
+                    onCutOffDateChange?.(nextDate);
+                  }}
                   disabled={isSubmitting}
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-slate-800 text-sm font-medium focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all disabled:bg-slate-100"
                   required
