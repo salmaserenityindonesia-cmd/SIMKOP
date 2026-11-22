@@ -6256,13 +6256,13 @@ const ACTIVE_OR_SETTLED_LOAN_STATUSES = new Set([
 let activeApprovedLoanSyncPromise: Promise<SyncApprovedLoansToCashFlowResult> | null = null;
 
 function resolveApprovedLoanCashFlowTimestamp(loan: any): string {
-  const disbursed = String(loan?.disbursed_at || '').trim();
+  const primary = String(loan?.disbursed_at || loan?.approved_at || '').trim();
   const created = String(loan?.created_at || '').trim();
-  if (disbursed) {
-    if (disbursed.includes('T')) return disbursed;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(disbursed)) {
-      if (created && created.startsWith(disbursed)) return created;
-      return `${disbursed}T00:00:00.000Z`;
+  if (primary) {
+    if (primary.includes('T')) return primary;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(primary)) {
+      if (created && created.startsWith(primary)) return created;
+      return `${primary}T00:00:00.000Z`;
     }
   }
   return created || new Date().toISOString();
@@ -6281,15 +6281,19 @@ async function runSyncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCash
 
     let loanRes = await safeFetchAllPaged<any>(
       'loans',
-      'id, loan_number, member_id, loan_type_id, principal_amount, amount, cost_price, markup_amount, item_description, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at, notes'
+      'id, loan_number, member_id, loan_type_id, principal_amount, amount, cost_price, markup_amount, item_description, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, approved_at, created_at, notes'
     );
     if (loanRes.error && isPostgrestColumnError(loanRes.error)) {
       loanRes = await safeFetchAllPaged<any>(
         'loans',
-        'id, loan_number, member_id, loan_type_id, principal_amount, amount, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at, notes'
+        'id, loan_number, member_id, loan_type_id, principal_amount, amount, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, approved_at, created_at, notes'
       );
     }
+    if (loanRes.error && isPostgrestColumnError(loanRes.error)) {
+      loanRes = await safeFetchAllPaged<any>('loans', '*');
+    }
     if (loanRes.error) {
+      console.error('[syncApprovedLoansToCashFlow] Query loans gagal:', loanRes.error);
       return emptyResult;
     }
 
@@ -6310,7 +6314,7 @@ async function runSyncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCash
         return false;
       }
 
-      const rawEffectiveDate = String(loan?.disbursed_at || loan?.created_at || '').trim();
+      const rawEffectiveDate = String(loan?.disbursed_at || loan?.approved_at || loan?.created_at || '').trim();
       const ymdMatch = rawEffectiveDate.match(/^(\d{4}-\d{2}-\d{2})/);
       if (ymdMatch && ymdMatch[1] < '2026-01-01') return false;
 
@@ -6384,7 +6388,7 @@ async function runSyncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCash
       const markupAmount = isGoodsMarkup
         ? Math.max(0, Math.round(Number(loan?.markup_amount ?? 0)))
         : 0;
-      const rawCostPrice = loan?.cost_price;
+      const rawCostPrice = loan?.cost_price ?? loan?.supplier_cost;
       const outflowAmount = isGoodsMarkup
         ? Math.max(
             0,

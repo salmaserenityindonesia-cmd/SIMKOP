@@ -4307,4 +4307,97 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(txRowSlice).toContain('data-testid="cashflow-row-time"');
     expect(txRowSlice).toContain(expectedTime);
   });
+
+  it("getCashFlowReport renders fallback description 'Penyerahan Modal Kas Kecil Awal Shift Kasir' for MODAL_KASIR_AWAL when description is null", async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const cfRows = [
+        {
+          id: '34677ca3-0000-0000-0000-000000000001',
+          created_at: '2026-11-22T01:00:00.000Z',
+          category: 'MODAL_KASIR_AWAL',
+          direction: 'out',
+          amount: 100000,
+          reference_id: 'shift-001',
+          description: null,
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                };
+              }
+              return {
+                range: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loans' || table === 'deposit_transactions' || table === 'store_credit_payments' || table === 'member_deposits' || table === 'cashier_shifts') {
+          return {
+            select: vi.fn().mockReturnValue({
+              range: vi.fn().mockResolvedValue({ data: [], error: null }),
+              in: vi.fn().mockResolvedValue({ data: [], error: null }),
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+      expect(report.outflowTotal).toBe(100000);
+      expect(report.transactions).toHaveLength(1);
+      expect(report.transactions[0]).toMatchObject({
+        kategori: 'MODAL_KASIR_AWAL',
+        kas_keluar: 100000,
+        deskripsi: 'Penyerahan Modal Kas Kecil Awal Shift Kasir',
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

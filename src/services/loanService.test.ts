@@ -2050,5 +2050,85 @@ describe('loanService', () => {
       expect(insertCalls).toBe(1);
       expect(existingCashFlows).toHaveLength(1);
     });
+
+    it('approveLoan throws explicit error when cash_flow insert fails', async () => {
+      const cashLoan = {
+        id: 'loan-cash-err-1',
+        loan_number: 'LOAN-1795339999999',
+        member_id: 'mem-agus',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 5000000,
+        amount: 5000000,
+        tenor: 10,
+        agreed_tenor_months: 10,
+        monthly_target: 500000,
+        planned_installment_amount: 500000,
+        status: 'draft',
+        loan_types: { id: 'lt-tunai', code: 'PINJ_TUNAI', name: 'Pinjaman Tunai', financing_scheme: 'ZERO_INTEREST' },
+        anggota: { nrp: '77020009', nama: 'Agus Salim' },
+      };
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: () => ({
+              eq: (col: string) => {
+                if (col === 'member_id') {
+                  return {
+                    eq: () => ({
+                      in: () => ({
+                        neq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                      }),
+                    }),
+                  };
+                }
+                return {
+                  maybeSingle: vi.fn().mockResolvedValue({ data: cashLoan, error: null }),
+                };
+              },
+            }),
+            update: (payload: any) => ({
+              eq: () => ({
+                select: () => ({
+                  single: vi.fn().mockResolvedValue({ data: { ...cashLoan, ...payload }, error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: () => ({
+              eq: () => ({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: () => ({
+                  limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({
+              error: { message: 'RLS policy violation on cash_flow' },
+            }),
+          };
+        }
+        if (table === 'audit_logs') {
+          return { insert: vi.fn().mockResolvedValue({ error: null }) };
+        }
+        return {};
+      });
+
+      await expect(loanService.approveLoan('loan-cash-err-1', '2026-11-22')).rejects.toThrow(
+        'Pinjaman disetujui, namun pencatatan Kas Keluar gagal: RLS policy violation on cash_flow'
+      );
+    });
   });
 });

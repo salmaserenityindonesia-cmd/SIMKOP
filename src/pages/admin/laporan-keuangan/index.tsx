@@ -728,6 +728,8 @@ export async function getCashFlowReport(
     const keluar = dir === 'out' ? Number(r.amount) : 0;
     const isOpeningSavings =
       r.category === 'SALDO_AWAL_SIMPANAN' || r.category === 'saldo_awal_simpanan';
+    const isModalKasirAwal =
+      String(r.category || '').trim().toUpperCase() === 'MODAL_KASIR_AWAL';
     const rawDescription = typeof r.description === 'string' ? r.description.trim() : '';
     const enrichedMemberDesc =
       memberDepositEnrichRes?.resolvedDescriptions?.[String(r.id)] || '';
@@ -743,7 +745,9 @@ export async function getCashFlowReport(
             ? effectiveDescription
             : isOpeningSavings
               ? 'Saldo Awal Simpanan Anggota (Pokok, Wajib, Belanja & Lebaran - Cut-Off)'
-              : '-',
+              : isModalKasirAwal
+                ? 'Penyerahan Modal Kas Kecil Awal Shift Kasir'
+                : '-',
         kategori: r.category ?? 'lainnya',
         unit_usaha: 'Umum', // cash_flow table has no 'unit' column
         kas_masuk: masuk,

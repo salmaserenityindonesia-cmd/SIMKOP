@@ -3901,4 +3901,92 @@ describe('cashFlowAuditService - syncApprovedLoansToCashFlow', () => {
     expect(insertCalls).toBe(1);
     expect(cashFlowRows).toHaveLength(1);
   });
+
+  it("falls back to select('*') on loans when PostgREST returns PGRST204 and uses approved_at when disbursed_at is absent", async () => {
+    const loans = [
+      {
+        id: 'loan-fallback-1',
+        loan_number: 'LOAN-1795338673852',
+        member_id: 'm-1',
+        loan_type_id: 'lt-brg',
+        principal_amount: 70000000,
+        amount: 70000000,
+        supplier_cost: 50000000,
+        markup_amount: 20000000,
+        item_description: 'Mobil Operasional',
+        tenor: 24,
+        status: 'berjalan',
+        approved_at: '2026-11-22T08:30:00.000Z',
+        created_at: '2026-11-22T07:00:00.000Z',
+      },
+    ];
+    const selectedLoanCols: string[] = [];
+    const insertedCashFlows: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            selectedLoanCols.push(cols);
+            return {
+              range: vi.fn().mockImplementation(async () => {
+                if (cols !== '*') {
+                  return {
+                    data: null,
+                    error: { code: 'PGRST204', message: 'Could not find the column in schema cache' },
+                  };
+                }
+                return { data: loans, error: null };
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({
+              data: [{ id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', financing_scheme: 'GOODS_MARKUP' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-1', nrp: '88010001', nama: 'Budi Santoso' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+          insert: vi.fn().mockImplementation(async (rows: any[]) => {
+            insertedCashFlows.push(...rows);
+            return { data: rows, error: null };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await syncApprovedLoansToCashFlow();
+
+    expect(res).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(selectedLoanCols).toContain('*');
+    expect(insertedCashFlows).toHaveLength(1);
+    expect(insertedCashFlows[0]).toMatchObject({
+      direction: 'out',
+      category: 'pembiayaan_barang',
+      amount: 50000000,
+      reference_id: 'loan-fallback-1',
+      created_at: '2026-11-22T08:30:00.000Z',
+    });
+  });
 });

@@ -1511,6 +1511,7 @@ export const loanService = {
       : Math.max(0, finalPrincipal - effectiveSettlement);
 
     if (disbursementOutflowAmount > 0) {
+      let cashFlowInsertError: Error | null = null;
       try {
         const cfTable: any = supabase.from('cash_flow');
         if (cfTable && typeof cfTable.insert === 'function') {
@@ -1607,11 +1608,16 @@ export const loanService = {
             }
             if (cfRes?.error) {
               console.error('[approveLoan -> cash_flow] Gagal mencatat kas keluar pencairan:', cfRes.error);
+              const errMsg = cfRes.error?.message || 'Gagal mencatat kas keluar pencairan ke cash_flow';
+              cashFlowInsertError = new Error(`Pinjaman disetujui, namun pencatatan Kas Keluar gagal: ${errMsg}`);
             }
           }
         }
       } catch (cfErr) {
         console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
+      }
+      if (cashFlowInsertError) {
+        throw cashFlowInsertError;
       }
     }
 
