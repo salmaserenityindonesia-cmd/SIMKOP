@@ -4400,4 +4400,123 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
       }
     }
   });
+
+  it('getCashFlowReport paginates cash_flow beyond 1,000 rows via .range() and includes LOAN-1795334228834 at row 1,001', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const fillerRows = Array.from({ length: 1000 }, (_, idx) => ({
+        id: `cf-fill-${String(idx + 1).padStart(4, '0')}`,
+        created_at: '2026-11-10T01:00:00.000Z',
+        category: 'SETORAN_ANGGOTA',
+        direction: 'in',
+        amount: 1000,
+        reference_id: `ref-fill-${idx + 1}`,
+        description: `Setoran Simpanan #${idx + 1}`,
+      }));
+
+      const loanRow1001 = {
+        id: 'cf-loan-1001',
+        created_at: '2026-11-22T10:00:00.000Z',
+        category: 'pembiayaan_barang',
+        direction: 'out',
+        amount: 3000000,
+        reference_id: 'loan-uuid-1795334228834',
+        description:
+          'Pencairan Pembiayaan Barang (beli sepeda listrik) [LOAN-1795334228834] — 99999998 - Anggota Tes 2',
+      };
+
+      const allPeriodRows = [...fillerRows, loanRow1001];
+      const periodRangeCalls: Array<[number, number]> = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => {
+              if (cols === '*') {
+                return {
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                };
+              }
+              return {
+                range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      range: vi.fn().mockImplementation(async (from: number, to: number) => {
+                        periodRangeCalls.push([from, to]);
+                        return { data: allPeriodRows.slice(from, to + 1), error: null };
+                      }),
+                    }),
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              lt: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  gt: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockReturnValue({
+                      order: vi.fn().mockReturnValue({
+                        range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      });
+
+      const report = await getCashFlowReport('2026-11-01', '2026-11-30', 'all');
+
+      expect(periodRangeCalls).toEqual([
+        [0, 999],
+        [1000, 1999],
+      ]);
+      expect(report.transactions).toHaveLength(1001);
+      expect(report.inflowTotal).toBe(1000000);
+      expect(report.outflowTotal).toBe(3000000);
+      expect(report.netCashflow).toBe(-2000000);
+
+      const loanTx = report.transactions.find((t) =>
+        t.deskripsi.includes('LOAN-1795334228834')
+      );
+      expect(loanTx).toBeDefined();
+      expect(loanTx).toMatchObject({
+        kategori: 'pembiayaan_barang',
+        kas_keluar: 3000000,
+        reference_id: 'loan-uuid-1795334228834',
+      });
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

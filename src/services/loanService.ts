@@ -1613,8 +1613,10 @@ export const loanService = {
             }
           }
         }
-      } catch (cfErr) {
+      } catch (cfErr: any) {
         console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
+        const errMsg = cfErr?.message || String(cfErr || 'Gagal mencatat kas keluar pencairan ke cash_flow');
+        cashFlowInsertError = new Error(`Pinjaman disetujui, namun pencatatan Kas Keluar gagal: ${errMsg}`);
       }
       if (cashFlowInsertError) {
         throw cashFlowInsertError;

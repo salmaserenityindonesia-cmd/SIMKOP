@@ -586,6 +586,146 @@ async function fetchPriorCashFlowRows(startBoundaryIso: string): Promise<any[]> 
   return [];
 }
 
+async function fetchPeriodCashFlowRows(startDate: string, endDate: string): Promise<any[]> {
+  const pageSize = 1000;
+  const endBoundary = `${endDate}T23:59:59`;
+
+  const queryWithColumns = async (
+    cols: string
+  ): Promise<{ data: any[]; error: any; unsupported?: boolean }> => {
+    const allRows: any[] = [];
+    let offset = 0;
+
+    while (true) {
+      const tableRef: any = supabase?.from?.('cash_flow');
+      if (!tableRef || typeof tableRef.select !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+      const selectQ: any = tableRef.select(cols);
+      if (!selectQ || typeof selectQ.gte !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+
+      let q: any = selectQ.gte('created_at', startDate);
+      if (q && typeof q.lte === 'function') {
+        q = q.lte('created_at', endBoundary);
+      }
+      if (q && typeof q.order === 'function') {
+        q = q.order('created_at', { ascending: true });
+      }
+
+      if (q && typeof q.range === 'function') {
+        const res = await q.range(offset, offset + pageSize - 1);
+        if (res?.error) {
+          return { data: allRows, error: res.error };
+        }
+        const batch = Array.isArray(res?.data) ? res.data : [];
+        allRows.push(...batch);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      } else {
+        const res = await q;
+        if (res?.error) {
+          return { data: [], error: res.error };
+        }
+        return { data: Array.isArray(res?.data) ? res.data : [], error: null };
+      }
+    }
+
+    return { data: allRows, error: null };
+  };
+
+  const primary = await queryWithColumns(
+    'id, created_at, description, category, direction, amount, reference_id'
+  );
+  if (primary.unsupported) return [];
+  if (!primary.error) return primary.data;
+
+  const fallback = await queryWithColumns(
+    'id, created_at, category, direction, amount, reference_id'
+  );
+  if (fallback.unsupported) return [];
+  if (!fallback.error) return fallback.data;
+
+  console.error('cash_flow query error:', primary.error);
+  return [];
+}
+
+async function fetchPeriodSalesRows(startDate: string, endDate: string): Promise<any[]> {
+  const pageSize = 1000;
+  const endBoundary = `${endDate}T23:59:59`;
+
+  const queryWithColumns = async (
+    cols: string
+  ): Promise<{ data: any[]; error: any; unsupported?: boolean }> => {
+    const allRows: any[] = [];
+    let offset = 0;
+
+    while (true) {
+      const tableRef: any = supabase?.from?.('sales');
+      if (!tableRef || typeof tableRef.select !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+      const selectQ: any = tableRef.select(cols);
+      if (!selectQ || typeof selectQ.gte !== 'function') {
+        return { data: [], error: null, unsupported: true };
+      }
+
+      let q: any = selectQ.gte('created_at', startDate);
+      if (q && typeof q.lte === 'function') {
+        q = q.lte('created_at', endBoundary);
+      }
+      if (q && typeof q.eq === 'function') {
+        q = q.eq('sale_status', 'completed');
+      }
+      if (q && typeof q.gt === 'function') {
+        q = q.gt('paid_cash', 0);
+      }
+      if (q && typeof q.order === 'function') {
+        q = q.order('created_at', { ascending: true });
+      }
+
+      if (q && typeof q.range === 'function') {
+        const res = await q.range(offset, offset + pageSize - 1);
+        if (res?.error) {
+          return { data: allRows, error: res.error };
+        }
+        const batch = Array.isArray(res?.data) ? res.data : [];
+        allRows.push(...batch);
+        if (batch.length < pageSize) break;
+        offset += pageSize;
+      } else {
+        const res = await q;
+        if (res?.error) {
+          return { data: [], error: res.error };
+        }
+        return { data: Array.isArray(res?.data) ? res.data : [], error: null };
+      }
+    }
+
+    return { data: allRows, error: null };
+  };
+
+  const primary = await queryWithColumns(
+    'id, sale_number, member_id, created_at, paid_cash, total_amount'
+  );
+  if (primary.unsupported) return [];
+  if (!primary.error) return primary.data;
+
+  if (isMissingColumnErr(primary.error)) {
+    const fallback = await queryWithColumns(
+      'id, created_at, paid_cash, total_amount'
+    );
+    if (fallback.unsupported) return [];
+    if (!fallback.error) return fallback.data;
+    console.error('sales query error:', fallback.error);
+    return [];
+  }
+
+  console.error('sales query error:', primary.error);
+  return [];
+}
+
 async function fetchPriorSalesRows(startBoundaryIso: string): Promise<any[]> {
   if (!startBoundaryIso) return [];
   const pageSize = 1000;
@@ -666,52 +806,13 @@ export async function getCashFlowReport(
   ]);
   const openingBalance = computeOpeningBalanceFromRows(priorCfRows, priorSalesRows);
 
-  // Fetch cash_flow table (dengan fallback bila kolom description belum tersedia di skema DB)
+  // Fetch cash_flow dan sales secara bertahap (range pagination) agar tidak terpotong batas 1.000 baris Supabase/PostgREST
   // NOTE: cash_flow table has no 'unit' column — filter unit usaha tidak tersedia di level DB
-  let cfQueryRes: any = await supabase
-    .from('cash_flow')
-    .select('id, created_at, description, category, direction, amount, reference_id')
-    .gte('created_at', startDate)
-    .lte('created_at', endDate + 'T23:59:59')
-    .order('created_at', { ascending: true });
-
-  if (cfQueryRes?.error) {
-    const fallbackRes = await supabase
-      .from('cash_flow')
-      .select('id, created_at, category, direction, amount, reference_id')
-      .gte('created_at', startDate)
-      .lte('created_at', endDate + 'T23:59:59')
-      .order('created_at', { ascending: true });
-    if (!fallbackRes?.error) {
-      cfQueryRes = fallbackRes;
-    } else {
-      console.error('cash_flow query error:', cfQueryRes.error);
-    }
-  }
-  const cfRows = cfQueryRes?.data;
+  const [cfRows, salesRows] = await Promise.all([
+    fetchPeriodCashFlowRows(startDate, endDate),
+    fetchPeriodSalesRows(startDate, endDate),
+  ]);
   const deduplicatedCfRows = deduplicateClearanceRowsInMemory<any>(cfRows ?? []);
-
-  // Cross-check: also fetch sales.paid_cash for the period (retail inflow)
-  // NOTE: actual column is 'sale_status' (enum), not 'status'
-  let salesQueryRes: any = await supabase
-    .from('sales')
-    .select('id, sale_number, member_id, created_at, paid_cash, total_amount')
-    .gte('created_at', startDate)
-    .lte('created_at', endDate + 'T23:59:59')
-    .eq('sale_status', 'completed')
-    .gt('paid_cash', 0);
-
-  if (salesQueryRes?.error && isMissingColumnErr(salesQueryRes.error)) {
-    salesQueryRes = await supabase
-      .from('sales')
-      .select('id, created_at, paid_cash, total_amount')
-      .gte('created_at', startDate)
-      .lte('created_at', endDate + 'T23:59:59')
-      .eq('sale_status', 'completed')
-      .gt('paid_cash', 0);
-  }
-  if (salesQueryRes?.error) console.error('sales query error:', salesQueryRes.error);
-  const salesRows = salesQueryRes?.data;
 
   const parseTimestamp = (raw?: string | null): number => {
     if (!raw) return 0;

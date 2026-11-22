@@ -1,8 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { loanService, isGoodsMarkupLoan } from '../../services/loanService';
 import { X, Loader2, DollarSign } from 'lucide-react';
-import StatusBadge from '../ui/StatusBadge';
+import StatusBadge, { StatusType } from '../ui/StatusBadge';
 import { useFeedback } from '../../context/FeedbackContext';
+
+export function mapLoanModalStatus(status?: string | null): StatusType {
+  const s = String(status || '').trim().toLowerCase();
+  if (s === 'active' || s === 'approved' || s === 'berjalan' || s === 'disbursed') {
+    return 'berjalan';
+  }
+  if (s === 'completed' || s === 'paid_off' || s === 'lunas' || s === 'paid') {
+    return 'lunas';
+  }
+  if (s === 'rejected' || s === 'ditolak') {
+    return 'rejected';
+  }
+  return 'pending';
+}
 
 // Helper modal for partial payments
 function PartialPaymentModal({ 
@@ -114,16 +128,20 @@ export interface LoanDetailModalProps {
   loanId: string | null;
   onClose: () => void;
   onSuccess?: () => void;
+  initialPinjaman?: any;
+  initialSchedules?: any[];
 }
 
 export default function LoanDetailModal({
   isOpen,
   loanId,
   onClose,
-  onSuccess
+  onSuccess,
+  initialPinjaman = null,
+  initialSchedules = [],
 }: LoanDetailModalProps) {
-  const [pinjaman, setPinjaman] = useState<any>(null);
-  const [schedules, setSchedules] = useState<any[]>([]);
+  const [pinjaman, setPinjaman] = useState<any>(initialPinjaman);
+  const [schedules, setSchedules] = useState<any[]>(initialSchedules);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activePayment, setActivePayment] = useState<any | null>(null);
@@ -219,7 +237,7 @@ export default function LoanDetailModal({
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Status Pinjaman</p>
-                    <StatusBadge status={pinjaman.status} />
+                    <StatusBadge status={mapLoanModalStatus(pinjaman.status)} />
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Jenis Pinjaman</p>
