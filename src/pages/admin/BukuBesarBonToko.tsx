@@ -10,7 +10,6 @@ import {
   Filter,
   ShoppingCart,
   Users,
-  Coins,
   ChevronLeft,
   ChevronRight,
   X,
@@ -21,8 +20,7 @@ import {
   TrendingDown,
   TrendingUp,
   CheckCircle2,
-  Clock,
-  Plus
+  Clock
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
@@ -40,7 +38,6 @@ import {
 } from '../../services/storeCreditLedgerService';
 import { getSaleDetailByInvoice, SaleDetail } from '../../services/shoppingSavingsLedgerService';
 import { supabase } from '../../lib/supabaseClient';
-import BayarBonModal from '../../components/pos/BayarBonModal';
 import StoreCreditScheduleModal from '../../components/pos/StoreCreditScheduleModal';
 
 interface MemberOption {
@@ -103,16 +100,6 @@ export default function BukuBesarBonToko() {
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<SaleDetail | null>(null);
   const [isLoadingSaleDetail, setIsLoadingSaleDetail] = useState<boolean>(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState<boolean>(false);
-
-  // Modal Pembayaran Bon State
-  const [isPayModalOpen, setIsPayModalOpen] = useState<boolean>(false);
-  const [payTargetMember, setPayTargetMember] = useState<{
-    id?: string;
-    name?: string;
-    saleId?: string;
-    debt?: number;
-    receiptNo?: string;
-  } | null>(null);
 
   // Tab & Store Credit Installments State
   const [activeTab, setActiveTab] = useState<'ledger' | 'installments'>('ledger');
@@ -219,6 +206,17 @@ export default function BukuBesarBonToko() {
     });
   }, [activePlans, searchQuery]);
 
+  // Lookup active installment plan by member_id for quick access from ledger rows
+  const activePlanByMemberId = useMemo(() => {
+    const map = new Map<string, StoreCreditPlanWithSchedules>();
+    activePlans.forEach(plan => {
+      if (plan.member_id && !map.has(plan.member_id)) {
+        map.set(plan.member_id, plan);
+      }
+    });
+    return map;
+  }, [activePlans]);
+
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
   const paginatedItems = useMemo(() => {
@@ -300,22 +298,10 @@ export default function BukuBesarBonToko() {
     }
   };
 
-  // Open Payment Modal for Row
-  const handleOpenPayForRow = (item: StoreCreditLedgerItem) => {
-    setPayTargetMember({
-      id: item.member_id,
-      name: `${item.member_name} (${item.member_nrp})`,
-      saleId: item.sale_id,
-      debt: item.running_debt,
-      receiptNo: item.reference_no
-    });
-    setIsPayModalOpen(true);
-  };
-
-  // Open Generic Payment Modal
-  const handleOpenGenericPay = () => {
-    setPayTargetMember(null);
-    setIsPayModalOpen(true);
+  // Open Store Credit Schedule Modal for a member's active plan
+  const handleOpenScheduleForPlan = (plan: StoreCreditPlanWithSchedules) => {
+    setSelectedPlanForSchedule(plan);
+    setIsScheduleModalOpen(true);
   };
 
   // Quick Date Helpers
@@ -376,11 +362,12 @@ export default function BukuBesarBonToko() {
 
           <div className="flex flex-wrap items-center gap-2.5">
             <button
-              onClick={handleOpenGenericPay}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-lg shadow-sm transition-colors"
+              type="button"
+              onClick={() => setActiveTab('installments')}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg shadow-sm transition-colors"
             >
-              <Plus className="w-4 h-4" />
-              <span>Catat Pelunasan Bon</span>
+              <Calendar className="w-4 h-4 text-emerald-600" />
+              <span>Jadwal Angsuran (Potong Gaji)</span>
             </button>
 
             <button
@@ -776,6 +763,7 @@ export default function BukuBesarBonToko() {
                   paginatedItems.map((item, idx) => {
                     const rowNumber = (currentPage - 1) * pageSize + idx + 1;
                     const isSale = item.source_type === 'sale';
+                    const memberPlan = activePlanByMemberId.get(item.member_id);
 
                     return (
                       <tr
@@ -896,20 +884,20 @@ export default function BukuBesarBonToko() {
                           )}
                         </td>
 
-                        {/* Aksi Bayar */}
+                        {/* Aksi: Arahkan ke Buku Bantu Angsuran */}
                         <td className="px-4 py-3.5 text-center whitespace-nowrap print:hidden">
-                          {item.running_debt > 0 ? (
+                          {item.status !== 'PAID' && item.running_debt > 0 && memberPlan ? (
                             <button
                               type="button"
-                              onClick={() => handleOpenPayForRow(item)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors cursor-pointer"
-                              title="Bayar cicilan / lunasi sisa bon anggota ini"
+                              onClick={() => handleOpenScheduleForPlan(memberPlan)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+                              title="Buka Buku Bantu Angsuran Bon Toko anggota ini"
                             >
-                              <Coins className="w-3.5 h-3.5 text-rose-600" />
-                              <span>Bayar</span>
+                              <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Buku Bantu →</span>
                             </button>
                           ) : (
-                            <span className="text-xs text-gray-400 font-medium">Lunas</span>
+                            <span className="text-xs text-gray-400 font-medium">-</span>
                           )}
                         </td>
                       </tr>
@@ -1103,10 +1091,7 @@ export default function BukuBesarBonToko() {
                           <td className="py-3 px-4 text-center">
                             <button
                               type="button"
-                              onClick={() => {
-                                setSelectedPlanForSchedule(plan);
-                                setIsScheduleModalOpen(true);
-                              }}
+                              onClick={() => handleOpenScheduleForPlan(plan)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium shadow-sm transition-colors"
                             >
                               <Calendar className="w-3.5 h-3.5" />
@@ -1259,25 +1244,6 @@ export default function BukuBesarBonToko() {
             </div>
           </div>
         )}
-
-        {/* ========================================================
-            MODAL PELUNASAN BON TOKO (BayarBonModal)
-        ======================================================== */}
-        <BayarBonModal
-          isOpen={isPayModalOpen}
-          onClose={() => {
-            setIsPayModalOpen(false);
-            setPayTargetMember(null);
-          }}
-          onSuccess={() => {
-            loadLedgerData();
-          }}
-          initialMemberId={payTargetMember?.id}
-          initialMemberName={payTargetMember?.name}
-          initialSaleId={payTargetMember?.saleId}
-          initialDebtAmount={payTargetMember?.debt}
-          initialReceiptNo={payTargetMember?.receiptNo}
-        />
 
         {/* ========================================================
             MODAL BUKU BANTU ANGSURAN BON TOKO (StoreCreditScheduleModal)

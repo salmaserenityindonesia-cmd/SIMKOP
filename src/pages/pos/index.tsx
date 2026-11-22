@@ -66,6 +66,7 @@ export default function POSPage() {
   });
   const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
   const [memberFinancials, setMemberFinancials] = useState<MemberFinancials | null>(null);
+  const [isLoadingFinancials, setIsLoadingFinancials] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -151,7 +152,7 @@ export default function POSPage() {
 
     supabase
       .from('anggota')
-      .select('id, nrp, nama, take_home_pay, status, membership_status')
+      .select('id, nomor_referensi, nrp, nama, take_home_pay, status, membership_status')
       .eq('status', 'aktif')
       .then(({ data }) => {
         const activeMembers = (data || []).filter((m: any) => {
@@ -160,7 +161,6 @@ export default function POSPage() {
           return st === 'aktif' && mst === 'ACTIVE';
         });
         setMembers(activeMembers);
-        setSelectedMember(activeMembers.length > 0 ? activeMembers[0] : null);
       });
   }, [loadProductCatalog, refreshParkedCount, showToast]);
 
@@ -174,9 +174,11 @@ export default function POSPage() {
     let active = true;
     if (!selectedMember?.id) {
       setMemberFinancials(null);
+      setIsLoadingFinancials(false);
       return;
     }
     setMemberFinancials(null);
+    setIsLoadingFinancials(true);
     getMemberFinancials(selectedMember.id)
       .then((data) => {
         if (active) setMemberFinancials(data);
@@ -184,6 +186,9 @@ export default function POSPage() {
       .catch((err) => {
         console.warn('Gagal memuat data finansial anggota:', err);
         if (active) setMemberFinancials(null);
+      })
+      .finally(() => {
+        if (active) setIsLoadingFinancials(false);
       });
     return () => {
       active = false;
@@ -508,6 +513,9 @@ export default function POSPage() {
                 setInitialPaymentMethod('Tunai');
               }
             }}
+            memberFinancials={memberFinancials}
+            isLoadingFinancials={isLoadingFinancials}
+            defaultMemberMode={true}
             isShiftActive={!!activeShift}
             onPay={(method: string) => { 
               if (!activeShift) {

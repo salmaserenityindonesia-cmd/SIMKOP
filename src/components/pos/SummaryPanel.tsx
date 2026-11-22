@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PosMemberSearch from './PosMemberSearch';
 
 export default function SummaryPanel({
   cart,
@@ -14,8 +15,13 @@ export default function SummaryPanel({
   memberDiscountPercentage = 5,
   selectedPaymentType,
   onPaymentTypeChange,
+  memberFinancials = null,
+  isLoadingFinancials = false,
+  defaultMemberMode,
 }: any) {
-  const [isMemberMode, setIsMemberMode] = useState<boolean>(selectedMember !== null);
+  const [isMemberMode, setIsMemberMode] = useState<boolean>(
+    defaultMemberMode ?? selectedMember !== null
+  );
   const [paymentType, setPaymentType] = useState(selectedPaymentType || 'Tunai');
 
   // Synchronize isMemberMode when selectedMember changes from parent
@@ -48,9 +54,7 @@ export default function SummaryPanel({
   // Sync selectedMember when switching modes
   const handleSetMemberMode = (mode: boolean) => {
     setIsMemberMode(mode);
-    if (mode && !selectedMember && members.length > 0) {
-      onSelectMember(members[0]);
-    } else if (!mode) {
+    if (!mode) {
       onSelectMember(null);
       setPaymentType('Tunai');
       onPaymentTypeChange?.('Tunai');
@@ -74,20 +78,13 @@ export default function SummaryPanel({
           <div className="flex items-start justify-between">
             <div className="w-full">
               {isMemberMode ? (
-                <>
-                  <select
-                    className="w-full bg-surface border border-outline-variant rounded p-1 text-sm mb-2"
-                    value={selectedMember?.id || ''}
-                    onChange={e => onSelectMember(members.find(m => m.id === e.target.value) || null)}
-                  >
-                    {members.map(m => (
-                      <option key={m.id} value={m.id}>{m.nrp} - {m.nama}</option>
-                    ))}
-                  </select>
-                  <div className="mt-1 pt-2 border-t border-outline-variant/40 text-[11px] text-outline">
-                    Pilih anggota untuk memuat limit & saldo.
-                  </div>
-                </>
+                <PosMemberSearch
+                  members={members}
+                  selectedMember={selectedMember}
+                  onSelectMember={onSelectMember}
+                  memberFinancials={memberFinancials}
+                  isLoadingFinancials={isLoadingFinancials}
+                />
               ) : (
                 <div className="text-sm italic text-on-surface-variant py-2 text-center">Pembeli Umum</div>
               )}

@@ -88,7 +88,8 @@ describe('BukuBesarBonToko Page Component', () => {
     expect(html).toContain('Ekspor Excel (.xlsx)');
     expect(html).toContain('Cetak Rekening Bon');
     expect(html).toContain('Segarkan');
-    expect(html).toContain('Catat Pelunasan Bon');
+    expect(html).toContain('Jadwal Angsuran (Potong Gaji)');
+    expect(html).not.toContain('Catat Pelunasan Bon');
   });
 
   it('renders 4 Top KPI Cards correctly', () => {
