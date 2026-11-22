@@ -75,7 +75,7 @@ export interface MemberBillingSummary {
     id: string;
     nama: string;
     nrp: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
     created_at?: string;
   };
   selectedYear: number;
@@ -99,7 +99,7 @@ export interface ProcessMemberPaymentInput {
     id: string;
     nama: string;
     nrp: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   };
   items: PaymentItemInput[];
   paymentMethod: SetoranPaymentMethod;
@@ -130,7 +130,7 @@ export interface ReceiptPayload {
   memberId: string;
   memberName: string;
   memberNrp: string;
-  memberPangkat?: string | null;
+  memberTanggalLahir?: string | null;
   paymentMethod: SetoranPaymentMethod;
   paymentMethodLabel: 'Tunai' | 'Transfer Bank';
   cashierId?: string | null;
@@ -294,7 +294,7 @@ export async function calculateMemberCumulativeBills(
         id: string;
         nama: string;
         nrp: string;
-        pangkat?: string | null;
+        tanggal_lahir?: string | null;
         created_at?: string;
         tgl_awal_anggota?: string;
         status?: string;
@@ -310,7 +310,7 @@ export async function calculateMemberCumulativeBills(
     id: string;
     nama: string;
     nrp: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
     created_at?: string;
     tgl_awal_anggota?: string;
     status?: string;
@@ -320,7 +320,7 @@ export async function calculateMemberCumulativeBills(
   if (typeof memberOrId === 'string') {
     const { data, error } = await supabase
       .from('anggota')
-      .select('id, nama, nrp, pangkat, created_at, status, membership_status')
+      .select('id, nama, nrp, tanggal_lahir, created_at, status, membership_status')
       .eq('id', memberOrId)
       .single();
     if (error || !data) {
@@ -340,7 +340,7 @@ export async function calculateMemberCumulativeBills(
         id: memberRecord.id,
         nama: memberRecord.nama,
         nrp: memberRecord.nrp,
-        pangkat: memberRecord.pangkat ?? null,
+        tanggal_lahir: memberRecord.tanggal_lahir ?? null,
         created_at: memberRecord.created_at,
       },
       selectedYear,
@@ -786,7 +786,7 @@ export async function calculateMemberCumulativeBills(
       id: memberRecord.id,
       nama: memberRecord.nama,
       nrp: memberRecord.nrp,
-      pangkat: memberRecord.pangkat ?? null,
+      tanggal_lahir: memberRecord.tanggal_lahir ?? null,
       created_at: memberRecord.created_at,
     },
     selectedYear,
@@ -1376,7 +1376,7 @@ export async function processMemberPayment(
     memberId: member.id,
     memberName: member.nama,
     memberNrp: member.nrp,
-    memberPangkat: member.pangkat ?? null,
+    memberTanggalLahir: member.tanggal_lahir ?? null,
     paymentMethod,
     paymentMethodLabel,
     cashierId: cashierId ?? null,

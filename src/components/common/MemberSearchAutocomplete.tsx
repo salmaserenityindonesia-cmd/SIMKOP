@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, X } from 'lucide-react';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 export interface MemberAutocompleteItem {
   id: string;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   bank_account_number?: string | null;
   take_home_pay?: number | null;
   master_thp?: number | null;
@@ -259,8 +260,10 @@ export const MemberSearchAutocomplete: React.FC<MemberSearchAutocompleteProps> =
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm truncate">{member.nama}</span>
-                        {member.pangkat && (
-                          <span className="text-xs text-slate-500 truncate">({member.pangkat})</span>
+                        {member.tanggal_lahir && (
+                          <span className="text-xs text-slate-500 truncate">
+                            (Tgl Lahir: {formatTanggalLahirWithAge(member.tanggal_lahir)})
+                          </span>
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">

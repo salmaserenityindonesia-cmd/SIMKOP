@@ -153,7 +153,7 @@ describe('withdrawalReportService', () => {
             id: 'm-1',
             nama: 'Budi Santoso',
             nrp: '123456',
-            pangkat: 'Kapt Inf',
+            tanggal_lahir: '1982-05-10',
             bank_name: 'BRI',
             bank_account_number: '1234-01-000123-50-1',
             status: 'aktif'
@@ -184,7 +184,7 @@ describe('withdrawalReportService', () => {
             id: 'm-2',
             nama: 'Siti Aminah',
             nrp: '654321',
-            pangkat: 'PNS III/b',
+            tanggal_lahir: '1989-11-20',
             bank_name: 'Mandiri',
             bank_account_number: '137-00-1234567-8',
             status: 'aktif'
@@ -286,7 +286,7 @@ describe('withdrawalReportService', () => {
               id: 'm-3',
               nama: 'Agus Sutanto',
               nrp: '789012',
-              pangkat: 'Letkol Inf',
+              tanggal_lahir: '1978-03-14',
               bank_name: 'BNI',
               bank_account_number: '987654321',
               status: 'nonaktif'
@@ -334,7 +334,7 @@ describe('withdrawalReportService', () => {
               id: 'm-4',
               nama: 'Dewi Lestari',
               nrp: '112233',
-              pangkat: 'PNS IV/a',
+              tanggal_lahir: '1980-07-22',
               bank_name: 'BRI',
               bank_account_number: '1122-3344-55',
               status: 'aktif'
@@ -448,7 +448,7 @@ describe('withdrawalReportService', () => {
           id: 'm-wawan',
           nama: 'Wawan Gunawan',
           nrp: '92185332',
-          pangkat: 'PNS III/a',
+          tanggal_lahir: '1992-03-10',
           bank_name: 'BRI',
           bank_account_number: '92185332001',
           status: 'aktif'
@@ -511,7 +511,7 @@ describe('withdrawalReportService', () => {
           id: 'mem-yanto',
           nama: 'Yanto Santoso',
           nrp: '96316180',
-          pangkat: 'Serma',
+          tanggal_lahir: '1986-07-15',
           bank_name: 'BRI',
           bank_account_number: '9631618001',
           status: 'aktif'
@@ -541,7 +541,7 @@ describe('withdrawalReportService', () => {
       expect(result).toHaveLength(1);
       expect(result[0].member_name).toBe('Yanto Santoso');
       expect(result[0].member_nrp).toBe('96316180');
-      expect(result[0].member_rank).toBe('Serma');
+      expect(result[0].tanggal_lahir).toBe('1986-07-15');
       expect(result[0].deposit_type_code).toBe('BELANJA');
       expect(result[0].deposit_type_name).toBe('Simpanan Belanja Bulanan');
       expect(result[0].amount).toBe(41000);
@@ -576,7 +576,7 @@ describe('withdrawalReportService', () => {
           id: 'mem-yanto',
           nama: 'Yanto Santoso',
           nrp: '96316180',
-          pangkat: 'Serma',
+          tanggal_lahir: '1986-07-15',
           bank_name: 'BRI',
           bank_account_number: '9631618001',
           status: 'aktif'
@@ -615,7 +615,7 @@ describe('withdrawalReportService', () => {
         member_id: 'm-1',
         member_name: 'Budi Santoso',
         member_nrp: '123456',
-        member_rank: 'Kapt Inf',
+        tanggal_lahir: '1982-05-10',
         bank_name: 'BRI',
         bank_account_number: '1234',
         deposit_type_id: 'dt-1',
@@ -636,7 +636,7 @@ describe('withdrawalReportService', () => {
         member_id: 'm-1', // Same member doing another withdrawal
         member_name: 'Budi Santoso',
         member_nrp: '123456',
-        member_rank: 'Kapt Inf',
+        tanggal_lahir: '1982-05-10',
         bank_name: 'BRI',
         bank_account_number: '1234',
         deposit_type_id: 'dt-3',
@@ -657,7 +657,7 @@ describe('withdrawalReportService', () => {
         member_id: 'm-2',
         member_name: 'Siti Aminah',
         member_nrp: '654321',
-        member_rank: 'PNS III/b',
+        tanggal_lahir: '1989-11-20',
         bank_name: 'Mandiri',
         bank_account_number: '5678',
         deposit_type_id: 'dt-2',
@@ -716,7 +716,7 @@ describe('withdrawalReportService', () => {
         member_id: 'm-1',
         member_name: 'Budi Santoso',
         member_nrp: '123456',
-        member_rank: 'Kapt Inf',
+        tanggal_lahir: '1982-05-10',
         bank_name: 'BRI',
         bank_account_number: '1234-01-000123-50-1',
         deposit_type_id: 'dt-1',

@@ -94,7 +94,7 @@ export interface MemberLebaranRateModalProps {
     id: string;
     nama: string;
     nrp?: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   } | null;
   onSuccess?: () => void;
   initialPersonalRates?: MemberLebaranRate[];

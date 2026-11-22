@@ -937,7 +937,7 @@ describe('savingsRateService', () => {
         id: `mem-${i + 1}`,
         nrp: String(100001 + i),
         nama: `Anggota ${i + 1}`,
-        pangkat: 'Serda',
+        tanggal_lahir: '1992-04-05',
         status: 'aktif',
         membership_status: 'ACTIVE',
       }));
@@ -988,9 +988,9 @@ describe('savingsRateService', () => {
 
     it('buildMemberLebaranRateTemplateWorkbook & parseMemberLebaranRateExcel should round-trip and skip empty/zero rows', async () => {
       const mockMembers = [
-        { id: 'm-1', nrp: '001122', nama: 'Budi', pangkat: 'Kopda', status: 'aktif' },
-        { id: 'm-2', nrp: '001133', nama: 'Siti', pangkat: 'Serka', status: 'aktif' },
-        { id: 'm-3', nrp: '001144', nama: 'Andi', pangkat: 'Peltu', status: 'aktif' },
+        { id: 'm-1', nrp: '001122', nama: 'Budi', tanggal_lahir: '1988-11-10', status: 'aktif' },
+        { id: 'm-2', nrp: '001133', nama: 'Siti', tanggal_lahir: '1986-07-15', status: 'aktif' },
+        { id: 'm-3', nrp: '001144', nama: 'Andi', tanggal_lahir: '1980-05-14', status: 'aktif' },
       ];
       const mockRates: MemberLebaranRate[] = [
         { id: 'r-1', member_id: 'm-1', effective_year: 2025, effective_month: 5, monthly_rate: 300000 },

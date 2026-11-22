@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
+import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 export type DepositTypeCode = 'POKOK' | 'WAJIB' | 'BELANJA' | 'LEBARAN';
 
@@ -552,7 +553,7 @@ export interface ActiveMemberRateTarget {
   id: string;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   status?: string | null;
   membership_status?: string | null;
 }
@@ -627,7 +628,7 @@ export async function fetchAllActiveMembersPaged(): Promise<ActiveMemberRateTarg
   while (hasMore) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-    let query: any = tableObj.select('id, nrp, nama, pangkat, status, membership_status');
+    let query: any = tableObj.select('id, nrp, nama, tanggal_lahir, status, membership_status');
     if (query && typeof query.eq === 'function') {
       query = query.eq('status', 'aktif');
     }
@@ -1371,7 +1372,7 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
   const headers = [
     'nrp',
     'nama',
-    'pangkat',
+    'tanggal_lahir',
     'tarif_saat_ini',
     'tarif_lebaran_baru',
     'mulai_bulan',
@@ -1382,7 +1383,7 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
   sheet.columns = [
     { header: headers[0], key: 'nrp', width: 18 },
     { header: headers[1], key: 'nama', width: 32 },
-    { header: headers[2], key: 'pangkat', width: 18 },
+    { header: headers[2], key: 'tanggal_lahir', width: 22 },
     { header: headers[3], key: 'tarif_saat_ini', width: 18 },
     { header: headers[4], key: 'tarif_lebaran_baru', width: 22 },
     { header: headers[5], key: 'mulai_bulan', width: 14 },
@@ -1422,7 +1423,7 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
     const row = sheet.addRow({
       nrp: String(m.nrp ?? ''),
       nama: m.nama || '',
-      pangkat: m.pangkat || '-',
+      tanggal_lahir: formatTanggalLahirWithAge(m.tanggal_lahir),
       tarif_saat_ini: currentRate,
       tarif_lebaran_baru: '',
       mulai_bulan: defaultMonth,

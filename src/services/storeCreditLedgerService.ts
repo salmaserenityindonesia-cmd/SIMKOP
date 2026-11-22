@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
+import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 export interface StoreCreditSummary {
   totalCreditSales: number;   // Total Belanja Bon Kumulatif
@@ -16,7 +17,7 @@ export interface StoreCreditLedgerItem {
   member_id: string;
   member_name: string;
   member_nrp: string;
-  member_pangkat?: string;
+  member_tanggal_lahir?: string | null;
   reference_no: string;      // No. Struk POS (INV-...) atau No. Kwitansi (BYR-...)
   sale_id?: string;
   debit: number;             // Tambah Utang (+ Bon)
@@ -65,7 +66,7 @@ export interface StoreCreditInstallmentPlan {
     id?: string;
     nama?: string;
     nrp?: string;
-    pangkat?: string;
+    tanggal_lahir?: string | null;
   };
   schedules?: StoreCreditSchedule[];
 }
@@ -415,18 +416,18 @@ export async function getStoreCreditLedger(
     });
 
     // 4. Kueri profil Anggota
-    const memberMap = new Map<string, { nama: string; nrp: string; pangkat?: string }>();
+    const memberMap = new Map<string, { nama: string; nrp: string; tanggal_lahir?: string | null }>();
     if (memberIdSet.size > 0) {
       const { data: members } = await supabase
         .from('anggota')
-        .select('id, nama, nrp, pangkat')
+        .select('id, nama, nrp, tanggal_lahir')
         .in('id', Array.from(memberIdSet));
 
       (members || []).forEach((m: any) => {
         memberMap.set(m.id, {
           nama: m.nama || 'Anggota Tanpa Nama',
           nrp: m.nrp || '-',
-          pangkat: m.pangkat || '-'
+          tanggal_lahir: m.tanggal_lahir ?? null
         });
       });
     }
@@ -584,7 +585,7 @@ export async function getStoreCreditLedger(
         }
       }
 
-      const mInfo = memberMap.get(memberId) || { nama: 'Anggota Toko', nrp: '-', pangkat: '-' };
+      const mInfo = memberMap.get(memberId) || { nama: 'Anggota Toko', nrp: '-', tanggal_lahir: null };
       const cashierName = (tx.cashier_id && cashierMap.get(tx.cashier_id)) || 'Kasir Toko / Petugas';
 
       // Jika ada unallocated payments di akun anggota, evaluasi status bon terkini
@@ -600,7 +601,7 @@ export async function getStoreCreditLedger(
         member_id: memberId,
         member_name: mInfo.nama,
         member_nrp: mInfo.nrp,
-        member_pangkat: mInfo.pangkat,
+        member_tanggal_lahir: mInfo.tanggal_lahir,
         reference_no: tx.reference_no,
         sale_id: tx.sale_id,
         debit: tx.debit,
@@ -1349,7 +1350,7 @@ export async function exportStoreCreditToExcel(
     'Tanggal & Waktu',
     'NRP',
     'Nama Anggota',
-    'Pangkat',
+    'Tanggal Lahir',
     'Jenis Mutasi',
     'No. Struk / Bukti',
     'Kasir / Petugas',
@@ -1384,7 +1385,7 @@ export async function exportStoreCreditToExcel(
     { key: 'date', width: 20 },
     { key: 'nrp', width: 14 },
     { key: 'name', width: 26 },
-    { key: 'pangkat', width: 14 },
+    { key: 'tanggal_lahir', width: 22 },
     { key: 'type', width: 18 },
     { key: 'ref', width: 22 },
     { key: 'cashier', width: 20 },
@@ -1408,7 +1409,7 @@ export async function exportStoreCreditToExcel(
       new Date(item.date).toLocaleString('id-ID'),
       item.member_nrp,
       item.member_name,
-      item.member_pangkat || '-',
+      formatTanggalLahirWithAge(item.member_tanggal_lahir),
       item.source_type === 'sale' ? 'Belanja Bon POS' : 'Pelunasan Bon',
       item.reference_no,
       item.cashier_name || '-',
@@ -1762,7 +1763,7 @@ export async function getActiveStoreCreditPlans(): Promise<StoreCreditPlanWithSc
       .from('store_credit_installment_plans')
       .select(`
         *,
-        anggota (id, nama, nrp, pangkat),
+        anggota (id, nama, nrp, tanggal_lahir),
         store_credit_schedules (*)
       `)
       .eq('status', 'active')

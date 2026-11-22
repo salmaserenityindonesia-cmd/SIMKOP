@@ -3,6 +3,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { MemberComprehensiveExportRow } from './memberService';
 import type { KoperasiProfile } from './settingsService';
+import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 /**
  * Format angka nominal ke format mata uang Rupiah
@@ -44,7 +45,7 @@ export async function exportMembersToExcel(
   worksheet.columns = [
     { header: 'nrp', key: 'nrp', width: 16 },
     { header: 'nama', key: 'nama', width: 28 },
-    { header: 'pangkat', key: 'pangkat', width: 18 },
+    { header: 'Tanggal Lahir', key: 'tanggal_lahir', width: 22 },
     { header: 'bank_account_number', key: 'bank_account_number', width: 22 },
     { header: 'membership_status', key: 'membership_status', width: 18 },
     { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 16 },
@@ -59,7 +60,7 @@ export async function exportMembersToExcel(
   ];
 
   // Format kolom teks dengan format text '@'
-  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+  ['nrp', 'nama', 'tanggal_lahir', 'bank_account_number', 'membership_status'].forEach((k) => {
     const col = worksheet.getColumn(k);
     if (col) col.numFmt = '@';
   });
@@ -111,7 +112,7 @@ export async function exportMembersToExcel(
     const row = worksheet.addRow({
       nrp: r.nrp || '',
       nama: r.nama || '',
-      pangkat: r.pangkat || '',
+      tanggal_lahir: formatTanggalLahirWithAge(r.tanggal_lahir),
       bank_account_number: r.bank_account_number || '',
       membership_status: r.membership_status || '',
       tgl_awal_anggota: r.tgl_awal_anggota || '',
@@ -130,7 +131,7 @@ export async function exportMembersToExcel(
 
     row.getCell('nrp').alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell('nama').alignment = { horizontal: 'left', vertical: 'middle' };
-    row.getCell('pangkat').alignment = { horizontal: 'left', vertical: 'middle' };
+    row.getCell('tanggal_lahir').alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell('bank_account_number').alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell('membership_status').alignment = { horizontal: 'center', vertical: 'middle' };
     row.getCell('tgl_awal_anggota').alignment = { horizontal: 'center', vertical: 'middle' };
@@ -272,7 +273,7 @@ export async function exportMembersToPdf(
     idx + 1,
     r.nrp || '-',
     r.nama || '-',
-    r.pangkat || '-',
+    formatTanggalLahirWithAge(r.tanggal_lahir),
     r.bank_account_number || '-',
     r.membership_status || '-',
     r.tgl_awal_anggota || '-',
@@ -347,7 +348,7 @@ export async function exportMembersToPdf(
         'No',
         'NRP',
         'Nama',
-        'Pkt',
+        'Tanggal Lahir',
         'Rekening',
         'Status',
         'Tgl Masuk',

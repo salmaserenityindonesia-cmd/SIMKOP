@@ -11,7 +11,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
       {
         nrp: '12345',
         nama: 'Joko Ramadhan',
-        pangkat: 'Bripka',
+        tanggal_lahir: '1985-05-20',
         bank_account_number: '1234567890',
         membership_status: 'ACTIVE',
         tgl_awal_anggota: '2023-01-01',
@@ -34,7 +34,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
       {
         nrp: '67890',
         nama: 'Asep Saputra',
-        pangkat: 'Aipda',
+        tanggal_lahir: '1983-08-15',
         bank_account_number: null,
         membership_status: 'ACTIVE',
         tgl_awal_anggota: '2022-05-15',
@@ -103,7 +103,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
     );
 
     expect(markup).toContain('NRP / Nama');
-    expect(markup).toContain('Pangkat');
+    expect(markup).toContain('Tanggal Lahir');
     expect(markup).toContain('No. Rekening');
     expect(markup).toContain('Tgl Awal');
     expect(markup).toContain('Simp. Pokok');
@@ -180,7 +180,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
         {
           nrp: '111',
           nama: 'Budi Seimbang',
-          pangkat: 'Bripda',
+          tanggal_lahir: '1994-03-12',
           bank_account_number: '111222',
           membership_status: 'ACTIVE',
           tgl_awal_anggota: '2026-09-01', // 3 bulan s/d Nov 2026 @ 200k = 600.000
@@ -203,7 +203,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
         {
           nrp: '222',
           nama: 'Chandra Selisih',
-          pangkat: 'Briptu',
+          tanggal_lahir: '1991-09-08',
           bank_account_number: '222333',
           membership_status: 'ACTIVE',
           tgl_awal_anggota: '2026-09-01', // 3 bulan s/d Nov 2026 @ 200k = 600.000, di Excel 1.000.000 (Selisih +400.000)
@@ -226,7 +226,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
         {
           nrp: '333',
           nama: 'Dedi Veteran Pra-2020',
-          pangkat: 'Aiptu',
+          tanggal_lahir: '1980-12-01',
           bank_account_number: '333444',
           membership_status: 'ACTIVE',
           tgl_awal_anggota: '2018-05-10', // Sebelum 2020
@@ -294,7 +294,7 @@ describe('MemberMigrationModal - 12-Column Table & As-Is Preview', () => {
         {
           nrp: '95168420',
           nama: 'Budi Santoso',
-          pangkat: 'Aipda',
+          tanggal_lahir: '1983-08-15',
           bank_account_number: '367800973556',
           membership_status: 'ACTIVE',
           tgl_awal_anggota: '2026-11-13',

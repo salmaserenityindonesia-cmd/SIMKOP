@@ -25,6 +25,7 @@ import {
   Plus
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 import {
   getStoreCreditSummary,
@@ -809,7 +810,7 @@ export default function BukuBesarBonToko() {
                             {item.member_name}
                           </div>
                           <div className="text-xs text-gray-500">
-                            NRP: {item.member_nrp} {item.member_pangkat ? `| ${item.member_pangkat}` : ''}
+                            NRP: {item.member_nrp} {item.member_tanggal_lahir ? `| Tgl Lahir: ${formatTanggalLahirWithAge(item.member_tanggal_lahir)}` : ''}
                           </div>
                         </td>
 
@@ -1077,7 +1078,7 @@ export default function BukuBesarBonToko() {
                             <div className="font-semibold text-gray-900">{plan.anggota?.nama || 'Anggota'}</div>
                             <div className="text-[11px] text-gray-500">
                               NRP: {plan.anggota?.nrp || '-'}
-                              {plan.anggota?.pangkat && ` • ${plan.anggota.pangkat}`}
+                              {plan.anggota?.tanggal_lahir && ` • Tgl Lahir: ${formatTanggalLahirWithAge(plan.anggota.tanggal_lahir)}`}
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-medium text-gray-800">

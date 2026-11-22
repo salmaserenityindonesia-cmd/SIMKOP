@@ -4,6 +4,7 @@
  */
 
 import ExcelJS from 'exceljs';
+import { parseBirthDateInput } from './dateUtils';
 
 export interface MigrationLoanSchedule {
   period_number: number;
@@ -171,7 +172,7 @@ export const REQUIRED_MEMBER_HEADERS = [
   'nomor_referensi',
   'nrp',
   'nama',
-  'pangkat',
+  'tanggal_lahir',
   'bank_account_number',
   'membership_status',
   'tgl_awal_anggota',
@@ -186,12 +187,24 @@ export const MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS = [
     nomor_referensi: 'REF-001',
     nrp: '95168420',
     nama: 'Budi Santoso',
-    pangkat: 'Aipda',
+    tanggal_lahir: '1985-05-20',
     bank_account_number: '367800973556',
     membership_status: 'ACTIVE',
     tgl_awal_anggota: '2026-11-13',
   },
 ];
+
+function normalizeMemberHeaderName(raw: unknown): string {
+  const s = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+  if (s === 'tgl_lahir' || s === 'birth_date' || s === 'dob' || s === 'date_of_birth') {
+    return 'tanggal_lahir';
+  }
+  return s;
+}
 
 /**
  * Validasi ketat header kolom file Excel Import Data Induk Anggota.
@@ -199,7 +212,7 @@ export const MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS = [
  */
 export function validateMemberImportHeaders(rawHeaders: unknown[]): string[] {
   const headers = rawHeaders
-    .map((h) => String(h || '').trim().toLowerCase())
+    .map((h) => normalizeMemberHeaderName(h))
     .filter(Boolean);
 
   if (headers.includes('jumlah_simpanan_wajib') || headers.includes('jumlah_simpanan_pokok')) {
@@ -235,15 +248,16 @@ export async function buildMemberImportTemplateWorkbook(): Promise<ExcelJS.Workb
     { header: 'nomor_referensi', key: 'nomor_referensi', width: 20 },
     { header: 'nrp', key: 'nrp', width: 15 },
     { header: 'nama', key: 'nama', width: 30 },
-    { header: 'pangkat', key: 'pangkat', width: 20 },
+    { header: 'tanggal_lahir', key: 'tanggal_lahir', width: 18 },
     { header: 'bank_account_number', key: 'bank_account_number', width: 25 },
     { header: 'membership_status', key: 'membership_status', width: 20 },
     { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 20 },
   ];
 
-  ['nomor_referensi', 'nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+  ['nomor_referensi', 'nrp', 'nama', 'bank_account_number', 'membership_status'].forEach((k) => {
     worksheet.getColumn(k).numFmt = '@';
   });
+  worksheet.getColumn('tanggal_lahir').numFmt = 'yyyy-mm-dd';
   worksheet.getColumn('tgl_awal_anggota').numFmt = 'yyyy-mm-dd';
 
   for (const sampleRow of MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS) {
@@ -321,7 +335,7 @@ export async function parseMemberImportExcel(
   worksheet.getRow(1).eachCell((cell, colNumber) => {
     const raw = extractExcelCellValue(cell);
     rawHeaders.push(raw);
-    const headerName = raw !== null && raw !== undefined ? String(raw).trim().toLowerCase() : '';
+    const headerName = normalizeMemberHeaderName(raw);
     if (headerName) {
       headerMap[headerName] = colNumber;
     }
@@ -344,7 +358,7 @@ export async function parseMemberImportExcel(
     const rawNomorReferensi = getVal('nomor_referensi');
     const rawNrp = getVal('nrp');
     const rawNama = getVal('nama');
-    const rawPangkat = getVal('pangkat');
+    const rawTanggalLahir = getVal('tanggal_lahir');
     const rawBank = getVal('bank_account_number');
     const rawStatus = getVal('membership_status');
     const rawTgl = getVal('tgl_awal_anggota');
@@ -356,7 +370,7 @@ export async function parseMemberImportExcel(
     const nrp = rawNrp !== null && rawNrp !== undefined ? String(rawNrp).trim() : '';
     const nama = rawNama !== null && rawNama !== undefined ? String(rawNama).trim() : '';
 
-    if (!nomor_referensi && !nrp && !nama && !rawPangkat && !rawBank && !rawStatus && !rawTgl) {
+    if (!nomor_referensi && !nrp && !nama && !rawTanggalLahir && !rawBank && !rawStatus && !rawTgl) {
       return;
     }
 
@@ -380,7 +394,7 @@ export async function parseMemberImportExcel(
         nomor_referensi,
         nrp,
         nama,
-        pangkat: rawPangkat,
+        tanggal_lahir: rawTanggalLahir,
         bank_account_number: rawBank,
         membership_status,
         tgl_awal_anggota: rawTgl,
@@ -407,7 +421,7 @@ export interface SanitizedMigrationMemberRow extends SanitizedMigrationLoan {
   nomor_referensi: string;
   nrp: string;
   nama: string;
-  pangkat: string | null;
+  tanggal_lahir: string | null;
   membership_status: string;
   tgl_awal_anggota: string | null;
   jumlah_simpanan_pokok: number;
@@ -426,7 +440,7 @@ export const sanitizeMigrationMemberRow = (row: any): SanitizedMigrationMemberRo
     nomor_referensi: row?.nomor_referensi !== undefined && row?.nomor_referensi !== null ? String(row.nomor_referensi).trim() : '',
     nrp: row?.nrp !== undefined && row?.nrp !== null ? String(row.nrp).trim() : '',
     nama: row?.nama !== undefined && row?.nama !== null ? String(row.nama).trim() : '',
-    pangkat: row?.pangkat ? String(row.pangkat).trim() : null,
+    tanggal_lahir: parseBirthDateInput(row?.tanggal_lahir),
     bank_account_number: loan.bank_account_number,
     membership_status: row?.membership_status ? String(row.membership_status).trim().toUpperCase() : 'ACTIVE',
     tgl_awal_anggota: sanitizeDateString(row?.tgl_awal_anggota),

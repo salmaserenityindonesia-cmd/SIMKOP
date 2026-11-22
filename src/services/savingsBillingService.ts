@@ -60,7 +60,7 @@ export interface SavingsAggregateBillRow {
     id: string;
     nama: string;
     nrp: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   };
   selectedYear: number;
   selectedMonth: number;
@@ -257,14 +257,14 @@ async function fetchActiveMembersResilient(): Promise<any[]> {
 
   let res = await fetchAllPaged<any>(
     'anggota',
-    'id, nrp, nama, pangkat, status, membership_status, created_at, joined_at',
+    'id, nrp, nama, tanggal_lahir, status, membership_status, created_at, joined_at',
     buildFilter
   );
 
   if (res.error && isPostgrestColumnError(res.error)) {
     res = await fetchAllPaged<any>(
       'anggota',
-      'id, nrp, nama, pangkat, status, membership_status, created_at',
+      'id, nrp, nama, tanggal_lahir, status, membership_status, created_at',
       buildFilter
     );
   }
@@ -584,7 +584,7 @@ export async function getAggregateSavingsBills(
           id: memberId,
           nama: String(member.nama || '-'),
           nrp: String(member.nrp || '-'),
-          pangkat: member.pangkat ?? null,
+          tanggal_lahir: member.tanggal_lahir ?? null,
         },
         selectedYear: safeYear,
         selectedMonth: safeMonth,
@@ -664,7 +664,7 @@ export async function getAggregateSavingsBills(
             id: memberId,
             nama: String(member.nama || '-'),
             nrp: String(member.nrp || '-'),
-            pangkat: member.pangkat ?? null,
+            tanggal_lahir: member.tanggal_lahir ?? null,
           },
           selectedYear: safeYear,
           selectedMonth: safeMonth,

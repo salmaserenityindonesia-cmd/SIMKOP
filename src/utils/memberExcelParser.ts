@@ -5,11 +5,12 @@ import {
   sanitizeBankAccountNumber,
   sanitizeMigrationLoanRow,
 } from './memberMigrationParser';
+import { parseBirthDateInput } from './dateUtils';
 
 export interface ParsedMemberRow {
   nrp: string;
   nama: string;
-  pangkat: string | null;
+  tanggal_lahir: string | null;
   bank_account_number: string | null;
   membership_status: string;
   tgl_awal_anggota: string | null;
@@ -48,7 +49,7 @@ function normalizeHeaderName(header: string): string {
 const HEADER_ALIASES: Record<string, string[]> = {
   nrp: ['nrp', 'no_anggota', 'nomor_anggota', 'nip', 'nik', 'id_anggota', 'no_id'],
   nama: ['nama', 'nama_lengkap', 'nama_anggota', 'name', 'member_name'],
-  pangkat: ['pangkat', 'golongan', 'rank', 'jabatan'],
+  tanggal_lahir: ['tanggal_lahir', 'tgl_lahir', 'birth_date', 'dob', 'date_of_birth'],
   bank_account_number: ['bank_account_number', 'no_rekening', 'nomor_rekening', 'no_rek', 'rekening', 'bank_account', 'norek'],
   membership_status: ['membership_status', 'status_keanggotaan', 'status_anggota', 'status_member'],
   tgl_awal_anggota: ['tgl_awal_anggota', 'tgl_daftar', 'tanggal_daftar', 'tgl_masuk', 'tanggal_masuk', 'tgl_bergabung', 'tanggal_bergabung', 'join_date'],
@@ -132,7 +133,7 @@ export async function parseMemberExcel(
     );
   }
 
-  const pangkatCol = findColumnIndex(headersMap, 'pangkat');
+  const tanggalLahirCol = findColumnIndex(headersMap, 'tanggal_lahir');
   const rekCol = findColumnIndex(headersMap, 'bank_account_number');
   const statusCol = findColumnIndex(headersMap, 'membership_status');
   const tglAwalCol = findColumnIndex(headersMap, 'tgl_awal_anggota');
@@ -189,8 +190,8 @@ export async function parseMemberExcel(
       }
     }
 
-    const rawPangkat = getCellValue(row, pangkatCol);
-    const pangkat = rawPangkat ? String(rawPangkat).trim() : null;
+    const rawTanggalLahir = getCellValue(row, tanggalLahirCol);
+    const tanggal_lahir = parseBirthDateInput(rawTanggalLahir);
 
     const rawRek = getCellValue(row, rekCol);
     const bank_account_number = sanitizeBankAccountNumber(rawRek);
@@ -214,7 +215,7 @@ export async function parseMemberExcel(
     rows.push({
       nrp: nrpStr,
       nama: namaStr,
-      pangkat,
+      tanggal_lahir,
       bank_account_number,
       membership_status,
       tgl_awal_anggota,

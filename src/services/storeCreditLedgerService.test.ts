@@ -139,7 +139,7 @@ describe('storeCreditLedgerService', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({
-                data: [{ id: 'm-1', nama: 'Serma Agus', nrp: '778899', pangkat: 'Serma' }],
+                data: [{ id: 'm-1', nama: 'Serma Agus', nrp: '778899', tanggal_lahir: '1984-04-12' }],
                 error: null
               })
             })
@@ -697,7 +697,7 @@ describe('storeCreditLedgerService', () => {
           member_id: 'm-1',
           total_consolidated_debt: 300000,
           status: 'active',
-          anggota: { id: 'm-1', nama: 'Kopda Ahmad', nrp: '654321', pangkat: 'Kopda' },
+          anggota: { id: 'm-1', nama: 'Kopda Ahmad', nrp: '654321', tanggal_lahir: '1988-11-10' },
           store_credit_schedules: [
             { id: 's-2', period_number: 2, target_amount: 150000 },
             { id: 's-1', period_number: 1, target_amount: 150000 }

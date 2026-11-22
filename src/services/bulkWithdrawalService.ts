@@ -43,7 +43,7 @@ export interface LebaranSimulationMember {
   memberDepositId?: string;
   nrp: string;
   nama: string;
-  pangkat: string;
+  tanggal_lahir: string | null;
   bankAccount: string;
   bankName: string;
   saldoLebaran: number;
@@ -471,7 +471,7 @@ export async function simulateLebaranDisbursement(
   // 3. Query seluruh anggota berstatus 'aktif' dan membership_status 'ACTIVE'
   const { data: membersData, error: memError } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, bank_account_number, status, membership_status');
+    .select('id, nrp, nama, tanggal_lahir, bank_account_number, status, membership_status');
 
   if (memError) {
     throw new Error(`Gagal memuat profil anggota: ${memError.message}`);
@@ -763,7 +763,7 @@ export async function simulateLebaranDisbursement(
       memberDepositId: mb.memberDepositId,
       nrp: mb.member.nrp || '',
       nama: mb.member.nama || '',
-      pangkat: mb.member.pangkat || '',
+      tanggal_lahir: mb.member.tanggal_lahir ?? null,
       bankAccount: mb.member.bank_account_number || '',
       bankName: mb.member.bank_name || 'Bank BRI',
       saldoLebaran: mb.eligibleAmount,
@@ -1785,7 +1785,7 @@ async function executeReplayClientFallback(): Promise<ReplayExecutionResult> {
 
   const { data: membersData } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, bank_account_number, status, joined_at, created_at');
+    .select('id, nrp, nama, tanggal_lahir, bank_account_number, status, joined_at, created_at');
 
   const membersMap = new Map<string, any>((membersData || []).map(m => [m.id, m]));
 

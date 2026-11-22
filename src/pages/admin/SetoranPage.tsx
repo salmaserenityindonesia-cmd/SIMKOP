@@ -20,6 +20,7 @@ import SetoranReceiptModal from '../../components/setoran/SetoranReceiptModal';
 import { useFeedback } from '../../context/FeedbackContext';
 import { supabase } from '../../lib/supabaseClient';
 import { Anggota, getAnggota } from '../../services/koperasiService';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import {
   calculateMemberCumulativeBills,
   FULL_MONTH_NAMES,
@@ -186,8 +187,7 @@ export const SetoranPage: React.FC = () => {
       .filter((m) => {
         const nama = (m.nama || '').toLowerCase();
         const nrp = (m.nrp || '').toLowerCase();
-        const pangkat = (m.pangkat || '').toLowerCase();
-        return nama.includes(q) || nrp.includes(q) || pangkat.includes(q);
+        return nama.includes(q) || nrp.includes(q);
       })
       .slice(0, 30);
   }, [members, searchQuery]);
@@ -298,7 +298,7 @@ export const SetoranPage: React.FC = () => {
           id: selectedMember.id,
           nama: selectedMember.nama,
           nrp: selectedMember.nrp,
-          pangkat: selectedMember.pangkat,
+          tanggal_lahir: selectedMember.tanggal_lahir ?? null,
         },
         items: selectedPayableEntries,
         paymentMethod,
@@ -427,7 +427,7 @@ export const SetoranPage: React.FC = () => {
                           </div>
                           <div className="text-xs text-slate-500">
                             NRP: <span className="font-mono">{m.nrp}</span>
-                            {m.pangkat ? ` • ${m.pangkat}` : ''}
+                            {m.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(m.tanggal_lahir)}` : ''}
                           </div>
                         </div>
                         <span className="text-xs font-semibold text-emerald-700 shrink-0">
@@ -540,7 +540,7 @@ export const SetoranPage: React.FC = () => {
                 </div>
                 <div className="text-xs text-slate-500 font-mono mt-0.5">
                   NRP: {billingSummary.member.nrp}
-                  {billingSummary.member.pangkat ? ` • ${billingSummary.member.pangkat}` : ''}
+                  {billingSummary.member.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(billingSummary.member.tanggal_lahir)}` : ''}
                 </div>
               </div>
 

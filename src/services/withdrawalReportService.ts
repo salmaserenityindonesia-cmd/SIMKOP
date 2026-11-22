@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
+import { formatTanggalLahir, formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 export interface DepositTypeOption {
   id: string;
@@ -26,7 +27,7 @@ export interface WithdrawalLedgerItem {
   member_id: string;
   member_name: string;
   member_nrp: string;
-  member_rank: string;
+  tanggal_lahir: string | null;
   bank_name: string;
   bank_account_number: string;
   deposit_type_id: string;
@@ -230,7 +231,7 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
             id,
             nama,
             nrp,
-            pangkat,
+            tanggal_lahir,
             bank_name,
             bank_account_number,
             status
@@ -570,7 +571,7 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
 
       const memberName = member?.nama || member?.name || 'Anggota Tidak Dikenal';
       const memberNrp = member?.nrp || '-';
-      const memberRank = member?.pangkat || '-';
+      const memberTanggalLahir = member?.tanggal_lahir ?? null;
       const bankName = member?.bank_name || '-';
       const bankAccountNumber = member?.bank_account_number || '-';
 
@@ -579,7 +580,7 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
         member_id: memberId,
         member_name: memberName,
         member_nrp: memberNrp,
-        member_rank: memberRank,
+        tanggal_lahir: memberTanggalLahir,
         bank_name: bankName,
         bank_account_number: bankAccountNumber,
         deposit_type_id: dt?.id || md?.deposit_type_id || '',
@@ -699,7 +700,7 @@ export async function getWithdrawalDetailedLedger(filters?: WithdrawalReportFilt
       items = items.filter(i =>
         i.member_name.toLowerCase().includes(q) ||
         i.member_nrp.toLowerCase().includes(q) ||
-        i.member_rank.toLowerCase().includes(q) ||
+        formatTanggalLahir(i.tanggal_lahir).toLowerCase().includes(q) ||
         i.reference_no.toLowerCase().includes(q) ||
         i.deposit_type_name.toLowerCase().includes(q) ||
         i.notes.toLowerCase().includes(q)
@@ -910,7 +911,7 @@ export async function exportWithdrawalReportExcel(
     'No. Referensi',
     'NRP',
     'Nama Anggota',
-    'Pangkat / Korps',
+    'Tanggal Lahir',
     'Jenis Simpanan',
     'Nominal Pencairan',
     'Metode Bayar',
@@ -973,7 +974,7 @@ export async function exportWithdrawalReportExcel(
       item.reference_no,
       item.member_nrp,
       item.member_name,
-      item.member_rank,
+      formatTanggalLahirWithAge(item.tanggal_lahir),
       item.deposit_type_name,
       item.amount,
       item.payment_method.toUpperCase(),

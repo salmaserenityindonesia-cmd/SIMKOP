@@ -8,14 +8,14 @@ const sampleMembers: MemberAutosuggestOption[] = [
     id: 'm-1',
     nrp: '951001',
     nama: 'Dedi Kurniawan',
-    pangkat: 'Sertu',
+    tanggal_lahir: '1985-05-20',
     take_home_pay: 5500000
   },
   {
     id: 'm-2',
     nrp: '951002',
     nama: 'Budi Santoso',
-    pangkat: 'Kopda',
+    tanggal_lahir: '1988-11-10',
     master_thp: 4200000
   }
 ];
@@ -31,7 +31,7 @@ describe('MemberSelectAutosuggest', () => {
     );
 
     expect(html).toContain('role="combobox"');
-    expect(html).toContain('placeholder="Ketik NRP, Nama Anggota, atau Pangkat..."');
+    expect(html).toContain('placeholder="Ketik NRP atau Nama Anggota..."');
     expect(html).toContain('value=""');
     expect(html).not.toContain('Hapus pilihan anggota');
   });

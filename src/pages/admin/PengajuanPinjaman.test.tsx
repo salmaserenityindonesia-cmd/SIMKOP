@@ -55,7 +55,7 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('Pengajuan Pinjaman Baru');
       expect(html).toContain('Ajukan pinjaman dengan validasi sisa THP otomatis.');
       expect(html).toContain('Anggota Pemohon');
-      expect(html).toContain('Ketik NRP, Nama Anggota, atau Pangkat...');
+      expect(html).toContain('Ketik NRP atau Nama Anggota...');
       expect(html).toContain('Keperluan Pinjaman (Tujuan Pembelian)');
       expect(html).toContain('Plafon Pinjaman (Rp)');
       expect(html).toContain('Tenor (Bulan)');

@@ -22,6 +22,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import LoanSubsidiaryLedgerModal from '../../components/loans/LoanSubsidiaryLedgerModal';
+import { formatTanggalLahir, formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import {
   getPaidOffLoansReport,
   getLoanTypesForFilter,
@@ -165,7 +166,7 @@ export default function LaporanPinjamanLunas({
           row.nrp.toLowerCase().includes(q) ||
           row.loanNumber.toLowerCase().includes(q) ||
           row.loanTypeName.toLowerCase().includes(q) ||
-          row.pangkat.toLowerCase().includes(q);
+          formatTanggalLahir(row.tanggal_lahir).toLowerCase().includes(q);
         if (!matchSearch) return false;
       }
 
@@ -492,7 +493,7 @@ export default function LaporanPinjamanLunas({
                           <div className="font-bold text-slate-800">{row.memberName}</div>
                           <div className="text-xs text-slate-500 mt-0.5">
                             NRP: <span className="font-mono font-medium">{row.nrp}</span>
-                            {row.pangkat && row.pangkat !== '-' ? ` • ${row.pangkat}` : ''}
+                            {row.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(row.tanggal_lahir)}` : ''}
                           </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -656,8 +657,8 @@ export default function LaporanPinjamanLunas({
                       <span className="font-mono font-semibold text-slate-800">{selectedRow.nrp}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-500">Pangkat:</span>
-                      <span className="font-semibold text-slate-700">{selectedRow.pangkat || '-'}</span>
+                      <span className="text-slate-500">Tanggal Lahir:</span>
+                      <span className="font-semibold text-slate-700">{formatTanggalLahirWithAge(selectedRow.tanggal_lahir)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Nama Pinjaman:</span>

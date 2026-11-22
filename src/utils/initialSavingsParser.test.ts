@@ -126,7 +126,7 @@ describe('initialSavingsParser', () => {
   it('rejects Member Import or Initial Loans templates when uploaded to Initial Savings', async () => {
     const memberWb = new ExcelJS.Workbook();
     const memberWs = memberWb.addWorksheet('Template Import Anggota');
-    memberWs.addRow(['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status', 'tgl_awal_anggota']);
+    memberWs.addRow(['nrp', 'nama', 'tanggal_lahir', 'bank_account_number', 'membership_status', 'tgl_awal_anggota']);
     memberWs.addRow(['95168420', 'Budi Santoso', 'Aipda', '367800973556', 'ACTIVE', '2026-11-13']);
     const memberBuf = await memberWb.xlsx.writeBuffer();
 

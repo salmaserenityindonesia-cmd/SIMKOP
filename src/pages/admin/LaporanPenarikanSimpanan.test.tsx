@@ -32,7 +32,7 @@ const mockLedgerItems: withdrawalReportService.WithdrawalLedgerItem[] = [
     member_id: 'mem-001',
     member_name: 'Mayor Budi Prakoso',
     member_nrp: '19840101',
-    member_rank: 'Mayor Inf',
+    tanggal_lahir: '1984-01-01',
     bank_name: 'BRI',
     bank_account_number: '1234-5678-90',
     deposit_type_id: 'dt-leb',
@@ -53,7 +53,7 @@ const mockLedgerItems: withdrawalReportService.WithdrawalLedgerItem[] = [
     member_id: 'mem-002',
     member_name: 'Kapten Siti Rahma',
     member_nrp: '19890202',
-    member_rank: 'Kapten Cku',
+    tanggal_lahir: '1989-02-02',
     bank_name: 'Mandiri',
     bank_account_number: '9876-5432-10',
     deposit_type_id: 'dt-suk',
@@ -74,7 +74,7 @@ const mockLedgerItems: withdrawalReportService.WithdrawalLedgerItem[] = [
     member_id: 'mem-wawan',
     member_name: 'Wawan Gunawan',
     member_nrp: '92185332',
-    member_rank: 'PNS III/a',
+    tanggal_lahir: '1992-03-10',
     bank_name: 'BRI',
     bank_account_number: '92185332001',
     deposit_type_id: 'dt-leb',
@@ -263,7 +263,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     // Member 1: Has active loan
     expect(html).toContain('Mayor Budi Prakoso');
     expect(html).toContain('19840101');
-    expect(html).toContain('Mayor Inf');
+    expect(html).toContain('01/01/1984');
     expect(html).toContain('WD-2026-001');
     expect(html).toContain('Simpanan Hari Raya (Lebaran)');
     expect(html).toContain(withdrawalReportService.formatRupiah(5000000));
@@ -274,7 +274,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
     // Member 2: Free of active loans
     expect(html).toContain('Kapten Siti Rahma');
     expect(html).toContain('19890202');
-    expect(html).toContain('Kapten Cku');
+    expect(html).toContain('02/02/1989');
     expect(html).toContain('WD-2026-002');
     expect(html).toContain('Kasir Tunai');
     expect(html).toContain('Bebas Pinjaman');
@@ -350,7 +350,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
       member_id: 'mem-yanto',
       member_name: 'Yanto Santoso',
       member_nrp: '96316180',
-      member_rank: 'Serma',
+      tanggal_lahir: '1986-07-15',
       bank_name: 'BRI',
       bank_account_number: '9631618001',
       deposit_type_id: 'dt-belanja',
@@ -375,7 +375,7 @@ describe('LaporanPenarikanSimpanan Page Component', () => {
 
     expect(html).toContain('Yanto Santoso');
     expect(html).toContain('96316180');
-    expect(html).toContain('Serma');
+    expect(html).toContain('15/07/1986');
     expect(html).toContain('INV-1794286975137');
     expect(html).toContain('Simpanan Belanja Bulanan');
     expect(html).toContain('bg-amber-100');

@@ -3,6 +3,7 @@ import { X, UserCheck, Wallet, Banknote, Calendar, CheckCircle2, AlertCircle, Lo
 import { Anggota } from '../../services/koperasiService';
 import { supabase } from '../../lib/supabaseClient';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import MemberLebaranRateModal from './MemberLebaranRateModal';
 
 interface MemberMigrationDetailModalProps {
@@ -381,8 +382,8 @@ export default function MemberMigrationDetailModal({
                   </div>
 
                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                    <span className="block text-xs font-medium text-slate-500 mb-0.5">Pangkat / Golongan</span>
-                    <span className="font-medium text-slate-800">{member.pangkat || '-'}</span>
+                    <span className="block text-xs font-medium text-slate-500 mb-0.5">Tanggal Lahir &amp; Usia</span>
+                    <span className="font-medium text-slate-800">{formatTanggalLahirWithAge(member.tanggal_lahir, { long: true })}</span>
                   </div>
 
                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">

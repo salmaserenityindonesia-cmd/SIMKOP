@@ -502,7 +502,7 @@ export interface MemberSalaryAccountItem {
   id: string;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   bank_account_number?: string | null;
   take_home_pay?: number | null;
   master_thp?: number | null;
@@ -532,7 +532,7 @@ export function isFallbackError(error: any): boolean {
  */
 export async function fetchMemberSalaryData(): Promise<MemberSalaryAccountItem[]> {
   try {
-    const baseFields = ['id', 'nrp', 'nama', 'pangkat', 'bank_account_number', 'take_home_pay', 'master_thp'];
+    const baseFields = ['id', 'nrp', 'nama', 'tanggal_lahir', 'bank_account_number', 'take_home_pay', 'master_thp'];
     let selectFields = [...baseFields, 'salary', 'angsuran_lain_lain'];
 
     let { data, error }: { data: any; error: any } = await supabase
@@ -588,7 +588,7 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
         'id',
         'nrp',
         'nama',
-        'pangkat',
+        'tanggal_lahir',
         'bank_account_number',
         'take_home_pay',
         'master_thp',

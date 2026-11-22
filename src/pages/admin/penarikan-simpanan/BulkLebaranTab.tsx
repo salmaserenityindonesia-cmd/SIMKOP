@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabaseClient';
 import { exportToExcel } from '../../../lib/exportUtils';
+import { formatTanggalLahirWithAge } from '../../../utils/dateUtils';
 import { 
   bulkWithdrawalService,
   formatCycleDisplayDate,
@@ -141,7 +142,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
       'No': idx + 1,
       'NRP': m.nrp,
       'Nama Anggota': m.nama,
-      'Pangkat': m.pangkat,
+      'Tanggal Lahir': formatTanggalLahirWithAge(m.tanggal_lahir),
       'Nomor Rekening': m.bankAccount,
       'Nama Bank': m.bankName,
       'Saldo Saat Ini (Rp)': m.currentTotalBalance ?? m.saldoLebaran,
@@ -529,7 +530,7 @@ export default function BulkLebaranTab({ onCyclesUpdated }: BulkLebaranTabProps)
                         <td className="py-3.5 px-4">
                           <div className="font-semibold text-slate-800">{member.nama}</div>
                           <div className="text-xs text-slate-500 font-mono">
-                            NRP: {member.nrp} • {member.pangkat}
+                            NRP: {member.nrp}{member.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(member.tanggal_lahir)}` : ''}
                           </div>
                           {member.hasActiveLoan && (
                             <div className="mt-1">

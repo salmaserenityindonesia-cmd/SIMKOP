@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, AlertTriangle, CheckCircle, Upload, Loader2, Info, Eye } from 'lucide-react';
 import { MemberParseResult } from '../../services/memberExcelService';
 import { TierRate, computeReverseWajibBreakdown, ReverseWajibBreakdownResult } from '../../utils/memberMigrationParser';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 interface Props {
   isOpen: boolean;
@@ -162,7 +163,7 @@ export default function MemberMigrationModal({
                 <thead className="bg-gray-50 text-gray-700 sticky top-0 z-20 shadow-xs">
                   <tr>
                     <th className="px-4 py-3 sticky left-0 top-0 bg-gray-50 z-30 border-r border-gray-200 whitespace-nowrap">NRP / Nama</th>
-                    <th className="px-4 py-3 whitespace-nowrap">Pangkat</th>
+                    <th className="px-4 py-3 whitespace-nowrap">Tanggal Lahir</th>
                     <th className="px-4 py-3 whitespace-nowrap">No. Rekening</th>
                     <th className="px-4 py-3 whitespace-nowrap">Tgl Awal</th>
                     <th className="px-4 py-3 text-right whitespace-nowrap">Simp. Pokok</th>
@@ -183,7 +184,7 @@ export default function MemberMigrationModal({
                         <div className="text-xs text-gray-500">{row.nrp}</div>
                       </td>
                       <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
-                        {row.pangkat || '-'}
+                        {formatTanggalLahirWithAge(row.tanggal_lahir)}
                       </td>
                       <td className="px-4 py-3 text-gray-700 font-mono text-xs whitespace-nowrap">
                         {row.bank_account_number || '-'}

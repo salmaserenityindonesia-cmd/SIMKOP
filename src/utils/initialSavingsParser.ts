@@ -204,7 +204,8 @@ export async function parseInitialSavingsExcel(
   if (
     headerList.includes('jumlah_pinjaman') ||
     headerList.includes('jenis_pinjaman') ||
-    headerList.includes('pangkat')
+    headerList.includes('tanggal_lahir') ||
+    headerList.includes('tanggal lahir')
   ) {
     throw new Error(
       'File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal (.xlsx)" pada menu ini.'

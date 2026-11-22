@@ -750,7 +750,7 @@ export async function getComplianceMatrixData(
   try {
     const memberSelectBuilder: any = supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status, suspended_at, suspension_reason');
+      .select('id, nrp, nama, tanggal_lahir, bank_account_number, membership_status, created_at, status, suspended_at, suspension_reason');
 
     let executed = false;
     // Gunakan .or(...) di PostgREST agar anggota SUSPENDED (status='nonaktif') tetap termuat bersama anggota aktif,

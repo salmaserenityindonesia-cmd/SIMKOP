@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
+import { parseBirthDateInput } from '../utils/dateUtils';
 import {
   MEMBER_IMPORT_TEMPLATE_FILENAME,
   MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS,
@@ -11,7 +12,7 @@ export interface MigrationRowData {
   nomor_referensi?: string | null;
   nrp: string;
   nama: string;
-  pangkat: string | null;
+  tanggal_lahir: string | null;
   bank_account_number: string | null;
   membership_status: string;
   tgl_awal_anggota: string | null;
@@ -47,15 +48,16 @@ export const buildMemberTemplateWorkbook = async (): Promise<ExcelJS.Workbook> =
   worksheet.columns = [
     { header: 'nrp', key: 'nrp', width: 15 },
     { header: 'nama', key: 'nama', width: 30 },
-    { header: 'pangkat', key: 'pangkat', width: 20 },
+    { header: 'tanggal_lahir', key: 'tanggal_lahir', width: 18 },
     { header: 'bank_account_number', key: 'bank_account_number', width: 25 },
     { header: 'membership_status', key: 'membership_status', width: 20 },
     { header: 'tgl_awal_anggota', key: 'tgl_awal_anggota', width: 20 },
   ];
 
-  ['nrp', 'nama', 'pangkat', 'bank_account_number', 'membership_status'].forEach((k) => {
+  ['nrp', 'nama', 'bank_account_number', 'membership_status'].forEach((k) => {
     worksheet.getColumn(k).numFmt = '@';
   });
+  worksheet.getColumn('tanggal_lahir').numFmt = 'yyyy-mm-dd';
   worksheet.getColumn('tgl_awal_anggota').numFmt = 'yyyy-mm-dd';
 
   for (const sampleRow of MEMBER_IMPORT_TEMPLATE_SAMPLE_ROWS) {
@@ -268,7 +270,9 @@ export const parseMemberUpload = async (file: File): Promise<MemberParseResult> 
       nomor_referensi: getVal('nomor_referensi')?.toString().trim() || null,
       nrp,
       nama,
-      pangkat: getVal('pangkat')?.toString().trim() || null,
+      tanggal_lahir: parseBirthDateInput(
+        getVal('tanggal_lahir') ?? getVal('tanggal lahir') ?? getVal('tgl_lahir')
+      ),
       bank_account_number,
       membership_status,
       tgl_awal_anggota,
@@ -325,7 +329,7 @@ export const executeMigration = async (
         nomor_referensi: row.nomor_referensi ? String(row.nomor_referensi).trim() : null,
         nrp: row.nrp,
         nama: row.nama,
-        pangkat: row.pangkat,
+        tanggal_lahir: parseBirthDateInput(row.tanggal_lahir),
         bank_account_number: row.bank_account_number,
         membership_status: row.membership_status,
         status: (row.membership_status || 'ACTIVE') === 'ACTIVE' ? 'aktif' : 'nonaktif',

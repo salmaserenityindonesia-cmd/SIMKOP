@@ -39,7 +39,7 @@ export interface MemberContributionInput {
   memberId: string;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   totalSavingsContribution: number;
   totalTransactionContribution: number;
 }
@@ -377,7 +377,7 @@ export function recalculatePreviewWithSettings(
       memberId: r.memberId,
       nrp: r.nrp,
       nama: r.nama,
-      pangkat: r.pangkat,
+      tanggal_lahir: r.tanggal_lahir,
       totalSavingsContribution: r.totalSavingsContribution,
       totalTransactionContribution: r.totalTransactionContribution,
     })),
@@ -666,13 +666,13 @@ async function buildClosedPreviewFromRecord(
   const memberIds = Array.from(
     new Set(rawDist.map((d: any) => d?.member_id).filter(Boolean).map(String))
   );
-  const memberLookup = new Map<string, { nrp: string; nama: string; pangkat?: string | null }>();
+  const memberLookup = new Map<string, { nrp: string; nama: string; tanggal_lahir?: string | null }>();
   if (memberIds.length > 0) {
     try {
       const { data: anggotaRows } = await safeFetchPaged<any>(() => {
         const t: any = supabase?.from?.('anggota');
         if (!t || typeof t.select !== 'function') return null;
-        const q = t.select('id, nrp, nama, pangkat');
+        const q = t.select('id, nrp, nama, tanggal_lahir');
         return q && typeof q.in === 'function' ? q.in('id', memberIds) : q;
       });
       for (const m of anggotaRows) {
@@ -680,7 +680,7 @@ async function buildClosedPreviewFromRecord(
           memberLookup.set(String(m.id), {
             nrp: String(m.nrp || ''),
             nama: String(m.nama || ''),
-            pangkat: m.pangkat ?? null,
+            tanggal_lahir: m.tanggal_lahir ?? null,
           });
         }
       }
@@ -697,7 +697,7 @@ async function buildClosedPreviewFromRecord(
       memberId: mid,
       nrp: String(joined?.nrp ?? info?.nrp ?? ''),
       nama: String(joined?.nama ?? info?.nama ?? 'Anggota'),
-      pangkat: joined?.pangkat ?? info?.pangkat ?? null,
+      tanggal_lahir: joined?.tanggal_lahir ?? info?.tanggal_lahir ?? null,
       totalSavingsContribution: Number(d.total_savings_contribution ?? 0),
       totalTransactionContribution: Number(d.total_transaction_contribution ?? 0),
       jasaModalAmount: Number(d.jasa_modal_amount ?? 0),
@@ -999,14 +999,14 @@ export async function computeYearEndPreview(
   let { data: anggotaRows, error: anggotaErr } = await safeFetchPaged<any>(() => {
     const t: any = supabase?.from?.('anggota');
     if (!t || typeof t.select !== 'function') return null;
-    return t.select('id, nrp, nama, pangkat, status, membership_status');
+    return t.select('id, nrp, nama, tanggal_lahir, status, membership_status');
   });
 
   if (anggotaErr && isMissingColumnErr(anggotaErr)) {
     const fallbackAnggota = await safeFetchPaged<any>(() => {
       const t: any = supabase?.from?.('anggota');
       if (!t || typeof t.select !== 'function') return null;
-      return t.select('id, nrp, nama, pangkat, status');
+      return t.select('id, nrp, nama, tanggal_lahir, status');
     });
     anggotaRows = fallbackAnggota.data;
   }
@@ -1232,7 +1232,7 @@ export async function computeYearEndPreview(
       memberId: mId,
       nrp: String(m.nrp || ''),
       nama: String(m.nama || ''),
-      pangkat: m.pangkat ?? null,
+      tanggal_lahir: m.tanggal_lahir ?? null,
       totalSavingsContribution: memberSavingsMap.get(mId) || 0,
       totalTransactionContribution:
         (memberPosSalesMap.get(mId) || 0) + (memberMarginMap.get(mId) || 0),

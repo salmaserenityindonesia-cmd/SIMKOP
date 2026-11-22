@@ -23,6 +23,7 @@ import { downloadInitialSavingsTemplate, parseInitialSavingsExcel, InitialSaving
 import { downloadInitialLoansTemplate, parseInitialLoansExcel, InitialLoanRow } from '../../utils/initialLoansParser';
 import { useFeedback } from '../../context/FeedbackContext';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahir, formatTanggalLahirWithAge, hitungUsia } from '../../utils/dateUtils';
 import { getActiveSavingsRateTiers, getRateTiers } from '../../services/savingsRateService';
 import {
   TierRate,
@@ -140,7 +141,7 @@ export default function ManajemenAnggota({
     nomor_referensi: '',
     nrp: '',
     nama: '',
-    pangkat: '',
+    tanggal_lahir: '',
     status: 'aktif',
     membership_status: 'ACTIVE' as NonNullable<Anggota['membership_status']>,
     suspension_reason: '',
@@ -234,7 +235,7 @@ export default function ManajemenAnggota({
       nomor_referensi: '',
       nrp: '',
       nama: '',
-      pangkat: '',
+      tanggal_lahir: '',
       status: 'aktif',
       membership_status: 'ACTIVE',
       suspension_reason: '',
@@ -251,7 +252,7 @@ export default function ManajemenAnggota({
       nomor_referensi: anggota.nomor_referensi || '',
       nrp: anggota.nrp || '',
       nama: anggota.nama,
-      pangkat: anggota.pangkat || '',
+      tanggal_lahir: anggota.tanggal_lahir ? String(anggota.tanggal_lahir).slice(0, 10) : '',
       status: anggota.status || 'aktif',
       membership_status: anggota.membership_status || (anggota.status === 'nonaktif' ? 'RESIGNED' : 'ACTIVE'),
       suspension_reason: anggota.suspension_reason || '',
@@ -294,7 +295,7 @@ export default function ManajemenAnggota({
           nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
-          pangkat: formData.pangkat,
+          tanggal_lahir: formData.tanggal_lahir || null,
           master_thp: formData.master_thp,
           bank_account_number: formData.bank_account_number,
         };
@@ -305,7 +306,7 @@ export default function ManajemenAnggota({
           nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
-          pangkat: formData.pangkat,
+          tanggal_lahir: formData.tanggal_lahir || null,
           master_thp: formData.master_thp,
           bank_account_number: formData.bank_account_number,
           tgl_awal_anggota: formData.tgl_awal_anggota,
@@ -489,7 +490,7 @@ export default function ManajemenAnggota({
           nomor_referensi: row.nomor_referensi || null,
           nrp: row.nrp,
           nama: row.nama,
-          pangkat: row.pangkat,
+          tanggal_lahir: row.tanggal_lahir,
           bank_account_number: row.bank_account_number,
           membership_status: row.membership_status,
           tgl_awal_anggota: row.tgl_awal_anggota,
@@ -885,7 +886,7 @@ export default function ManajemenAnggota({
                 <th className="py-3 px-4 font-medium border-b border-gray-200">No. Referensi</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">NRP</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nama</th>
-                <th className="py-3 px-4 font-medium border-b border-gray-200">Pangkat</th>
+                <th className="py-3 px-4 font-medium border-b border-gray-200">Tanggal Lahir</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Nomor Rekening</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Status</th>
                 <th className="py-3 px-4 font-medium border-b border-gray-200">Terdaftar</th>
@@ -920,7 +921,20 @@ export default function ManajemenAnggota({
                     </td>
                     <td className="py-3 px-4 text-sm font-medium text-gray-900">{anggota.nrp}</td>
                     <td className="py-3 px-4 text-sm text-gray-700">{anggota.nama}</td>
-                    <td className="py-3 px-4 text-sm text-gray-700">{anggota.pangkat || '-'}</td>
+                    <td className="py-3 px-4 text-sm text-gray-700 whitespace-nowrap">
+                      {anggota.tanggal_lahir && formatTanggalLahir(anggota.tanggal_lahir) !== '-' ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span>{formatTanggalLahir(anggota.tanggal_lahir)}</span>
+                          {hitungUsia(anggota.tanggal_lahir) !== null && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[11px] font-medium">
+                              {hitungUsia(anggota.tanggal_lahir)} Thn
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-sm text-gray-700 font-medium">
                       {anggota.bank_account_number || '-'}
                     </td>
@@ -1110,15 +1124,16 @@ export default function ManajemenAnggota({
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Pangkat
+                  <label htmlFor="anggota-tanggal-lahir" className="block text-sm font-medium text-gray-700 mb-1">
+                    Tanggal Lahir
                   </label>
                   <input
-                    type="text"
-                    value={formData.pangkat}
-                    onChange={(e) => setFormData({...formData, pangkat: e.target.value})}
+                    id="anggota-tanggal-lahir"
+                    type="date"
+                    max={new Date().toISOString().split('T')[0]}
+                    value={formData.tanggal_lahir}
+                    onChange={(e) => setFormData({...formData, tanggal_lahir: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-                    placeholder="Contoh: Sertu, Kopda, dll"
                   />
                 </div>
 
@@ -1325,7 +1340,7 @@ export default function ManajemenAnggota({
                 <div>
                   <h3 className="text-lg font-bold tracking-tight">Import Data Induk Anggota</h3>
                   <p className="text-xs text-slate-300">
-                    Tambah anggota baru atau perbarui data profil (NRP, Nama, Pangkat, Rekening, Status, Tgl Awal) tanpa mengubah saldo simpanan &amp; pinjaman
+                    Tambah anggota baru atau perbarui data profil (NRP, Nama, Tanggal Lahir, Rekening, Status, Tgl Awal) tanpa mengubah saldo simpanan &amp; pinjaman
                   </p>
                 </div>
               </div>
@@ -1353,7 +1368,7 @@ export default function ManajemenAnggota({
                     <code className="bg-slate-100 px-1 rounded">nomor_referensi</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">nrp</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">nama</code>,{' '}
-                    <code className="bg-slate-100 px-1 rounded">pangkat</code>,{' '}
+                    <code className="bg-slate-100 px-1 rounded">tanggal_lahir</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">bank_account_number</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">membership_status</code>,{' '}
                     <code className="bg-slate-100 px-1 rounded">tgl_awal_anggota</code>) tanpa mengubah saldo simpanan maupun pinjaman. Untuk saldo awal simpanan atau pinjaman, gunakan tombol menu masing-masing.
@@ -1451,7 +1466,7 @@ export default function ManajemenAnggota({
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">No. Referensi</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">NRP</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Nama</th>
-                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Pangkat</th>
+                          <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Tanggal Lahir</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Nomor Rekening</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Status</th>
                           <th className="px-3 py-2.5 font-semibold border-b border-slate-200">Tgl Awal Anggota</th>
@@ -1464,7 +1479,7 @@ export default function ManajemenAnggota({
                             <td className="px-3 py-2 font-mono text-slate-700">{row.nomor_referensi || '-'}</td>
                             <td className="px-3 py-2 font-mono text-slate-800">{row.nrp}</td>
                             <td className="px-3 py-2 font-medium text-slate-800">{row.nama}</td>
-                            <td className="px-3 py-2 text-slate-700">{row.pangkat || '-'}</td>
+                            <td className="px-3 py-2 text-slate-700 whitespace-nowrap">{formatTanggalLahirWithAge(row.tanggal_lahir)}</td>
                             <td className="px-3 py-2 font-mono text-slate-700">{row.bank_account_number || '-'}</td>
                             <td className="px-3 py-2">
                               <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[11px] font-semibold">

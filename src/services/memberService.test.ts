@@ -71,7 +71,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
         id: 'member-1',
         nrp: '123456',
         nama: 'Kopda Ahmad',
-        pangkat: 'Kopda',
+        tanggal_lahir: '1988-11-10',
         bank_account_number: '0011223344',
         membership_status: 'ACTIVE',
         created_at: '2023-01-15T10:00:00.000Z',
@@ -81,7 +81,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
         id: 'member-2',
         nrp: '654321',
         nama: 'Sertu Budi',
-        pangkat: 'Sertu',
+        tanggal_lahir: '1985-05-20',
         bank_account_number: '5566778899',
         membership_status: 'READY_TO_RESIGN',
         created_at: '2022-05-20T08:30:00.000Z',
@@ -187,7 +187,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
     expect(m1).toEqual<MemberComprehensiveExportRow>({
       nrp: '123456',
       nama: 'Kopda Ahmad',
-      pangkat: 'Kopda',
+      tanggal_lahir: '1988-11-10',
       bank_account_number: '0011223344',
       membership_status: 'ACTIVE',
       tgl_awal_anggota: '2023-01-15',
@@ -207,7 +207,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
     expect(m2).toEqual<MemberComprehensiveExportRow>({
       nrp: '654321',
       nama: 'Sertu Budi',
-      pangkat: 'Sertu',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '5566778899',
       membership_status: 'READY_TO_RESIGN',
       tgl_awal_anggota: '2022-05-20',
@@ -229,7 +229,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
         id: 'member-clean',
         nrp: '999999',
         nama: 'Praka Charlie',
-        pangkat: 'Praka',
+        tanggal_lahir: '1991-06-15',
         bank_account_number: null,
         membership_status: null,
         created_at: '2025-06-01',
@@ -270,7 +270,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
     const m = report[0];
     expect(m.nrp).toBe('999999');
     expect(m.nama).toBe('Praka Charlie');
-    expect(m.pangkat).toBe('Praka');
+    expect(m.tanggal_lahir).toBe('1991-06-15');
     expect(m.bank_account_number).toBe('');
     expect(m.membership_status).toBe('aktif');
     expect(m.tgl_awal_anggota).toBe('2025-06-01');
@@ -331,7 +331,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
         id: 'member-multi-loans',
         nrp: '777888',
         nama: 'Aipda Gunawan',
-        pangkat: 'Aipda',
+        tanggal_lahir: '1983-08-15',
         bank_account_number: '998877',
         membership_status: 'ACTIVE',
         created_at: '2022-01-01',
@@ -461,7 +461,7 @@ describe('memberService - createMember', () => {
       id: 'member-101',
       nrp: '12345678',
       nama: 'Serma Joni',
-      pangkat: 'Serma',
+      tanggal_lahir: '1984-04-12',
       master_thp: 6000000,
       bank_account_number: '115738953714',
       status: 'aktif',
@@ -509,7 +509,7 @@ describe('memberService - createMember', () => {
     const result = await createMember({
       nrp: '12345678',
       nama: 'Serma Joni',
-      pangkat: 'Serma',
+      tanggal_lahir: '1984-04-12',
       master_thp: 6000000,
       bank_account_number: '115738953714',
       tgl_awal_anggota: '2023-05-10',
@@ -523,7 +523,7 @@ describe('memberService - createMember', () => {
         nomor_referensi: null,
         nrp: '12345678',
         nama: 'Serma Joni',
-        pangkat: 'Serma',
+        tanggal_lahir: '1984-04-12',
         master_thp: 6000000,
         bank_account_number: '115738953714',
         status: 'aktif',

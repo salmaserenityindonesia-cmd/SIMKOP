@@ -1015,7 +1015,7 @@ function ComplianceMatrixContent({
     id: string;
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   } | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);

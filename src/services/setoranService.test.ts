@@ -31,7 +31,7 @@ function resetTables(overrides: Partial<MockTables> = {}) {
         id: 'mem-1',
         nama: 'Budi Santoso',
         nrp: '88010023',
-        pangkat: 'Sertu',
+        tanggal_lahir: '1985-05-20',
         created_at: '2026-11-05T08:00:00Z',
       },
     ],

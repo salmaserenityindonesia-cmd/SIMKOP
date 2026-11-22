@@ -605,7 +605,7 @@ export default function PengajuanPinjaman({
   async function loadAnggota() {
     let { data, error } = await supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number, status, membership_status')
+      .select('id, nrp, nama, tanggal_lahir, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number, status, membership_status')
       .eq('status', 'aktif')
       .order('nama');
 
@@ -948,7 +948,7 @@ export default function PengajuanPinjaman({
                   members={anggotaList}
                   selectedMemberId={selectedAnggota}
                   onSelectMember={(member) => handleSelectMember(member ? member.id : '')}
-                  placeholder="Ketik NRP, Nama Anggota, atau Pangkat..."
+                  placeholder="Ketik NRP atau Nama Anggota..."
                 />
               </div>
 

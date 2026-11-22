@@ -35,7 +35,7 @@ vi.mock('../../services/koperasiService', () => {
       id: 'member-1',
       nrp: '12345678',
       nama: 'Budi Santoso',
-      pangkat: 'Bripka',
+      tanggal_lahir: '1985-05-20',
       status: 'aktif',
       master_thp: 5000000,
       bank_account_number: '1234567890',
@@ -61,7 +61,7 @@ vi.mock('../../services/memberService', () => ({
     id: 'member-created-1',
     nrp: '12345678',
     nama: 'Budi Santoso',
-    pangkat: 'Bripka',
+    tanggal_lahir: '1985-05-20',
     status: 'aktif',
     master_thp: 5000000,
     bank_account_number: '1234567890',
@@ -70,7 +70,7 @@ vi.mock('../../services/memberService', () => ({
     {
       nrp: '12345678',
       nama: 'Budi Santoso',
-      pangkat: 'Bripka',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '1234567890',
       membership_status: 'ACTIVE',
       tgl_awal_anggota: '2023-01-01',
@@ -140,7 +140,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('NRP');
       expect(html.indexOf('No. Referensi')).toBeLessThan(html.indexOf('>NRP<'));
       expect(html).toContain('Nama');
-      expect(html).toContain('Pangkat');
+      expect(html).toContain('Tanggal Lahir');
       expect(html).toContain('Nomor Rekening');
       expect(html).toContain('Status');
       expect(html).toContain('Terdaftar');
@@ -208,7 +208,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('placeholder="Contoh: REF-001"');
       expect(html).toContain('NRP');
       expect(html).toContain('Nama Lengkap');
-      expect(html).toContain('Pangkat');
+      expect(html).toContain('Tanggal Lahir');
       expect(html).toContain('Gaji Pokok (Master THP)');
 
       // Simpanan Pokok info banner
@@ -463,7 +463,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
             nomor_referensi: 'REF-088',
             nrp: '88010203',
             nama: 'Agus Susanto',
-            pangkat: 'Bripka',
+            tanggal_lahir: '1985-05-20',
             status: 'aktif',
             membership_status: 'ACTIVE',
             master_thp: 6000000,
@@ -529,7 +529,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
             nomor_referensi: 'REF-101',
             nrp: '87010203',
             nama: 'Bripka Dani',
-            pangkat: 'Bripka',
+            tanggal_lahir: '1985-05-20',
             status: 'aktif',
             membership_status: 'ACTIVE',
             master_thp: 5500000,
@@ -557,7 +557,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
             nomor_referensi: 'REF-102',
             nrp: '87010204',
             nama: 'Sertu Eko',
-            pangkat: 'Sertu',
+            tanggal_lahir: '1986-07-14',
             status: 'nonaktif',
             membership_status: 'SUSPENDED',
             suspension_reason: 'Tugas Khusus',

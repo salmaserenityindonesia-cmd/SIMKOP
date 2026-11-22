@@ -10,7 +10,7 @@ describe('memberExcelParser', () => {
     worksheet.columns = [
       { header: 'No. Anggota', key: 'nrp', width: 15 },
       { header: 'Nama Lengkap', key: 'nama', width: 25 },
-      { header: 'Pangkat', key: 'pangkat', width: 15 },
+      { header: 'Tanggal Lahir', key: 'tanggal_lahir', width: 15 },
       { header: 'Nomor Rekening', key: 'rek', width: 20 },
       { header: 'Status Anggota', key: 'status', width: 15 },
       { header: 'Tanggal Masuk', key: 'tgl', width: 15 },
@@ -27,7 +27,7 @@ describe('memberExcelParser', () => {
     worksheet.addRow({
       nrp: '123456',
       nama: 'Ahmad Dahlan',
-      pangkat: 'Bripda',
+      tanggal_lahir: '20/05/1985',
       rek: '5566778899',
       status: 'ACTIVE',
       tgl: '2023-01-15',
@@ -50,7 +50,7 @@ describe('memberExcelParser', () => {
     const row = result.rows[0];
     expect(row.nrp).toBe('123456');
     expect(row.nama).toBe('Ahmad Dahlan');
-    expect(row.pangkat).toBe('Bripda');
+    expect(row.tanggal_lahir).toBe('1985-05-20');
     expect(row.bank_account_number).toBe('5566778899');
     expect(row.membership_status).toBe('ACTIVE');
     expect(row.tgl_awal_anggota).toBe('2023-01-15');

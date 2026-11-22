@@ -812,7 +812,7 @@ export const loanService = {
           id,
           nrp,
           nama,
-          pangkat,
+          tanggal_lahir,
           take_home_pay,
           master_thp,
           bank_account_number
@@ -844,7 +844,7 @@ export const loanService = {
           id,
           nrp,
           nama,
-          pangkat,
+          tanggal_lahir,
           take_home_pay,
           master_thp,
           bank_account_number
@@ -928,7 +928,7 @@ export const loanService = {
     let memberData: any = null;
     const { data: member, error: memberError } = await supabase
       .from('anggota')
-      .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number')
+      .select('id, nrp, nama, tanggal_lahir, take_home_pay, master_thp, salary, angsuran_lain_lain, bank_account_number')
       .eq('id', memberId)
       .single();
 

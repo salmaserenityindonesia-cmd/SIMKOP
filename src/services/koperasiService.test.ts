@@ -171,7 +171,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       const dummy250: MemberImportInput[] = Array.from({ length: 250 }, (_, i) => ({
         nrp: `NRP-${i + 1}`,
         nama: `Anggota Massal ${i + 1}`,
-        pangkat: 'Bripka',
+        tanggal_lahir: '1985-05-20',
         bank_account_number: `112233${i + 1}`,
         status: 'aktif',
         membership_status: 'ACTIVE',
@@ -312,7 +312,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         {
           nrp: 'NRP-AGUS',
           nama: 'Agus Susanto',
-          pangkat: 'Aiptu',
+          tanggal_lahir: '1980-12-01',
           bank_account_number: '1234567890',
           status: 'aktif',
           membership_status: 'ACTIVE',
@@ -444,7 +444,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         {
           nrp: '89113210',
           nama: 'Eko Setiawan',
-          pangkat: 'Bripka',
+          tanggal_lahir: '1985-05-20',
           status: 'aktif',
           membership_status: 'ACTIVE',
           jumlah_simpanan_pokok: 100000,
@@ -607,7 +607,7 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
         {
           nrp: '95168420',
           nama: 'Budi Santoso',
-          pangkat: 'Aipda',
+          tanggal_lahir: '1983-08-15',
           bank_account_number: '367800973556',
           membership_status: 'ACTIVE',
           tgl_awal_anggota: '2026-11-13',

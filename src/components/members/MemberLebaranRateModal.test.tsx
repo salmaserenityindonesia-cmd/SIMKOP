@@ -30,7 +30,7 @@ describe('MemberLebaranRateModal & UI Integration', () => {
     id: 'mem-agus',
     nrp: '95168420',
     nama: 'Agus Susanto',
-    pangkat: 'Bripka',
+    tanggal_lahir: '1985-05-20',
     status: 'aktif',
     membership_status: 'ACTIVE',
     created_at: '2024-01-01T00:00:00.000Z',

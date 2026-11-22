@@ -884,7 +884,7 @@ describe('loanMatrixService - Multi-Loan Support per Member', () => {
       id: 'mem-yanto',
       nrp: '96316880',
       nama: 'Yanto Santoso',
-      pangkat: 'Serda',
+      tanggal_lahir: '1992-04-05',
     };
 
     const loan1 = {
@@ -1025,7 +1025,7 @@ describe('loanMatrixService - Multi-Loan Support per Member', () => {
     expect(rowLoan1?.memberId).toBe('mem-yanto');
     expect(rowLoan1?.nama).toBe('Yanto Santoso');
     expect(rowLoan1?.nrp).toBe('96316880');
-    expect(rowLoan1?.pangkat).toBe('Serda');
+    expect(rowLoan1?.tanggal_lahir).toBe('1992-04-05');
     expect(rowLoan1?.loanTypeName).toBe('Pinjaman Reguler');
     expect(rowLoan1?.tenor).toBe(30);
     expect(rowLoan1?.monthlyTarget).toBe(333333);
@@ -1043,7 +1043,7 @@ describe('loanMatrixService - Multi-Loan Support per Member', () => {
     expect(rowLoan2?.memberId).toBe('mem-yanto');
     expect(rowLoan2?.nama).toBe('Yanto Santoso');
     expect(rowLoan2?.nrp).toBe('96316880');
-    expect(rowLoan2?.pangkat).toBe('Serda');
+    expect(rowLoan2?.tanggal_lahir).toBe('1992-04-05');
     expect(rowLoan2?.loanTypeName).toBe('Pinjaman Khusus');
     expect(rowLoan2?.tenor).toBe(12);
     expect(rowLoan2?.monthlyTarget).toBe(166667);
@@ -1144,7 +1144,7 @@ describe('loanMatrixService - Multi-Loan Support per Member', () => {
       id: 'mem-budi',
       nrp: '12345678',
       nama: 'Budi Prasetyo',
-      pangkat: 'Koptu',
+      tanggal_lahir: '1987-01-25',
     };
 
     const loans = [
@@ -3363,7 +3363,7 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
       monthly_target: 2100000,
       disbursed_at: '2026-10-19',
       status: 'completed',
-      member: { id: 'mem-surya', nrp: '87010011', nama: 'Surya Pratama', pangkat: 'BRIPKA' },
+      member: { id: 'mem-surya', nrp: '87010011', nama: 'Surya Pratama', tanggal_lahir: '1985-05-20' },
       loan_types: { id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang', financing_scheme: 'GOODS_MARKUP' },
     };
 

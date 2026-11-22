@@ -6,9 +6,28 @@ import {
   syncOpeningSavingsBalanceToCashFlow,
   syncInitialSavingsOpeningCashFlow,
 } from './cashFlowService';
+import {
+  parseBirthDateInput,
+  formatTanggalLahir,
+  formatTanggalLahirLong,
+  hitungUsia,
+  formatTanggalLahirWithAge,
+  formatBirthDate,
+  calculateAge,
+} from '../utils/dateUtils';
 
 export type { InitialSavingsRow };
-export { syncOpeningSavingsBalanceToCashFlow, syncInitialSavingsOpeningCashFlow };
+export {
+  syncOpeningSavingsBalanceToCashFlow,
+  syncInitialSavingsOpeningCashFlow,
+  parseBirthDateInput,
+  formatTanggalLahir,
+  formatTanggalLahirLong,
+  hitungUsia,
+  formatTanggalLahirWithAge,
+  formatBirthDate,
+  calculateAge,
+};
 
 function shouldFallback(e: any): boolean {
   if (!e) return false;
@@ -21,7 +40,7 @@ export interface Anggota {
   nomor_referensi?: string | null;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   status?: string;
   membership_status?: 'ACTIVE' | 'SUSPENDED' | 'PENDING_RESIGNED' | 'READY_TO_RESIGN' | 'RESIGNED' | 'BLOCKED';
   suspended_at?: string | null;
@@ -49,7 +68,7 @@ export interface MemberImportInput {
   nomor_referensi?: string | null;
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   bank_account_number?: string | null;
   status?: string;
   membership_status?: string;
@@ -67,7 +86,7 @@ export interface CreateMemberInput {
   nomor_referensi?: string | null;
   nrp: string;
   nama: string;
-  pangkat?: string;
+  tanggal_lahir?: string | null;
   master_thp?: number;
   bank_account_number?: string;
   tgl_awal_anggota?: string;
@@ -93,7 +112,7 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
     nomor_referensi: input.nomor_referensi?.trim() || null,
     nrp: input.nrp.trim(),
     nama: input.nama.trim(),
-    pangkat: input.pangkat?.trim() || null,
+    tanggal_lahir: parseBirthDateInput(input.tanggal_lahir),
     master_thp: Number(input.master_thp) || 0,
     bank_account_number: input.bank_account_number?.trim() || null,
     status: resolvedStatus,
@@ -176,7 +195,7 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
           id: 'dummy-anggota-1',
           nama: 'Budi Santoso',
           nrp: '123456',
-          pangkat: 'Sertu',
+          tanggal_lahir: '1985-05-20',
           status: 'aktif',
           created_at: new Date().toISOString(),
           simpanan_pokok: 100000,
@@ -187,7 +206,7 @@ export async function getAnggotaWithSimpanan(): Promise<AnggotaWithSimpanan[]> {
           id: 'dummy-anggota-2',
           nama: 'Siti Aminah',
           nrp: '654321',
-          pangkat: 'Kopda',
+          tanggal_lahir: '1988-11-10',
           status: 'aktif',
           created_at: new Date().toISOString(),
           simpanan_pokok: 100000,
@@ -493,7 +512,7 @@ export async function importMembersChunked(
             nomor_referensi: m.nomor_referensi ? String(m.nomor_referensi).trim() : null,
             nrp: String(m.nrp || '').trim(),
             nama: String(m.nama || '').trim(),
-            pangkat: m.pangkat ? String(m.pangkat).trim() : null,
+            tanggal_lahir: parseBirthDateInput(m.tanggal_lahir),
             bank_account_number: m.bank_account_number ? String(m.bank_account_number).trim() : null,
             status: m.status || 'aktif',
             membership_status: m.membership_status || 'ACTIVE',
@@ -801,7 +820,7 @@ export function extractMemberTHP(member: any): number {
 export async function getActiveMembersForLoan() {
   let { data, error } = await supabase
     .from('anggota')
-    .select('id, nrp, nama, pangkat, take_home_pay, master_thp, salary, bank_account_number, status, membership_status')
+    .select('id, nrp, nama, tanggal_lahir, take_home_pay, master_thp, salary, bank_account_number, status, membership_status')
     .eq('status', 'aktif')
     .order('nama');
 
@@ -824,7 +843,7 @@ export async function getActiveMembersForLoan() {
 export interface MemberComprehensiveExportRow {
   nrp: string;
   nama: string;
-  pangkat: string;
+  tanggal_lahir: string;
   bank_account_number: string;
   membership_status: string;
   tgl_awal_anggota: string;
@@ -870,7 +889,7 @@ export async function getMembersComprehensiveReport(
   // Query 1: Anggota
   let memberQuery = supabase
     .from('anggota')
-    .select('id, nomor_referensi, nrp, nama, pangkat, bank_account_number, membership_status, created_at, status');
+    .select('id, nomor_referensi, nrp, nama, tanggal_lahir, bank_account_number, membership_status, created_at, status');
 
   if (memberIds && memberIds.length > 0) {
     memberQuery = memberQuery.in('id', memberIds);
@@ -1037,7 +1056,7 @@ export async function getMembersComprehensiveReport(
     return {
       nrp: m.nrp || '',
       nama: m.nama || '',
-      pangkat: m.pangkat || '',
+      tanggal_lahir: formatSafeDate(m.tanggal_lahir),
       bank_account_number: m.bank_account_number || '',
       membership_status: m.membership_status || m.status || 'ACTIVE',
       tgl_awal_anggota: formatSafeDate(m.tgl_awal_anggota || m.created_at),

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ReceiptPayload } from '../../services/setoranService';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 interface SetoranReceiptModalProps {
   receipt: ReceiptPayload | null;
@@ -170,7 +171,7 @@ export const SetoranReceiptModal: React.FC<SetoranReceiptModalProps> = ({
       y += 4.2;
 
       doc.text(
-        `Nama Anggota : ${receipt.memberName}${receipt.memberPangkat ? ` (${receipt.memberPangkat})` : ''}`,
+        `Nama Anggota : ${receipt.memberName}${receipt.memberTanggalLahir ? ` (Tgl Lahir: ${formatTanggalLahirWithAge(receipt.memberTanggalLahir)})` : ''}`,
         leftX,
         y
       );
@@ -411,7 +412,7 @@ export const SetoranReceiptModal: React.FC<SetoranReceiptModalProps> = ({
                 <span className="text-slate-500">Nama Anggota</span>
                 <span className="font-bold text-slate-900">
                   {receipt.memberName}
-                  {receipt.memberPangkat ? ` (${receipt.memberPangkat})` : ''}
+                  {receipt.memberTanggalLahir ? ` (Tgl Lahir: ${formatTanggalLahirWithAge(receipt.memberTanggalLahir)})` : ''}
                 </span>
               </div>
               <div className="flex justify-between gap-2">

@@ -4,6 +4,7 @@ import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
 import { calculateRepaymentPortions } from './loanService';
 import type { KoperasiProfile } from './settingsService';
+import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 export interface LoanTypeOption {
   id: string;
@@ -46,7 +47,7 @@ export interface PaidOffLoanReportRow {
   memberId: string;
   memberName: string;
   nrp: string;
-  pangkat: string;
+  tanggal_lahir: string | null;
   loanTypeId: string;
   loanTypeCode: string;
   loanTypeName: string;
@@ -186,7 +187,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       .select(`
         *,
         loan_types ( id, code, name, financing_scheme ),
-        member:anggota ( id, nrp, nama, pangkat )
+        member:anggota ( id, nrp, nama, tanggal_lahir )
       `);
 
     if (!joinErr && Array.isArray(joinedLoans)) {
@@ -198,7 +199,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
         .select(`
           *,
           loan_types ( id, code, name ),
-          member:anggota ( id, nrp, nama, pangkat )
+          member:anggota ( id, nrp, nama, tanggal_lahir )
         `);
 
       if (!fallbackJoinErr && Array.isArray(fallbackJoinedLoans)) {
@@ -255,7 +256,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
     try {
       const { data: membersData } = await supabase
         .from('anggota')
-        .select('id, nrp, nama, pangkat');
+        .select('id, nrp, nama, tanggal_lahir');
       (membersData || []).forEach((m: any) => {
         if (m?.id) memberMap.set(m.id, m);
       });
@@ -546,7 +547,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       memberId: relMember?.id || loan.member_id || '',
       memberName: relMember?.nama || relMember?.name || '-',
       nrp: relMember?.nrp || '-',
-      pangkat: relMember?.pangkat || '-',
+      tanggal_lahir: relMember?.tanggal_lahir ?? null,
       loanTypeId: relLoanType?.id || loan.loan_type_id || '',
       loanTypeCode: relLoanType?.code || '',
       loanTypeName: relLoanType?.name || loan.loanTypeName || 'Pinjaman Reguler',
@@ -633,7 +634,7 @@ export async function exportPaidOffLoansExcel(
     'No',
     'NRP',
     'Nama Anggota',
-    'Pangkat',
+    'Tanggal Lahir',
     'No. Pinjaman',
     'Nama Jenis Pinjaman',
     'Plafon Pokok (Rp)',
@@ -672,7 +673,7 @@ export async function exportPaidOffLoansExcel(
         index + 1,
         item.nrp || '-',
         item.memberName || '-',
-        item.pangkat || '-',
+        formatTanggalLahirWithAge(item.tanggal_lahir),
         item.loanNumber || '-',
         item.loanTypeName || 'Pinjaman Reguler',
         item.principalAmount,
@@ -877,7 +878,7 @@ export function exportPaidOffLoansPdf(
       ? rows.map((row, idx) => [
           idx + 1,
           row.nrp || '-',
-          `${row.memberName}\n${row.pangkat && row.pangkat !== '-' ? row.pangkat : ''}`.trim(),
+          `${row.memberName}${row.tanggal_lahir ? `\n${formatTanggalLahirWithAge(row.tanggal_lahir)}` : ''}`.trim(),
           row.loanNumber || '-',
           row.loanTypeName || 'Pinjaman Reguler',
           formatRp(row.principalAmount),
@@ -1026,7 +1027,7 @@ export function exportPaidOffLoanCertificatePdf(
   const infoPairsLeft = [
     ['Nama Anggota', row.memberName],
     ['NRP', row.nrp],
-    ['Pangkat / Jabatan', row.pangkat || '-'],
+    ['Tanggal Lahir', formatTanggalLahirWithAge(row.tanggal_lahir)],
     ['Jenis Pinjaman', row.loanTypeName],
     ['Status Pinjaman', 'LUNAS PENUH'],
   ];

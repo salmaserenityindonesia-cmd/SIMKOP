@@ -13,7 +13,7 @@ describe('MemberSearchAutocomplete - Component & Filtering Logic', () => {
       id: 'mem-1',
       nrp: '12345678',
       nama: 'Budi Santoso',
-      pangkat: 'Koptu',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '1122334455',
       take_home_pay: 5500000,
     },
@@ -21,7 +21,7 @@ describe('MemberSearchAutocomplete - Component & Filtering Logic', () => {
       id: 'mem-2',
       nrp: '87654321',
       nama: 'Agus Setiawan',
-      pangkat: 'Sertu',
+      tanggal_lahir: '1986-06-15',
       bank_account_number: '9988776655',
       master_thp: 6200000,
     },
@@ -29,7 +29,7 @@ describe('MemberSearchAutocomplete - Component & Filtering Logic', () => {
       id: 'mem-3',
       nrp: '11223344',
       nama: 'Dewi Lestari',
-      pangkat: 'PNS',
+      tanggal_lahir: '1990-01-10',
       bank_account_number: null,
       take_home_pay: 4800000,
     },
@@ -37,7 +37,7 @@ describe('MemberSearchAutocomplete - Component & Filtering Logic', () => {
       id: 'mem-4',
       nrp: '55667788',
       nama: 'Bambang Pamungkas',
-      pangkat: 'Kapten',
+      tanggal_lahir: '1982-11-25',
       bank_account_number: '4455667788',
       take_home_pay: 8500000,
     },
@@ -167,7 +167,7 @@ describe('MemberSearchAutocomplete - Component & Filtering Logic', () => {
       expect(markup).toContain('role="listbox"');
       expect(markup).toContain('Budi Santoso');
       expect(markup).toContain('12345678');
-      expect(markup).toContain('Koptu');
+      expect(markup).toContain('Tgl Lahir: 20/05/1985');
       expect(markup).toContain('Rek: <span class="font-mono text-slate-700">1122334455</span>');
       expect(markup).toContain('Rp 5.500.000');
       expect(markup).toContain('Belum ada rekening');

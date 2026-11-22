@@ -2047,7 +2047,7 @@ describe('Deep-Link Navigation (?tab=, ?ref=, ?receipt=, ?date=) & Highlighting'
           id: 'mem-alif',
           nrp: '(lama 1) 00010062',
           nama: 'MOCH. ALIF NURSYARIFUDDIN',
-          pangkat: 'BRIPTU',
+          tanggal_lahir: '1990-02-10',
           status: 'nonaktif',
           membership_status: 'RESIGNED',
           updated_at: '2026-11-19T14:20:00.000Z',

@@ -31,7 +31,7 @@ const { mockMemberList } = vi.hoisted(() => ({
       id: 'm-1',
       nrp: '12345',
       nama: 'Budi Santoso',
-      pangkat: 'Sertu',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '987654321',
       take_home_pay: 5500000,
       master_thp: 5500000,
@@ -40,7 +40,7 @@ const { mockMemberList } = vi.hoisted(() => ({
       id: 'm-2',
       nrp: '67890',
       nama: 'Ahmad Yani',
-      pangkat: 'Kopda',
+      tanggal_lahir: '1988-11-10',
       bank_account_number: null,
       take_home_pay: 4200000,
       master_thp: 4200000,
@@ -99,13 +99,13 @@ describe('SalaryImport Page Integration', () => {
     expect(html).toContain('Tidak ada data anggota yang ditemukan.');
   });
 
-  it('renders fallback formatting for members without pangkat and with only master_thp', () => {
+  it('renders fallback formatting for members without tanggal_lahir and with only master_thp', () => {
     const customMembers = [
       {
         id: 'm-3',
         nrp: '112233',
         nama: 'Siti Rahma',
-        pangkat: null,
+        tanggal_lahir: null,
         bank_account_number: '   ',
         take_home_pay: null,
         master_thp: 3800000,
@@ -114,7 +114,7 @@ describe('SalaryImport Page Integration', () => {
         id: 'm-4',
         nrp: '445566',
         nama: 'Dewi Lestari',
-        pangkat: '',
+        tanggal_lahir: '',
         bank_account_number: undefined,
         take_home_pay: null,
         master_thp: null,
@@ -144,7 +144,7 @@ describe('SalaryImport Page Integration', () => {
         id: 'm-only-salary',
         nrp: '778899',
         nama: 'Agus Pramono',
-        pangkat: 'Kopda',
+        tanggal_lahir: '1988-11-10',
         bank_account_number: '112233',
         take_home_pay: null,
         master_thp: null,
@@ -163,7 +163,7 @@ describe('SalaryImport Page Integration', () => {
         id: 'm-agus',
         nrp: '95168420',
         nama: 'Agus Susanto',
-        pangkat: 'Serka',
+        tanggal_lahir: '1984-03-22',
         bank_account_number: '1122334455',
         take_home_pay: 6000000,
         master_thp: 6000000,

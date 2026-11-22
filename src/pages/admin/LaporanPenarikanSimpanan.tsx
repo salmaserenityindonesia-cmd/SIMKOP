@@ -28,6 +28,7 @@ import {
   type WithdrawalReportFilters,
   type DepositTypeOption
 } from '../../services/withdrawalReportService';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import WithdrawalReceiptModal from '../../components/withdrawal/WithdrawalReceiptModal';
 
 // ─── Date Helpers ────────────────────────────────────────────────────────────
@@ -686,7 +687,7 @@ export default function LaporanPenarikanSimpanan({
                         <td className="py-3 px-3">
                           <div className="font-bold text-slate-800">{item.member_name}</div>
                           <div className="text-[11px] text-slate-500">
-                            NRP: {item.member_nrp} • {item.member_rank}
+                            NRP: {item.member_nrp}{item.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(item.tanggal_lahir)}` : ''}
                           </div>
                         </td>
                         <td className="py-3 px-3 text-center whitespace-nowrap">

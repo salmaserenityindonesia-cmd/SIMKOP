@@ -15,6 +15,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 import {
   payStoreCreditSchedule,
@@ -242,9 +243,9 @@ export default function StoreCreditScheduleModal({
                 <p className="text-xs text-slate-300">
                   NRP: <span className="font-semibold text-white">{plan.anggota?.nrp || '-'}</span>
                 </p>
-                {plan.anggota?.pangkat && (
+                {plan.anggota?.tanggal_lahir && (
                   <p className="text-xs text-slate-300">
-                    Pangkat: <span className="font-semibold text-white">{plan.anggota.pangkat}</span>
+                    Tgl Lahir: <span className="font-semibold text-white">{formatTanggalLahirWithAge(plan.anggota.tanggal_lahir)}</span>
                   </p>
                 )}
               </div>

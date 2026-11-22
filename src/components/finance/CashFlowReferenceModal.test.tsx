@@ -55,7 +55,7 @@ describe('CashFlowReferenceModal Component', () => {
             member_id: 'm-1',
             nrp: '88010001',
             nama: 'Budi Santoso',
-            pangkat: 'Aipda',
+            tanggal_lahir: '1983-08-15',
             pokok: 100000,
             wajib: 1500000,
             belanja: 250000,
@@ -123,7 +123,7 @@ describe('CashFlowReferenceModal Component', () => {
         paidCash: 55000,
         paidDeposit: 0,
         paidCredit: 0,
-        member: { nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+        member: { nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
         items: [
           { id: 'si-1', productName: 'Minyak Goreng 2L', qty: 1, price: 38000, subtotal: 38000 },
           { id: 'si-2', productName: 'Teh Celup', qty: 1, price: 17000, subtotal: 17000 },
@@ -217,7 +217,7 @@ describe('CashFlowReferenceModal Component', () => {
         paymentDate: '2026-11-18',
         notes: 'Lunas',
         saleNumber: 'POS-CREDIT-99',
-        member: { nrp: '88010002', nama: 'Siti Aminah', pangkat: 'Bripka' },
+        member: { nrp: '88010002', nama: 'Siti Aminah', tanggal_lahir: '1985-05-20' },
       },
     };
 
@@ -266,7 +266,7 @@ describe('CashFlowReferenceModal Component', () => {
         member: {
           nrp: '88010001',
           nama: 'Budi Santoso',
-          pangkat: 'Aipda',
+          tanggal_lahir: '1983-08-15',
           bankName: 'Bank BRI',
           bankAccountNumber: '1234567890',
         },
@@ -290,7 +290,7 @@ describe('CashFlowReferenceModal Component', () => {
     );
     expect(wdHtml).toContain('Bukti Penarikan / Pencairan Simpanan');
     expect(wdHtml).toContain('Simpanan Lebaran (Personal)');
-    expect(wdHtml).toContain('Aipda');
+    expect(wdHtml).toContain('15/08/1983');
     expect(wdHtml).toContain('Transfer Bank');
     expect(wdHtml).toContain('Bank BRI — 1234567890');
     expect(wdHtml).toContain('KW-THR-01');
@@ -361,7 +361,7 @@ describe('CashFlowReferenceModal Component', () => {
             memberId: 'm-1',
             nrp: '88010001',
             nama: 'Budi Santoso',
-            pangkat: 'Aipda',
+            tanggal_lahir: '1983-08-15',
             bankName: 'Bank BRI',
             bankAccountNumber: '111222333',
             amount: 2400000,
@@ -371,7 +371,7 @@ describe('CashFlowReferenceModal Component', () => {
             memberId: 'm-2',
             nrp: '88010002',
             nama: 'Siti Aminah',
-            pangkat: 'Bripka',
+            tanggal_lahir: '1985-05-20',
             bankName: 'Bank Mandiri',
             bankAccountNumber: '444555666',
             amount: 2400000,
@@ -381,7 +381,7 @@ describe('CashFlowReferenceModal Component', () => {
             memberId: 'm-3',
             nrp: '88010003',
             nama: 'Agus Setiawan',
-            pangkat: 'Briptu',
+            tanggal_lahir: '1990-02-10',
             bankName: 'Bank BRI',
             bankAccountNumber: '777888999',
             amount: 2400000,
@@ -391,7 +391,7 @@ describe('CashFlowReferenceModal Component', () => {
             memberId: 'm-4',
             nrp: '88010004',
             nama: 'Dedi Kurniawan',
-            pangkat: 'Serka',
+            tanggal_lahir: '1986-07-15',
             bankName: 'Bank BRI',
             bankAccountNumber: '123999888',
             amount: 3600000,
@@ -455,7 +455,7 @@ describe('CashFlowReferenceModal Component', () => {
         nama: 'BAGUS BUDI PRASETYO',
         memberNrp: '00050543',
         memberName: 'BAGUS BUDI PRASETYO',
-        pangkat: 'Serka',
+        tanggal_lahir: '1986-07-15',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
         forMonth: 3,
@@ -528,7 +528,7 @@ describe('CashFlowReferenceModal Component', () => {
         nama: 'DONNY ILHAM PAMBUDI',
         memberNrp: '00060019',
         memberName: 'DONNY ILHAM PAMBUDI',
-        pangkat: 'Bripka',
+        tanggal_lahir: '1985-05-20',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
         forMonth: 3,
@@ -633,7 +633,7 @@ describe('CashFlowReferenceModal Component', () => {
             createdAt: '2026-11-01T08:00:00.000Z',
           },
         ],
-        member: { nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+        member: { nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
       },
     };
 
@@ -692,7 +692,7 @@ describe('CashFlowReferenceModal Component', () => {
         member: {
           nrp: '00010062',
           nama: 'MOCH. ALIF NURSYARIFUDDIN',
-          pangkat: 'BRIPTU',
+          tanggal_lahir: '1990-02-10',
           status: 'nonaktif',
           membershipStatus: 'RESIGNED',
           bankName: 'BRI',
@@ -779,7 +779,7 @@ describe('CashFlowReferenceModal Component', () => {
         member: {
           nrp: '88010051',
           nama: 'Dedi Kurniawan',
-          pangkat: 'Serda',
+          tanggal_lahir: '1992-04-05',
           status: 'nonaktif',
           membershipStatus: 'RESIGNED',
         },
@@ -853,7 +853,7 @@ describe('CashFlowReferenceModal Component', () => {
           id: 'mem-bagus',
           nrp: '00050543',
           nama: 'BAGUS BUDI PRASETYO',
-          pangkat: 'Serka',
+          tanggal_lahir: '1986-07-15',
         },
         items: [
           {
@@ -953,7 +953,7 @@ describe('CashFlowReferenceModal Component', () => {
         memberId: 'mem-donny',
         memberNrp: '00060019',
         memberName: 'DONNY ILHAM PAMBUDI',
-        pangkat: 'Bripka',
+        tanggal_lahir: '1985-05-20',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
         forMonth: 11,

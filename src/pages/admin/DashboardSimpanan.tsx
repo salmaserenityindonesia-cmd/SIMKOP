@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 
 export type BillingStatusFilter = 'UNPAID_ONLY' | 'ALL' | 'PAID_ONLY';
@@ -697,7 +698,7 @@ export default function DashboardSimpanan({
                       <div className="font-semibold text-gray-900">{row.anggota?.nama || '-'}</div>
                       <div className="text-gray-500 text-xs">
                         NRP: {row.anggota?.nrp || '-'}
-                        {row.anggota?.pangkat ? ` • ${row.anggota.pangkat}` : ''}
+                        {row.anggota?.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(row.anggota.tanggal_lahir)}` : ''}
                       </div>
                     </td>
 

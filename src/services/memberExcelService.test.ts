@@ -143,7 +143,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
   const standardHeaders = [
     'nrp',
     'nama',
-    'pangkat',
+    'tanggal_lahir',
     'bank_account_number',
     'membership_status',
     'tgl_awal_anggota',
@@ -390,7 +390,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '11111',
             nama: 'Joko Ramadhan',
-            pangkat: 'Bripka',
+            tanggal_lahir: '1985-05-20',
             bank_account_number: '111222',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2023-01-01',
@@ -554,7 +554,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '77777',
             nama: 'Agus Salim',
-            pangkat: 'Ipda',
+            tanggal_lahir: '1982-04-10',
             bank_account_number: '777888',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2022-01-01',
@@ -740,7 +740,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '99999',
             nama: 'Re-import Member',
-            pangkat: 'Bripka',
+            tanggal_lahir: '1985-05-20',
             bank_account_number: '999111',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2023-01-01',
@@ -951,7 +951,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '12345',
             nama: 'Sequence Test Member',
-            pangkat: 'Brigadir',
+            tanggal_lahir: '1988-09-12',
             bank_account_number: '123999',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2024-01-01',
@@ -1107,7 +1107,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '19850101',
             nama: 'Joko Ramadhan',
-            pangkat: 'Bripda',
+            tanggal_lahir: '1994-03-12',
             bank_account_number: '1985010199',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2023-01-01',
@@ -1288,7 +1288,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '12345678',
             nama: 'Budi Santoso',
-            pangkat: 'Aipda',
+            tanggal_lahir: '1983-08-15',
             bank_account_number: '0123456789',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2023-01-01',
@@ -1452,7 +1452,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '87654321',
             nama: 'Siti Aminah',
-            pangkat: 'Bripda',
+            tanggal_lahir: '1994-03-12',
             bank_account_number: '9876543210',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2023-01-01',
@@ -1509,7 +1509,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       expect(headerValues).toEqual([
         'nrp',
         'nama',
-        'pangkat',
+        'tanggal_lahir',
         'bank_account_number',
         'membership_status',
         'tgl_awal_anggota',
@@ -1518,7 +1518,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       const sampleRow = sheet.getRow(2);
       expect(sampleRow.getCell(1).value).toBe('95168420');
       expect(sampleRow.getCell(2).value).toBe('Budi Santoso');
-      expect(sampleRow.getCell(3).value).toBe('Aipda');
+      expect(sampleRow.getCell(3).value).toBe('1985-05-20');
       expect(sampleRow.getCell(4).value).toBe('367800973556');
       expect(sampleRow.getCell(5).value).toBe('ACTIVE');
       expect(sampleRow.getCell(6).value).toBe('2026-11-13');
@@ -1558,26 +1558,29 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
       const sixColHeaders = [
         'nrp',
         'nama',
-        'pangkat',
+        'tanggal_lahir',
         'bank_account_number',
         'membership_status',
         'tgl_awal_anggota',
       ];
       const sixColRows = [
-        ['95168420', 'Budi Santoso', 'Aipda', '367800973556', 'ACTIVE', '2026-11-13'],
-        ['95168421', 'Andi Wijaya', 'Bripka', '', '', ''],
+        ['95168420', 'Budi Santoso', '1983-08-15', '367800973556', 'ACTIVE', '2026-11-13'],
+        ['95168421', 'Andi Wijaya', '20/05/1985', '', '', ''],
+        ['95168422', 'Citra Dewi', 31187, '', '', ''],
       ];
 
       const file = await createMockExcelFile(sixColHeaders, sixColRows);
       const result = await parseMemberUpload(file);
 
       expect(result.errors).toHaveLength(0);
-      expect(result.rows).toHaveLength(2);
+      expect(result.rows).toHaveLength(3);
 
       const r1 = result.rows[0];
       expect(r1.nrp).toBe('95168420');
       expect(r1.nama).toBe('Budi Santoso');
-      expect(r1.pangkat).toBe('Aipda');
+      expect(r1.tanggal_lahir).toBe('1983-08-15');
+      expect(result.rows[1].tanggal_lahir).toBe('1985-05-20');
+      expect(result.rows[2].tanggal_lahir).toBe('1985-05-20');
       expect(r1.bank_account_number).toBe('367800973556');
       expect(r1.membership_status).toBe('ACTIVE');
       expect(r1.tgl_awal_anggota).toBe('2026-11-13');
@@ -1679,7 +1682,7 @@ describe('memberExcelService - As-Is Pure Mapping', () => {
           {
             nrp: '95168420',
             nama: 'Budi Santoso',
-            pangkat: 'Aipda',
+            tanggal_lahir: '1983-08-15',
             bank_account_number: '367800973556',
             membership_status: 'ACTIVE',
             tgl_awal_anggota: '2026-11-13',

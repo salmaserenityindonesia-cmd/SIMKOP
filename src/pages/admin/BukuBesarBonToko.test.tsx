@@ -60,7 +60,7 @@ vi.mock('../../services/storeCreditLedgerService', () => ({
       tenor_months: 3,
       monthly_installment: 200000,
       status: 'active',
-      anggota: { id: 'm-1', nama: 'Sertu Budi', nrp: '12345', pangkat: 'Sertu' },
+      anggota: { id: 'm-1', nama: 'Sertu Budi', nrp: '12345', tanggal_lahir: '1985-05-20' },
       schedules: [
         { id: 's-1', plan_id: 'plan-1', member_id: 'm-1', period_number: 1, target_amount: 200000, paid_amount: 200000, status: 'paid', due_date: '2026-12-01' },
         { id: 's-2', plan_id: 'plan-1', member_id: 'm-1', period_number: 2, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-01-01' },

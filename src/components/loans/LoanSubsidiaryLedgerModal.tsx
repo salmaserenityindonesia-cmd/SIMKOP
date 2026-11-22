@@ -15,6 +15,7 @@ import {
   formatReportDate,
   type PaidOffLoanReportRow,
 } from '../../services/paidOffLoansReportService';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 export interface LoanSubsidiaryLedgerEntry {
   id: string;
@@ -599,10 +600,10 @@ export default function LoanSubsidiaryLedgerModal({
                 <span>
                   NRP: <span className="font-mono">{loanRecord.nrp}</span>
                 </span>
-                {loanRecord.pangkat && loanRecord.pangkat !== '-' && (
+                {loanRecord.tanggal_lahir && (
                   <>
                     <span className="text-slate-500">•</span>
-                    <span>{loanRecord.pangkat}</span>
+                    <span>Tgl Lahir: {formatTanggalLahirWithAge(loanRecord.tanggal_lahir)}</span>
                   </>
                 )}
                 <span className="text-slate-500">•</span>

@@ -9,7 +9,7 @@ describe('MemberMigrationDetailModal - Snapshot Data Migrasi Awal Anggota', () =
     id: 'member-123',
     nrp: '78010234',
     nama: 'Bripka Joko Susilo',
-    pangkat: 'Bripka',
+    tanggal_lahir: '1983-08-15',
     bank_account_number: '9876543210',
     membership_status: 'ACTIVE',
     status: 'aktif',
@@ -65,7 +65,7 @@ describe('MemberMigrationDetailModal - Snapshot Data Migrasi Awal Anggota', () =
     expect(html).toContain('Card 1: Profil &amp; Kepegawaian');
     expect(html).toContain('78010234');
     expect(html).toContain('Bripka Joko Susilo');
-    expect(html).toContain('Bripka');
+    expect(html).toContain('15 Agustus 1983');
     expect(html).toContain('9876543210');
     expect(html).toContain('ACTIVE');
   });

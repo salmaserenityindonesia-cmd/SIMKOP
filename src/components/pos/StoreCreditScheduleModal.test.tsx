@@ -39,7 +39,7 @@ describe('StoreCreditScheduleModal Component', () => {
       id: 'mem-99',
       nama: 'Serma Agus Supriyadi',
       nrp: '98765432',
-      pangkat: 'Serma'
+      tanggal_lahir: '1984-04-12'
     },
     schedules: [
       {
@@ -126,7 +126,7 @@ describe('StoreCreditScheduleModal Component', () => {
     expect(html).toContain('Buku Bantu Angsuran Bon Toko');
     expect(html).toContain('Serma Agus Supriyadi');
     expect(html).toContain('98765432');
-    expect(html).toContain('Serma');
+    expect(html).toContain('12/04/1984');
 
     // Akumulasi Konsolidasi
     expect(html).toContain('Sisa Bon Lama:');

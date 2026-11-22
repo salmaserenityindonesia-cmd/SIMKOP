@@ -383,7 +383,7 @@ describe('memberMigrationParser - Strict Header Validation & parseMemberImportEx
       ' nomor_referensi ',
       ' NRP ',
       'Nama',
-      'PANGKAT',
+      'Tanggal Lahir',
       'bank_account_number',
       'membership_status',
       'tgl_awal_anggota',
@@ -434,7 +434,7 @@ describe('memberMigrationParser - Strict Header Validation & parseMemberImportEx
   it('rejects incomplete headers with exact missing column names', async () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Sheet1');
-    ws.addRow(['nrp', 'nama', 'pangkat']);
+    ws.addRow(['nrp', 'nama', 'tanggal_lahir']);
     ws.addRow(['12345678', 'Budi Santoso', 'Aipda']);
     const buffer = await workbook.xlsx.writeBuffer();
 
@@ -454,7 +454,7 @@ describe('memberMigrationParser - Strict Header Validation & parseMemberImportEx
       'nomor_referensi',
       'nrp',
       'nama',
-      'pangkat',
+      'tanggal_lahir',
       'bank_account_number',
       'membership_status',
       'tgl_awal_anggota',
@@ -468,7 +468,7 @@ describe('memberMigrationParser - Strict Header Validation & parseMemberImportEx
       nomor_referensi: 'REF-001',
       nrp: '95168420',
       nama: 'Budi Santoso',
-      pangkat: 'Aipda',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '367800973556',
       membership_status: 'ACTIVE',
       tgl_awal_anggota: '2026-11-13',

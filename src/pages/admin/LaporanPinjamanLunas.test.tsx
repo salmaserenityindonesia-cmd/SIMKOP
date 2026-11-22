@@ -63,7 +63,7 @@ const prabowoRow: PaidOffLoanReportRow = {
   memberId: 'mem-prabowo',
   memberName: 'Prabowo Hadi',
   nrp: '97109810',
-  pangkat: 'AIPDA',
+  tanggal_lahir: '1983-08-15',
   loanTypeId: 'lt-reg',
   loanTypeCode: 'REG',
   loanTypeName: 'Pinjaman Reguler',
@@ -86,7 +86,7 @@ const budiRow: PaidOffLoanReportRow = {
   memberId: 'mem-budi',
   memberName: 'Budi Santoso',
   nrp: '88010203',
-  pangkat: 'BRIPKA',
+  tanggal_lahir: '1985-05-20',
   loanTypeId: 'lt-khs',
   loanTypeCode: 'KHS',
   loanTypeName: 'Pinjaman Khusus',
@@ -149,7 +149,7 @@ describe('LaporanPinjamanLunas Page Component', () => {
 
     expect(html).toContain('Prabowo Hadi');
     expect(html).toContain('97109810');
-    expect(html).toContain('AIPDA');
+    expect(html).toContain('15/08/1983');
     expect(html).toContain('PINJ-MIGRASI-97109810');
     expect(html).toContain('Pinjaman Reguler');
     expect(html).toContain('24.000.000');
@@ -246,7 +246,7 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
         disbursed_at: '2024-10-25',
         status: 'active', // Belum ter-update completed tapi 24 jadwal sudah lunas
         loan_types: { id: 'lt-reg', code: 'REG', name: 'Pinjaman Reguler' },
-        member: { id: 'mem-prabowo', nrp: '97109810', nama: 'Prabowo Hadi', pangkat: 'AIPDA' },
+        member: { id: 'mem-prabowo', nrp: '97109810', nama: 'Prabowo Hadi', tanggal_lahir: '1983-08-15' },
       },
       {
         id: 'loan-unpaid-99',
@@ -258,7 +258,7 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
         status: 'active',
         sisa_pinjaman: 5000000,
         loan_types: { id: 'lt-khs', code: 'KHS', name: 'Pinjaman Khusus' },
-        member: { id: 'mem-other', nrp: '11112222', nama: 'Anggota Belum Lunas', pangkat: 'BRIGADIR' },
+        member: { id: 'mem-other', nrp: '11112222', nama: 'Anggota Belum Lunas', tanggal_lahir: '1988-11-10' },
       },
       {
         id: 'loan-old-completed',
@@ -270,7 +270,7 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
         disbursed_at: '2024-06-15',
         status: 'completed',
         loan_types: { id: 'lt-khs', code: 'KHS', name: 'Pinjaman Khusus' },
-        member: { id: 'mem-budi', nrp: '88010203', nama: 'Budi Santoso', pangkat: 'BRIPKA' },
+        member: { id: 'mem-budi', nrp: '88010203', nama: 'Budi Santoso', tanggal_lahir: '1985-05-20' },
       },
     ];
 
@@ -411,7 +411,7 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
         name: 'Pembiayaan Barang',
         financing_scheme: 'GOODS_MARKUP',
       },
-      member: { id: 'mem-goods', nrp: '87010011', nama: 'Surya Pratama', pangkat: 'BRIPKA' },
+      member: { id: 'mem-goods', nrp: '87010011', nama: 'Surya Pratama', tanggal_lahir: '1985-05-20' },
     };
 
     const goodsSchedules = [
@@ -495,7 +495,7 @@ describe('Clickable LOAN-... Reference & LoanSubsidiaryLedgerModal', () => {
     memberId: 'mem-surya',
     memberName: 'Surya Pratama',
     nrp: '87010011',
-    pangkat: 'BRIPKA',
+    tanggal_lahir: '1985-05-20',
     loanTypeId: 'lt-brg',
     loanTypeCode: 'PEMBIAYAAN_BARANG',
     loanTypeName: 'Pembiayaan Barang',

@@ -27,6 +27,7 @@ import {
   isMemberDepositBatchCategory,
   type CashFlowReferenceBreakdown,
 } from '../../services/cashFlowAuditService';
+import { formatTanggalLahir, formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import {
   formatPosPaymentSchemeLabel,
   isPosCashSaleCategory,
@@ -232,7 +233,7 @@ export default function CashFlowReferenceModal({
       (r) =>
         r.nrp.toLowerCase().includes(q) ||
         r.nama.toLowerCase().includes(q) ||
-        r.pangkat.toLowerCase().includes(q)
+        formatTanggalLahir(r.tanggal_lahir).toLowerCase().includes(q)
     );
   }, [breakdown, searchQuery]);
 
@@ -244,7 +245,7 @@ export default function CashFlowReferenceModal({
       (r) =>
         r.nrp.toLowerCase().includes(q) ||
         r.nama.toLowerCase().includes(q) ||
-        r.pangkat.toLowerCase().includes(q) ||
+        formatTanggalLahir(r.tanggal_lahir).toLowerCase().includes(q) ||
         r.bankAccountNumber.toLowerCase().includes(q) ||
         r.bankName.toLowerCase().includes(q) ||
         (r.referenceNo || '').toLowerCase().includes(q)
@@ -536,9 +537,9 @@ export default function CashFlowReferenceModal({
                             </td>
                             <td className="px-3 py-2 font-medium text-slate-900">
                               {row.nama}
-                              {row.pangkat ? (
+                              {row.tanggal_lahir ? (
                                 <span className="ml-1.5 text-[11px] text-slate-500 font-normal">
-                                  ({row.pangkat})
+                                  (Tgl Lahir: {formatTanggalLahirWithAge(row.tanggal_lahir)})
                                 </span>
                               ) : null}
                             </td>
@@ -856,7 +857,7 @@ export default function CashFlowReferenceModal({
                       <p className="font-semibold text-slate-800 mt-0.5">
                         {scp.member
                           ? `${scp.member.nama} (${scp.member.nrp})${
-                              scp.member.pangkat ? ` • ${scp.member.pangkat}` : ''
+                              scp.member.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(scp.member.tanggal_lahir)}` : ''
                             }`
                           : '-'}
                       </p>
@@ -951,9 +952,9 @@ export default function CashFlowReferenceModal({
                   </p>
                 </div>
                 <div>
-                  <p className="text-slate-500">Pangkat</p>
+                  <p className="text-slate-500">Tanggal Lahir</p>
                   <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.depositWithdrawal.member?.pangkat || '-'}
+                    {formatTanggalLahirWithAge(breakdown.depositWithdrawal.member?.tanggal_lahir)}
                   </p>
                 </div>
                 <div>
@@ -1153,9 +1154,9 @@ export default function CashFlowReferenceModal({
                             </td>
                             <td className="px-3 py-2 font-medium text-slate-900">
                               {row.nama}
-                              {row.pangkat ? (
+                              {row.tanggal_lahir ? (
                                 <span className="ml-1.5 text-[11px] text-slate-500 font-normal">
-                                  ({row.pangkat})
+                                  (Tgl Lahir: {formatTanggalLahirWithAge(row.tanggal_lahir)})
                                 </span>
                               ) : null}
                             </td>
@@ -1340,9 +1341,9 @@ export default function CashFlowReferenceModal({
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500">Pangkat</p>
+                      <p className="text-slate-500">Tanggal Lahir</p>
                       <p className="font-semibold text-slate-800 mt-0.5">
-                        {ind.pangkat || '-'}
+                        {formatTanggalLahirWithAge(ind.tanggal_lahir)}
                       </p>
                     </div>
                     <div>
@@ -1529,9 +1530,9 @@ export default function CashFlowReferenceModal({
                         <span className="font-mono text-slate-600">
                           (NRP: {batch.member.nrp})
                         </span>
-                        {batch.member.pangkat ? (
+                        {batch.member.tanggal_lahir ? (
                           <span className="ml-1 text-slate-500 font-normal">
-                            • {batch.member.pangkat}
+                            • Tgl Lahir: {formatTanggalLahirWithAge(batch.member.tanggal_lahir)}
                           </span>
                         ) : null}
                       </p>
@@ -1781,9 +1782,9 @@ export default function CashFlowReferenceModal({
                         <span className="font-mono text-slate-600">
                           ({rev.memberNrp})
                         </span>
-                        {rev.pangkat ? (
+                        {rev.tanggal_lahir ? (
                           <span className="ml-1 text-slate-500 font-normal">
-                            • {rev.pangkat}
+                            • Tgl Lahir: {formatTanggalLahirWithAge(rev.tanggal_lahir)}
                           </span>
                         ) : null}
                       </p>
@@ -2032,9 +2033,9 @@ export default function CashFlowReferenceModal({
                       </p>
                     </div>
                     <div>
-                      <p className="text-slate-500">Pangkat</p>
+                      <p className="text-slate-500">Tanggal Lahir</p>
                       <p className="font-semibold text-slate-800 mt-0.5">
-                        {mc.member.pangkat || '-'}
+                        {formatTanggalLahirWithAge(mc.member.tanggal_lahir)}
                       </p>
                     </div>
                     <div>

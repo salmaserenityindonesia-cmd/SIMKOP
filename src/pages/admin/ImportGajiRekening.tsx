@@ -13,6 +13,7 @@ import { supabase } from '../../lib/supabaseClient';
 import { MemberSearchAutocomplete } from '../../components/common/MemberSearchAutocomplete';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 export interface SalaryImportProps {
   initialMembers?: MemberSalaryAccountItem[];
@@ -70,7 +71,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
           'id',
           'nrp',
           'nama',
-          'pangkat',
+          'tanggal_lahir',
           'bank_account_number',
           'take_home_pay',
           'master_thp',
@@ -495,7 +496,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                   <tr>
                     <th className="px-4 py-3 font-medium">NRP</th>
                     <th className="px-4 py-3 font-medium">Nama Anggota</th>
-                    <th className="px-4 py-3 font-medium">Pangkat</th>
+                    <th className="px-4 py-3 font-medium">Tanggal Lahir</th>
                     <th className="px-4 py-3 font-medium">No. Rekening Bank</th>
                     <th className="px-4 py-3 font-medium text-right">Gaji Pokok (Rp)</th>
                     <th className="px-4 py-3 font-medium text-right">Angsuran Lain-lain (Rp)</th>
@@ -513,7 +514,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                       <tr key={row.id || row.nrp} className="hover:bg-surface-container-lowest/50 transition-colors">
                         <td className="px-4 py-3 font-mono text-xs text-on-surface">{row.nrp}</td>
                         <td className="px-4 py-3 font-medium text-on-surface">{row.nama}</td>
-                        <td className="px-4 py-3 text-on-surface-variant">{row.pangkat || '-'}</td>
+                        <td className="px-4 py-3 text-on-surface-variant">{formatTanggalLahirWithAge(row.tanggal_lahir)}</td>
                         <td className="px-4 py-3 font-mono text-xs text-on-surface">
                           {row.bank_account_number || '-'}
                         </td>

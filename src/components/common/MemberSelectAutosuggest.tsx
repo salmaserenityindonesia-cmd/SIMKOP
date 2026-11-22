@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, X } from 'lucide-react';
 import { extractMemberTHP } from '../../services/memberService';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 
 export interface MemberAutosuggestOption {
   id: string;
   nrp?: string;
   nama?: string;
   name?: string;
-  pangkat?: string;
+  tanggal_lahir?: string | null;
   take_home_pay?: number | string | null;
   master_thp?: number | string | null;
   salary?: number | string | null;
@@ -44,7 +45,7 @@ export const MemberSelectAutosuggest: React.FC<MemberSelectAutosuggestProps> = (
   members,
   selectedMemberId,
   onSelectMember,
-  placeholder = 'Ketik NRP, Nama Anggota, atau Pangkat...',
+  placeholder = 'Ketik NRP atau Nama Anggota...',
   disabled = false
 }) => {
   const selectedMember = useMemo(
@@ -93,8 +94,7 @@ export const MemberSelectAutosuggest: React.FC<MemberSelectAutosuggestProps> = (
       .filter(member => {
         const nama = formatMemberName(member).toLowerCase();
         const nrp = (member.nrp || '').toLowerCase();
-        const pangkat = (member.pangkat || '').toLowerCase();
-        return nama.includes(trimmed) || nrp.includes(trimmed) || pangkat.includes(trimmed);
+        return nama.includes(trimmed) || nrp.includes(trimmed);
       })
       .slice(0, MAX_SUGGESTIONS);
   }, [members, query, selectedMember]);
@@ -242,9 +242,9 @@ export const MemberSelectAutosuggest: React.FC<MemberSelectAutosuggestProps> = (
                           {member.nrp}
                         </span>
                       )}
-                      {member.pangkat && (
+                      {member.tanggal_lahir && (
                         <span className="text-xs text-slate-600 truncate">
-                          {member.pangkat}
+                          Tgl Lahir: {formatTanggalLahirWithAge(member.tanggal_lahir)}
                         </span>
                       )}
                     </div>

@@ -7,12 +7,13 @@ import { bulkWithdrawalService } from '../../../services/bulkWithdrawalService';
 import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalReceiptModal';
 import BulkLebaranTab from './BulkLebaranTab';
 import LebaranDatesTab from './LebaranDatesTab';
+import { formatTanggalLahirWithAge } from '../../../utils/dateUtils';
 
 interface Anggota {
   id: string;
   nama: string;
   nrp: string;
-  pangkat: string;
+  tanggal_lahir?: string | null;
   bank_account_number?: string;
   bank_name?: string;
 }
@@ -70,7 +71,7 @@ export default function PenarikanSimpanan() {
     try {
       const { data, error } = await supabase
         .from('anggota')
-        .select('id, nama, nrp, pangkat, bank_account_number, status, membership_status')
+        .select('id, nama, nrp, tanggal_lahir, bank_account_number, status, membership_status')
         .eq('status', 'aktif')
         .or(`nama.ilike.%${searchQuery}%,nrp.ilike.%${searchQuery}%`)
         .limit(10);
@@ -288,7 +289,9 @@ export default function PenarikanSimpanan() {
                     >
                       <div>
                         <div className="font-medium text-slate-800">{anggota.nama}</div>
-                        <div className="text-sm text-slate-500">{anggota.nrp} • {anggota.pangkat}</div>
+                        <div className="text-sm text-slate-500">
+                          {anggota.nrp}{anggota.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(anggota.tanggal_lahir)}` : ''}
+                        </div>
                       </div>
                       <ArrowRight className="w-4 h-4 text-slate-400" />
                     </button>
@@ -308,7 +311,9 @@ export default function PenarikanSimpanan() {
                     </div>
                     <div>
                       <h2 className="text-xl font-bold text-slate-800">{selectedAnggota.nama}</h2>
-                      <p className="text-slate-500">{selectedAnggota.nrp} • {selectedAnggota.pangkat}</p>
+                      <p className="text-slate-500">
+                        {selectedAnggota.nrp}{selectedAnggota.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(selectedAnggota.tanggal_lahir)}` : ''}
+                      </p>
                     </div>
                   </div>
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center gap-3">

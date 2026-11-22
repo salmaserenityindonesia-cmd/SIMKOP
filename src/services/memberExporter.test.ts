@@ -19,7 +19,7 @@ describe('memberExporter - Unit Tests', () => {
     {
       nrp: '123456',
       nama: 'Kopda Ahmad',
-      pangkat: 'Kopda',
+      tanggal_lahir: '1988-11-10',
       bank_account_number: '0011223344',
       membership_status: 'ACTIVE',
       tgl_awal_anggota: '2023-01-15',
@@ -35,7 +35,7 @@ describe('memberExporter - Unit Tests', () => {
     {
       nrp: '654321',
       nama: 'Sertu Budi',
-      pangkat: 'Sertu',
+      tanggal_lahir: '1985-05-20',
       bank_account_number: '5566778899',
       membership_status: 'ACTIVE',
       tgl_awal_anggota: '2022-05-20',
@@ -111,7 +111,7 @@ describe('memberExporter - Unit Tests', () => {
       const expectedHeaders = [
         'nrp',
         'nama',
-        'pangkat',
+        'Tanggal Lahir',
         'bank_account_number',
         'membership_status',
         'tgl_awal_anggota',

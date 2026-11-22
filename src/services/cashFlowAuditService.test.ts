@@ -37,8 +37,8 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
       { id: 'dt-l', code: 'SL', name: 'Simpanan Lebaran' },
     ];
     const members = [
-      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
-      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', pangkat: 'Bripka' },
+      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
+      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', tanggal_lahir: '1985-05-20' },
     ];
     const memberDeposits = [
       { id: 'md-1p', member_id: 'm-1', deposit_type_id: 'dt-p' },
@@ -158,7 +158,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
       id: `m-${idx + 1}`,
       nrp: String(10000 + idx + 1),
       nama: `Anggota ${idx + 1}`,
-      pangkat: 'Briptu',
+      tanggal_lahir: '1990-02-10',
     }));
     const tables: Record<string, any[]> = {
       deposit_transactions: dtRows,
@@ -236,7 +236,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
                 error: null,
               }),
             }),
@@ -303,7 +303,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
                 error: null,
               }),
             }),
@@ -370,7 +370,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
                 error: null,
               }),
             }),
@@ -522,8 +522,8 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
       },
     ];
     const anggotaRows = [
-      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda', bank_account_number: '111222333' },
-      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', pangkat: 'Bripka', bank_account_number: '222333444' },
+      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15', bank_account_number: '111222333' },
+      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah', tanggal_lahir: '1985-05-20', bank_account_number: '222333444' },
     ];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -580,7 +580,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
       expect(res.bulkLebaranWithdrawal.recipients[0]).toMatchObject({
         nrp: '88010001',
         nama: 'Budi Santoso',
-        pangkat: 'Aipda',
+        tanggal_lahir: '1983-08-15',
         bankAccountNumber: '111222333',
         amount: 1200000,
       });
@@ -645,7 +645,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
                     id: 'm-1',
                     nrp: '88010001',
                     nama: 'Budi Santoso',
-                    pangkat: 'Aipda',
+                    tanggal_lahir: '1983-08-15',
                     bank_account_number: '0099887766',
                   },
                   error: null,
@@ -1237,10 +1237,10 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
       },
     ];
     const anggotaRows = [
-      { id: 'm-1', nrp: '88010001', nama: 'Anggota 1', pangkat: 'Aipda', bank_name: 'BRI', bank_account_number: '111001' },
-      { id: 'm-2', nrp: '88010002', nama: 'Anggota 2', pangkat: 'Bripka', bank_name: 'BRI', bank_account_number: '111002' },
-      { id: 'm-3', nrp: '88010003', nama: 'Anggota 3', pangkat: 'Briptu', bank_name: 'BRI', bank_account_number: '111003' },
-      { id: 'm-4', nrp: '88010004', nama: 'Anggota 4', pangkat: 'Bripda', bank_name: 'Mandiri', bank_account_number: '222004' },
+      { id: 'm-1', nrp: '88010001', nama: 'Anggota 1', tanggal_lahir: '1983-08-15', bank_name: 'BRI', bank_account_number: '111001' },
+      { id: 'm-2', nrp: '88010002', nama: 'Anggota 2', tanggal_lahir: '1985-05-20', bank_name: 'BRI', bank_account_number: '111002' },
+      { id: 'm-3', nrp: '88010003', nama: 'Anggota 3', tanggal_lahir: '1990-02-10', bank_name: 'BRI', bank_account_number: '111003' },
+      { id: 'm-4', nrp: '88010004', nama: 'Anggota 4', tanggal_lahir: '1994-03-12', bank_name: 'Mandiri', bank_account_number: '222004' },
     ];
 
     (supabase.from as any).mockImplementation((table: string) => {
@@ -1375,7 +1375,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
                   id: 'm-bagus',
                   nrp: '00050543',
                   nama: 'BAGUS BUDI PRASETYO',
-                  pangkat: 'Serka',
+                  tanggal_lahir: '1986-07-15',
                 },
                 error: null,
               }),
@@ -1418,7 +1418,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
         nama: 'BAGUS BUDI PRASETYO',
         memberNrp: '00050543',
         memberName: 'BAGUS BUDI PRASETYO',
-        pangkat: 'Serka',
+        tanggal_lahir: '1986-07-15',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
         forMonth: 3,
@@ -1611,7 +1611,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', pangkat: 'Aipda' },
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
                 error: null,
               }),
             }),
@@ -1970,7 +1970,7 @@ describe('cashFlowAuditService - getCashFlowReferenceBreakdown', () => {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               maybeSingle: vi.fn().mockResolvedValue({
-                data: { id: 'mem-alif', nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN', pangkat: 'BRIPTU' },
+                data: { id: 'mem-alif', nrp: '00010062', nama: 'MOCH. ALIF NURSYARIFUDDIN', tanggal_lahir: '1990-02-10' },
                 error: null,
               }),
             }),
@@ -2052,7 +2052,7 @@ describe('cashFlowAuditService - Kliring Anggota Keluar (KLIRING_ANGGOTA_KELUAR)
         id: 'mem-alif',
         nrp: '(lama 1) 00010062',
         nama: 'MOCH. ALIF NURSYARIFUDDIN',
-        pangkat: 'BRIPTU',
+        tanggal_lahir: '1990-02-10',
         status: 'nonaktif',
         membership_status: 'RESIGNED',
         updated_at: '2026-11-19T10:00:00.000Z',
@@ -2265,7 +2265,7 @@ describe('cashFlowAuditService - Kliring Anggota Keluar (KLIRING_ANGGOTA_KELUAR)
         id: 'mem-alif',
         nrp: '(lama 1) 00010062',
         nama: 'MOCH. ALIF NURSYARIFUDDIN',
-        pangkat: 'BRIPTU',
+        tanggal_lahir: '1990-02-10',
         status: 'nonaktif',
         membership_status: 'RESIGNED',
         bank_name: 'BRI',
@@ -2617,7 +2617,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
 
   it('resolves SETORAN_ANGGOTA CF-EED98D59 (reference_id: null) via [KW-SETOR-20261120-3663] to itemized deposit_transactions totaling Rp 4.050.000', async () => {
     const anggotaRows = [
-      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', tanggal_lahir: '1986-07-15' },
     ];
     const depositTypes = [
       { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' },
@@ -2744,7 +2744,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
 
   it('falls back to matching historical deposit_transactions by member NRP and date when reference_no is missing', async () => {
     const anggotaRows = [
-      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', tanggal_lahir: '1986-07-15' },
     ];
     const depositTypes = [
       { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },
@@ -2820,7 +2820,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
 
   it('getTraceBackDepositRows resolves both KW-SETOR-... and CF-... trace-back codes', async () => {
     const anggotaRows = [
-      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', pangkat: 'Serka' },
+      { id: 'mem-bagus', nrp: '00050543', nama: 'BAGUS BUDI PRASETYO', tanggal_lahir: '1986-07-15' },
     ];
     const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
     const memberDeposits = [{ id: 'md-w', member_id: 'mem-bagus', deposit_type_id: 'dt-wajib' }];
@@ -2873,7 +2873,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
 
   it('populates structured bidirectional trace fields for single matrix deposit without receipt number (CF-6C928789)', async () => {
     const anggotaRows = [
-      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Bripka' },
+      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', tanggal_lahir: '1985-05-20' },
     ];
     const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
     const memberDeposits = [{ id: 'md-donny-w', member_id: 'mem-donny', deposit_type_id: 'dt-wajib' }];
@@ -2994,7 +2994,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
       { id: 'md-donny-w', member_id: 'mem-donny', deposit_type_id: 'dt-wajib' },
     ];
     const anggotaRows = [
-      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Bripka' },
+      { id: 'mem-donny', nrp: '00060019', nama: 'DONNY ILHAM PAMBUDI', tanggal_lahir: '1985-05-20' },
     ];
     const depositTypes = [{ id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' }];
 
@@ -3025,7 +3025,7 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
         memberId: 'mem-donny',
         memberNrp: '00060019',
         memberName: 'DONNY ILHAM PAMBUDI',
-        pangkat: 'Bripka',
+        tanggal_lahir: '1985-05-20',
         depositTypeCode: 'WAJIB',
         depositTypeName: 'Simpanan Wajib',
         forMonth: 11,
@@ -3138,9 +3138,9 @@ describe('cashFlowAuditService - SETORAN_ANGGOTA & Trace-Back KW-SETOR', () => {
 
   it('enrichMemberDepositCashFlowDescriptions backfills CF-CF7E7572 & CF-A2B66A65 idempotently and handles null reference_no fallback', async () => {
     const anggotaRows = [
-      { id: 'mem-zuh', nrp: '00060124', nama: 'ZUH RISSA NUR', pangkat: 'Bripda' },
-      { id: 'mem-andi', nrp: '00050999', nama: 'ANDI WIJAYA', pangkat: 'Briptu' },
-      { id: 'mem-hist', nrp: '00040111', nama: 'BUDI HARTO', pangkat: 'Aipda' },
+      { id: 'mem-zuh', nrp: '00060124', nama: 'ZUH RISSA NUR', tanggal_lahir: '1994-03-12' },
+      { id: 'mem-andi', nrp: '00050999', nama: 'ANDI WIJAYA', tanggal_lahir: '1990-02-10' },
+      { id: 'mem-hist', nrp: '00040111', nama: 'BUDI HARTO', tanggal_lahir: '1983-08-15' },
     ];
     const depositTypes = [
       { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib' },

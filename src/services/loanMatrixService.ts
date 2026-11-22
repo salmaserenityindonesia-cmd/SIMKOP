@@ -238,7 +238,7 @@ export interface LoanMatrixMember {
   memberId: string;
   nrp: string;
   nama: string;
-  pangkat?: string;
+  tanggal_lahir?: string | null;
   loanTypeName?: string;
   loanTypeCode?: string;
   agreedTenorMonths?: number;
@@ -273,7 +273,7 @@ export interface LoanMatrixMember {
     id: string;
     nrp: string;
     nama: string;
-    pangkat?: string;
+    tanggal_lahir?: string | null;
     status?: string;
     membership_status?: string;
     suspended_at?: string | null;
@@ -453,7 +453,7 @@ export const getLoanMatrix = async (
           id,
           nrp,
           nama,
-          pangkat,
+          tanggal_lahir,
           status,
           membership_status,
           suspended_at,
@@ -598,7 +598,7 @@ export const getLoanMatrix = async (
         memberId: member.id,
         nrp: member.nrp,
         nama: member.nama,
-        pangkat: member.pangkat || loan.pangkat || '',
+        tanggal_lahir: member.tanggal_lahir ?? loan.tanggal_lahir ?? null,
         loanTypeName: loanType?.name || loan.loanTypeName || 'Pinjaman Reguler',
         loanTypeCode: loanType?.code || loan.loanTypeCode || 'REGULER',
         agreedTenorMonths: Number(loan.agreed_tenor_months || loan.tenor || 0),
@@ -851,7 +851,7 @@ export const getLoanMatrix = async (
             disbursed_at,
             status,
             loan_types ( id, code, name ),
-            member:anggota ( id, nrp, nama, pangkat, status, membership_status, suspended_at, suspension_reason )
+            member:anggota ( id, nrp, nama, tanggal_lahir, status, membership_status, suspended_at, suspension_reason )
           `);
         if (missingQ && typeof missingQ.in === 'function') {
           const { data: missingLoans } = await missingQ.in('id', missingIds);
@@ -883,7 +883,7 @@ export const getLoanMatrix = async (
               memberId: member.id,
               nrp: member.nrp,
               nama: member.nama,
-              pangkat: member.pangkat || loan.pangkat || '',
+              tanggal_lahir: member.tanggal_lahir ?? loan.tanggal_lahir ?? null,
               loanTypeName: loanType?.name || 'Pinjaman Reguler',
               loanTypeCode: loanType?.code || 'REGULER',
               agreedTenorMonths: tenorVal,

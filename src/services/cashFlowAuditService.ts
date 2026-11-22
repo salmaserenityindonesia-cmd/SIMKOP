@@ -69,7 +69,7 @@ export interface OpeningSavingsMemberRow {
   member_id: string;
   nrp: string;
   nama: string;
-  pangkat: string;
+  tanggal_lahir: string | null;
   pokok: number;
   wajib: number;
   belanja: number;
@@ -90,7 +90,7 @@ export interface PosSaleBreakdown {
   paidCash: number;
   paidDeposit: number;
   paidCredit: number;
-  member?: { nrp: string; nama: string; pangkat?: string | null } | null;
+  member?: { nrp: string; nama: string; tanggal_lahir?: string | null } | null;
   items: Array<{
     id: string;
     productName: string;
@@ -122,7 +122,7 @@ export interface StoreCreditPaymentBreakdown {
   beforeBalance?: number;
   afterBalance?: number;
   relatedSales?: StoreCreditRelatedSale[];
-  member?: { nrp: string; nama: string; pangkat?: string | null } | null;
+  member?: { nrp: string; nama: string; tanggal_lahir?: string | null } | null;
 }
 
 export interface DepositWithdrawalBreakdown {
@@ -140,7 +140,7 @@ export interface DepositWithdrawalBreakdown {
   member?: {
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
     bankName?: string | null;
     bankAccountNumber?: string | null;
   } | null;
@@ -151,7 +151,7 @@ export interface BulkLebaranRecipientRow {
   memberId: string;
   nrp: string;
   nama: string;
-  pangkat: string;
+  tanggal_lahir: string | null;
   bankName: string;
   bankAccountNumber: string;
   amount: number;
@@ -196,7 +196,7 @@ export interface LoanDisbursementBreakdown {
   itemDescription?: string | null;
   costPrice?: number;
   markupAmount?: number;
-  member?: { nrp: string; nama: string; pangkat?: string | null } | null;
+  member?: { nrp: string; nama: string; tanggal_lahir?: string | null } | null;
 }
 
 export interface IndividualDepositBreakdown {
@@ -206,7 +206,7 @@ export interface IndividualDepositBreakdown {
   nama: string;
   memberNrp?: string;
   memberName?: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   depositTypeCode: string;
   depositTypeName: string;
   forMonth: number | null;
@@ -228,7 +228,7 @@ export interface DepositCancellationReversalBreakdown {
   memberId?: string;
   memberNrp: string;
   memberName: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   depositTypeCode: string;
   depositTypeName: string;
   forMonth: number | null;
@@ -270,7 +270,7 @@ export interface MemberDepositBatchBreakdown {
     id: string;
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   };
   items: MemberDepositBatchItem[];
   totalAmount: number;
@@ -287,7 +287,7 @@ export interface TraceBackDepositLookupResult {
     id: string;
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
   } | null;
   items: MemberDepositBatchItem[];
   totalAmount: number;
@@ -337,7 +337,7 @@ export interface MemberClearanceBreakdown {
   member: {
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
     status: string;
     membershipStatus: string;
     bankName?: string | null;
@@ -583,7 +583,7 @@ function formatMemberSummary(
 ): {
   nrp: string;
   nama: string;
-  pangkat?: string | null;
+  tanggal_lahir?: string | null;
   bankName?: string | null;
   bankAccountNumber?: string | null;
 } | null {
@@ -591,13 +591,13 @@ function formatMemberSummary(
   const summary: {
     nrp: string;
     nama: string;
-    pangkat?: string | null;
+    tanggal_lahir?: string | null;
     bankName?: string | null;
     bankAccountNumber?: string | null;
   } = {
     nrp: String(member.nrp || '-'),
     nama: String(member.nama || '-'),
-    pangkat: member.pangkat ?? null,
+    tanggal_lahir: member.tanggal_lahir ?? null,
   };
   if (member.bank_name !== undefined) {
     summary.bankName = member.bank_name ?? null;
@@ -612,13 +612,13 @@ async function safeFetchMemberWithBankById(memberId: string): Promise<any | null
   if (!memberId) return null;
   let res = await safeFetchSingleById<any>(
     'anggota',
-    'id, nrp, nama, pangkat, bank_name, bank_account_number',
+    'id, nrp, nama, tanggal_lahir, bank_name, bank_account_number',
     memberId
   );
   if (res.error && isPostgrestColumnError(res.error)) {
     res = await safeFetchSingleById<any>(
       'anggota',
-      'id, nrp, nama, pangkat, bank_account_number',
+      'id, nrp, nama, tanggal_lahir, bank_account_number',
       memberId
     );
   }
@@ -690,16 +690,16 @@ async function safeFetchByIds<T = any>(
 
 async function safeFetchMembersWithBankByIds(
   memberIds: string[]
-): Promise<Map<string, { id: string; nrp: string; nama: string; pangkat: string; bankName: string; bankAccountNumber: string }>> {
+): Promise<Map<string, { id: string; nrp: string; nama: string; tanggal_lahir: string | null; bankName: string; bankAccountNumber: string }>> {
   const rows = await safeFetchByIds<any>(
     'anggota',
-    'id, nrp, nama, pangkat, bank_name, bank_account_number',
+    'id, nrp, nama, tanggal_lahir, bank_name, bank_account_number',
     memberIds,
-    'id, nrp, nama, pangkat, bank_account_number'
+    'id, nrp, nama, tanggal_lahir, bank_account_number'
   );
   const map = new Map<
     string,
-    { id: string; nrp: string; nama: string; pangkat: string; bankName: string; bankAccountNumber: string }
+    { id: string; nrp: string; nama: string; tanggal_lahir: string | null; bankName: string; bankAccountNumber: string }
   >();
   for (const m of rows) {
     if (m?.id) {
@@ -707,7 +707,7 @@ async function safeFetchMembersWithBankByIds(
         id: String(m.id),
         nrp: String(m.nrp || '-'),
         nama: String(m.nama || '-'),
-        pangkat: String(m.pangkat || ''),
+        tanggal_lahir: m.tanggal_lahir ?? null,
         bankName: String(m.bank_name || ''),
         bankAccountNumber: String(m.bank_account_number || ''),
       });
@@ -822,12 +822,12 @@ async function safeFetchByColumnIn<T = any>(
 async function safeFetchAllAnggotaForClearance(): Promise<{ data: any[]; error: any }> {
   let res = await safeFetchAllPaged<any>(
     'anggota',
-    'id, nrp, nama, pangkat, status, membership_status, updated_at, created_at'
+    'id, nrp, nama, tanggal_lahir, status, membership_status, updated_at, created_at'
   );
   if (res.error && isPostgrestColumnError(res.error)) {
     res = await safeFetchAllPaged<any>(
       'anggota',
-      'id, nrp, nama, pangkat, status, membership_status, created_at'
+      'id, nrp, nama, tanggal_lahir, status, membership_status, created_at'
     );
   }
   if (res.error && isPostgrestColumnError(res.error)) {
@@ -840,20 +840,20 @@ async function safeFetchMemberFullById(memberId: string): Promise<any | null> {
   if (!memberId) return null;
   let res = await safeFetchSingleById<any>(
     'anggota',
-    'id, nrp, nama, pangkat, status, membership_status, bank_name, bank_account_number, updated_at',
+    'id, nrp, nama, tanggal_lahir, status, membership_status, bank_name, bank_account_number, updated_at',
     memberId
   );
   if (res.error && isPostgrestColumnError(res.error)) {
     res = await safeFetchSingleById<any>(
       'anggota',
-      'id, nrp, nama, pangkat, status, membership_status, bank_account_number, created_at',
+      'id, nrp, nama, tanggal_lahir, status, membership_status, bank_account_number, created_at',
       memberId
     );
   }
   if (res.error && isPostgrestColumnError(res.error)) {
     res = await safeFetchSingleById<any>(
       'anggota',
-      'id, nrp, nama, pangkat, status, created_at',
+      'id, nrp, nama, tanggal_lahir, status, created_at',
       memberId
     );
   }
@@ -1499,7 +1499,7 @@ async function fetchLebaranWithdrawalRecipientsFromTransactions(params: {
       memberId: String(md?.member_id || ''),
       nrp: String(mInfo?.nrp || '-'),
       nama: String(mInfo?.nama || 'Anggota'),
-      pangkat: String(mInfo?.pangkat || ''),
+      tanggal_lahir: mInfo?.tanggal_lahir ?? null,
       bankName: String(mInfo?.bankName || ''),
       bankAccountNumber: String(mInfo?.bankAccountNumber || ''),
       amount: Math.round(Number(tx?.amount || 0)),
@@ -1884,7 +1884,7 @@ async function resolveMemberDepositBatchData(params: {
     } else {
       const memberByRef = await safeFetchSingleById<any>(
         'anggota',
-        'id, nrp, nama, pangkat',
+        'id, nrp, nama, tanggal_lahir',
         rawRefId
       );
       if (memberByRef.data?.id) {
@@ -1897,7 +1897,7 @@ async function resolveMemberDepositBatchData(params: {
   let resolvedMember: any | null = resolvedMemberFromRef;
   if (matchedTxs.length === 0 && (memberNrpHint || resolvedMember)) {
     if (!resolvedMember && memberNrpHint) {
-      const allMembers = await safeFetchAllPaged<any>('anggota', 'id, nrp, nama, pangkat');
+      const allMembers = await safeFetchAllPaged<any>('anggota', 'id, nrp, nama, tanggal_lahir');
       resolvedMember =
         (allMembers.data || []).find(
           (m: any) => stripResignedNrpPrefix(m?.nrp) === stripResignedNrpPrefix(memberNrpHint)
@@ -2022,7 +2022,7 @@ async function resolveMemberDepositBatchData(params: {
       ? safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
       : Promise.resolve([]),
     memberIds.length > 0
-      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, pangkat', memberIds)
+      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, tanggal_lahir', memberIds)
       : Promise.resolve([]),
   ]);
 
@@ -2040,7 +2040,7 @@ async function resolveMemberDepositBatchData(params: {
     id: String(primaryMemberRow?.id || ''),
     nrp: stripResignedNrpPrefix(primaryMemberRow?.nrp) || memberNrpHint || '-',
     nama: String(primaryMemberRow?.nama || memberNameHint || 'Anggota'),
-    pangkat: primaryMemberRow?.pangkat ?? null,
+    tanggal_lahir: primaryMemberRow?.tanggal_lahir ?? null,
   };
 
   const items: MemberDepositBatchItem[] = [];
@@ -2248,7 +2248,7 @@ export async function getCashFlowReferenceBreakdown(
       ),
       safeFetchAllPaged<any>('member_deposits', 'id, member_id, deposit_type_id'),
       safeFetchAllPaged<any>('deposit_types', 'id, code, name'),
-      safeFetchAllPaged<any>('anggota', 'id, nrp, nama, pangkat'),
+      safeFetchAllPaged<any>('anggota', 'id, nrp, nama, tanggal_lahir'),
     ]);
 
     if (txRes.error) {
@@ -2278,14 +2278,14 @@ export async function getCashFlowReferenceBreakdown(
       }
     }
 
-    const memberMap = new Map<string, { id: string; nrp: string; nama: string; pangkat: string }>();
+    const memberMap = new Map<string, { id: string; nrp: string; nama: string; tanggal_lahir: string | null }>();
     for (const m of anggotaRes.data) {
       if (m?.id) {
         memberMap.set(m.id, {
           id: m.id,
           nrp: String(m.nrp || '-'),
           nama: String(m.nama || '-'),
-          pangkat: String(m.pangkat || ''),
+          tanggal_lahir: m.tanggal_lahir ?? null,
         });
       }
     }
@@ -2356,7 +2356,7 @@ export async function getCashFlowReferenceBreakdown(
           member_id: memberId,
           nrp: memberInfo?.nrp || '-',
           nama: memberInfo?.nama || 'Anggota Tidak Dikenal',
-          pangkat: memberInfo?.pangkat || '',
+          tanggal_lahir: memberInfo?.tanggal_lahir ?? null,
           pokok: 0,
           wajib: 0,
           belanja: 0,
@@ -2418,7 +2418,7 @@ export async function getCashFlowReferenceBreakdown(
         const [itemsRes, memberRes] = await Promise.all([
           safeFetchListByEq<any>('sale_items', '*', 'sale_id', saleId),
           sale.member_id
-            ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, pangkat', sale.member_id)
+            ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, tanggal_lahir', sale.member_id)
             : Promise.resolve({ data: null, error: null }),
         ]);
 
@@ -2532,7 +2532,7 @@ export async function getCashFlowReferenceBreakdown(
       let saleTotal: number | undefined;
       let salePaidCredit: number | undefined;
       let saleCreatedAt: string | null = null;
-      let member: { nrp: string; nama: string; pangkat?: string | null } | null = null;
+      let member: { nrp: string; nama: string; tanggal_lahir?: string | null } | null = null;
       let linkedSale: any = null;
 
       if (payment.sale_id) {
@@ -2561,7 +2561,7 @@ export async function getCashFlowReferenceBreakdown(
           if (linkedSale.member_id) {
             const { data: m } = await safeFetchSingleById<any>(
               'anggota',
-              'id, nrp, nama, pangkat',
+              'id, nrp, nama, tanggal_lahir',
               String(linkedSale.member_id)
             );
             member = formatMemberSummary(m);
@@ -2837,7 +2837,7 @@ export async function getCashFlowReferenceBreakdown(
             memberId: String(it?.member_id || ''),
             nrp: String(it?.nrp || mInfo?.nrp || '-'),
             nama: String(it?.member_name || mInfo?.nama || 'Anggota'),
-            pangkat: String(mInfo?.pangkat || ''),
+            tanggal_lahir: mInfo?.tanggal_lahir ?? null,
             bankName: String(mInfo?.bankName || ''),
             bankAccountNumber: String(it?.bank_account || mInfo?.bankAccountNumber || ''),
             amount: Math.round(Number(it?.amount_disbursed || 0)),
@@ -3098,7 +3098,7 @@ export async function getCashFlowReferenceBreakdown(
     let memberId: string | undefined;
     let nrp = parsed.memberNrp || '-';
     let nama = parsed.memberName || 'Anggota';
-    let pangkat: string | null = null;
+    let tanggal_lahir: string | null = null;
     let depositTypeName = parsed.depositTypeName || 'Simpanan Anggota';
     let depositTypeCode = parsed.depositTypeCode || '-';
 
@@ -3112,7 +3112,7 @@ export async function getCashFlowReferenceBreakdown(
         if (md.member_id) memberId = String(md.member_id);
         const [memberRes, typeRes] = await Promise.all([
           md.member_id
-            ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, pangkat', String(md.member_id))
+            ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, tanggal_lahir', String(md.member_id))
             : Promise.resolve({ data: null, error: null }),
           md.deposit_type_id
             ? safeFetchSingleById<any>('deposit_types', 'id, code, name', String(md.deposit_type_id))
@@ -3122,7 +3122,7 @@ export async function getCashFlowReferenceBreakdown(
           if (memberRes.data.id) memberId = String(memberRes.data.id);
           if (memberRes.data.nrp) nrp = String(memberRes.data.nrp);
           if (memberRes.data.nama) nama = String(memberRes.data.nama);
-          pangkat = memberRes.data.pangkat ?? null;
+          tanggal_lahir = memberRes.data.tanggal_lahir ?? null;
         }
         if (typeRes.data) {
           if (typeRes.data.name) depositTypeName = String(typeRes.data.name);
@@ -3184,7 +3184,7 @@ export async function getCashFlowReferenceBreakdown(
         memberId,
         memberNrp: nrp,
         memberName: nama,
-        pangkat,
+        tanggal_lahir,
         depositTypeCode,
         depositTypeName,
         forMonth,
@@ -3257,7 +3257,7 @@ export async function getCashFlowReferenceBreakdown(
       let memberId: string | undefined;
       let nrp = '-';
       let nama = 'Anggota';
-      let pangkat: string | null = null;
+      let tanggal_lahir: string | null = null;
       let depositTypeName = 'Simpanan Anggota';
       let depositTypeCode = '-';
 
@@ -3273,7 +3273,7 @@ export async function getCashFlowReferenceBreakdown(
           }
           const [memberRes, typeRes] = await Promise.all([
             md.member_id
-              ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, pangkat', String(md.member_id))
+              ? safeFetchSingleById<any>('anggota', 'id, nrp, nama, tanggal_lahir', String(md.member_id))
               : Promise.resolve({ data: null, error: null }),
             md.deposit_type_id
               ? safeFetchSingleById<any>('deposit_types', 'id, code, name', String(md.deposit_type_id))
@@ -3285,7 +3285,7 @@ export async function getCashFlowReferenceBreakdown(
             }
             nrp = String(memberRes.data.nrp || '-');
             nama = String(memberRes.data.nama || 'Anggota');
-            pangkat = memberRes.data.pangkat ?? null;
+            tanggal_lahir = memberRes.data.tanggal_lahir ?? null;
           }
           if (typeRes.data) {
             depositTypeName = String(typeRes.data.name || depositTypeName);
@@ -3337,7 +3337,7 @@ export async function getCashFlowReferenceBreakdown(
           nama,
           memberNrp: nrp,
           memberName: nama,
-          pangkat,
+          tanggal_lahir,
           depositTypeCode,
           depositTypeName,
           forMonth,
@@ -3422,11 +3422,11 @@ export async function getCashFlowReferenceBreakdown(
     }
 
     if (loan) {
-      let member: { nrp: string; nama: string; pangkat?: string | null } | null = null;
+      let member: { nrp: string; nama: string; tanggal_lahir?: string | null } | null = null;
       if (loan.member_id) {
         const { data: m } = await safeFetchSingleById<any>(
           'anggota',
-          'id, nrp, nama, pangkat',
+          'id, nrp, nama, tanggal_lahir',
           String(loan.member_id)
         );
         member = formatMemberSummary(m);
@@ -3539,7 +3539,7 @@ export async function getCashFlowReferenceBreakdown(
           member: {
             nrp: stripResignedNrpPrefix(member?.nrp) || '-',
             nama: String(member?.nama || 'Anggota Keluar'),
-            pangkat: member?.pangkat ?? null,
+            tanggal_lahir: member?.tanggal_lahir ?? null,
             status: String(member?.status || 'nonaktif'),
             membershipStatus: String(member?.membership_status || 'RESIGNED'),
             bankName: member?.bank_name ?? null,
@@ -3661,7 +3661,7 @@ export async function getTraceBackDepositRows(
             id: ind.memberId || '',
             nrp: resolvedNrp,
             nama: resolvedName,
-            pangkat: ind.pangkat ?? null,
+            tanggal_lahir: ind.tanggal_lahir ?? null,
           },
           items: [item],
           totalAmount: ind.amount,
@@ -3738,7 +3738,7 @@ export async function getTraceBackDepositRows(
       ? safeFetchByIds<any>('deposit_types', 'id, code, name', dtIds)
       : Promise.resolve([]),
     memberIds.length > 0
-      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, pangkat', memberIds)
+      ? safeFetchByIds<any>('anggota', 'id, nrp, nama, tanggal_lahir', memberIds)
       : Promise.resolve([]),
   ]);
 
@@ -3862,7 +3862,7 @@ export async function getTraceBackDepositRows(
           id: String(targetMember.id),
           nrp: stripResignedNrpPrefix(targetMember.nrp) || '-',
           nama: String(targetMember.nama || 'Anggota'),
-          pangkat: targetMember.pangkat ?? null,
+          tanggal_lahir: targetMember.tanggal_lahir ?? null,
         }
       : null,
     items,
@@ -5513,7 +5513,7 @@ export async function enrichMemberClearanceCashFlowDescriptions<
 
     const memberRows = await safeFetchByIds<any>(
       'anggota',
-      'id, nrp, nama, pangkat, status, membership_status, updated_at',
+      'id, nrp, nama, tanggal_lahir, status, membership_status, updated_at',
       refIds,
       'id, nrp, nama, status'
     );

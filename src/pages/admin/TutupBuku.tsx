@@ -24,6 +24,7 @@ import {
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
 import { getKoperasiProfile } from '../../services/settingsService';
+import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import {
   computeYearEndPreview,
   createDefaultRatSettings,
@@ -1023,7 +1024,7 @@ export default function TutupBuku({
                             </div>
                             <div className="text-[11px] font-mono text-slate-500">
                               NRP: {row.nrp || '-'}
-                              {row.pangkat ? ` • ${row.pangkat}` : ''}
+                              {row.tanggal_lahir ? ` • Tgl Lahir: ${formatTanggalLahirWithAge(row.tanggal_lahir)}` : ''}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums text-slate-700 font-medium">

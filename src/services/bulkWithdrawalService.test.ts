@@ -95,10 +95,10 @@ describe('bulkWithdrawalService', () => {
 
       // 3. Mock anggota
       const mockAnggota = [
-        { id: 'mem-01', nrp: '112233', nama: 'Budi Santoso', pangkat: 'Serka', bank_account_number: '1234567890', status: 'aktif' },
-        { id: 'mem-02', nrp: '445566', nama: 'Agus Setiawan', pangkat: 'Kopda', bank_account_number: '0987654321', status: 'aktif' },
-        { id: 'mem-03', nrp: '778899', nama: 'Dodi Purnomo', pangkat: 'Sertu', bank_account_number: '111222333', status: 'keluar' },
-        { id: 'mem-04', nrp: '332211', nama: 'Candra Wijaya', pangkat: 'Praka', bank_account_number: '444555666', status: 'aktif' }
+        { id: 'mem-01', nrp: '112233', nama: 'Budi Santoso', tanggal_lahir: '1984-03-22', bank_account_number: '1234567890', status: 'aktif' },
+        { id: 'mem-02', nrp: '445566', nama: 'Agus Setiawan', tanggal_lahir: '1988-11-10', bank_account_number: '0987654321', status: 'aktif' },
+        { id: 'mem-03', nrp: '778899', nama: 'Dodi Purnomo', tanggal_lahir: '1985-05-20', bank_account_number: '111222333', status: 'keluar' },
+        { id: 'mem-04', nrp: '332211', nama: 'Candra Wijaya', tanggal_lahir: '1991-06-15', bank_account_number: '444555666', status: 'aktif' }
       ];
 
       // 4. Mock deposit_transactions
@@ -179,7 +179,7 @@ describe('bulkWithdrawalService', () => {
       const mockDepositTypes = [{ id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' }];
       const mockMemberDeposits = [{ id: 'md-01', member_id: 'mem-01', deposit_type_id: 'dt-lebaran' }];
       const mockAnggota = [
-        { id: 'mem-01', nrp: '112233', nama: 'Siti Aminah', pangkat: 'Serda', bank_account_number: '12345', status: 'aktif' }
+        { id: 'mem-01', nrp: '112233', nama: 'Siti Aminah', tanggal_lahir: '1992-04-05', bank_account_number: '12345', status: 'aktif' }
       ];
       const mockLastCycle = {
         id: 'cyc-last',
@@ -353,7 +353,7 @@ describe('bulkWithdrawalService', () => {
       // Mock member simulation
       const mockDepositTypes = [{ id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Lebaran' }];
       const mockMemberDeposits = [{ id: 'md-01', member_id: 'mem-01', deposit_type_id: 'dt-lebaran' }];
-      const mockAnggota = [{ id: 'mem-01', nrp: '998877', nama: 'Joko Widodo', pangkat: 'Mayor', bank_account_number: '999888', status: 'aktif' }];
+      const mockAnggota = [{ id: 'mem-01', nrp: '998877', nama: 'Joko Widodo', tanggal_lahir: '1979-09-12', bank_account_number: '999888', status: 'aktif' }];
       const mockTxs = [{ member_deposit_id: 'md-01', amount: 3000000, transaction_type: 'deposit' }];
 
       let insertedTxRows: any[] = [];
@@ -479,8 +479,8 @@ describe('bulkWithdrawalService', () => {
         { id: 'md-02', member_id: 'mem-02', deposit_type_id: 'dt-lebaran' }
       ];
       const mockAnggota = [
-        { id: 'mem-01', nrp: '111111', nama: 'Agus', pangkat: 'Serka', bank_account_number: '111', status: 'aktif' },
-        { id: 'mem-02', nrp: '222222', nama: 'Budi', pangkat: 'Kopda', bank_account_number: '222', status: 'aktif' }
+        { id: 'mem-01', nrp: '111111', nama: 'Agus', tanggal_lahir: '1984-03-22', bank_account_number: '111', status: 'aktif' },
+        { id: 'mem-02', nrp: '222222', nama: 'Budi', tanggal_lahir: '1988-11-10', bank_account_number: '222', status: 'aktif' }
       ];
       const mockTxs = [
         { member_deposit_id: 'md-01', amount: 1000000, transaction_type: 'deposit' },
@@ -1085,7 +1085,7 @@ describe('bulkWithdrawalService', () => {
           return createMockChain([{ id: 'md-01', member_id: 'm-1', deposit_type_id: 'dt-lebaran' }]);
         }
         if (table === 'anggota') {
-          return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+          return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', tanggal_lahir: '1984-03-22', bank_account_number: '123', status: 'aktif' }]);
         }
         if (table === 'deposit_transactions') {
           const chain: any = {
@@ -1198,7 +1198,7 @@ describe('bulkWithdrawalService', () => {
         }
         if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
         if (table === 'member_deposits') return createMockChain([{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-leb' }]);
-        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'Bagus', tanggal_lahir: '1984-03-22', bank_account_number: '123', status: 'aktif' }]);
         if (table === 'deposit_transactions') {
           return {
             select: vi.fn(() => ({
@@ -1279,7 +1279,7 @@ describe('bulkWithdrawalService', () => {
       (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
         if (table === 'member_deposits') return createMockChain([{ id: 'md-01', member_id: 'mem-1', deposit_type_id: 'dt-leb' }]);
-        if (table === 'anggota') return createMockChain([{ id: 'mem-1', nrp: '112233', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Serka', bank_account_number: '123456', status: 'aktif' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'mem-1', nrp: '112233', nama: 'DONNY ILHAM PAMBUDI', tanggal_lahir: '1984-03-22', bank_account_number: '123456', status: 'aktif' }]);
         if (table === 'deposit_transactions') return createMockChain(mockTxs);
         if (table === 'loans') return createMockChain([]);
         return createMockChain([]);
@@ -1365,7 +1365,7 @@ describe('bulkWithdrawalService', () => {
         }
         if (table === 'deposit_types') return createMockChain([{ id: 'dt-leb', code: 'SL', name: 'Simpanan Lebaran' }]);
         if (table === 'member_deposits') return createMockChain([{ id: 'md-1', member_id: 'm-1', deposit_type_id: 'dt-leb' }]);
-        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'DONNY ILHAM PAMBUDI', pangkat: 'Serka', bank_account_number: '123', status: 'aktif' }]);
+        if (table === 'anggota') return createMockChain([{ id: 'm-1', nrp: '00050543', nama: 'DONNY ILHAM PAMBUDI', tanggal_lahir: '1984-03-22', bank_account_number: '123', status: 'aktif' }]);
         if (table === 'deposit_transactions') {
           return {
             select: vi.fn(() => ({
