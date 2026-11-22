@@ -1960,23 +1960,48 @@ export interface BulkLoanResult {
   totalFailed: number;
   successCount: number;
   failCount: number;
+  totalInstallmentsPaid?: number;
+  totalAmountCollected?: number;
   errors?: Array<{ loanId: string; error: string }>;
   errorMessages?: string[];
 }
 
+export interface BulkCheckLoansOptions {
+  targetYear?: number;
+  targetMonth?: number; // 1..12
+  paymentDate?: string; // 'YYYY-MM-DD'
+  loanIds?: string[];
+  restrictToTargetYear?: boolean;
+}
+
 /**
- * Menjalankan centang lunas massal s/d bulan ini untuk seluruh pinjaman aktif
+ * Menjalankan centang lunas massal s/d bulan tertentu (atau bulan berjalan) untuk pinjaman aktif
  */
-export const bulkCheckAllLoansUpToCurrentMonth = async (
+export const bulkCheckAllLoansUpToMonth = async (
+  options: BulkCheckLoansOptions = {},
   onProgress?: (progress: BulkLoanProgress) => void
 ): Promise<BulkLoanResult> => {
-  // 1. Tentukan tanggal acuan jatuh tempo bulan berjalan
+  // 1. Tentukan tanggal acuan jatuh tempo & rentang target
   const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
-  const cutoffDate = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999);
+  const targetYear = options.targetYear ?? now.getFullYear();
+  const targetMonth = Math.min(12, Math.max(1, options.targetMonth ?? (now.getMonth() + 1)));
+  const startDateStr = `${targetYear}-01-01`;
+  const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+  const cutoffDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
   const cutoffDateIso = cutoffDate.toISOString();
-  const cutoffDateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(new Date(currentYear, currentMonth, 0).getDate()).padStart(2, '0')}`;
+  const cutoffDateStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  // Tentukan base timestamp untuk pencatatan kas berurutan (+10ms per baris)
+  let baseTime = Date.now();
+  if (options.paymentDate) {
+    const match = options.paymentDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      const d = parseInt(match[3], 10);
+      baseTime = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds(), 0).getTime();
+    }
+  }
 
   // 2. Ambil seluruh data pinjaman aktif yang masih berjalan (status IN ('active', 'approved'))
   const runActiveLoansQuery = async (withGoodsCols: boolean) => {
@@ -2032,7 +2057,7 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
   }
 
   if (loanErr || !activeLoans) {
-    console.error('Error fetching loans for bulkCheckAllLoansUpToCurrentMonth:', loanErr);
+    console.error('Error fetching loans for bulkCheckAllLoansUpToMonth:', loanErr);
     throw loanErr || new Error('Gagal memuat pinjaman aktif');
   }
 
@@ -2047,17 +2072,30 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
     console.warn('Could not retrieve current user for bulk loan check:', authErr);
   }
 
-  // 4. Eksekusi pemrosesan secara bertahap (batch loop per pinjaman), kecualikan anggota SUSPENDED/nonaktif
-  const loanList = (activeLoans || []).filter((loan: any) => {
+  // 4. Filter anggota aktif, terapkan filter loanIds jika ada, dan urutkan berdasar NRP ASC
+  let loanList = (activeLoans || []).filter((loan: any) => {
     const m = loan.member as any;
     if (!m) return true;
     const st = m.status ? String(m.status).toLowerCase() : 'aktif';
     const mst = m.membership_status ? String(m.membership_status).toUpperCase() : 'ACTIVE';
     return st === 'aktif' && mst === 'ACTIVE';
   });
+
+  if (options.loanIds && options.loanIds.length > 0) {
+    const allowedIds = new Set(options.loanIds);
+    loanList = loanList.filter((loan: any) => allowedIds.has(loan.id));
+  }
+
+  loanList = [...loanList].sort((a: any, b: any) =>
+    String((a.member as any)?.nrp || '').localeCompare(String((b.member as any)?.nrp || ''))
+  );
+
   const total = loanList.length;
   let successCount = 0;
   let failCount = 0;
+  let totalInstallmentsPaid = 0;
+  let totalAmountCollected = 0;
+  let seqIdx = 0;
   const errors: Array<{ loanId: string; error: string }> = [];
   const errorMessages: string[] = [];
 
@@ -2089,7 +2127,10 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
 
       const targetSchedules = (schedules || []).filter((s: any) => {
         if (!s.due_date) return false;
-        const isDue = s.due_date <= cutoffDateStr || s.due_date <= cutoffDateIso;
+        const dueDateYmd = String(s.due_date).slice(0, 10);
+        const isDue = options.restrictToTargetYear
+          ? dueDateYmd >= startDateStr && dueDateYmd <= cutoffDateStr
+          : (s.due_date <= cutoffDateStr || s.due_date <= cutoffDateIso);
         const target = Number(s.target_amount || 0);
         const paid = Number(s.paid_amount || 0);
         const isUnpaid = s.status !== 'paid' || paid < target;
@@ -2130,16 +2171,19 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
             schedMargin > 0 ||
             Number(loan.markup_amount || 0) > 0;
 
+          const entryIso = new Date(baseTime + seqIdx * 10).toISOString();
+          seqIdx++;
+
           const repayRow: Record<string, any> = {
             loan_id: loan.id,
             schedule_id: sched.id,
             amount_paid: remainingAmount,
             payment_method: 'POTONG_GAJI',
-            payment_date: new Date().toISOString(),
+            payment_date: entryIso,
             receipt_number: `KW-BULK-${loan.loan_number || loan.id}-B${sched.period_number}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-            notes: `Centang Massal Angsuran s/d Bulan ${currentMonth}/${currentYear}`,
+            notes: `Centang Massal Angsuran s/d Bulan ${targetMonth}/${targetYear}`,
             created_by: currentUserId || null,
-            created_at: new Date().toISOString(),
+            created_at: entryIso,
           };
           if (hasMargin) {
             repayRow.principal_portion = portions.principalPortion;
@@ -2159,8 +2203,11 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
               portions.marginPortion > 0
                 ? `Angsuran Pembiayaan Barang (${loan.item_description || loan.loan_number || 'Barang'}) Bln ke-${sched.period_number}${memberSeg ? ` — ${memberSeg}` : ''} | Pokok: Rp ${formatMatrixRp(portions.principalPortion)} | Margin: Rp ${formatMatrixRp(portions.marginPortion)}`
                 : `Angsuran Pinjaman (${loan.loan_number || loan.id}) Bln ke-${sched.period_number}${memberSeg ? ` — ${memberSeg}` : ''}`,
-            created_at: new Date().toISOString(),
+            created_at: entryIso,
           });
+
+          totalInstallmentsPaid++;
+          totalAmountCollected += remainingAmount;
         }
       }
 
@@ -2236,9 +2283,20 @@ export const bulkCheckAllLoansUpToCurrentMonth = async (
     totalFailed: failCount,
     successCount,
     failCount,
+    totalInstallmentsPaid,
+    totalAmountCollected,
     errors,
     errorMessages,
   };
+};
+
+/**
+ * Menjalankan centang lunas massal s/d bulan ini untuk seluruh pinjaman aktif
+ */
+export const bulkCheckAllLoansUpToCurrentMonth = async (
+  onProgress?: (progress: BulkLoanProgress) => void
+): Promise<BulkLoanResult> => {
+  return bulkCheckAllLoansUpToMonth({}, onProgress);
 };
 
 /**

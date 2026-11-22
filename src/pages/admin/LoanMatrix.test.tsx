@@ -8,6 +8,8 @@ import {
   fetchLoanMatrixData,
   formatAmount,
   getCellBadge,
+  computeBulkPreviewSummary,
+  getSmartDefaultBulkTargetMonth,
 } from './LoanMatrix';
 import {
   getLoanMatrix,
@@ -217,7 +219,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('Matriks Proyeksi &amp; Kepatuhan Pinjaman');
       expect(html).toContain('SIMKOP / Simpan Pinjam / Matriks Pinjaman');
       expect(html).toContain('Export Excel');
-      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('Centang Semua s/d Bulan Tertentu');
       expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
 
       // KPI card titles
@@ -546,14 +548,14 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
     });
   });
 
-  describe('Bulk Actions: Centang Semua s/d Bulan Ini (Tanpa Cocokkan Otomatis)', () => {
-    it('renders Centang Semua s/d Bulan Ini and omits removed Cocokkan Otomatis button', () => {
+  describe('Bulk Actions: Centang Semua s/d Bulan Tertentu (Tanpa Cocokkan Otomatis)', () => {
+    it('renders Centang Semua s/d Bulan Tertentu and omits removed Cocokkan Otomatis button', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
 
       expect(html).toContain('data-testid="bulk-check-all-btn"');
       expect(html).not.toContain('data-testid="bulk-reconcile-btn"');
-      expect(html).toContain('title="Centang lunas seluruh pinjaman anggota pasca saldo awal s/d bulan ini"');
-      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('title="Centang lunas seluruh pinjaman anggota s/d bulan tertentu"');
+      expect(html).toContain('Centang Semua s/d Bulan Tertentu');
       expect(html).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
     });
 
@@ -565,7 +567,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
 
     it('renders the bulk check button with initial state ready to trigger confirmation dialog', () => {
       const html = renderToStaticMarkup(<LoanMatrix initialData={mockSummaryData as any} />);
-      expect(html).toContain('Centang Semua s/d Bulan Ini');
+      expect(html).toContain('Centang Semua s/d Bulan Tertentu');
       expect(html).toContain('data-testid="bulk-check-all-btn"');
     });
   });
@@ -591,7 +593,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(headerSlice).not.toContain('bulk-reconcile-btn');
       expect(headerSlice).not.toContain('export-excel-btn');
       expect(headerSlice).not.toContain('Export Excel');
-      expect(headerSlice).not.toContain('Centang Semua s/d Bulan Ini');
+      expect(headerSlice).not.toContain('Centang Semua s/d Bulan Tertentu');
       expect(headerSlice).not.toContain('Cocokkan Otomatis');
     });
 
@@ -610,7 +612,7 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(toolbarSlice).toContain('Cari NRP atau Nama...');
       expect(toolbarSlice).toContain('Semua Status');
       expect(toolbarSlice).toContain('data-testid="bulk-check-all-btn"');
-      expect(toolbarSlice).toContain('Centang Semua s/d Bulan Ini');
+      expect(toolbarSlice).toContain('Centang Semua s/d Bulan Tertentu');
       expect(toolbarSlice).not.toContain('data-testid="bulk-reconcile-btn"');
       expect(toolbarSlice).not.toContain('Cocokkan Otomatis dengan Saldo Terangsur');
       expect(toolbarSlice).toContain('data-testid="export-excel-btn"');
@@ -1312,6 +1314,85 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('data-testid="loan-matrix-url-filter-banner"');
       expect(html).toContain('Surya Pratama');
       expect(html).not.toContain('Anggota Lain Tidak Cocok');
+    });
+  });
+
+  describe('computeBulkPreviewSummary & getSmartDefaultBulkTargetMonth', () => {
+    const sampleRows: any[] = [
+      {
+        id: 'loan-tes-2',
+        loanId: 'loan-tes-2',
+        loanNumber: 'LP-002',
+        memberId: 'mem-2',
+        nrp: '002',
+        nama: 'Anggota Tes 2',
+        isLoanActive: true,
+        status: 'active',
+        months: {
+          11: { month: 11, year: 2026, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+          12: { month: 12, year: 2026, status: 'PROJECTED', targetAmount: 1100000, paidAmount: 0, loanId: 'loan-tes-2', periodNumber: 1 },
+        },
+      },
+      {
+        id: 'loan-tes-1',
+        loanId: 'loan-tes-1',
+        loanNumber: 'LP-001',
+        memberId: 'mem-1',
+        nrp: '001',
+        nama: 'anggota tes 1',
+        isLoanActive: true,
+        status: 'active',
+        months: {
+          11: { month: 11, year: 2026, status: 'NONE', targetAmount: 0, paidAmount: 0 },
+          12: { month: 12, year: 2026, status: 'PROJECTED', targetAmount: 200000, paidAmount: 0, loanId: 'loan-tes-1', periodNumber: 1 },
+        },
+      },
+      {
+        id: 'loan-done',
+        loanId: 'loan-done',
+        loanNumber: 'LP-DONE',
+        memberId: 'mem-3',
+        nrp: '003',
+        nama: 'Sudah Lunas',
+        isLoanActive: false,
+        status: 'completed',
+        months: {
+          12: { month: 12, year: 2026, status: 'PROJECTED', targetAmount: 500000, paidAmount: 0, loanId: 'loan-done', periodNumber: 1 },
+        },
+      },
+      {
+        id: 'loan-susp',
+        loanId: 'loan-susp',
+        loanNumber: 'LP-SUSP',
+        memberId: 'mem-4',
+        nrp: '004',
+        nama: 'Anggota Beku',
+        isLoanActive: true,
+        status: 'active',
+        membershipStatus: 'SUSPENDED',
+        months: {
+          12: { month: 12, year: 2026, status: 'FROZEN', targetAmount: 400000, paidAmount: 0, loanId: 'loan-susp', periodNumber: 1 },
+        },
+      },
+    ];
+
+    it('computes dynamic preview summary for targetEndMonth=12 (Rp 1.300.000 across 2 active members) and 0 for month=11', () => {
+      const novPreview = computeBulkPreviewSummary(sampleRows, 11, 2026);
+      expect(novPreview.affectedMemberCount).toBe(0);
+      expect(novPreview.unpaidItems).toHaveLength(0);
+      expect(novPreview.totalCollectibleAmount).toBe(0);
+
+      const decPreview = computeBulkPreviewSummary(sampleRows, 12, 2026);
+      expect(decPreview.affectedMemberCount).toBe(2);
+      expect(decPreview.unpaidItems).toHaveLength(2);
+      expect(decPreview.totalCollectibleAmount).toBe(1300000);
+      expect(decPreview.affectedLoanIds).toEqual(['loan-tes-1', 'loan-tes-2']);
+      expect(decPreview.unpaidItems.map(i => i.nama)).toEqual(['anggota tes 1', 'Anggota Tes 2']);
+    });
+
+    it('picks smart default target month when installments start in December', () => {
+      const picked = getSmartDefaultBulkTargetMonth(sampleRows, new Date().getFullYear());
+      expect(picked).toBe(12);
     });
   });
 });

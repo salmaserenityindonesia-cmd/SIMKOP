@@ -21,9 +21,7 @@ import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
   getCumulativePaidUpToMonth,
-  bulkCheckAllLoansUpToCurrentMonth,
-  BulkLoanProgress,
-  BulkLoanResult,
+  bulkCheckAllLoansUpToMonth,
   GetLoanMatrixOptions,
   LoanMatrixMember,
   LoanMatrixSummary,
@@ -34,6 +32,160 @@ import * as ExcelJS from 'exceljs';
 import AdminLayout from '../../components/layout/AdminLayout';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+const FULL_MONTH_NAMES = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+
+const getTodayLocalYmd = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+export interface BulkPreviewUnpaidItem {
+  loanId?: string;
+  memberId: string;
+  nrp: string;
+  nama: string;
+  month: number;
+  periodNumber: number;
+  remainingAmount: number;
+}
+
+export interface BulkPreviewSummary {
+  unpaidItems: BulkPreviewUnpaidItem[];
+  affectedMemberCount: number;
+  affectedLoanIds: string[];
+  totalCollectibleAmount: number;
+}
+
+const ELIGIBLE_BULK_CELL_STATUSES = new Set(['UNPAID', 'PARTIAL', 'PROJECTED', 'PROJECTION']);
+
+export const computeBulkPreviewSummary = (
+  rows: LoanMatrixMember[],
+  targetEndMonth: number,
+  year: number
+): BulkPreviewSummary => {
+  const unpaidItems: BulkPreviewUnpaidItem[] = [];
+  const clampedTargetMonth = Math.min(12, Math.max(1, targetEndMonth));
+
+  for (const row of rows) {
+    const { isLoanCompleted } = getRowComplianceInfo(row, year);
+    const isSuspended =
+      (row.anggota?.membership_status || row.membershipStatus || '').toUpperCase() === 'SUSPENDED';
+    if (isLoanCompleted || isSuspended) continue;
+
+    const loanId = row.loanId || row.id || Object.values(row.months).find(c => c?.loanId)?.loanId;
+    const memberId = row.memberId || row.nrp;
+    const nrp = row.anggota?.nrp || row.nrp || '';
+    const nama = row.anggota?.nama || row.nama || '';
+
+    for (let m = 1; m <= clampedTargetMonth; m++) {
+      const cell = row.months[m];
+      if (!cell) continue;
+      const st = (cell.status || '').toUpperCase();
+      if (!ELIGIBLE_BULK_CELL_STATUSES.has(st)) continue;
+
+      const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
+      if (remaining > 0) {
+        unpaidItems.push({
+          loanId,
+          memberId,
+          nrp,
+          nama,
+          month: m,
+          periodNumber: cell.periodNumber ?? m,
+          remainingAmount: remaining,
+        });
+      }
+    }
+  }
+
+  unpaidItems.sort(
+    (a, b) =>
+      a.nrp.localeCompare(b.nrp) ||
+      a.month - b.month ||
+      a.periodNumber - b.periodNumber
+  );
+
+  const affectedMemberCount = new Set(unpaidItems.map(item => item.memberId)).size;
+  const affectedLoanIds = Array.from(
+    new Set(unpaidItems.map(item => item.loanId).filter((id): id is string => Boolean(id)))
+  );
+  const totalCollectibleAmount = unpaidItems.reduce((sum, item) => sum + item.remainingAmount, 0);
+
+  return {
+    unpaidItems,
+    affectedMemberCount,
+    affectedLoanIds,
+    totalCollectibleAmount,
+  };
+};
+
+export const getSmartDefaultBulkTargetMonth = (
+  rows: LoanMatrixMember[],
+  activeYear: number
+): number => {
+  const currentYearNow = new Date().getFullYear();
+  const currentMonthNow = new Date().getMonth() + 1;
+  let defaultMonth = activeYear === currentYearNow ? currentMonthNow : 12;
+
+  if (activeYear === currentYearNow) {
+    const eligibleRows = rows.filter(row => {
+      const { isLoanCompleted } = getRowComplianceInfo(row, activeYear);
+      const isSuspended =
+        (row.anggota?.membership_status || row.membershipStatus || '').toUpperCase() === 'SUSPENDED';
+      return !isLoanCompleted && !isSuspended;
+    });
+
+    const hasEligibleUpToCurrent = eligibleRows.some(row => {
+      for (let m = 1; m <= defaultMonth; m++) {
+        const cell = row.months[m];
+        if (!cell) continue;
+        const st = (cell.status || '').toUpperCase();
+        if (ELIGIBLE_BULK_CELL_STATUSES.has(st)) {
+          const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
+          if (remaining > 0) return true;
+        }
+      }
+      return false;
+    });
+
+    if (!hasEligibleUpToCurrent) {
+      for (let m = 1; m <= 12; m++) {
+        const hasInMonth = eligibleRows.some(row => {
+          const cell = row.months[m];
+          if (!cell) return false;
+          const st = (cell.status || '').toUpperCase();
+          if (ELIGIBLE_BULK_CELL_STATUSES.has(st)) {
+            const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
+            return remaining > 0;
+          }
+          return false;
+        });
+        if (hasInMonth) {
+          defaultMonth = m;
+          break;
+        }
+      }
+    }
+  }
+
+  return defaultMonth;
+};
 
 export const formatAmount = (num?: number | null): string => {
   if (!num || num === 0) return '-';
@@ -209,15 +361,22 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(initialSelectedLoan ?? null);
   const feedback = useContext(FeedbackContext);
 
-  // Bulk Actions State: Centang Semua s/d Bulan Ini
+  // Bulk Actions State: Centang Semua s/d Bulan Tertentu
   const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(false);
+  const [targetEndMonth, setTargetEndMonth] = useState<number>(() => new Date().getMonth() + 1);
+  const [bulkPaymentDate, setBulkPaymentDate] = useState<string>(() => getTodayLocalYmd());
   const [isBulkChecking, setIsBulkChecking] = useState(false);
   const [isProcessingBulk, setIsProcessingBulk] = useState(false);
   const [bulkCheckProgress, setBulkCheckProgress] = useState<{ current: number; total: number; currentMemberName?: string }>({
     current: 0,
     total: 0,
   });
-  const [bulkCheckSummary, setBulkCheckSummary] = useState<{ totalSuccess: number; totalFailed: number } | null>(null);
+  const [bulkCheckSummary, setBulkCheckSummary] = useState<{
+    totalSuccess: number;
+    totalFailed: number;
+    totalInstallmentsPaid?: number;
+    totalAmountCollected?: number;
+  } | null>(null);
 
   const formattedCutoffDate = `Jan-${String(year).slice(-2)}`;
 
@@ -241,59 +400,6 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
       setStatusFilter('ALL');
     }
   }, [urlSearchQuery]);
-
-  const handleBulkCheckAll = async () => {
-    setIsProcessingBulk(true);
-    setIsBulkChecking(true);
-    setBulkCheckSummary(null);
-    try {
-      const res = await bulkCheckAllLoansUpToCurrentMonth((progress) => {
-        setBulkCheckProgress({
-          current: progress.processed,
-          total: progress.total,
-          currentMemberName: progress.currentMemberName,
-        });
-      });
-
-      const successCount = res.successCount ?? res.totalSuccess ?? 0;
-      const failCount = res.failCount ?? res.totalFailed ?? 0;
-
-      setBulkCheckSummary({
-        totalSuccess: successCount,
-        totalFailed: failCount,
-      });
-
-      if (failCount === 0) {
-        if (feedback?.showToast) {
-          feedback.showToast('Seluruh angsuran pinjaman s/d bulan ini berhasil dicentang lunas.', 'success');
-        }
-      } else {
-        console.warn('Rincian pinjaman yang gagal dicentang massal:', res.errors);
-        if (feedback?.showToast) {
-          feedback.showToast(
-            `Centang massal selesai: ${successCount} berhasil, ${failCount} gagal. Periksa konsol untuk rincian.`,
-            'warning'
-          );
-        }
-      }
-
-      await fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
-    } catch (err: any) {
-      console.error('Error during bulk check all loans:', err);
-      if (feedback?.showToast) {
-        feedback.showToast(
-          'Terjadi kesalahan saat memproses centang massal pinjaman: ' + (err?.message || 'Kesalahan sistem'),
-          'error'
-        );
-      } else {
-        alert('Terjadi kesalahan saat memproses centang massal pinjaman.');
-      }
-      setShowCheckAllConfirmModal(false);
-    } finally {
-      setIsProcessingBulk(false);
-      setIsBulkChecking(false);
-    }
-  };
 
   useEffect(() => {
     if (initialData !== undefined) return;
@@ -344,6 +450,81 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
       return matchSearch && matchStatus;
     });
   }, [data, search, statusFilter]);
+
+  const bulkPreviewSummary = useMemo(
+    () => computeBulkPreviewSummary(filteredMembers, targetEndMonth, year),
+    [filteredMembers, targetEndMonth, year]
+  );
+
+  const handleBulkCheckAll = async () => {
+    if (bulkPreviewSummary.unpaidItems.length === 0) return;
+
+    setIsProcessingBulk(true);
+    setIsBulkChecking(true);
+    setBulkCheckSummary(null);
+    try {
+      const res = await bulkCheckAllLoansUpToMonth(
+        {
+          targetYear: year,
+          targetMonth: targetEndMonth,
+          paymentDate: bulkPaymentDate,
+          loanIds: bulkPreviewSummary.affectedLoanIds,
+          restrictToTargetYear: true,
+        },
+        (progress) => {
+          setBulkCheckProgress({
+            current: progress.processed,
+            total: progress.total,
+            currentMemberName: progress.currentMemberName,
+          });
+        }
+      );
+
+      const successCount = res.successCount ?? res.totalSuccess ?? 0;
+      const failCount = res.failCount ?? res.totalFailed ?? 0;
+      const targetMonthName = FULL_MONTH_NAMES[targetEndMonth - 1];
+
+      setBulkCheckSummary({
+        totalSuccess: successCount,
+        totalFailed: failCount,
+        totalInstallmentsPaid: res.totalInstallmentsPaid,
+        totalAmountCollected: res.totalAmountCollected,
+      });
+
+      if (failCount === 0) {
+        if (feedback?.showToast) {
+          feedback.showToast(
+            `Seluruh angsuran pinjaman s/d ${targetMonthName} ${year} berhasil dicentang lunas.`,
+            'success'
+          );
+        }
+      } else {
+        console.warn('Rincian pinjaman yang gagal dicentang massal:', res.errors);
+        if (feedback?.showToast) {
+          feedback.showToast(
+            `Centang massal s/d ${targetMonthName} ${year} selesai: ${successCount} berhasil, ${failCount} gagal. Periksa konsol untuk rincian.`,
+            'warning'
+          );
+        }
+      }
+
+      await fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
+    } catch (err: any) {
+      console.error('Error during bulk check all loans:', err);
+      if (feedback?.showToast) {
+        feedback.showToast(
+          'Terjadi kesalahan saat memproses centang massal pinjaman: ' + (err?.message || 'Kesalahan sistem'),
+          'error'
+        );
+      } else {
+        alert('Terjadi kesalahan saat memproses centang massal pinjaman.');
+      }
+      setShowCheckAllConfirmModal(false);
+    } finally {
+      setIsProcessingBulk(false);
+      setIsBulkChecking(false);
+    }
+  };
 
   // Unique members count for accurate pagination display
   const uniqueMembersCount = useMemo(() => {
@@ -490,11 +671,13 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={() => {
+              setTargetEndMonth(getSmartDefaultBulkTargetMonth(filteredMembers, year));
+              setBulkPaymentDate(getTodayLocalYmd());
               setBulkCheckSummary(null);
               setShowCheckAllConfirmModal(true);
             }}
             disabled={isProcessingBulk || isBulkChecking}
-            title="Centang lunas seluruh pinjaman anggota pasca saldo awal s/d bulan ini"
+            title="Centang lunas seluruh pinjaman anggota s/d bulan tertentu"
             className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg font-semibold text-sm shadow-xs transition-colors cursor-pointer disabled:opacity-50"
             data-testid="bulk-check-all-btn"
           >
@@ -506,7 +689,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
             ) : (
               <>
                 <CheckSquare className="w-4 h-4 text-emerald-600" />
-                <span>Centang Semua s/d Bulan Ini</span>
+                <span>Centang Semua s/d Bulan Tertentu</span>
               </>
             )}
           </button>
@@ -943,7 +1126,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         />
       )}
 
-      {/* Modal Dialog Konfirmasi & Progress Centang Semua s/d Bulan Ini Massal */}
+      {/* Modal Dialog Konfirmasi & Progress Pelunasan Massal s/d Bulan Tertentu */}
       {showCheckAllConfirmModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4"
@@ -957,11 +1140,16 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                   <CheckSquare className={`w-5 h-5 ${isBulkChecking || isProcessingBulk ? 'animate-pulse' : ''}`} />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    Centang Semua Pinjaman s/d Bulan Ini
-                  </h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      Pelunasan Massal Angsuran s/d Bulan Tertentu
+                    </h3>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      Tahun Fiskal {year}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-500">
-                    Tandai lunas seluruh jadwal angsuran pinjaman anggota dari awal tenor s/d sekarang
+                    Pilih bulan batas akhir pelunasan dan tinjau total nominal sebelum eksekusi
                   </p>
                 </div>
               </div>
@@ -1038,7 +1226,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                       Centang Massal Berhasil Diselesaikan!
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
-                      Seluruh jadwal angsuran pinjaman s/d bulan ini berhasil ditandai lunas.
+                      Seluruh jadwal angsuran pinjaman s/d {FULL_MONTH_NAMES[targetEndMonth - 1]} {year} berhasil ditandai lunas.
                     </p>
                   </div>
 
@@ -1077,16 +1265,92 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                 </div>
               )}
 
-              {/* State 3: Confirmation Dialog */}
+              {/* State 3: Confirmation Dialog with Month Grid & Dynamic Preview */}
               {!(isBulkChecking || isProcessingBulk) && bulkCheckSummary === null && (
                 <div className="space-y-4">
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
-                    <div className="font-semibold flex items-center gap-1.5 text-amber-950">
-                      <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
-                      <span>Konfirmasi Tindakan Massal</span>
+                  {/* Grid 12 Bulan */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-2">
+                      Pilih Bulan Batas Akhir Pelunasan (Tahun {year})
+                    </label>
+                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                      {MONTHS.map((mLabel, idx) => {
+                        const monthNum = idx + 1;
+                        const isSelected = monthNum === targetEndMonth;
+                        const isInRange = monthNum < targetEndMonth;
+                        return (
+                          <button
+                            key={mLabel}
+                            type="button"
+                            onClick={() => setTargetEndMonth(monthNum)}
+                            data-testid={`bulk-month-btn-${monthNum}`}
+                            className={`py-2 px-2 rounded-lg text-xs border transition-colors cursor-pointer ${
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 font-bold shadow-xs'
+                                : isInRange
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {mLabel}
+                          </button>
+                        );
+                      })}
                     </div>
+                  </div>
+
+                  {/* Ringkasan Pratinjau Dinamis */}
+                  <div
+                    className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2.5 text-xs"
+                    data-testid="bulk-preview-summary"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-500">Rentang Periode</span>
+                      <span className="font-semibold text-slate-800 text-right">
+                        Januari {year} s/d {FULL_MONTH_NAMES[targetEndMonth - 1]} {year}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-500">Anggota / Pos Angsuran</span>
+                      <span className="font-semibold text-slate-800 text-right">
+                        {bulkPreviewSummary.affectedMemberCount} Anggota ({bulkPreviewSummary.unpaidItems.length} Pos Angsuran)
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200">
+                      <span className="font-semibold text-slate-700">Total Kas Masuk Akan Dicatat</span>
+                      <span className="text-sm font-bold text-emerald-700 tabular-nums">
+                        Rp {bulkPreviewSummary.totalCollectibleAmount.toLocaleString('id-ID')}
+                      </span>
+                    </div>
+                    {bulkPreviewSummary.unpaidItems.length === 0 && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1">
+                        Tidak ada pos angsuran belum lunas pada rentang Januari {year} s/d {FULL_MONTH_NAMES[targetEndMonth - 1]} {year}.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Tanggal Pencatatan Mutasi Kas */}
+                  <div>
+                    <label
+                      htmlFor="bulk-payment-date-input"
+                      className="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >
+                      Tanggal Pencatatan Mutasi Kas
+                    </label>
+                    <input
+                      id="bulk-payment-date-input"
+                      type="date"
+                      value={bulkPaymentDate}
+                      onChange={e => setBulkPaymentDate(e.target.value)}
+                      data-testid="bulk-payment-date-input"
+                      className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
                     <p className="leading-relaxed">
-                      Aksi ini akan mencentang lunas jadwal angsuran pinjaman untuk <strong>seluruh anggota</strong> dari awal tenor pinjaman hingga bulan berjalan saat ini. Riwayat pelunasan otomatis akan dicatat untuk audit trail.
+                      Aksi ini akan melunasi pos angsuran terpilih, mencatat mutasi <strong>Kas Masuk</strong> secara otomatis ke laporan keuangan, dan menandai kontrak sebagai selesai apabila seluruh angsurannya telah lunas.
                     </p>
                   </div>
 
@@ -1101,8 +1365,8 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                     <button
                       type="button"
                       onClick={handleBulkCheckAll}
-                      disabled={isProcessingBulk || isBulkChecking}
-                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                      disabled={bulkPreviewSummary.unpaidItems.length === 0 || isProcessingBulk || isBulkChecking}
+                      className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       data-testid="confirm-check-all-btn"
                     >
                       {isProcessingBulk || isBulkChecking ? (
@@ -1113,7 +1377,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                       ) : (
                         <>
                           <CheckSquare className="w-4 h-4" />
-                          <span>Ya, Lanjutkan Centang Semua</span>
+                          <span>Eksekusi Pelunasan s/d {FULL_MONTH_NAMES[targetEndMonth - 1]}</span>
                         </>
                       )}
                     </button>

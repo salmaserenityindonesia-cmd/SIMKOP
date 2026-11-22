@@ -14,6 +14,7 @@ import {
   checkAllLoanUpToCurrentMonth,
   uncheckAllLoanSchedules,
   getImportedRepaidBalance,
+  bulkCheckAllLoansUpToMonth,
   bulkCheckAllLoansUpToCurrentMonth,
   bulkAutoReconcileAllLoans,
   bulkAutoReconcileLoans,
@@ -2305,6 +2306,171 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
         loanId: 'loan-fail',
         error: 'PostgREST query deadlock',
       });
+    });
+  });
+
+  describe('bulkCheckAllLoansUpToMonth', () => {
+    it('settles December 2026 projected schedules with restrictToTargetYear, ignores other years, records sequential +10ms cash_flow timestamps, and completes fully paid loans', async () => {
+      const mockLoans = [
+        {
+          id: 'loan-2',
+          loan_number: 'LP-2026-02',
+          status: 'active',
+          principal_amount: 1100000,
+          member: { id: 'm-2', nrp: '002', nama: 'Anggota Tes 2', status: 'aktif', membership_status: 'ACTIVE' },
+        },
+        {
+          id: 'loan-1',
+          loan_number: 'LP-2026-01',
+          status: 'active',
+          principal_amount: 200000,
+          member: { id: 'm-1', nrp: '001', nama: 'anggota tes 1', status: 'aktif', membership_status: 'ACTIVE' },
+        },
+      ];
+
+      const schedulesByLoan: Record<string, any[]> = {
+        'loan-1': [
+          { id: 'sc-1-2025', loan_id: 'loan-1', period_number: 1, due_date: '2025-12-20', target_amount: 200000, paid_amount: 0, status: 'unpaid' },
+          { id: 'sc-1-dec26', loan_id: 'loan-1', period_number: 2, due_date: '2026-12-20', target_amount: 200000, paid_amount: 0, status: 'unpaid' },
+          { id: 'sc-1-jan27', loan_id: 'loan-1', period_number: 3, due_date: '2027-01-20', target_amount: 200000, paid_amount: 0, status: 'unpaid' },
+        ],
+        'loan-2': [
+          { id: 'sc-2-dec26', loan_id: 'loan-2', period_number: 1, due_date: '2026-12-15', target_amount: 1100000, paid_amount: 0, status: 'unpaid' },
+        ],
+      };
+
+      const scheduleUpdates: Array<{ id: string; payload: any }> = [];
+      const loanUpdates: Array<{ id: string; payload: any }> = [];
+      const insertedRepayments: any[] = [];
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+            update: vi.fn().mockImplementation((payload: any) => ({
+              eq: vi.fn().mockImplementation((_col: string, id: string) => {
+                loanUpdates.push({ id, payload });
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockImplementation((cols: string) => ({
+              eq: vi.fn().mockImplementation((_col: string, loanId: string) => {
+                const rows = schedulesByLoan[loanId] || [];
+                const effectiveRows =
+                  cols === '*'
+                    ? rows
+                    : rows.map(r => ({
+                        ...r,
+                        status: scheduleUpdates.some(u => u.id === r.id) ? 'paid' : r.status,
+                      }));
+                return {
+                  order: vi.fn().mockResolvedValue({ data: effectiveRows, error: null }),
+                };
+              }),
+            })),
+            update: vi.fn().mockImplementation((payload: any) => ({
+              eq: vi.fn().mockImplementation((_col: string, id: string) => {
+                scheduleUpdates.push({ id, payload });
+                return Promise.resolve({ error: null });
+              }),
+            })),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedRepayments.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((rows: any[]) => {
+              insertedCashFlows.push(...rows);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await bulkCheckAllLoansUpToMonth({
+        targetYear: 2026,
+        targetMonth: 12,
+        paymentDate: '2026-11-23',
+        restrictToTargetYear: true,
+      });
+
+      expect(res.totalLoans).toBe(2);
+      expect(res.totalSuccess).toBe(2);
+      expect(res.totalFailed).toBe(0);
+      expect(res.totalInstallmentsPaid).toBe(2);
+      expect(res.totalAmountCollected).toBe(1300000);
+
+      // Sorted by NRP ASC: '001' (loan-1) first, then '002' (loan-2)
+      expect(scheduleUpdates.map(u => u.id)).toEqual(['sc-1-dec26', 'sc-2-dec26']);
+
+      // Sequential +10ms timestamps on the chosen paymentDate (local 2026-11-23)
+      expect(insertedCashFlows).toHaveLength(2);
+      expect(insertedCashFlows[0].direction).toBe('in');
+      expect(insertedCashFlows[0].category).toBe('angsuran_pinjaman');
+      expect(insertedCashFlows[0].amount).toBe(200000);
+      expect(insertedCashFlows[1].amount).toBe(1100000);
+
+      const t0 = new Date(insertedCashFlows[0].created_at).getTime();
+      const t1 = new Date(insertedCashFlows[1].created_at).getTime();
+      expect(t1 - t0).toBe(10);
+      expect(insertedRepayments[0].payment_date).toBe(insertedCashFlows[0].created_at);
+      expect(insertedRepayments[1].payment_date).toBe(insertedCashFlows[1].created_at);
+      expect(insertedRepayments[0].notes).toBe('Centang Massal Angsuran s/d Bulan 12/2026');
+
+      // loan-2 had only sc-2-dec26 so all schedules are now paid -> marked completed
+      expect(loanUpdates).toEqual([{ id: 'loan-2', payload: { status: 'completed' } }]);
+    });
+
+    it('filters active loans by provided loanIds when specified', async () => {
+      const mockLoans = [
+        { id: 'loan-a', loan_number: 'LP-A', status: 'active', member: { id: 'm-a', nrp: '001', nama: 'A', status: 'aktif', membership_status: 'ACTIVE' } },
+        { id: 'loan-b', loan_number: 'LP-B', status: 'active', member: { id: 'm-b', nrp: '002', nama: 'B', status: 'aktif', membership_status: 'ACTIVE' } },
+      ];
+      const schedEqSpy = vi.fn().mockReturnValue({
+        order: vi.fn().mockResolvedValue({ data: [], error: null }),
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({ eq: schedEqSpy }),
+          };
+        }
+        return {};
+      });
+
+      const res = await bulkCheckAllLoansUpToMonth({
+        targetYear: 2026,
+        targetMonth: 12,
+        loanIds: ['loan-b'],
+        restrictToTargetYear: true,
+      });
+
+      expect(res.totalLoans).toBe(1);
+      expect(schedEqSpy).toHaveBeenCalledWith('loan_id', 'loan-b');
+      expect(schedEqSpy).not.toHaveBeenCalledWith('loan_id', 'loan-a');
     });
   });
 
