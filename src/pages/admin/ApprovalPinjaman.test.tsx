@@ -421,4 +421,66 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(confirmMsg).toContain('2.300.000');
     });
   });
+
+  describe('Reset ke Pending Action Button', () => {
+    it('renders enabled Reset ke Pending button on APPROVED tab when active/approved loans exist', () => {
+      const html = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={[
+            {
+              id: 'loan-active-1',
+              status: 'active',
+              amount: 5000000,
+              tenor: 10,
+              anggota: { nama: 'Sertu Andi', nrp: '111222' },
+            },
+          ]}
+        />
+      );
+
+      expect(html).toContain('data-testid="btn-reset-to-pending"');
+      expect(html).toContain('Reset ke Pending');
+      expect(html).not.toMatch(/data-testid="btn-reset-to-pending"[^>]*\sdisabled=""/);
+    });
+
+    it('renders disabled Reset ke Pending button on APPROVED tab when empty or only paid_off loans exist', () => {
+      const emptyHtml = renderToStaticMarkup(
+        <ApprovalPinjaman initialTab="APPROVED" initialPinjamanList={[]} />
+      );
+      expect(emptyHtml).toContain('data-testid="btn-reset-to-pending"');
+      expect(emptyHtml).toMatch(/data-testid="btn-reset-to-pending"[^>]*\sdisabled=""/);
+
+      const paidOffHtml = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={[
+            {
+              id: 'loan-paid-1',
+              status: 'paid_off',
+              amount: 5000000,
+              tenor: 10,
+              anggota: { nama: 'Sertu Budi', nrp: '333444' },
+            },
+          ]}
+        />
+      );
+      expect(paidOffHtml).toContain('data-testid="btn-reset-to-pending"');
+      expect(paidOffHtml).toMatch(/data-testid="btn-reset-to-pending"[^>]*\sdisabled=""/);
+    });
+
+    it('does not render Reset ke Pending button on PENDING or ALL tabs', () => {
+      const pendingHtml = renderToStaticMarkup(
+        <ApprovalPinjaman initialTab="PENDING" initialPinjamanList={[]} />
+      );
+      expect(pendingHtml).not.toContain('btn-reset-to-pending');
+      expect(pendingHtml).not.toContain('Reset ke Pending');
+
+      const allHtml = renderToStaticMarkup(
+        <ApprovalPinjaman initialTab="ALL" initialPinjamanList={[]} />
+      );
+      expect(allHtml).not.toContain('btn-reset-to-pending');
+      expect(allHtml).not.toContain('Reset ke Pending');
+    });
+  });
 });

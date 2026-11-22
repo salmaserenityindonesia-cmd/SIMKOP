@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService, LoanApplicationStatusTab, LoanType, isGoodsMarkupLoan } from '../../services/loanService';
-import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight, RotateCcw, AlertTriangle, X } from 'lucide-react';
 import StatusBadge, { StatusType } from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 import LoanDetailModal from '../../components/loans/LoanDetailModal';
+import { supabase } from '../../lib/supabaseClient';
 
 const defaultFormatRupiah = (amount: number) =>
   new Intl.NumberFormat('id-ID', {
@@ -67,6 +68,9 @@ export default function ApprovalPinjaman({
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(10);
   const [activeLoanTypes, setActiveLoanTypes] = useState<LoanType[]>([]);
+  const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
+  const [resetConfirmText, setResetConfirmText] = useState<string>('');
+  const [resettingLoans, setResettingLoans] = useState<boolean>(false);
 
   useEffect(() => {
     if (initialPinjamanList === undefined) {
@@ -165,6 +169,45 @@ export default function ApprovalPinjaman({
       showToast(err.message || 'Terjadi kesalahan', 'error');
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleResetActiveLoansToPending = async () => {
+    if (resetConfirmText.trim() !== 'RESET PINJAMAN' || resettingLoans) {
+      return;
+    }
+
+    try {
+      setResettingLoans(true);
+      const { data, error: rpcError } = await (supabase as any).rpc(
+        'revert_active_loans_to_pending',
+        { p_confirmation_phrase: resetConfirmText.trim() }
+      );
+      if (rpcError) {
+        throw new Error(rpcError.message || 'Gagal mengembalikan pinjaman ke status Pending.');
+      }
+
+      setIsResetModalOpen(false);
+      setResetConfirmText('');
+      showToast(
+        (data as any)?.message ||
+          'Pinjaman berhasil dikembalikan ke status Menunggu Persetujuan (Pending).',
+        'success'
+      );
+
+      await Promise.all([
+        loadData(activeTab),
+        loanService
+          .getLoanApplications('PENDING')
+          .then((res) => {
+            if (res) setCounts((prev) => ({ ...prev, pending: res.length }));
+          })
+          .catch(() => {}),
+      ]);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengembalikan pinjaman ke status Pending.', 'error');
+    } finally {
+      setResettingLoans(false);
     }
   };
 
@@ -279,6 +322,14 @@ export default function ApprovalPinjaman({
     searchQuery || selectedLoanTypeFilter !== 'ALL' || startDateFilter || endDateFilter
   );
 
+  const activeApprovedLoansCount = useMemo(() => {
+    if (activeTab !== 'APPROVED') return 0;
+    return pinjamanList.filter((item) => {
+      const s = String(item?.status || '').trim().toLowerCase();
+      return s === 'berjalan' || s === 'active' || s === 'approved' || s === 'disbursed';
+    }).length;
+  }, [activeTab, pinjamanList]);
+
   const handleExportExcel = () => {
     const data = filteredApplications.map(p => ({
       'No. Anggota': p.anggota?.no_anggota || p.anggota?.nrp || '-',
@@ -328,6 +379,21 @@ export default function ApprovalPinjaman({
           <p className="text-[var(--color-text-secondary)]">Kelola persetujuan pinjaman anggota (Khusus Admin)</p>
         </div>
         <div className="flex gap-2">
+          {activeTab === 'APPROVED' && (
+            <button
+              type="button"
+              data-testid="btn-reset-to-pending"
+              onClick={() => {
+                setResetConfirmText('');
+                setIsResetModalOpen(true);
+              }}
+              disabled={activeApprovedLoansCount === 0 || loading || resettingLoans}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-800 border border-amber-300 rounded-md hover:bg-amber-100 font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Reset ke Pending
+            </button>
+          )}
           <button 
             onClick={handleExportExcel}
             className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium text-sm transition-colors"
@@ -694,6 +760,107 @@ export default function ApprovalPinjaman({
         onClose={() => setSelectedLoanIdForModal(null)}
         onSuccess={() => loadData(activeTab)}
       />
+
+      {isResetModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-loans-modal-title"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-amber-50/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <h2 id="reset-loans-modal-title" className="text-base font-bold text-slate-900">
+                  Reset Pinjaman Berjalan ke Pending
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!resettingLoans) {
+                    setIsResetModalOpen(false);
+                    setResetConfirmText('');
+                  }
+                }}
+                disabled={resettingLoans}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
+                aria-label="Tutup modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-sm text-slate-600">
+              <ul className="space-y-2 list-disc pl-5 text-xs leading-relaxed text-slate-700">
+                <li>
+                  Sebanyak{' '}
+                  <span className="font-bold text-slate-900">
+                    {activeApprovedLoansCount} kontrak pinjaman berstatus Berjalan
+                  </span>{' '}
+                  akan dikembalikan ke tab{' '}
+                  <span className="font-semibold text-slate-900">
+                    Menunggu Persetujuan (Pending)
+                  </span>
+                  .
+                </li>
+                <li>
+                  Jadwal angsuran di Matriks Pinjaman dan catatan Kas Keluar pencairan di Laporan
+                  Keuangan terkait kontrak tersebut akan dibersihkan otomatis. Data pengajuan awal
+                  anggota tetap aman.
+                </li>
+              </ul>
+
+              <div>
+                <label
+                  htmlFor="reset-loans-confirm-input"
+                  className="block text-xs font-semibold text-slate-700 mb-1.5"
+                >
+                  Ketik <span className="font-mono font-bold text-rose-600">RESET PINJAMAN</span>{' '}
+                  untuk konfirmasi:
+                </label>
+                <input
+                  id="reset-loans-confirm-input"
+                  type="text"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  disabled={resettingLoans}
+                  placeholder="Ketik RESET PINJAMAN"
+                  autoFocus
+                  className="w-full h-10 px-3 bg-white border border-slate-300 rounded-xl text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:bg-slate-100"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsResetModalOpen(false);
+                  setResetConfirmText('');
+                }}
+                disabled={resettingLoans}
+                className="px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition-colors disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                data-testid="btn-confirm-reset-to-pending"
+                onClick={handleResetActiveLoansToPending}
+                disabled={resetConfirmText.trim() !== 'RESET PINJAMAN' || resettingLoans}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {resettingLoans && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Kembalikan ke Pending
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }
