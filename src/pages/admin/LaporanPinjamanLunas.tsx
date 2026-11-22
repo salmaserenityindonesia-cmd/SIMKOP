@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
@@ -42,6 +42,7 @@ export interface LaporanPinjamanLunasProps {
   initialLoanTypes?: LoanTypeOption[];
   initialSelectedRow?: PaidOffLoanReportRow | null;
   initialSelectedLedgerRow?: PaidOffLoanReportRow | null;
+  initialFiscalYear?: number;
 }
 
 export default function LaporanPinjamanLunas({
@@ -49,8 +50,10 @@ export default function LaporanPinjamanLunas({
   initialLoanTypes,
   initialSelectedRow = null,
   initialSelectedLedgerRow = null,
+  initialFiscalYear,
 }: LaporanPinjamanLunasProps = {}) {
   const feedback = useContext(FeedbackContext);
+  const currentFiscalYear = new Date().getFullYear();
 
   const [data, setData] = useState<PaidOffLoansSummary | null>(initialData ?? null);
   const [loanTypes, setLoanTypes] = useState<LoanTypeOption[]>(initialLoanTypes ?? []);
@@ -62,7 +65,8 @@ export default function LaporanPinjamanLunas({
   // Filters
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedLoanType, setSelectedLoanType] = useState<string>('ALL');
-  const [selectedYear, setSelectedYear] = useState<string>('ALL');
+  const [selectedYear, setSelectedYear] = useState<number>(initialFiscalYear ?? currentFiscalYear);
+  const skipInitialFetchRef = useRef<boolean>(initialData !== undefined);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -75,48 +79,47 @@ export default function LaporanPinjamanLunas({
     initialSelectedLedgerRow
   );
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [reportRes, typesRes, profileRes] = await Promise.all([
-        getPaidOffLoansReport(),
-        getLoanTypesForFilter(),
-        getKoperasiProfile().catch(() => null),
-      ]);
-      setData(reportRes);
-      if (typesRes.length > 0) {
-        setLoanTypes(typesRes);
+  const fetchPaidOffLoans = useCallback(
+    async (year: number) => {
+      setLoading(true);
+      try {
+        const reportRes = await getPaidOffLoansReport(year);
+        setData(reportRes);
+      } catch (err: any) {
+        console.error('Gagal memuat laporan pinjaman lunas:', err);
+        feedback?.showToast?.(
+          'Gagal memuat data pinjaman lunas: ' + (err?.message || 'Kesalahan sistem'),
+          'error'
+        );
+      } finally {
+        setLoading(false);
       }
-      if (profileRes) {
-        setKoperasiProfile(profileRes);
-      }
-    } catch (err: any) {
-      console.error('Gagal memuat laporan pinjaman lunas:', err);
-      feedback?.showToast?.(
-        'Gagal memuat data pinjaman lunas: ' + (err?.message || 'Kesalahan sistem'),
-        'error'
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [feedback]);
+    },
+    [feedback]
+  );
 
   useEffect(() => {
-    if (initialData !== undefined) {
-      if (!initialLoanTypes) {
-        getLoanTypesForFilter().then((types) => {
+    if (!initialLoanTypes || initialLoanTypes.length === 0) {
+      getLoanTypesForFilter()
+        .then((types) => {
           if (types.length > 0) setLoanTypes(types);
-        });
-      }
-      getKoperasiProfile()
-        .then((prof) => {
-          if (prof) setKoperasiProfile(prof);
         })
         .catch(() => {});
+    }
+    getKoperasiProfile()
+      .then((prof) => {
+        if (prof) setKoperasiProfile(prof);
+      })
+      .catch(() => {});
+  }, [initialLoanTypes]);
+
+  useEffect(() => {
+    if (skipInitialFetchRef.current) {
+      skipInitialFetchRef.current = false;
       return;
     }
-    loadData();
-  }, [initialData, initialLoanTypes, loadData]);
+    fetchPaidOffLoans(selectedYear);
+  }, [selectedYear, fetchPaidOffLoans]);
 
   // Gabungkan pilihan jenis pinjaman dari tabel master loan_types dan baris laporan aktual
   const loanTypeFilterOptions = useMemo(() => {
@@ -143,16 +146,19 @@ export default function LaporanPinjamanLunas({
     return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'id'));
   }, [loanTypes, data]);
 
-  // Daftar tahun lunas dinamis + tahun berjalan
+  // Daftar opsi tahun fiskal independen dari baris tabel (tahun berjalan hingga tahun cut-off koperasi)
   const availableYears = useMemo(() => {
-    const yearSet = new Set<number>([new Date().getFullYear()]);
-    (data?.rows || []).forEach((row) => {
-      if (row.paidOffYear && !isNaN(row.paidOffYear)) {
-        yearSet.add(row.paidOffYear);
-      }
-    });
-    return Array.from(yearSet).sort((a, b) => b - a);
-  }, [data]);
+    const minYear = Math.min(2022, currentFiscalYear - 5);
+    const years: number[] = [];
+    for (let y = currentFiscalYear; y >= minYear; y--) {
+      years.push(y);
+    }
+    if (!years.includes(selectedYear)) {
+      years.push(selectedYear);
+      years.sort((a, b) => b - a);
+    }
+    return years;
+  }, [currentFiscalYear, selectedYear]);
 
   // Terapkan filter pencarian, jenis pinjaman, dan tahun lunas
   const filteredRows = useMemo(() => {
@@ -178,9 +184,8 @@ export default function LaporanPinjamanLunas({
         if (!matchType) return false;
       }
 
-      if (selectedYear !== 'ALL') {
-        const yearNum = Number(selectedYear);
-        if (row.paidOffYear !== yearNum) return false;
+      if (row.paidOffYear !== selectedYear) {
+        return false;
       }
 
       return true;
@@ -219,8 +224,11 @@ export default function LaporanPinjamanLunas({
     if (filteredRows.length === 0) return;
     setIsExportingExcel(true);
     try {
-      await exportPaidOffLoansExcel(filteredRows, koperasiProfile, true);
-      feedback?.showToast?.('Laporan Pinjaman Lunas berhasil diekspor ke Excel.', 'success');
+      await exportPaidOffLoansExcel(filteredRows, koperasiProfile, true, selectedYear);
+      feedback?.showToast?.(
+        `Laporan Pinjaman Lunas Tahun Fiskal ${selectedYear} berhasil diekspor ke Excel.`,
+        'success'
+      );
     } catch (err: any) {
       console.error('Gagal ekspor Excel pinjaman lunas:', err);
       feedback?.showToast?.(
@@ -236,8 +244,11 @@ export default function LaporanPinjamanLunas({
     if (filteredRows.length === 0) return;
     setIsExportingPdf(true);
     try {
-      exportPaidOffLoansPdf(filteredRows, koperasiProfile, true);
-      feedback?.showToast?.('Laporan Pinjaman Lunas berhasil dicetak ke PDF.', 'success');
+      exportPaidOffLoansPdf(filteredRows, koperasiProfile, true, selectedYear);
+      feedback?.showToast?.(
+        `Laporan Pinjaman Lunas Tahun Fiskal ${selectedYear} berhasil dicetak ke PDF.`,
+        'success'
+      );
     } catch (err: any) {
       console.error('Gagal ekspor PDF pinjaman lunas:', err);
       feedback?.showToast?.(
@@ -278,11 +289,20 @@ export default function LaporanPinjamanLunas({
               <span className="text-slate-400">/</span>
               <span className="text-emerald-700 font-semibold">Laporan Pinjaman Lunas</span>
             </div>
-            <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
-              Laporan Anggota Pinjaman Lunas
-            </h1>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-2xl font-bold text-slate-800 tracking-tight">
+                Laporan Anggota Pinjaman Lunas
+              </h1>
+              <span
+                data-testid="active-fiscal-year-badge"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                <span>Tahun Fiskal {selectedYear}</span>
+              </span>
+            </div>
             <p className="text-sm text-slate-500 mt-1">
-              Daftar riwayat anggota yang telah menyelesaikan seluruh kewajiban angsuran pinjaman beserta jenis pinjamannya.
+              Daftar riwayat anggota yang telah menyelesaikan seluruh kewajiban angsuran pinjaman beserta jenis pinjamannya (Tahun Fiskal {selectedYear}).
             </p>
           </div>
 
@@ -334,7 +354,7 @@ export default function LaporanPinjamanLunas({
               {kpiMetrics.totalContracts}
             </div>
             <p className="text-xs text-slate-500 mt-1.5">
-              Kontrak pinjaman telah selesai 100%
+              Kontrak pinjaman selesai 100% • Tahun Fiskal {selectedYear}
             </p>
           </div>
 
@@ -351,7 +371,7 @@ export default function LaporanPinjamanLunas({
               {kpiMetrics.uniqueMembers}
             </div>
             <p className="text-xs text-slate-500 mt-1.5">
-              Anggota unik yang telah melunasi pinjaman
+              Anggota unik melunasi pinjaman • Tahun Fiskal {selectedYear}
             </p>
           </div>
 
@@ -368,7 +388,7 @@ export default function LaporanPinjamanLunas({
               {formatCurrency(kpiMetrics.totalPrincipal)}
             </div>
             <p className="text-xs text-slate-500 mt-1.5">
-              Akumulasi plafon pokok pinjaman yang lunas
+              Akumulasi plafon pokok lunas • Tahun Fiskal {selectedYear}
             </p>
           </div>
         </div>
@@ -410,14 +430,13 @@ export default function LaporanPinjamanLunas({
               <CalendarDays className="w-4 h-4 text-slate-500 shrink-0" />
               <select
                 value={selectedYear}
-                onChange={(e) => setSelectedYear(e.target.value)}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
                 data-testid="filter-paid-year-select"
                 aria-label="Filter Tahun Lunas"
                 className="border border-slate-300 rounded-lg py-2 px-3 text-sm bg-white text-slate-700 font-medium focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
               >
-                <option value="ALL">Semua Tahun</option>
                 {availableYears.map((yr) => (
-                  <option key={yr} value={String(yr)}>
+                  <option key={yr} value={yr}>
                     {yr}
                   </option>
                 ))}
@@ -427,7 +446,7 @@ export default function LaporanPinjamanLunas({
 
           <button
             type="button"
-            onClick={loadData}
+            onClick={() => fetchPaidOffLoans(selectedYear)}
             disabled={loading}
             className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold transition-colors cursor-pointer disabled:opacity-50"
           >
@@ -459,7 +478,7 @@ export default function LaporanPinjamanLunas({
                     <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Loader2 className="w-7 h-7 animate-spin text-emerald-600" />
-                        <span>Memuat daftar anggota pinjaman lunas...</span>
+                        <span>Memuat daftar anggota pinjaman lunas Tahun Fiskal {selectedYear}...</span>
                       </div>
                     </td>
                   </tr>
@@ -469,7 +488,7 @@ export default function LaporanPinjamanLunas({
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Award className="w-9 h-9 text-slate-300" />
                         <p className="font-semibold text-slate-700">
-                          Belum ada data pinjaman lunas yang cocok
+                          Belum ada data pinjaman lunas yang cocok pada Tahun Fiskal {selectedYear}
                         </p>
                         <p className="text-xs text-slate-400">
                           Coba ubah filter jenis pinjaman, tahun lunas, atau kata kunci pencarian.

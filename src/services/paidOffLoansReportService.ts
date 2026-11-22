@@ -178,43 +178,160 @@ export async function getLoanTypesForFilter(): Promise<LoanTypeOption[]> {
   }
 }
 
-export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
-  let rawLoans: any[] = [];
+async function fetchCandidateLoansFromDb(candidateLoanIds?: string[]): Promise<any[]> {
+  const idChunks: Array<string[] | null> = candidateLoanIds
+    ? chunkArray(candidateLoanIds, 200)
+    : [null];
 
-  try {
-    const { data: joinedLoans, error: joinErr } = await supabase
+  const allLoans: any[] = [];
+
+  for (const idChunk of idChunks) {
+    let joinQuery: any = supabase
       .from('loans')
       .select(`
         *,
         loan_types ( id, code, name, financing_scheme ),
         member:anggota ( id, nrp, nama, tanggal_lahir )
       `);
+    if (idChunk) {
+      joinQuery = joinQuery.in('id', idChunk);
+    }
 
+    const { data: joinedLoans, error: joinErr } = await joinQuery;
     if (!joinErr && Array.isArray(joinedLoans)) {
-      rawLoans = joinedLoans;
-    } else {
-      console.warn('Fallback query loans tanpa kolom financing_scheme:', joinErr?.message);
-      const { data: fallbackJoinedLoans, error: fallbackJoinErr } = await supabase
-        .from('loans')
-        .select(`
-          *,
-          loan_types ( id, code, name ),
-          member:anggota ( id, nrp, nama, tanggal_lahir )
-        `);
+      allLoans.push(...joinedLoans);
+      continue;
+    }
 
-      if (!fallbackJoinErr && Array.isArray(fallbackJoinedLoans)) {
-        rawLoans = fallbackJoinedLoans;
-      } else {
-        console.warn('Fallback query loans tanpa relasi bersarang:', fallbackJoinErr?.message);
-        const { data: plainLoans, error: plainErr } = await supabase
-          .from('loans')
-          .select('*');
-        if (plainErr) {
-          console.error('Gagal mengambil data loans:', plainErr.message);
-          throw plainErr;
-        }
-        rawLoans = plainLoans || [];
+    console.warn('Fallback query loans tanpa kolom financing_scheme:', joinErr?.message);
+    let fallbackQuery: any = supabase
+      .from('loans')
+      .select(`
+        *,
+        loan_types ( id, code, name ),
+        member:anggota ( id, nrp, nama, tanggal_lahir )
+      `);
+    if (idChunk) {
+      fallbackQuery = fallbackQuery.in('id', idChunk);
+    }
+
+    const { data: fallbackJoinedLoans, error: fallbackJoinErr } = await fallbackQuery;
+    if (!fallbackJoinErr && Array.isArray(fallbackJoinedLoans)) {
+      allLoans.push(...fallbackJoinedLoans);
+      continue;
+    }
+
+    console.warn('Fallback query loans tanpa relasi bersarang:', fallbackJoinErr?.message);
+    let plainQuery: any = supabase.from('loans').select('*');
+    if (idChunk) {
+      plainQuery = plainQuery.in('id', idChunk);
+    }
+
+    const { data: plainLoans, error: plainErr } = await plainQuery;
+    if (plainErr) {
+      console.error('Gagal mengambil data loans:', plainErr.message);
+      throw plainErr;
+    }
+    if (Array.isArray(plainLoans)) {
+      allLoans.push(...plainLoans);
+    }
+  }
+
+  return allLoans;
+}
+
+async function discoverCandidateLoanIdsForFiscalYear(fiscalYear: number): Promise<string[]> {
+  const yearStart = `${fiscalYear}-01-01T00:00:00.000Z`;
+  const yearEnd = `${fiscalYear}-12-31T23:59:59.999Z`;
+  const yearStartDate = `${fiscalYear}-01-01`;
+  const yearEndDate = `${fiscalYear}-12-31`;
+
+  const fetchRepaymentIds = async (): Promise<string[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('loan_repayments')
+        .select('loan_id')
+        .gte('payment_date', yearStart)
+        .lte('payment_date', yearEnd);
+      if (error || !Array.isArray(data)) return [];
+      return data.map((r: any) => r?.loan_id).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const fetchScheduleIds = async (): Promise<string[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('loan_schedules')
+        .select('loan_id')
+        .eq('status', 'paid')
+        .gte('due_date', yearStartDate)
+        .lte('due_date', yearEndDate);
+      if (error || !Array.isArray(data)) return [];
+      return data.map((s: any) => s?.loan_id).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const fetchCompletedLoanIds = async (): Promise<string[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('loans')
+        .select('id')
+        .in('status', ['completed', 'paid_off'])
+        .gte('updated_at', yearStart)
+        .lte('updated_at', yearEnd);
+
+      if (!error && Array.isArray(data)) {
+        return data.map((l: any) => l?.id).filter(Boolean);
       }
+
+      const { data: fallbackData, error: fallbackErr } = await supabase
+        .from('loans')
+        .select('id')
+        .in('status', ['completed', 'paid_off'])
+        .gte('disbursed_at', yearStartDate)
+        .lte('disbursed_at', yearEndDate);
+
+      if (!fallbackErr && Array.isArray(fallbackData)) {
+        return fallbackData.map((l: any) => l?.id).filter(Boolean);
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  };
+
+  const [repayIds, schedIds, completedIds] = await Promise.all([
+    fetchRepaymentIds(),
+    fetchScheduleIds(),
+    fetchCompletedLoanIds(),
+  ]);
+
+  return Array.from(new Set([...repayIds, ...schedIds, ...completedIds]));
+}
+
+export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOffLoansSummary> {
+  const hasFiscalYear = typeof fiscalYear === 'number' && Number.isFinite(fiscalYear);
+  let rawLoans: any[] = [];
+
+  try {
+    if (hasFiscalYear) {
+      const candidateIds = await discoverCandidateLoanIdsForFiscalYear(fiscalYear as number);
+      if (candidateIds.length === 0) {
+        return {
+          totalPaidOffLoans: 0,
+          uniqueMembersCount: 0,
+          totalPrincipalAmount: 0,
+          totalPaidAmount: 0,
+          rows: [],
+        };
+      }
+      rawLoans = await fetchCandidateLoansFromDb(candidateIds);
+    } else {
+      rawLoans = await fetchCandidateLoansFromDb();
     }
   } catch (err) {
     console.error('Error fetching loans for paid-off report:', err);
@@ -540,6 +657,11 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
     const resolvedStatus: 'completed' | 'paid_off' =
       statusLower === 'paid_off' ? 'paid_off' : 'completed';
 
+    const paidOffYear = extractYearFromDate(paidOffDate);
+    if (hasFiscalYear && paidOffYear !== fiscalYear) {
+      continue;
+    }
+
     rows.push({
       id: loan.id,
       loanId: loan.id,
@@ -562,7 +684,7 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
       totalPaid,
       disbursedAt: loan.disbursed_at || loan.created_at || null,
       paidOffDate,
-      paidOffYear: extractYearFromDate(paidOffDate),
+      paidOffYear,
       status: resolvedStatus,
       paidPeriodsCount: mappedSchedules.filter((s) => s.status === 'paid').length || tenor,
       schedules: mappedSchedules,
@@ -595,8 +717,10 @@ export async function getPaidOffLoansReport(): Promise<PaidOffLoansSummary> {
 export async function exportPaidOffLoansExcel(
   rows: PaidOffLoanReportRow[],
   profile?: KoperasiProfile | null,
-  autoSave = true
+  autoSave = true,
+  fiscalYear?: number
 ): Promise<ExcelJS.Workbook> {
+  const hasFiscalYear = typeof fiscalYear === 'number' && Number.isFinite(fiscalYear);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'SIMKOP Enterprise';
   workbook.created = new Date();
@@ -617,14 +741,18 @@ export async function exportPaidOffLoansExcel(
     contactRow.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF475569' } };
   }
 
-  const reportTitleRow = worksheet.addRow(['LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS']);
+  const reportTitleText = hasFiscalYear
+    ? `LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS — TAHUN FISKAL ${fiscalYear}`
+    : 'LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS';
+  const reportTitleRow = worksheet.addRow([reportTitleText]);
   reportTitleRow.font = { name: 'Calibri', size: 12, bold: true, color: { argb: 'FF0F172A' } };
 
   const totalPrincipal = rows.reduce((sum, r) => sum + r.principalAmount, 0);
   const uniqueMembers = new Set(rows.map((r) => r.memberId || r.nrp).filter(Boolean)).size;
 
+  const fiscalMetaPrefix = hasFiscalYear ? `Tahun Fiskal: ${fiscalYear} | ` : '';
   const metaRow = worksheet.addRow([
-    `Total Berkas Lunas: ${rows.length} | Anggota Unik: ${uniqueMembers} | Total Plafon: ${formatRp(totalPrincipal)} | Dicetak: ${new Date().toLocaleString('id-ID')}`,
+    `${fiscalMetaPrefix}Total Berkas Lunas: ${rows.length} | Anggota Unik: ${uniqueMembers} | Total Plafon: ${formatRp(totalPrincipal)} | Dicetak: ${new Date().toLocaleString('id-ID')}`,
   ]);
   metaRow.font = { name: 'Calibri', size: 9.5, color: { argb: 'FF334155' } };
 
@@ -775,7 +903,9 @@ export async function exportPaidOffLoansExcel(
     const a = document.createElement('a');
     a.href = url;
     const dateStr = new Date().toISOString().slice(0, 10);
-    a.download = `Laporan_Pinjaman_Lunas_${dateStr}.xlsx`;
+    a.download = hasFiscalYear
+      ? `Laporan_Pinjaman_Lunas_FY${fiscalYear}_${dateStr}.xlsx`
+      : `Laporan_Pinjaman_Lunas_${dateStr}.xlsx`;
     document.body?.appendChild?.(a);
     a.click();
     document.body?.removeChild?.(a);
@@ -788,8 +918,10 @@ export async function exportPaidOffLoansExcel(
 export function exportPaidOffLoansPdf(
   rows: PaidOffLoanReportRow[],
   profile?: KoperasiProfile | null,
-  autoSave = true
+  autoSave = true,
+  fiscalYear?: number
 ): jsPDF {
+  const hasFiscalYear = typeof fiscalYear === 'number' && Number.isFinite(fiscalYear);
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
@@ -821,13 +953,21 @@ export function exportPaidOffLoansPdf(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
   doc.setTextColor(15, 118, 110);
-  doc.text('LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS', marginX, currentY + 2);
+  doc.text(
+    hasFiscalYear
+      ? `LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS (TAHUN FISKAL ${fiscalYear})`
+      : 'LAPORAN DAFTAR ANGGOTA PINJAMAN LUNAS',
+    marginX,
+    currentY + 2
+  );
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(71, 85, 105);
   doc.text(
-    'Daftar anggota yang telah melunasi seluruh kewajiban angsuran pinjaman beserta nama jenis pinjamannya',
+    hasFiscalYear
+      ? `Daftar anggota yang telah melunasi seluruh kewajiban angsuran pinjaman beserta nama jenis pinjamannya — Tahun Fiskal ${fiscalYear}`
+      : 'Daftar anggota yang telah melunasi seluruh kewajiban angsuran pinjaman beserta nama jenis pinjamannya',
     marginX,
     currentY + 7
   );
@@ -947,12 +1087,15 @@ export function exportPaidOffLoansPdf(
 
   const totalPages = doc.getNumberOfPages();
   const printTimestamp = new Date().toLocaleString('id-ID');
+  const footerLeft = hasFiscalYear
+    ? `Dicetak pada: ${printTimestamp} | Tahun Fiskal ${fiscalYear} | SIMKOP Simpan Pinjam`
+    : `Dicetak pada: ${printTimestamp} | SIMKOP Simpan Pinjam`;
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     doc.setFont('helvetica', 'italic');
     doc.setFontSize(7.5);
     doc.setTextColor(148, 163, 184);
-    doc.text(`Dicetak pada: ${printTimestamp} | SIMKOP Simpan Pinjam`, marginX, pageHeight - 8);
+    doc.text(footerLeft, marginX, pageHeight - 8);
     doc.text(`Halaman ${i} dari ${totalPages}`, pageWidth - marginX, pageHeight - 8, {
       align: 'right',
     });
@@ -960,7 +1103,11 @@ export function exportPaidOffLoansPdf(
 
   if (autoSave) {
     const dateStr = new Date().toISOString().slice(0, 10);
-    doc.save(`Laporan_Pinjaman_Lunas_${dateStr}.pdf`);
+    doc.save(
+      hasFiscalYear
+        ? `Laporan_Pinjaman_Lunas_FY${fiscalYear}_${dateStr}.pdf`
+        : `Laporan_Pinjaman_Lunas_${dateStr}.pdf`
+    );
   }
 
   return doc;

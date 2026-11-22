@@ -115,7 +115,7 @@ describe('LaporanPinjamanLunas Page Component', () => {
     vi.clearAllMocks();
   });
 
-  it('renders header, action buttons, and 3 KPI summary cards accurately', () => {
+  it('renders header, active fiscal year badge (2026), action buttons, and 3 KPI summary cards scoped to active fiscal year', () => {
     const html = renderToStaticMarkup(
       <LaporanPinjamanLunas
         initialData={mockSummary}
@@ -124,47 +124,71 @@ describe('LaporanPinjamanLunas Page Component', () => {
     );
 
     expect(html).toContain('Laporan Anggota Pinjaman Lunas');
+    expect(html).toContain('data-testid="active-fiscal-year-badge"');
+    expect(html).toContain('Tahun Fiskal 2026');
     expect(html).toContain('SIMKOP');
     expect(html).toContain('Simpan Pinjam');
     expect(html).toContain('Laporan Pinjaman Lunas');
     expect(html).toContain('Export Excel');
     expect(html).toContain('Cetak PDF');
 
-    // KPI Cards
+    // KPI Cards scoped to active fiscal year (only Prabowo 2026, not Budi 2025)
     expect(html).toContain('Total Berkas Lunas');
-    expect(html).toContain('data-testid="kpi-total-loans">2<');
+    expect(html).toContain('data-testid="kpi-total-loans">1<');
     expect(html).toContain('Jumlah Anggota Lunas');
-    expect(html).toContain('data-testid="kpi-unique-members">2<');
+    expect(html).toContain('data-testid="kpi-unique-members">1<');
     expect(html).toContain('Total Plafon Terselesaikan');
-    expect(html).toContain('36.000.000');
+    expect(html).toContain('24.000.000');
+    expect(html).not.toContain('36.000.000');
   });
 
-  it('renders Prabowo Hadi (NRP 97109810) with Tenor 24 Bln, Pinjaman Reguler, and Lunas Penuh badge', () => {
-    const html = renderToStaticMarkup(
+  it('renders Prabowo Hadi (2026) by default and excludes 2025 rows until fiscal year 2025 is selected', () => {
+    const html2026 = renderToStaticMarkup(
       <LaporanPinjamanLunas
         initialData={mockSummary}
         initialLoanTypes={sampleLoanTypes}
       />
     );
 
-    expect(html).toContain('Prabowo Hadi');
-    expect(html).toContain('97109810');
-    expect(html).toContain('15/08/1983');
-    expect(html).toContain('PINJ-MIGRASI-97109810');
-    expect(html).toContain('Pinjaman Reguler');
-    expect(html).toContain('24.000.000');
-    expect(html).toContain('24 Bln');
-    expect(html).toContain('✓ Lunas Penuh');
+    expect(html2026).toContain('Prabowo Hadi');
+    expect(html2026).toContain('97109810');
+    expect(html2026).toContain('15/08/1983');
+    expect(html2026).toContain('PINJ-MIGRASI-97109810');
+    expect(html2026).toContain('Pinjaman Reguler');
+    expect(html2026).toContain('24.000.000');
+    expect(html2026).toContain('24 Bln');
+    expect(html2026).toContain('✓ Lunas Penuh');
+    expect(html2026).not.toContain('Budi Santoso');
 
-    expect(html).toContain('Budi Santoso');
-    expect(html).toContain('Pinjaman Khusus');
-    expect(html).toContain('12 Bln');
-  });
-
-  it('renders filter dropdowns for Jenis Pinjaman and Tahun Lunas', () => {
-    const html = renderToStaticMarkup(
+    const html2025 = renderToStaticMarkup(
       <LaporanPinjamanLunas
         initialData={mockSummary}
+        initialLoanTypes={sampleLoanTypes}
+        initialFiscalYear={2025}
+      />
+    );
+
+    expect(html2025).toContain('Tahun Fiskal 2025');
+    expect(html2025).toContain('data-testid="kpi-total-loans">1<');
+    expect(html2025).toContain('12.000.000');
+    expect(html2025).toContain('Budi Santoso');
+    expect(html2025).toContain('Pinjaman Khusus');
+    expect(html2025).toContain('12 Bln');
+    expect(html2025).not.toContain('Prabowo Hadi');
+  });
+
+  it('renders filter dropdowns for Jenis Pinjaman and Tahun Lunas without "Semua Tahun" and independent year options', () => {
+    const emptySummary: PaidOffLoansSummary = {
+      totalPaidOffLoans: 0,
+      uniqueMembersCount: 0,
+      totalPrincipalAmount: 0,
+      totalPaidAmount: 0,
+      rows: [],
+    };
+
+    const html = renderToStaticMarkup(
+      <LaporanPinjamanLunas
+        initialData={emptySummary}
         initialLoanTypes={sampleLoanTypes}
       />
     );
@@ -176,9 +200,13 @@ describe('LaporanPinjamanLunas Page Component', () => {
     expect(html).toContain('<option value="Pinjaman Khusus">Pinjaman Khusus</option>');
 
     expect(html).toContain('data-testid="filter-paid-year-select"');
-    expect(html).toContain('Semua Tahun');
-    expect(html).toContain('<option value="2026">2026</option>');
-    expect(html).toContain('<option value="2025">2025</option>');
+    expect(html).not.toContain('Semua Tahun');
+    expect(html).toMatch(/<option[^>]*selected[^>]*value="2026"|<option[^>]*value="2026"[^>]*selected/);
+    expect(html).toContain('>2026</option>');
+    expect(html).toContain('>2025</option>');
+    expect(html).toContain('>2024</option>');
+    expect(html).toContain('>2023</option>');
+    expect(html).toContain('>2022</option>');
   });
 
   it('renders Detail & Surat Keterangan Lunas modal with installment schedules when initialSelectedRow is provided', () => {
@@ -219,7 +247,7 @@ describe('LaporanPinjamanLunas Page Component', () => {
       />
     );
 
-    expect(html).toContain('Belum ada data pinjaman lunas yang cocok');
+    expect(html).toContain('Belum ada data pinjaman lunas yang cocok pada Tahun Fiskal 2026');
     expect(html).toContain('Menampilkan 0-0 dari 0 berkas pinjaman lunas');
   });
 });
@@ -377,17 +405,192 @@ describe('paidOffLoansReportService - Query, Auto-Sync & Exporters', () => {
     expect(types).toHaveLength(2);
   });
 
-  it('generates Excel workbook and PDF documents cleanly without errors', async () => {
-    const workbook = await exportPaidOffLoansExcel([prabowoRow, budiRow], null, false);
+  it('generates Excel workbook and PDF documents cleanly with fiscal year metadata without errors', async () => {
+    const workbook = await exportPaidOffLoansExcel([prabowoRow], null, false, 2026);
     const sheet = workbook.getWorksheet('Laporan Pinjaman Lunas');
     expect(sheet).toBeDefined();
-    expect(sheet!.rowCount).toBeGreaterThanOrEqual(8);
+    expect(sheet!.rowCount).toBeGreaterThanOrEqual(7);
+    const sheetValues = JSON.stringify(sheet!.getSheetValues());
+    expect(sheetValues).toContain('TAHUN FISKAL 2026');
+    expect(sheetValues).toContain('Tahun Fiskal: 2026');
 
-    const reportDoc = exportPaidOffLoansPdf([prabowoRow, budiRow], null, false);
+    const reportDoc = exportPaidOffLoansPdf([prabowoRow], null, false, 2026);
     expect(reportDoc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+    const pdfContent = JSON.stringify((reportDoc as any).internal.pages);
+    expect(pdfContent).toContain('TAHUN FISKAL 2026');
 
     const certDoc = exportPaidOffLoanCertificatePdf(prabowoRow, null, false);
     expect(certDoc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('filters paid-off loans server-side by fiscalYear (2026 vs 2025) and excludes loans settled in a different year', async () => {
+    const repayGteMock = vi.fn();
+    const repayLteMock = vi.fn();
+    const schedEqMock = vi.fn();
+    const schedGteMock = vi.fn();
+    const schedLteMock = vi.fn();
+    const loansIdInMock = vi.fn();
+
+    const loan2026 = {
+      id: 'loan-2026-only',
+      loan_number: 'PJ-2026-001',
+      member_id: 'mem-1',
+      loan_type_id: 'lt-reg',
+      principal_amount: 5000000,
+      tenor: 5,
+      disbursed_at: '2025-11-01',
+      updated_at: '2026-03-15T10:00:00.000Z',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'REG', name: 'Pinjaman Reguler' },
+      member: { id: 'mem-1', nrp: '10001', nama: 'Anggota 2026', tanggal_lahir: '1990-01-01' },
+    };
+
+    const loan2025 = {
+      id: 'loan-2025-only',
+      loan_number: 'PJ-2025-001',
+      member_id: 'mem-2',
+      loan_type_id: 'lt-khs',
+      principal_amount: 3000000,
+      tenor: 3,
+      disbursed_at: '2025-01-01',
+      updated_at: '2025-04-10T10:00:00.000Z',
+      status: 'paid_off',
+      loan_types: { id: 'lt-khs', code: 'KHS', name: 'Pinjaman Khusus' },
+      member: { id: 'mem-2', nrp: '10002', nama: 'Anggota 2025', tanggal_lahir: '1991-02-02' },
+    };
+
+    const allRepayments = [
+      {
+        id: 'r-2025-part',
+        loan_id: 'loan-2026-only',
+        schedule_id: null,
+        amount_paid: 1000000,
+        payment_date: '2025-12-10T10:00:00.000Z',
+        payment_method: 'potong_gaji',
+      },
+      {
+        id: 'r-2026-final',
+        loan_id: 'loan-2026-only',
+        schedule_id: null,
+        amount_paid: 4000000,
+        payment_date: '2026-03-15T10:00:00.000Z',
+        payment_method: 'potong_gaji',
+      },
+      {
+        id: 'r-2025-full',
+        loan_id: 'loan-2025-only',
+        schedule_id: null,
+        amount_paid: 3000000,
+        payment_date: '2025-04-10T10:00:00.000Z',
+        payment_method: 'transfer',
+      },
+    ];
+
+    let activeYear = 2026;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: repayGteMock.mockImplementation((_col: string, start: string) => ({
+                  lte: repayLteMock.mockImplementation((_col2: string, end: string) => {
+                    const filtered = allRepayments
+                      .filter((r) => r.payment_date >= start && r.payment_date <= end)
+                      .map((r) => ({ loan_id: r.loan_id }));
+                    return Promise.resolve({ data: filtered, error: null });
+                  }),
+                })),
+              };
+            }
+            return {
+              in: vi.fn((_col: string, ids: string[]) => ({
+                order: vi.fn().mockResolvedValue({
+                  data: allRepayments.filter((r) => ids.includes(r.loan_id)),
+                  error: null,
+                }),
+              })),
+            };
+          }),
+        };
+      }
+
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                eq: schedEqMock.mockImplementation(() => ({
+                  gte: schedGteMock.mockImplementation(() => ({
+                    lte: schedLteMock.mockImplementation(() =>
+                      Promise.resolve({ data: [], error: null })
+                    ),
+                  })),
+                })),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            };
+          }),
+        };
+      }
+
+      if (table === 'loans') {
+        return {
+          select: vi.fn((cols: string) => {
+            if (cols === 'id') {
+              return {
+                in: vi.fn(() => ({
+                  gte: vi.fn((_col: string, start: string) => ({
+                    lte: vi.fn((_col2: string, end: string) => {
+                      const matches = [loan2026, loan2025]
+                        .filter((l) => l.updated_at >= start && l.updated_at <= end)
+                        .map((l) => ({ id: l.id }));
+                      return Promise.resolve({ data: matches, error: null });
+                    }),
+                  })),
+                })),
+              };
+            }
+            return {
+              in: loansIdInMock.mockImplementation((_col: string, ids: string[]) =>
+                Promise.resolve({
+                  data: [loan2026, loan2025].filter((l) => ids.includes(l.id)),
+                  error: null,
+                })
+              ),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    // 1. Query default active year 2026 -> only loan-2026-only fetched and returned
+    activeYear = 2026;
+    const res2026 = await getPaidOffLoansReport(activeYear);
+    expect(repayGteMock).toHaveBeenCalledWith('payment_date', '2026-01-01T00:00:00.000Z');
+    expect(repayLteMock).toHaveBeenCalledWith('payment_date', '2026-12-31T23:59:59.999Z');
+    expect(schedEqMock).toHaveBeenCalledWith('status', 'paid');
+    expect(schedGteMock).toHaveBeenCalledWith('due_date', '2026-01-01');
+    expect(schedLteMock).toHaveBeenCalledWith('due_date', '2026-12-31');
+    expect(loansIdInMock).toHaveBeenCalledWith('id', ['loan-2026-only']);
+    expect(res2026.rows).toHaveLength(1);
+    expect(res2026.rows[0].loanId).toBe('loan-2026-only');
+    expect(res2026.rows[0].paidOffYear).toBe(2026);
+
+    // 2. Query historical year 2025 -> loan-2026-only (which had a partial 2025 payment) is excluded because final payoff was 2026
+    activeYear = 2025;
+    const res2025 = await getPaidOffLoansReport(activeYear);
+    expect(repayGteMock).toHaveBeenCalledWith('payment_date', '2025-01-01T00:00:00.000Z');
+    expect(repayLteMock).toHaveBeenCalledWith('payment_date', '2025-12-31T23:59:59.999Z');
+    expect(res2025.rows).toHaveLength(1);
+    expect(res2025.rows[0].loanId).toBe('loan-2025-only');
+    expect(res2025.rows[0].paidOffYear).toBe(2025);
   });
 
   it('extracts costPrice, markupAmount, itemDescription, financingScheme, and repayments in getPaidOffLoansReport', async () => {
