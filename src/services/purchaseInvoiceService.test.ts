@@ -3,6 +3,8 @@ import {
   getFakturPembelian,
   catatRestockFaktur,
   getRiwayatStok,
+  generateNextPurchaseInvoiceNumber,
+  isPurchaseInvoiceNumberExists,
   setMockFakturList
 } from './purchaseInvoiceService';
 import { supabase } from '../lib/supabaseClient';
@@ -175,6 +177,135 @@ describe('purchaseInvoiceService', () => {
       expect(history[0].qty).toBe(25);
       expect(history[0].tipe).toBe('in');
       expect(history[0].keterangan).toContain('FAK-123');
+    });
+  });
+
+  describe('generateNextPurchaseInvoiceNumber', () => {
+    it('harus menghasilkan PB/YYYYMMDD/001 jika belum ada faktur pada tanggal tersebut', async () => {
+      const mockIlike = vi.fn().mockResolvedValue({ data: [], error: null });
+      const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const result = await generateNextPurchaseInvoiceNumber('2026-11-22');
+
+      expect(supabase.from).toHaveBeenCalledWith('purchases');
+      expect(mockSelect).toHaveBeenCalledWith('invoice_number');
+      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB/20261122/%');
+      expect(result).toBe('PB/20261122/001');
+    });
+
+    it('harus mengambil nomor urut maksimum + 1 dan mengabaikan suffix non-numerik', async () => {
+      const mockData = [
+        { invoice_number: 'PB/20261122/001' },
+        { invoice_number: 'PB/20261122/003' },
+        { invoice_number: 'PB/20261122/ABC' }
+      ];
+      const mockIlike = vi.fn().mockResolvedValue({ data: mockData, error: null });
+      const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const result = await generateNextPurchaseInvoiceNumber('2026-11-22');
+
+      expect(result).toBe('PB/20261122/004');
+    });
+
+    it('harus mereset nomor urut ke 001 untuk tanggal yang berbeda', async () => {
+      const mockIlike = vi.fn().mockResolvedValue({ data: [], error: null });
+      const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const result = await generateNextPurchaseInvoiceNumber('2026-11-23');
+
+      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB/20261123/%');
+      expect(result).toBe('PB/20261123/001');
+    });
+
+    it('harus fallback ke mockFakturList saat terjadi error schema cache / offline', async () => {
+      setMockFakturList([
+        {
+          id: 'mock-1',
+          noFaktur: 'PB/20261122/001',
+          tanggal: '2026-11-22',
+          totalNilai: 50000,
+          items: []
+        },
+        {
+          id: 'mock-2',
+          noFaktur: 'PB/20261122/002',
+          tanggal: '2026-11-22',
+          totalNilai: 75000,
+          items: []
+        },
+        {
+          id: 'mock-3',
+          noFaktur: 'PB/20261123/005',
+          tanggal: '2026-11-23',
+          totalNilai: 10000,
+          items: []
+        }
+      ]);
+
+      const mockIlike = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: '42P01', message: 'relation "purchases" does not exist' }
+      });
+      const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const result = await generateNextPurchaseInvoiceNumber('2026-11-22');
+
+      expect(result).toBe('PB/20261122/003');
+    });
+  });
+
+  describe('isPurchaseInvoiceNumberExists', () => {
+    it('harus mengembalikan true jika nomor faktur sudah ada di database', async () => {
+      const mockLimit = vi.fn().mockResolvedValue({ data: [{ id: 'p-1' }], error: null });
+      const mockEq = vi.fn().mockReturnValue({ limit: mockLimit });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const exists = await isPurchaseInvoiceNumberExists(' PB/20261122/001 ');
+
+      expect(supabase.from).toHaveBeenCalledWith('purchases');
+      expect(mockSelect).toHaveBeenCalledWith('id');
+      expect(mockEq).toHaveBeenCalledWith('invoice_number', 'PB/20261122/001');
+      expect(mockLimit).toHaveBeenCalledWith(1);
+      expect(exists).toBe(true);
+    });
+
+    it('harus mengembalikan false jika nomor faktur belum terdaftar', async () => {
+      const mockLimit = vi.fn().mockResolvedValue({ data: [], error: null });
+      const mockEq = vi.fn().mockReturnValue({ limit: mockLimit });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      const exists = await isPurchaseInvoiceNumberExists('PB/20261122/099');
+
+      expect(exists).toBe(false);
+    });
+
+    it('harus fallback ke mockFakturList saat terjadi error schema cache / offline', async () => {
+      setMockFakturList([
+        {
+          id: 'mock-1',
+          noFaktur: 'PB/20261122/001',
+          tanggal: '2026-11-22',
+          totalNilai: 50000,
+          items: []
+        }
+      ]);
+
+      const mockLimit = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: '42P01', message: 'relation "purchases" does not exist' }
+      });
+      const mockEq = vi.fn().mockReturnValue({ limit: mockLimit });
+      const mockSelect = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockReturnValue({ select: mockSelect });
+
+      await expect(isPurchaseInvoiceNumberExists('pb/20261122/001')).resolves.toBe(true);
+      await expect(isPurchaseInvoiceNumberExists('PB/20261122/002')).resolves.toBe(false);
     });
   });
 });

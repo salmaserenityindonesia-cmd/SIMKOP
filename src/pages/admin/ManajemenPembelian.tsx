@@ -1,17 +1,92 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Edit3, Loader2 } from 'lucide-react';
+import { CheckCheck, ClipboardCheck, Edit3, Eye, FileDown, Loader2, Printer, RefreshCw } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import ProductSearchAutocomplete from '../../components/common/ProductSearchAutocomplete';
-import { getFakturPembelian, catatRestockFaktur, FakturPembelian, getProduk, Produk } from '../../services/koperasiService';
+import {
+  getFakturPembelian,
+  catatRestockFaktur,
+  FakturPembelian,
+  getProduk,
+  Produk,
+  generateNextPurchaseInvoiceNumber,
+  isPurchaseInvoiceNumberExists
+} from '../../services/koperasiService';
 import { updatePurchaseInvoice, getPurchaseAuditLogs, PurchaseAuditLog, isValidUUID } from '../../services/purchaseService';
+import {
+  getKoperasiProfile,
+  DEFAULT_KOPERASI_PROFILE,
+  type KoperasiProfile
+} from '../../services/settingsService';
+import {
+  generatePurchaseInvoicePdf,
+  type PurchaseChecklistData,
+  type PurchaseInvoicePdfMode
+} from '../../utils/purchaseInvoicePdf';
 import { supabase } from '../../lib/supabaseClient';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
+
+const GENERAL_CHECKLIST_ITEMS: Array<{
+  key: keyof PurchaseChecklistData['generalChecks'];
+  label: string;
+}> = [
+  {
+    key: 'suratJalanMatch',
+    label: 'Kesesuaian surat jalan / nota asli supplier dengan nomor faktur',
+  },
+  {
+    key: 'packagingIntact',
+    label: 'Kemasan, segel, dan fisik seluruh barang dalam kondisi baik / tidak cacat',
+  },
+  {
+    key: 'expiryChecked',
+    label: 'Masa kedaluwarsa (expired date) / spesifikasi barang telah diperiksa',
+  },
+  {
+    key: 'stockPlaced',
+    label: 'Jumlah fisik barang sesuai faktur dan siap/telah masuk ke stok POS',
+  },
+];
+
+const getChecklistItemKey = (item: { id?: string }, index: number): string =>
+  item.id || String(index);
+
+const createInitialChecklistData = (faktur: FakturPembelian): PurchaseChecklistData => {
+  const itemChecks: PurchaseChecklistData['itemChecks'] = {};
+  faktur.items.forEach((item, idx) => {
+    itemChecks[getChecklistItemKey(item, idx)] = {
+      qtyMatch: false,
+      conditionGood: false,
+      priceMatch: false,
+      note: '',
+    };
+  });
+
+  return {
+    itemChecks,
+    generalChecks: {
+      suratJalanMatch: false,
+      packagingIntact: false,
+      expiryChecked: false,
+      stockPlaced: false,
+    },
+    inspectorNotes: '',
+  };
+};
+
+const getTodayDateString = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 export default function ManajemenPembelian() {
   const { showToast } = useFeedback();
   const [fakturList, setFakturList] = useState<FakturPembelian[]>([]);
   const [products, setProducts] = useState<Produk[]>([]);
+  const [koperasiProfile, setKoperasiProfile] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
   const [loading, setLoading] = useState(true);
 
   // User state for role check
@@ -20,7 +95,11 @@ export default function ManajemenPembelian() {
   // Form Mode (New Invoice)
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [noFaktur, setNoFaktur] = useState('');
-  const [tanggal, setTanggal] = useState(new Date().toISOString().split('T')[0]);
+  const [tanggal, setTanggal] = useState(getTodayDateString);
+  const [isManualNoFaktur, setIsManualNoFaktur] = useState(false);
+  const [isGeneratingNoFaktur, setIsGeneratingNoFaktur] = useState(false);
+  const [isSubmittingFaktur, setIsSubmittingFaktur] = useState(false);
+  const invoiceGenRequestRef = useRef(0);
 
   // Cart items
   const [items, setItems] = useState<{ id: string; produkId: string; qty: number; hargaBeli: number }[]>([]);
@@ -34,6 +113,7 @@ export default function ManajemenPembelian() {
 
   // View Detail Modal
   const [selectedFaktur, setSelectedFaktur] = useState<FakturPembelian | null>(null);
+  const [checklistData, setChecklistData] = useState<PurchaseChecklistData | null>(null);
   const [auditLogs, setAuditLogs] = useState<PurchaseAuditLog[]>([]);
   const [isLoadingAudit, setIsLoadingAudit] = useState(false);
 
@@ -90,12 +170,14 @@ export default function ManajemenPembelian() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [fakturData, produkData] = await Promise.all([
+      const [fakturData, produkData, profileData] = await Promise.all([
         getFakturPembelian(),
-        getProduk()
+        getProduk(),
+        getKoperasiProfile().catch(() => DEFAULT_KOPERASI_PROFILE)
       ]);
       setFakturList(fakturData);
       setProducts(produkData);
+      setKoperasiProfile(profileData);
     } catch (error) {
       console.error('Failed to fetch data', error);
     } finally {
@@ -105,11 +187,36 @@ export default function ManajemenPembelian() {
 
   const getProductName = (id: string) => products.find(p => p.id === id)?.name || 'Produk Unknown';
 
+  const loadAutoInvoiceNumber = async (targetDate: string, resetManual = false) => {
+    const requestId = ++invoiceGenRequestRef.current;
+    setIsGeneratingNoFaktur(true);
+    try {
+      const generated = await generateNextPurchaseInvoiceNumber(targetDate);
+      if (invoiceGenRequestRef.current === requestId) {
+        setNoFaktur(generated);
+        if (resetManual) {
+          setIsManualNoFaktur(false);
+        }
+      }
+    } catch (error: any) {
+      if (invoiceGenRequestRef.current === requestId) {
+        showToast(error?.message || 'Gagal membuat nomor faktur otomatis, silakan isi manual', 'warning');
+      }
+    } finally {
+      if (invoiceGenRequestRef.current === requestId) {
+        setIsGeneratingNoFaktur(false);
+      }
+    }
+  };
+
   const handleOpenForm = () => {
+    const today = getTodayDateString();
     setNoFaktur('');
-    setTanggal(new Date().toISOString().split('T')[0]);
+    setTanggal(today);
     setItems([]);
+    setIsManualNoFaktur(false);
     setIsFormOpen(true);
+    void loadAutoInvoiceNumber(today, true);
   };
 
   const handleOpenItemModal = () => {
@@ -149,7 +256,8 @@ export default function ManajemenPembelian() {
   };
 
   const handleSubmitFaktur = async () => {
-    if (!noFaktur.trim()) {
+    const trimmedNoFaktur = noFaktur.trim();
+    if (!trimmedNoFaktur) {
       showToast('Nomor Faktur harus diisi', 'warning');
       return;
     }
@@ -158,9 +266,23 @@ export default function ManajemenPembelian() {
       return;
     }
 
+    setIsSubmittingFaktur(true);
     try {
+      let finalNoFaktur = trimmedNoFaktur;
+      const exists = await isPurchaseInvoiceNumberExists(finalNoFaktur);
+      if (exists) {
+        if (!isManualNoFaktur) {
+          finalNoFaktur = await generateNextPurchaseInvoiceNumber(tanggal);
+          setNoFaktur(finalNoFaktur);
+          showToast(`Nomor faktur sudah terpakai, otomatis diperbarui ke ${finalNoFaktur}`, 'info');
+        } else {
+          showToast(`Nomor faktur "${finalNoFaktur}" sudah terdaftar. Gunakan nomor lain atau klik Auto.`, 'warning');
+          return;
+        }
+      }
+
       await catatRestockFaktur({
-        noFaktur,
+        noFaktur: finalNoFaktur,
         tanggal,
         items
       });
@@ -169,6 +291,8 @@ export default function ManajemenPembelian() {
       fetchData();
     } catch (error: any) {
       showToast(error.message || 'Terjadi kesalahan saat menyimpan faktur', 'error');
+    } finally {
+      setIsSubmittingFaktur(false);
     }
   };
 
@@ -176,6 +300,7 @@ export default function ManajemenPembelian() {
 
   const handleOpenDetailModal = async (faktur: FakturPembelian) => {
     setSelectedFaktur(faktur);
+    setChecklistData(createInitialChecklistData(faktur));
     setIsLoadingAudit(true);
     try {
       const logs = await getPurchaseAuditLogs(faktur.id);
@@ -186,6 +311,114 @@ export default function ManajemenPembelian() {
     } finally {
       setIsLoadingAudit(false);
     }
+  };
+
+  const handleCloseDetailModal = () => {
+    setSelectedFaktur(null);
+    setAuditLogs([]);
+    setChecklistData(null);
+  };
+
+  const handleToggleItemCheck = (
+    itemKey: string,
+    field: 'qtyMatch' | 'conditionGood' | 'priceMatch'
+  ) => {
+    setChecklistData(prev => {
+      if (!prev) return prev;
+      const existing = prev.itemChecks[itemKey] || {
+        qtyMatch: false,
+        conditionGood: false,
+        priceMatch: false,
+        note: '',
+      };
+      return {
+        ...prev,
+        itemChecks: {
+          ...prev.itemChecks,
+          [itemKey]: {
+            ...existing,
+            [field]: !existing[field],
+          },
+        },
+      };
+    });
+  };
+
+  const handleItemNoteChange = (itemKey: string, value: string) => {
+    setChecklistData(prev => {
+      if (!prev) return prev;
+      const existing = prev.itemChecks[itemKey] || {
+        qtyMatch: false,
+        conditionGood: false,
+        priceMatch: false,
+        note: '',
+      };
+      return {
+        ...prev,
+        itemChecks: {
+          ...prev.itemChecks,
+          [itemKey]: {
+            ...existing,
+            note: value,
+          },
+        },
+      };
+    });
+  };
+
+  const handleToggleGeneralCheck = (
+    field: keyof PurchaseChecklistData['generalChecks']
+  ) => {
+    setChecklistData(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        generalChecks: {
+          ...prev.generalChecks,
+          [field]: !prev.generalChecks[field],
+        },
+      };
+    });
+  };
+
+  const areAllChecksSelected = Boolean(
+    selectedFaktur &&
+      checklistData &&
+      selectedFaktur.items.every((item, idx) => {
+        const entry = checklistData.itemChecks[getChecklistItemKey(item, idx)];
+        return Boolean(entry?.qtyMatch && entry?.conditionGood && entry?.priceMatch);
+      }) &&
+      GENERAL_CHECKLIST_ITEMS.every(({ key }) => checklistData.generalChecks[key])
+  );
+
+  const handleCheckAllMatch = () => {
+    if (!selectedFaktur) return;
+    const nextValue = !areAllChecksSelected;
+    setChecklistData(prev => {
+      if (!prev) return prev;
+      const nextItemChecks: PurchaseChecklistData['itemChecks'] = {};
+      selectedFaktur.items.forEach((item, idx) => {
+        const key = getChecklistItemKey(item, idx);
+        const existing = prev.itemChecks[key];
+        nextItemChecks[key] = {
+          qtyMatch: nextValue,
+          conditionGood: nextValue,
+          priceMatch: nextValue,
+          note: existing?.note ?? '',
+        };
+      });
+
+      return {
+        ...prev,
+        itemChecks: nextItemChecks,
+        generalChecks: {
+          suratJalanMatch: nextValue,
+          packagingIntact: nextValue,
+          expiryChecked: nextValue,
+          stockPlaced: nextValue,
+        },
+      };
+    });
   };
 
   const handleOpenEditModal = (faktur: FakturPembelian) => {
@@ -320,6 +553,40 @@ export default function ManajemenPembelian() {
     exportToPDF(headers, data, 'Laporan_Pembelian', 'Laporan Riwayat Pembelian');
   };
 
+  const handleInvoicePdf = (
+    faktur: FakturPembelian,
+    mode: PurchaseInvoicePdfMode,
+    checklist?: PurchaseChecklistData
+  ) => {
+    try {
+      const mappedItems = faktur.items.map((item, idx) => ({
+        id: getChecklistItemKey(item, idx),
+        productName: getProductName(item.produkId),
+        qty: item.qty,
+        buyPrice: item.hargaBeli,
+        subtotal: item.qty * item.hargaBeli
+      }));
+
+      generatePurchaseInvoicePdf(
+        {
+          invoiceNumber: faktur.noFaktur,
+          date: faktur.tanggal,
+          totalAmount: faktur.totalNilai
+        },
+        mappedItems,
+        koperasiProfile,
+        mode,
+        checklist
+      );
+
+      if (mode === 'download') {
+        showToast(`Faktur ${faktur.noFaktur} berhasil diunduh`, 'success');
+      }
+    } catch (error: any) {
+      showToast(error?.message || 'Gagal membuat dokumen PDF faktur pembelian', 'error');
+    }
+  };
+
   const totalPages = Math.ceil(fakturList.length / itemsPerPage);
   const paginatedFakturList = fakturList.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
@@ -345,15 +612,43 @@ export default function ManajemenPembelian() {
               <h2 className="text-title-md font-medium text-on-surface border-b border-outline-variant/30 pb-3">Informasi Faktur</h2>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur</label>
-                <input
-                  type="text"
-                  value={noFaktur}
-                  onChange={(e) => setNoFaktur(e.target.value)}
-                  className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
-                  placeholder="INV/2026/..."
-                  required
-                />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-label-md font-label-md text-on-surface-variant">No. Faktur</label>
+                  {!isManualNoFaktur ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-700 border border-emerald-500/20">
+                      Otomatis • Unik
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/10 text-amber-700 border border-amber-500/20">
+                      Manual
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={noFaktur}
+                    onChange={(e) => {
+                      invoiceGenRequestRef.current += 1;
+                      setIsGeneratingNoFaktur(false);
+                      setNoFaktur(e.target.value);
+                      setIsManualNoFaktur(true);
+                    }}
+                    className="flex-1 min-w-0 px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md font-mono focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                    placeholder="PB/20261122/001"
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void loadAutoInvoiceNumber(tanggal, true)}
+                    disabled={isGeneratingNoFaktur}
+                    title="Generate ulang nomor faktur otomatis"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-surface-container hover:bg-surface-container-high text-on-surface border border-outline-variant rounded-lg text-label-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isGeneratingNoFaktur ? 'animate-spin' : ''}`} />
+                    <span>Auto</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -361,7 +656,13 @@ export default function ManajemenPembelian() {
                 <input
                   type="date"
                   value={tanggal}
-                  onChange={(e) => setTanggal(e.target.value)}
+                  onChange={(e) => {
+                    const nextDate = e.target.value;
+                    setTanggal(nextDate);
+                    if (nextDate && !isManualNoFaktur) {
+                      void loadAutoInvoiceNumber(nextDate);
+                    }
+                  }}
                   className="px-4 py-2 bg-surface-container-lowest border border-outline rounded-lg text-body-md focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
                   required
                 />
@@ -433,10 +734,11 @@ export default function ManajemenPembelian() {
               <div className="mt-4 flex justify-end">
                 <button
                   onClick={handleSubmitFaktur}
-                  disabled={items.length === 0 || !noFaktur}
-                  className="bg-primary text-on-primary px-8 py-2.5 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={items.length === 0 || !noFaktur.trim() || isGeneratingNoFaktur || isSubmittingFaktur}
+                  className="inline-flex items-center gap-2 bg-primary text-on-primary px-8 py-2.5 rounded-lg font-label-lg shadow hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Simpan Faktur Pembelian
+                  {isSubmittingFaktur && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isSubmittingFaktur ? 'Menyimpan...' : 'Simpan Faktur Pembelian'}
                 </button>
               </div>
             </div>
@@ -582,9 +884,10 @@ export default function ManajemenPembelian() {
                         <button
                           onClick={() => handleOpenDetailModal(faktur)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-tertiary hover:bg-tertiary/10 transition-colors"
-                          title="Lihat Detail Faktur"
+                          title="Detail, Checklist Barang & Cetak PDF"
+                          aria-label={`Detail, Checklist Barang & Cetak PDF ${faktur.noFaktur}`}
                         >
-                          <span className="material-symbols-outlined text-[18px]">visibility</span>
+                          <Eye className="w-4 h-4" />
                         </button>
                         {currentUser?.role === 'admin' ? (
                           <button
@@ -656,55 +959,156 @@ export default function ManajemenPembelian() {
         </div>
       </div>
 
-      {/* Modal Detail Faktur & Audit Trail */}
+      {/* Modal Detail Faktur & Verifikasi Barang */}
       {selectedFaktur && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-surface rounded-2xl w-full max-w-2xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
+          <div className="bg-surface rounded-2xl w-full max-w-4xl overflow-hidden shadow-lg border border-outline-variant/30 flex flex-col max-h-[90vh]">
             <div className="p-6 border-b border-outline-variant/30 flex justify-between items-center bg-surface-container-lowest">
               <div>
-                <h2 className="text-title-lg font-title-lg text-on-surface">Detail Faktur</h2>
+                <h2 className="text-title-lg font-title-lg text-on-surface">Detail & Verifikasi Faktur</h2>
                 <p className="text-body-md text-on-surface-variant mt-1 font-mono">{selectedFaktur.noFaktur} - {selectedFaktur.tanggal}</p>
               </div>
-              <button onClick={() => { setSelectedFaktur(null); setAuditLogs([]); }} className="text-on-surface-variant hover:text-on-surface">
+              <button onClick={handleCloseDetailModal} className="text-on-surface-variant hover:text-on-surface">
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto flex flex-col gap-6">
-              {/* Daftar Barang */}
+              {/* Daftar Barang & Checklist Kecocokan */}
               <div>
-                <h3 className="text-title-sm font-medium text-on-surface mb-2">Daftar Barang</h3>
-                <div className="border border-outline-variant/30 rounded-xl overflow-hidden">
-                  <table className="w-full text-left border-collapse">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <h3 className="text-title-sm font-medium text-on-surface">Daftar Barang & Checklist Kecocokan</h3>
+                  <button
+                    type="button"
+                    onClick={handleCheckAllMatch}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-label-md font-medium bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors"
+                  >
+                    <CheckCheck className="w-4 h-4" />
+                    <span>{areAllChecksSelected ? 'Reset Centang' : 'Centang Semua Sesuai'}</span>
+                  </button>
+                </div>
+                <div className="border border-outline-variant/30 rounded-xl overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[720px]">
                     <thead>
                       <tr className="bg-surface-container-lowest border-b border-outline-variant text-label-md text-on-surface-variant">
                         <th className="py-2.5 px-4 font-medium">Produk</th>
                         <th className="py-2.5 px-3 font-medium text-right">Qty</th>
                         <th className="py-2.5 px-3 font-medium text-right">Harga Beli</th>
-                        <th className="py-2.5 px-4 font-medium text-right">Subtotal</th>
+                        <th className="py-2.5 px-3 font-medium text-right">Subtotal</th>
+                        <th className="py-2.5 px-2.5 font-medium text-center">Qty Sesuai</th>
+                        <th className="py-2.5 px-2.5 font-medium text-center">Kondisi Baik</th>
+                        <th className="py-2.5 px-2.5 font-medium text-center">Harga Sesuai</th>
+                        <th className="py-2.5 px-3 font-medium">Catatan</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedFaktur.items.map((item, idx) => (
-                        <tr key={idx} className="border-b border-outline-variant/30">
-                          <td className="py-3 px-4 text-body-md text-on-surface">{getProductName(item.produkId)}</td>
-                          <td className="py-3 px-3 text-body-md text-on-surface text-right">{item.qty}</td>
-                          <td className="py-3 px-3 text-body-md text-on-surface text-right">Rp {item.hargaBeli.toLocaleString('id-ID')}</td>
-                          <td className="py-3 px-4 text-body-md font-medium text-on-surface text-right">
-                            Rp {(item.qty * item.hargaBeli).toLocaleString('id-ID')}
-                          </td>
-                        </tr>
-                      ))}
+                      {selectedFaktur.items.map((item, idx) => {
+                        const itemKey = getChecklistItemKey(item, idx);
+                        const itemCheck = checklistData?.itemChecks[itemKey] || {
+                          qtyMatch: false,
+                          conditionGood: false,
+                          priceMatch: false,
+                          note: '',
+                        };
+
+                        return (
+                          <tr key={itemKey} className="border-b border-outline-variant/30 hover:bg-surface-container-lowest/30">
+                            <td className="py-3 px-4 text-body-md text-on-surface">{getProductName(item.produkId)}</td>
+                            <td className="py-3 px-3 text-body-md text-on-surface text-right">{item.qty}</td>
+                            <td className="py-3 px-3 text-body-md text-on-surface text-right">Rp {item.hargaBeli.toLocaleString('id-ID')}</td>
+                            <td className="py-3 px-3 text-body-md font-medium text-on-surface text-right">
+                              Rp {(item.qty * item.hargaBeli).toLocaleString('id-ID')}
+                            </td>
+                            <td className="py-3 px-2.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={itemCheck.qtyMatch}
+                                onChange={() => handleToggleItemCheck(itemKey, 'qtyMatch')}
+                                aria-label={`Qty Sesuai untuk ${getProductName(item.produkId)}`}
+                                className="w-4 h-4 rounded border-outline text-primary focus:ring-primary cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-3 px-2.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={itemCheck.conditionGood}
+                                onChange={() => handleToggleItemCheck(itemKey, 'conditionGood')}
+                                aria-label={`Kondisi Baik untuk ${getProductName(item.produkId)}`}
+                                className="w-4 h-4 rounded border-outline text-primary focus:ring-primary cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-3 px-2.5 text-center">
+                              <input
+                                type="checkbox"
+                                checked={itemCheck.priceMatch}
+                                onChange={() => handleToggleItemCheck(itemKey, 'priceMatch')}
+                                aria-label={`Harga Sesuai untuk ${getProductName(item.produkId)}`}
+                                className="w-4 h-4 rounded border-outline text-primary focus:ring-primary cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2 px-3">
+                              <input
+                                type="text"
+                                value={itemCheck.note}
+                                onChange={(e) => handleItemNoteChange(itemKey, e.target.value)}
+                                placeholder="Catatan item..."
+                                className="w-full min-w-[120px] px-2.5 py-1 text-body-sm bg-surface-container-lowest border border-outline-variant rounded-md focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="bg-surface-container-lowest/50">
                         <td colSpan={3} className="py-3 px-4 text-right font-medium text-on-surface">Total:</td>
-                        <td className="py-3 px-4 text-right font-bold text-primary text-title-md">
+                        <td className="py-3 px-3 text-right font-bold text-primary text-title-md">
                           Rp {selectedFaktur.totalNilai.toLocaleString('id-ID')}
                         </td>
+                        <td colSpan={4} />
                       </tr>
                     </tfoot>
                   </table>
+                </div>
+              </div>
+
+              {/* Formulir Checklist Kecocokan Barang & Faktur */}
+              <div className="p-4 bg-surface-container-lowest rounded-xl border border-outline-variant/40 flex flex-col gap-3">
+                <h3 className="text-title-sm font-medium text-on-surface flex items-center gap-2">
+                  <ClipboardCheck className="w-4 h-4 text-primary" />
+                  Formulir Checklist Kecocokan Barang &amp; Faktur
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {GENERAL_CHECKLIST_ITEMS.map(({ key, label }) => (
+                    <label
+                      key={key}
+                      className="flex items-start gap-2.5 p-2.5 rounded-lg bg-surface border border-outline-variant/30 hover:border-primary/40 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(checklistData?.generalChecks[key])}
+                        onChange={() => handleToggleGeneralCheck(key)}
+                        className="mt-0.5 w-4 h-4 rounded border-outline text-primary focus:ring-primary cursor-pointer shrink-0"
+                      />
+                      <span className="text-body-sm text-on-surface leading-snug">{label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-col gap-1.5 mt-1">
+                  <label className="text-label-md font-label-md text-on-surface-variant">
+                    Catatan Pemeriksa Gudang
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={checklistData?.inspectorNotes ?? ''}
+                    onChange={(e) =>
+                      setChecklistData(prev =>
+                        prev ? { ...prev, inspectorNotes: e.target.value } : prev
+                      )
+                    }
+                    placeholder="Tambahkan catatan hasil pemeriksaan fisik barang atau keterangan selisih..."
+                    className="px-3 py-2 bg-surface border border-outline-variant rounded-lg text-body-sm focus:border-primary focus:ring-1 focus:ring-primary outline-none resize-none"
+                  />
                 </div>
               </div>
 
@@ -751,6 +1155,32 @@ export default function ManajemenPembelian() {
                   </div>
                 )}
               </div>
+            </div>
+
+            <div className="p-4 border-t border-outline-variant/30 bg-surface-container-lowest flex flex-wrap justify-end gap-2.5 items-center">
+              <button
+                type="button"
+                onClick={() => handleInvoicePdf(selectedFaktur, 'print', checklistData ?? undefined)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border border-outline bg-surface hover:bg-surface-container text-on-surface font-label-lg transition-colors"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Cetak Faktur</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleInvoicePdf(selectedFaktur, 'download', checklistData ?? undefined)}
+                className="flex items-center gap-2 bg-[#db4437] text-white px-4 py-2 rounded-lg font-label-lg shadow hover:bg-[#c53929] transition-colors"
+              >
+                <FileDown className="w-4 h-4" />
+                <span>Download Faktur PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCloseDetailModal}
+                className="px-4 py-2 text-on-surface-variant font-label-lg hover:bg-surface-container rounded-lg transition-colors"
+              >
+                Tutup
+              </button>
             </div>
           </div>
         </div>

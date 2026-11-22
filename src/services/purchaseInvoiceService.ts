@@ -10,6 +10,54 @@ function shouldFallback(e: any): boolean {
   return e.code === "42P01" || msg.includes("schema cache") || msg.includes("fetch") || msg.includes("network") || msg.includes("failed to fetch");
 }
 
+function getLocalDateString(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeInvoiceDate(invoiceDate?: string): string {
+  const trimmed = (invoiceDate || '').trim();
+  if (!trimmed) {
+    return getLocalDateString();
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+  return trimmed;
+}
+
+export function formatPurchaseInvoiceNumber(invoiceDate: string, seq: number): string {
+  const normalizedDate = normalizeInvoiceDate(invoiceDate);
+  const compactDate = normalizedDate.replace(/-/g, '');
+  return `PB/${compactDate}/${String(Math.max(1, seq)).padStart(3, '0')}`;
+}
+
+function extractMaxSequenceForPrefix(
+  invoiceNumbers: Array<string | null | undefined>,
+  prefix: string
+): number {
+  const upperPrefix = prefix.toUpperCase();
+  let maxSeq = 0;
+
+  for (const raw of invoiceNumbers) {
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed.toUpperCase().startsWith(upperPrefix)) continue;
+
+    const suffix = trimmed.slice(prefix.length);
+    if (/^\d+$/.test(suffix)) {
+      const seq = parseInt(suffix, 10);
+      if (!Number.isNaN(seq) && seq > maxSeq) {
+        maxSeq = seq;
+      }
+    }
+  }
+
+  return maxSeq;
+}
+
 export interface RestockItem {
   id?: string;
   produkId: string;
@@ -235,5 +283,77 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
   }
 
   return riwayat;
+}
+
+export async function generateNextPurchaseInvoiceNumber(invoiceDate: string): Promise<string> {
+  const normalizedDate = normalizeInvoiceDate(invoiceDate);
+  const compactDate = normalizedDate.replace(/-/g, '');
+  const prefix = `PB/${compactDate}/`;
+
+  try {
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('invoice_number')
+      .ilike('invoice_number', `${prefix}%`);
+
+    if (error) {
+      if (shouldFallback(error)) {
+        const maxSeq = extractMaxSequenceForPrefix(
+          mockFakturList.map((f) => f.noFaktur),
+          prefix
+        );
+        return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
+      }
+      throw new Error(`Gagal membuat nomor faktur otomatis: ${error.message}`);
+    }
+
+    const maxSeq = extractMaxSequenceForPrefix(
+      (data || []).map((row: any) => row?.invoice_number),
+      prefix
+    );
+    return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
+  } catch (err: any) {
+    if (shouldFallback(err)) {
+      const maxSeq = extractMaxSequenceForPrefix(
+        mockFakturList.map((f) => f.noFaktur),
+        prefix
+      );
+      return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
+    }
+    throw err;
+  }
+}
+
+export async function isPurchaseInvoiceNumberExists(invoiceNumber: string): Promise<boolean> {
+  const trimmed = invoiceNumber.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('id')
+      .eq('invoice_number', trimmed)
+      .limit(1);
+
+    if (error) {
+      if (shouldFallback(error)) {
+        return mockFakturList.some(
+          (f) => f.noFaktur.trim().toLowerCase() === trimmed.toLowerCase()
+        );
+      }
+      throw new Error(`Gagal memeriksa duplikasi nomor faktur: ${error.message}`);
+    }
+
+    return Array.isArray(data) && data.length > 0;
+  } catch (err: any) {
+    if (shouldFallback(err)) {
+      return mockFakturList.some(
+        (f) => f.noFaktur.trim().toLowerCase() === trimmed.toLowerCase()
+      );
+    }
+    throw err;
+  }
 }
 
