@@ -3793,5 +3793,389 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
   });
 });
 
+describe('loanMatrixService - Sinkronisasi Realisasi Angsuran antara getLoanMatrix dan getLoanInteractiveGrid', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-23T02:15:00.000+07:00'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('membaca pelunasan Bulan 1 [Des-26] untuk Anggota Tes 2 (LOAN-1795334228834) secara konsisten di getLoanMatrix dan getLoanInteractiveGrid', async () => {
+    const loanObj = {
+      id: 'loan-tes-2',
+      loan_number: 'LOAN-1795334228834',
+      member_id: 'mem-tes-2',
+      principal_amount: 3300000,
+      amount: 3300000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 1100000,
+      planned_installment_amount: 1100000,
+      disbursed_at: '2026-11-22',
+      status: 'active',
+      loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+      member: {
+        id: 'mem-tes-2',
+        nrp: '200002',
+        nama: 'Anggota Tes 2',
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+      },
+    };
+
+    const schedules = [
+      { id: 'sc-tes2-1', loan_id: 'loan-tes-2', period_number: 1, due_date: '2026-12-23', target_amount: 1100000, paid_amount: 1100000, status: 'paid', loan: loanObj },
+      { id: 'sc-tes2-2', loan_id: 'loan-tes-2', period_number: 2, due_date: '2027-01-23', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 'sc-tes2-3', loan_id: 'loan-tes-2', period_number: 3, due_date: '2027-02-23', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+    ];
+
+    const repayments = [
+      { id: 'rep-tes2-1', loan_id: 'loan-tes-2', schedule_id: 'sc-tes2-1', amount_paid: 1100000, payment_date: '2026-11-23T01:00:00Z', payment_method: 'potong_gaji' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'id') {
+              return { in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-tes-2' }], error: null }) };
+            }
+            return {
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: loanObj, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-tes-2' }], error: null }),
+                }),
+              };
+            }
+            if (cols === '*') {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: repayments, error: null }),
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: repayments, error: null }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    const grid = await getLoanInteractiveGrid('loan-tes-2');
+
+    expect(matrix.members).toHaveLength(1);
+    const row = matrix.members[0];
+    expect(row.months[12].status).toBe('PAID');
+    expect(row.months[12].paidAmount).toBe(1100000);
+    expect(row.months[12].cumulativePaidAmount).toBe(1100000);
+    expect(row.months[12].remainingBalance).toBe(2200000);
+    expect(row.totalPaidAllTime).toBe(1100000);
+    expect(row.paidInstallmentsCount).toBe(1);
+    expect(row.totalInstallmentsCount).toBe(3);
+    expect(row.complianceYTD).toBe(100);
+    expect(matrix.totalCollectedYTD).toBe(1100000);
+
+    expect(grid.totalPaid).toBe(1100000);
+    expect(grid.sisaPinjaman).toBe(2200000);
+    expect(grid.periods[0].status).toBe('PAID');
+  });
+
+  it('tetap membaca status Lunas dan nominal terbayar saat status lunas/is_paid atau hanya tercatat di loan_repayments', async () => {
+    const loanObj = {
+      id: 'loan-sync-2',
+      loan_number: 'LOAN-SYNC-002',
+      member_id: 'mem-sync-2',
+      principal_amount: 3300000,
+      amount: 3300000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 1100000,
+      status: 'active',
+      member: { id: 'mem-sync-2', nrp: '200099', nama: 'Anggota Sync', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const schedules = [
+      { id: 'sc-s-1', loan_id: 'loan-sync-2', period_number: 1, due_date: '2026-12-23', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 'sc-s-2', loan_id: 'loan-sync-2', period_number: 2, due_date: '2027-01-23', target_amount: 1100000, paid_amount: 0, status: 'lunas', loan: loanObj },
+      { id: 'sc-s-3', loan_id: 'loan-sync-2', period_number: 3, due_date: '2027-02-23', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+    ];
+
+    const repayments = [
+      { id: 'rep-s-1', loan_id: 'loan-sync-2', schedule_id: 'sc-s-1', amount_paid: 1100000, payment_date: '2026-11-23T01:00:00Z', payment_method: 'transfer' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-sync-2' }], error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-sync-2' }], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: repayments, error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    const row = matrix.members[0];
+    expect(row.months[12].status).toBe('PAID');
+    expect(row.months[12].paidAmount).toBe(1100000);
+    expect(row.months[12].remainingBalance).toBe(2200000);
+    expect(row.remainingPrincipalAllTime).toBe(1100000);
+    expect(row.totalPaidAllTime).toBe(2200000);
+    expect(row.paidInstallmentsCount).toBe(2);
+    expect(row.totalInstallmentsCount).toBe(3);
+  });
+
+  it('mengalokasikan loan_repayments tanpa schedule_id secara FIFO ke jadwal 2026-12-22 untuk Anggota Tes 2 dan anggota tes 1 tanpa double-counting', async () => {
+    const loanTes2 = {
+      id: 'loan-tes-2',
+      loan_number: 'LOAN-1795334228834',
+      member_id: 'mem-tes-2',
+      principal_amount: 3300000,
+      amount: 3300000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 1100000,
+      status: 'active',
+      member: { id: 'mem-tes-2', nrp: '200002', nama: 'Anggota Tes 2', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+    const loanTes1 = {
+      id: 'loan-tes-1',
+      loan_number: 'LOAN-1795333396946',
+      member_id: 'mem-tes-1',
+      principal_amount: 2200000,
+      amount: 2200000,
+      tenor: 11,
+      agreed_tenor_months: 11,
+      monthly_target: 200000,
+      status: 'active',
+      member: { id: 'mem-tes-1', nrp: '200001', nama: 'anggota tes 1', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const schedules = [
+      { id: 'sc-t2-1', loan_id: 'loan-tes-2', period_number: 1, due_date: '2026-12-22', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanTes2 },
+      { id: 'sc-t2-2', loan_id: 'loan-tes-2', period_number: 2, due_date: '2027-01-22', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanTes2 },
+      { id: 'sc-t2-3', loan_id: 'loan-tes-2', period_number: 3, due_date: '2027-02-22', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanTes2 },
+      { id: 'sc-t1-1', loan_id: 'loan-tes-1', period_number: 1, due_date: '2026-12-22', target_amount: 200000, paid_amount: 0, status: 'unpaid', loan: loanTes1 },
+      ...Array.from({ length: 10 }, (_, idx) => ({
+        id: `sc-t1-${idx + 2}`,
+        loan_id: 'loan-tes-1',
+        period_number: idx + 2,
+        due_date: `2027-${String(idx + 1).padStart(2, '0')}-22`,
+        target_amount: 200000,
+        paid_amount: 0,
+        status: 'unpaid',
+        loan: loanTes1,
+      })),
+    ];
+
+    const repayments = [
+      { id: 'rep-t2-unlinked', loan_id: 'loan-tes-2', schedule_id: null, amount_paid: 1100000, payment_date: '2026-11-23T01:00:00Z', payment_method: 'transfer' },
+      { id: 'rep-t1-unlinked', loan_id: 'loan-tes-1', schedule_id: null, amount_paid: 200000, payment_date: '2026-11-23T01:00:00Z', payment_method: 'transfer' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'id') {
+              return { in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-tes-2' }, { id: 'loan-tes-1' }], error: null }) };
+            }
+            return {
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: loanTes2, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-tes-2' }, { loan_id: 'loan-tes-1' }], error: null }),
+                }),
+              };
+            }
+            if (cols === '*') {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({ data: schedules.filter(s => s.loan_id === 'loan-tes-2'), error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: repayments, error: null }),
+            eq: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: repayments.filter(r => r.loan_id === 'loan-tes-2'), error: null }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    expect(matrix.totalCollectedYTD).toBe(1300000);
+    expect(matrix.complianceYTD).toBe(100);
+
+    const row2 = matrix.members.find(m => m.loanNumber === 'LOAN-1795334228834')!;
+    expect(row2.months[12].status).toBe('PAID');
+    expect(row2.months[12].paidAmount).toBe(1100000);
+    expect(row2.paidInstallmentsCount).toBe(1);
+    expect(row2.totalInstallmentsCount).toBe(3);
+    expect(row2.complianceYTD).toBe(100);
+    expect(row2.totalPaidAllTime).toBe(1100000);
+
+    const row1 = matrix.members.find(m => m.loanNumber === 'LOAN-1795333396946')!;
+    expect(row1.months[12].status).toBe('PAID');
+    expect(row1.months[12].paidAmount).toBe(200000);
+    expect(row1.paidInstallmentsCount).toBe(1);
+    expect(row1.totalInstallmentsCount).toBe(11);
+    expect(row1.complianceYTD).toBe(100);
+    expect(row1.totalPaidAllTime).toBe(200000);
+
+    const grid2 = await getLoanInteractiveGrid('loan-tes-2');
+    expect(grid2.totalPaid).toBe(1100000);
+    expect(grid2.periods[0].status).toBe('PAID');
+    expect(grid2.periods[0].paidAmount).toBe(1100000);
+    expect(grid2.periods[1].status).toBe('PROJECTED');
+  });
+
+  it('tidak melakukan double-counting ketika schedule_id sudah terisi di loan_repayments', async () => {
+    const loanObj = {
+      id: 'loan-no-dbl',
+      loan_number: 'LOAN-NO-DBL',
+      member_id: 'mem-no-dbl',
+      principal_amount: 3300000,
+      amount: 3300000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 1100000,
+      status: 'active',
+      member: { id: 'mem-no-dbl', nrp: '200088', nama: 'Anggota No Double', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const schedules = [
+      { id: 'sc-nd-1', loan_id: 'loan-no-dbl', period_number: 1, due_date: '2026-12-22', target_amount: 1100000, paid_amount: 1100000, status: 'paid', loan: loanObj },
+      { id: 'sc-nd-2', loan_id: 'loan-no-dbl', period_number: 2, due_date: '2027-01-22', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+      { id: 'sc-nd-3', loan_id: 'loan-no-dbl', period_number: 3, due_date: '2027-02-22', target_amount: 1100000, paid_amount: 0, status: 'unpaid', loan: loanObj },
+    ];
+
+    const repayments = [
+      { id: 'rep-nd-1', loan_id: 'loan-no-dbl', schedule_id: 'sc-nd-1', amount_paid: 1100000, payment_date: '2026-11-23T01:00:00Z', payment_method: 'transfer' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-no-dbl' }], error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [{ loan_id: 'loan-no-dbl' }], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: repayments, error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    const row = matrix.members[0];
+    expect(row.totalPaidAllTime).toBe(1100000);
+    expect(row.paidInstallmentsCount).toBe(1);
+    expect(row.months[12].paidAmount).toBe(1100000);
+  });
+});
+
 
 

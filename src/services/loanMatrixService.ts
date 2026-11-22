@@ -132,6 +132,83 @@ function parseDueDateYearMonth(dueDateStr?: string | null): { year: number; mont
   };
 }
 
+export function resolveSchedulePaymentMetrics(
+  sched: any,
+  repaymentAmountForSchedule = 0
+): {
+  targetAmt: number;
+  effectivePaidAmt: number;
+  isInstallmentPaid: boolean;
+} {
+  const targetAmt = Number(
+    sched?.total_amount ?? sched?.installment_amount ?? sched?.target_amount ?? sched?.amount ?? 0
+  );
+  const statusLower = String(sched?.status || '').trim().toLowerCase();
+  const isStatusPaid =
+    ['paid', 'lunas', 'completed', 'settled', 'finished'].includes(statusLower) ||
+    sched?.is_paid === true;
+  const rawSchedulePaid = Number(sched?.paid_amount ?? sched?.amount_paid ?? 0);
+  const effectivePaidAmt = Math.max(
+    rawSchedulePaid,
+    Number(repaymentAmountForSchedule || 0),
+    isStatusPaid && targetAmt > 0 ? targetAmt : 0
+  );
+  const isInstallmentPaid =
+    isStatusPaid ||
+    (targetAmt > 0 &&
+      (effectivePaidAmt >= targetAmt || Math.abs(targetAmt - effectivePaidAmt) <= 5));
+
+  return {
+    targetAmt,
+    effectivePaidAmt,
+    isInstallmentPaid,
+  };
+}
+
+export function allocateUnlinkedRepaymentsToSchedules(
+  loanSchedules: any[],
+  repaidByScheduleId: Record<string, number>,
+  totalLoanRepaid: number
+): Record<string, number> {
+  const sortedSchedules = [...(loanSchedules || [])].sort((a, b) => {
+    const periodDiff =
+      Number(a?.period_number ?? Number.MAX_SAFE_INTEGER) -
+      Number(b?.period_number ?? Number.MAX_SAFE_INTEGER);
+    if (periodDiff !== 0) return periodDiff;
+    return String(a?.due_date || '').localeCompare(String(b?.due_date || ''));
+  });
+
+  const allocated: Record<string, number> = {};
+  let sumBasePaid = 0;
+
+  for (const s of sortedSchedules) {
+    const directPaid = s?.id ? Number(repaidByScheduleId[s.id] || 0) : 0;
+    if (s?.id && directPaid > 0) {
+      allocated[s.id] = directPaid;
+    }
+    const basePaid = resolveSchedulePaymentMetrics(s, directPaid).effectivePaidAmt;
+    sumBasePaid += basePaid;
+  }
+
+  let unallocated = Math.max(0, Number(totalLoanRepaid || 0) - sumBasePaid);
+  if (unallocated > 0) {
+    for (const s of sortedSchedules) {
+      const { targetAmt, effectivePaidAmt: basePaid } = resolveSchedulePaymentMetrics(
+        s,
+        s?.id ? allocated[s.id] || 0 : 0
+      );
+      const need = Math.max(0, targetAmt - basePaid);
+      if (need <= 0 || !s?.id) continue;
+      const alloc = Math.min(unallocated, need);
+      allocated[s.id] = basePaid + alloc;
+      unallocated -= alloc;
+      if (unallocated <= 0) break;
+    }
+  }
+
+  return allocated;
+}
+
 export interface LoanCutoffDateInfo {
   dateStr: string;
   year: number;
@@ -587,6 +664,27 @@ export const getLoanMatrix = async (
     throw scheduleError;
   }
 
+  const repaidByScheduleId: Record<string, number> = {};
+  const repaidByLoanId: Record<string, number> = {};
+  try {
+    const repayQ: any = supabase.from('loan_repayments')?.select?.('loan_id, schedule_id, amount_paid');
+    if (repayQ && typeof repayQ.in === 'function') {
+      const { data: repaymentRows } = await repayQ.in('loan_id', loanIds);
+      (repaymentRows || []).forEach((r: any) => {
+        const amt = Number(r?.amount_paid || 0);
+        if (amt <= 0) return;
+        if (r?.schedule_id) {
+          repaidByScheduleId[r.schedule_id] = (repaidByScheduleId[r.schedule_id] || 0) + amt;
+        }
+        if (r?.loan_id) {
+          repaidByLoanId[r.loan_id] = (repaidByLoanId[r.loan_id] || 0) + amt;
+        }
+      });
+    }
+  } catch {
+    // Non-fatal fallback bila tabel loan_repayments tidak distub pada test
+  }
+
   const currentMonth = new Date().getMonth() + 1; // 1-12
   const currentYear = new Date().getFullYear();
 
@@ -612,6 +710,18 @@ export const getLoanMatrix = async (
       schedulesByLoan[loanId] = [];
     }
     schedulesByLoan[loanId].push(sched);
+  });
+
+  const effectiveRepaidByScheduleId: Record<string, number> = { ...repaidByScheduleId };
+  Object.entries(schedulesByLoan).forEach(([loanId, loanSchedules]) => {
+    Object.assign(
+      effectiveRepaidByScheduleId,
+      allocateUnlinkedRepaymentsToSchedules(
+        loanSchedules,
+        repaidByScheduleId,
+        repaidByLoanId[loanId] || 0
+      )
+    );
   });
 
   const activeLoanIdsSet = new Set<string>();
@@ -642,7 +752,9 @@ export const getLoanMatrix = async (
     const tenor = Number(loan.tenor || loan.agreed_tenor_months || 0);
     const isAllSchedulesPaid =
       loanSchedules.length > 0 &&
-      loanSchedules.every((s: any) => String(s.status || '').toLowerCase() === 'paid') &&
+      loanSchedules.every((s: any) =>
+        resolveSchedulePaymentMetrics(s, s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0).isInstallmentPaid
+      ) &&
       (tenor <= 0 || loanSchedules.length >= tenor);
 
     const hasZeroRemaining =
@@ -731,6 +843,14 @@ export const getLoanMatrix = async (
           schedulesByLoan[loan.id] = syntheticSchedules;
           activeLoanIdsSet.add(loan.id);
           syntheticSchedulesToProcess.push(...syntheticSchedules);
+          Object.assign(
+            effectiveRepaidByScheduleId,
+            allocateUnlinkedRepaymentsToSchedules(
+              syntheticSchedules,
+              repaidByScheduleId,
+              repaidByLoanId[loan.id] || 0
+            )
+          );
         } else {
           const isExplicit =
             includePaidOff ||
@@ -760,6 +880,13 @@ export const getLoanMatrix = async (
     const member = loan.member || loan.anggota;
     if (!member) return;
 
+    const schedRepaidAmt = sched.id ? (effectiveRepaidByScheduleId[sched.id] || 0) : 0;
+    const {
+      targetAmt,
+      effectivePaidAmt,
+      isInstallmentPaid,
+    } = resolveSchedulePaymentMetrics(sched, schedRepaidAmt);
+
     const { year: scheduleYear, month } = parseDueDateYearMonth(sched.due_date);
 
     const isBeforeYear =
@@ -770,7 +897,7 @@ export const getLoanMatrix = async (
       loanPriorYearPaid[loan.id] = 0;
     }
     if (isBeforeYear) {
-      loanPriorYearPaid[loan.id] += Number(sched.paid_amount || 0);
+      loanPriorYearPaid[loan.id] += effectivePaidAmt;
     }
 
     // Initialize running balance for this loan if not exists
@@ -781,12 +908,12 @@ export const getLoanMatrix = async (
     }
     
     // Decrease the remaining balance by what has been paid in this schedule
-    loanBalances[loan.id] -= Number(sched.paid_amount);
+    loanBalances[loan.id] -= effectivePaidAmt;
 
     if (loanCumulativePaid[loan.id] === undefined) {
       loanCumulativePaid[loan.id] = 0;
     }
-    loanCumulativePaid[loan.id] += Number(sched.paid_amount || 0);
+    loanCumulativePaid[loan.id] += effectivePaidAmt;
 
     const loanType = loan.loan_types || loan.loanType || loan.loan_type;
 
@@ -861,37 +988,37 @@ export const getLoanMatrix = async (
       
       if (scheduleYear > currentYear || (scheduleYear === currentYear && month > currentMonth)) {
         // Future month
-        if (Number(sched.paid_amount) >= Number(sched.target_amount) && Number(sched.target_amount) > 0) {
+        if (isInstallmentPaid) {
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PAID';
-          totalTargetYTD += Number(sched.target_amount);
-          totalCollectedYTD += Number(sched.paid_amount);
-        } else if (Number(sched.paid_amount) > 0) {
+          totalTargetYTD += targetAmt;
+          totalCollectedYTD += effectivePaidAmt;
+        } else if (effectivePaidAmt > 0) {
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
-          totalTargetYTD += Number(sched.target_amount);
-          totalCollectedYTD += Number(sched.paid_amount);
+          totalTargetYTD += targetAmt;
+          totalCollectedYTD += effectivePaidAmt;
         } else if (!isLoanCompleted && isMemberSuspended) {
           cellStatus = 'FROZEN';
         } else {
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PROJECTED';
           if (!isLoanCompleted && month === currentMonth + 1 && scheduleYear === currentYear) {
-            projectedNextMonth += Number(sched.target_amount);
+            projectedNextMonth += targetAmt;
           }
         }
       } else {
         // Past or current month
-        if (Number(sched.paid_amount) >= Number(sched.target_amount)) {
-          totalTargetYTD += Number(sched.target_amount);
-          totalCollectedYTD += Number(sched.paid_amount);
+        if (isInstallmentPaid) {
+          totalTargetYTD += targetAmt;
+          totalCollectedYTD += effectivePaidAmt;
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PAID';
-        } else if (Number(sched.paid_amount) > 0) {
-          totalTargetYTD += Number(sched.target_amount);
-          totalCollectedYTD += Number(sched.paid_amount);
+        } else if (effectivePaidAmt > 0) {
+          totalTargetYTD += targetAmt;
+          totalCollectedYTD += effectivePaidAmt;
           cellStatus = isLoanCompleted ? 'FINISHED' : 'PARTIAL';
         } else if (!isLoanCompleted && isMemberSuspended) {
           cellStatus = 'FROZEN';
         } else {
-          totalTargetYTD += Number(sched.target_amount);
-          totalCollectedYTD += Number(sched.paid_amount);
+          totalTargetYTD += targetAmt;
+          totalCollectedYTD += effectivePaidAmt;
           cellStatus = isLoanCompleted ? 'FINISHED' : 'UNPAID';
           if (!isLoanCompleted && month === currentMonth && scheduleYear === currentYear) {
             unpaidMembersSet.add(member.id);
@@ -909,8 +1036,8 @@ export const getLoanMatrix = async (
         year: scheduleYear,
         dueDate: sched.due_date,
         status: cellStatus,
-        targetAmount: Number(sched.target_amount),
-        paidAmount: Number(sched.paid_amount),
+        targetAmount: targetAmt,
+        paidAmount: effectivePaidAmt,
         cumulativePaidAmount: loanCumulativePaid[loan.id],
         remainingBalance: isLoanCompleted ? 0 : Math.max(0, loanBalances[loan.id]), // Ensure it doesn't go below 0 visually
         loanId: loan.id,
@@ -1004,16 +1131,18 @@ export const getLoanMatrix = async (
     const totalTenor = Number(row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || allSchedules.length || 0);
     const principalAmount = Number(row.principalAmount || 0);
 
-    const totalPaidAllTime = allSchedules.reduce(
-      (sum: number, s: any) => sum + Number(s.paid_amount || 0),
-      0
-    );
+    const totalPaidFromSchedules = allSchedules.reduce((sum: number, s: any) => {
+      const { effectivePaidAmt } = resolveSchedulePaymentMetrics(
+        s,
+        s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0
+      );
+      return sum + effectivePaidAmt;
+    }, 0);
+    const totalPaidAllTime = Math.max(totalPaidFromSchedules, repaidByLoanId[rowId] || 0);
 
-    const paidInstallmentsCount = allSchedules.filter((s: any) => {
-      const target = Number(s.target_amount || 0);
-      const paid = Number(s.paid_amount || 0);
-      return String(s.status || '').toLowerCase() === 'paid' || (target > 0 && paid >= target - 5);
-    }).length;
+    const paidInstallmentsCount = allSchedules.filter((s: any) =>
+      resolveSchedulePaymentMetrics(s, s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0).isInstallmentPaid
+    ).length;
 
     const remainingPrincipalAllTime = Math.max(0, principalAmount - totalPaidAllTime);
     const repaymentProgressPct =
@@ -1352,14 +1481,30 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
   const openingPaidPeriodsCount = 0;
   const targetSchedulesForGrid = schedules || [];
 
+  const gridDirectRepaidByScheduleId: Record<string, number> = {};
+  (repayments || []).forEach((r: any) => {
+    const amt = Number(r?.amount_paid || 0);
+    if (amt > 0 && r?.schedule_id) {
+      gridDirectRepaidByScheduleId[r.schedule_id] =
+        (gridDirectRepaidByScheduleId[r.schedule_id] || 0) + amt;
+    }
+  });
   const totalPaidFromRepayments = (repayments || []).reduce(
     (sum: number, r: any) => sum + Number(r.amount_paid || 0),
     0
   );
-  const totalPaidFromSchedules = targetSchedulesForGrid.reduce(
-    (sum: number, s: any) => sum + Number(s.paid_amount || 0),
-    0
+  const gridEffectiveRepaidByScheduleId = allocateUnlinkedRepaymentsToSchedules(
+    targetSchedulesForGrid,
+    gridDirectRepaidByScheduleId,
+    totalPaidFromRepayments
   );
+  const totalPaidFromSchedules = targetSchedulesForGrid.reduce((sum: number, s: any) => {
+    const { effectivePaidAmt } = resolveSchedulePaymentMetrics(
+      s,
+      s?.id ? gridEffectiveRepaidByScheduleId[s.id] || 0 : 0
+    );
+    return sum + effectivePaidAmt;
+  }, 0);
   const totalPaid = Math.max(totalPaidFromRepayments, totalPaidFromSchedules);
   const forwardPaidTotal = totalPaid;
 
@@ -1376,14 +1521,32 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     const { year: sYear, month: sMonth } = parseDueDateYearMonth(sched.due_date);
     const isCurrentMonth = sYear === currentYear && sMonth === currentMonth;
 
-    const targetAmount = Math.round(Number(sched.target_amount || 0));
-    const paidAmount = Math.round(Number(sched.paid_amount || 0));
+    const schedRepayments = (repayments || [])
+      .filter((r: any) => r.schedule_id === sched.id)
+      .map((r: any) => ({
+        id: r.id,
+        amountPaid: Number(r.amount_paid || 0),
+        principalPortion: r.principal_portion !== undefined ? Number(r.principal_portion) : undefined,
+        marginPortion: r.margin_portion !== undefined ? Number(r.margin_portion) : undefined,
+        paymentDate: r.payment_date,
+        paymentMethod: r.payment_method || 'transfer',
+        notes: r.notes || null,
+        receiptNumber: r.receipt_number || null
+      }));
+
+    const {
+      targetAmt: rawTargetAmt,
+      effectivePaidAmt: rawEffectivePaidAmt,
+      isInstallmentPaid: isSettled,
+    } = resolveSchedulePaymentMetrics(
+      sched,
+      sched?.id ? gridEffectiveRepaidByScheduleId[sched.id] || 0 : 0
+    );
+
+    const targetAmount = Math.round(rawTargetAmt);
+    const paidAmount = Math.round(rawEffectivePaidAmt);
 
     let status: 'PAID' | 'PARTIAL' | 'UNPAID' | 'PROJECTED';
-    const isSettled = sched.status === 'paid' ||
-      (paidAmount >= targetAmount && targetAmount > 0) ||
-      (targetAmount > 0 && Math.abs(targetAmount - paidAmount) <= 5);
-
     if (isSettled) {
       status = 'PAID';
     } else if (paidAmount > 0) {
@@ -1397,19 +1560,6 @@ export const getLoanInteractiveGrid = async (loanId: string): Promise<LoanIntera
     const monthName = MONTH_NAMES[sMonth - 1] || 'Bln';
     const yearShort = String(sYear).slice(-2);
     const label = `Bulan ${sched.period_number} [${monthName}-${yearShort}]`;
-
-    const schedRepayments = (repayments || [])
-      .filter((r: any) => r.schedule_id === sched.id)
-      .map((r: any) => ({
-        id: r.id,
-        amountPaid: Number(r.amount_paid || 0),
-        principalPortion: r.principal_portion !== undefined ? Number(r.principal_portion) : undefined,
-        marginPortion: r.margin_portion !== undefined ? Number(r.margin_portion) : undefined,
-        paymentDate: r.payment_date,
-        paymentMethod: r.payment_method || 'transfer',
-        notes: r.notes || null,
-        receiptNumber: r.receipt_number || null
-      }));
 
     return {
       id: sched.id,

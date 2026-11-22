@@ -96,7 +96,7 @@ export const computeBulkPreviewSummary = (
     for (let m = 1; m <= clampedTargetMonth; m++) {
       const cell = row.months[m];
       if (!cell) continue;
-      const st = (cell.status || '').toUpperCase();
+      const st = evaluateInstallmentStatus(cell).effectiveStatus;
       if (!ELIGIBLE_BULK_CELL_STATUSES.has(st)) continue;
 
       const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
@@ -155,7 +155,7 @@ export const getSmartDefaultBulkTargetMonth = (
       for (let m = 1; m <= defaultMonth; m++) {
         const cell = row.months[m];
         if (!cell) continue;
-        const st = (cell.status || '').toUpperCase();
+        const st = evaluateInstallmentStatus(cell).effectiveStatus;
         if (ELIGIBLE_BULK_CELL_STATUSES.has(st)) {
           const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
           if (remaining > 0) return true;
@@ -169,7 +169,7 @@ export const getSmartDefaultBulkTargetMonth = (
         const hasInMonth = eligibleRows.some(row => {
           const cell = row.months[m];
           if (!cell) return false;
-          const st = (cell.status || '').toUpperCase();
+          const st = evaluateInstallmentStatus(cell).effectiveStatus;
           if (ELIGIBLE_BULK_CELL_STATUSES.has(st)) {
             const remaining = Math.max(0, Number(cell.targetAmount || 0) - Number(cell.paidAmount || 0));
             return remaining > 0;
@@ -198,32 +198,101 @@ export interface CellBadgeInfo {
   statusLabel: string;
 }
 
+export interface EvaluatedInstallmentStatus {
+  targetAmt: number;
+  paidAmt: number;
+  isExplicitPaid: boolean;
+  isPaid: boolean;
+  isPartial: boolean;
+  effectiveStatus: 'PAID' | 'FINISHED' | 'PARTIAL' | 'UNPAID' | 'PROJECTED' | 'FROZEN' | 'NONE';
+}
+
+export const evaluateInstallmentStatus = (inst: any): EvaluatedInstallmentStatus => {
+  if (!inst) {
+    return {
+      targetAmt: 0,
+      paidAmt: 0,
+      isExplicitPaid: false,
+      isPaid: false,
+      isPartial: false,
+      effectiveStatus: 'NONE',
+    };
+  }
+  const targetAmt = Number(
+    inst.targetAmount ?? inst.total_amount ?? inst.installment_amount ?? inst.target_amount ?? inst.amount ?? 0
+  );
+  const rawStatus = String(inst.status ?? '').trim().toLowerCase();
+  const isExplicitPaid =
+    ['lunas', 'paid', 'completed', 'settled', 'finished'].includes(rawStatus) ||
+    inst.is_paid === true;
+  const rawPaidAmt = Number(
+    inst.paidAmount ?? inst.paid_amount ?? inst.amount_paid ?? (isExplicitPaid ? targetAmt : 0)
+  );
+  const paidAmt = isExplicitPaid && rawPaidAmt <= 0 && targetAmt > 0 ? targetAmt : rawPaidAmt;
+  const isPaid =
+    isExplicitPaid ||
+    (targetAmt > 0 && (paidAmt >= targetAmt || Math.abs(targetAmt - paidAmt) <= 5));
+  const isPartial = !isPaid && paidAmt > 0;
+
+  let effectiveStatus: EvaluatedInstallmentStatus['effectiveStatus'];
+  if (rawStatus === 'finished') {
+    effectiveStatus = 'FINISHED';
+  } else if (isPaid) {
+    effectiveStatus = 'PAID';
+  } else if (isPartial || rawStatus === 'partial') {
+    effectiveStatus = 'PARTIAL';
+  } else if (rawStatus === 'unpaid') {
+    effectiveStatus = 'UNPAID';
+  } else if (rawStatus === 'projected' || rawStatus === 'projection') {
+    effectiveStatus = 'PROJECTED';
+  } else if (rawStatus === 'frozen') {
+    effectiveStatus = 'FROZEN';
+  } else {
+    effectiveStatus = 'NONE';
+  }
+
+  return {
+    targetAmt,
+    paidAmt,
+    isExplicitPaid,
+    isPaid,
+    isPartial,
+    effectiveStatus,
+  };
+};
+
+export const getRowPaidInstallmentsCount = (row: LoanMatrixMember): number => {
+  const paidCellsCount = Object.values(row.months || {}).filter(
+    cell => evaluateInstallmentStatus(cell).isPaid
+  ).length;
+  return Math.max(Number(row.paidInstallmentsCount || 0), paidCellsCount);
+};
+
 export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
-  const normStatus = (cell?.status || '').toUpperCase();
-  switch (normStatus) {
+  const { targetAmt, paidAmt, effectiveStatus } = evaluateInstallmentStatus(cell);
+  switch (effectiveStatus) {
     case 'PAID':
     case 'FINISHED':
       return {
-        text: formatAmount(cell.paidAmount || cell.targetAmount),
+        text: formatAmount(paidAmt || targetAmt),
         className: 'text-emerald-700 bg-emerald-50 border border-emerald-200 font-semibold',
         statusLabel: 'Lunas',
       };
     case 'PARTIAL':
       return {
-        text: formatAmount(cell.paidAmount),
+        text: formatAmount(paidAmt),
         className: 'text-amber-700 bg-amber-50 border border-amber-200 font-semibold',
         statusLabel: 'Parsial',
       };
     case 'UNPAID':
       return {
-        text: formatAmount(cell.targetAmount),
+        text: formatAmount(targetAmt),
         className: 'text-rose-700 bg-rose-50 border border-rose-200 font-bold',
         statusLabel: 'Menunggak',
       };
     case 'PROJECTED':
-    case 'PROJECTION':
       return {
-        text: formatAmount(cell.targetAmount),
+        text: formatAmount(targetAmt),
         className: 'text-slate-400 bg-slate-50 border border-dashed border-slate-200 font-normal',
         statusLabel: 'Proyeksi',
       };
@@ -234,7 +303,6 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
         statusLabel: 'Dibekukan',
       };
     case 'NONE':
-    case 'NOT_APPLICABLE':
     default:
       return {
         text: '-',
@@ -253,21 +321,51 @@ const getRowComplianceInfo = (row: LoanMatrixMember, fallbackYear: number) => {
     rowStatusLower === 'lunas' ||
     rowStatusLower === 'paid';
   const monthCells = Object.values(row.months || {});
-  const hasDueFromMonths = monthCells.some(cell => {
-    const st = (cell?.status || '').toUpperCase();
-    return st === 'PAID' || st === 'PARTIAL' || st === 'UNPAID' || st === 'FINISHED';
+  const todayYmd = getTodayLocalYmd();
+  const evaluatedCells = monthCells.map(cell => ({
+    cell,
+    evalInfo: evaluateInstallmentStatus(cell),
+  }));
+  const ytdRelevantCells = evaluatedCells.filter(({ cell, evalInfo }) => {
+    const st = evalInfo.effectiveStatus;
+    if (st === 'PAID' || st === 'FINISHED' || st === 'PARTIAL' || st === 'UNPAID') {
+      return true;
+    }
+    return st === 'PROJECTED' && Boolean(cell?.dueDate) && String(cell.dueDate) <= todayYmd;
   });
+  const hasDueFromMonths = ytdRelevantCells.length > 0;
   const hasDueSchedulesYTD = isLoanCompleted
     ? true
-    : row.hasDueSchedulesYTD !== undefined
-      ? row.hasDueSchedulesYTD
-      : hasDueFromMonths;
-  const rowCompliance = isLoanCompleted ? 100 : (!hasDueSchedulesYTD ? 0 : (row.complianceYTD ?? 0));
-  const firstProjectedCell = monthCells
-    .filter(m => {
-      const st = (m?.status || '').toUpperCase();
-      return st === 'PROJECTED' || st === 'PROJECTION';
-    })
+    : hasDueFromMonths
+      ? true
+      : Boolean(row.hasDueSchedulesYTD);
+  const computedCompliance =
+    ytdRelevantCells.length > 0
+      ? Math.min(
+          100,
+          Math.round(
+            (ytdRelevantCells.reduce((sum, { evalInfo }) => {
+              if (evalInfo.isPaid) return sum + 1;
+              if (evalInfo.targetAmt > 0) {
+                return sum + Math.min(1, evalInfo.paidAmt / evalInfo.targetAmt);
+              }
+              return sum;
+            }, 0) /
+              ytdRelevantCells.length) *
+              100
+          )
+        )
+      : 0;
+  const rowCompliance = isLoanCompleted
+    ? 100
+    : !hasDueSchedulesYTD
+      ? 0
+      : ytdRelevantCells.length > 0
+        ? computedCompliance
+        : (row.complianceYTD ?? 0);
+  const firstProjectedCell = evaluatedCells
+    .filter(({ evalInfo }) => evalInfo.effectiveStatus === 'PROJECTED')
+    .map(({ cell }) => cell)
     .sort((a, b) => (a.month || 0) - (b.month || 0))[0];
   const firstInstallmentLabel =
     row.firstInstallmentLabel ||
@@ -569,7 +667,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         loanType: m.loan_types?.name || m.loanTypeName || 'Pinjaman Reguler',
         tenor: m.agreedTenorMonths || m.agreed_tenor_months || m.tenor || '-',
         totalPaidAllTime: Number(m.totalPaidAllTime || 0),
-        paidInstallments: `${m.paidInstallmentsCount || 0} / ${tenorVal} Bln`,
+        paidInstallments: `${getRowPaidInstallmentsCount(m)} / ${tenorVal} Bln`,
         status: !isMemberCompleted ? 'Aktif' : 'Selesai',
         compliance: memberCompliance.toFixed(1) + '%'
       };
@@ -905,15 +1003,20 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                           </div>
                           <div className="flex items-center justify-between text-[11px] gap-2">
                             <span className="text-slate-500">Angsuran Lunas:</span>
-                            <span
-                              className={`font-bold px-1.5 py-0.5 rounded ${
-                                (row.paidInstallmentsCount || 0) > 0
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-slate-100 text-slate-600'
-                              }`}
-                            >
-                              {row.paidInstallmentsCount || 0} / {row.totalInstallmentsCount || tenorDisplay} Bln
-                            </span>
+                            {(() => {
+                              const paidInstallments = getRowPaidInstallmentsCount(row);
+                              return (
+                                <span
+                                  className={`font-bold px-1.5 py-0.5 rounded ${
+                                    paidInstallments > 0
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  {paidInstallments} / {row.totalInstallmentsCount || tenorDisplay} Bln
+                                </span>
+                              );
+                            })()}
                           </div>
                           <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                             <div
@@ -952,9 +1055,9 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                         return (
                           <td key={m} className="px-2 py-2 border-l border-slate-100 text-center">
                             {(() => {
+                              const { effectiveStatus } = evaluateInstallmentStatus(cell);
                               const badge = getCellBadge(cell);
-                              const normStatus = (cell?.status || '').toUpperCase();
-                              if (normStatus === 'NONE' || normStatus === 'NOT_APPLICABLE' || !cell) {
+                              if (effectiveStatus === 'NONE' || !cell) {
                                 return (
                                   <div className="w-full py-1.5 text-center text-slate-300 font-normal select-none">
                                     -
@@ -973,7 +1076,19 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                                     </div>
                                     <div className="flex justify-between mt-1">
                                       <span className="text-slate-300">Status:</span>
-                                      <span className="font-medium">{badge.statusLabel}</span>
+                                      <span
+                                        className={
+                                          effectiveStatus === 'PAID' || effectiveStatus === 'FINISHED'
+                                            ? 'text-emerald-400 font-semibold'
+                                            : effectiveStatus === 'PARTIAL'
+                                              ? 'text-amber-400 font-semibold'
+                                              : effectiveStatus === 'UNPAID'
+                                                ? 'text-rose-400 font-semibold'
+                                                : 'font-medium'
+                                        }
+                                      >
+                                        {badge.statusLabel}
+                                      </span>
                                     </div>
                                     <div className="flex justify-between mt-1">
                                       <span className="text-slate-300">Tenor:</span>
@@ -1121,7 +1236,10 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
           loanId={selectedLoan.loanId}
           memberNrp={selectedLoan.nrp}
           memberName={selectedLoan.nama}
-          onClose={() => setSelectedLoan(null)}
+          onClose={() => {
+            setSelectedLoan(null);
+            fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
+          }}
           onSuccess={() => fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions)}
         />
       )}
@@ -1156,8 +1274,12 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
               {!(isBulkChecking || isProcessingBulk) && (
                 <button
                   onClick={() => {
+                    const hadSummary = bulkCheckSummary !== null;
                     setShowCheckAllConfirmModal(false);
                     setBulkCheckSummary(null);
+                    if (hadSummary) {
+                      fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions);
+                    }
                   }}
                   data-testid="close-check-all-modal-btn"
                   className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"

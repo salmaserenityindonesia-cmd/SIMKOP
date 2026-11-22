@@ -8,6 +8,7 @@ import {
   fetchLoanMatrixData,
   formatAmount,
   getCellBadge,
+  evaluateInstallmentStatus,
   computeBulkPreviewSummary,
   getSmartDefaultBulkTargetMonth,
 } from './LoanMatrix';
@@ -208,6 +209,40 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(getCellBadge(partialLower).statusLabel).toBe('Parsial');
       expect(getCellBadge(unpaidLower).statusLabel).toBe('Menunggak');
       expect(getCellBadge(projLower).statusLabel).toBe('Proyeksi');
+    });
+
+    it('detects paid installment via evaluateInstallmentStatus when status is still PROJECTED or alias (lunas/settled) with paidAmount >= targetAmount', () => {
+      const projectedButPaid: any = {
+        month: 12,
+        status: 'PROJECTED',
+        targetAmount: 1100000,
+        paidAmount: 1100000,
+      };
+      const evalProj = evaluateInstallmentStatus(projectedButPaid);
+      expect(evalProj.isPaid).toBe(true);
+      expect(evalProj.effectiveStatus).toBe('PAID');
+
+      const badgeProj = getCellBadge(projectedButPaid);
+      expect(badgeProj.text).toBe('1.100.000');
+      expect(badgeProj.className).toContain('text-emerald-700');
+      expect(badgeProj.className).toContain('bg-emerald-50');
+      expect(badgeProj.statusLabel).toBe('Lunas');
+
+      const settledAlias: any = {
+        total_amount: 200000,
+        paid_amount: 0,
+        status: 'settled',
+      };
+      const evalSettled = evaluateInstallmentStatus(settledAlias);
+      expect(evalSettled.isPaid).toBe(true);
+      expect(evalSettled.paidAmt).toBe(200000);
+
+      const lunasAlias: any = {
+        installment_amount: 500000,
+        amount_paid: 500000,
+        status: 'lunas',
+      };
+      expect(evaluateInstallmentStatus(lunasAlias).isPaid).toBe(true);
     });
   });
 
@@ -1393,6 +1428,201 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
     it('picks smart default target month when installments start in December', () => {
       const picked = getSmartDefaultBulkTargetMonth(sampleRows, new Date().getFullYear());
       expect(picked).toBe(12);
+    });
+  });
+
+  describe('Synchronized Paid Installment Display for Anggota Tes 2 (LOAN-1795334228834)', () => {
+    it('renders Terbayar Rp 1.100.000, 1 / 3 Bln, green Dec cell 1.100.000, green Lunas tooltip, Sisa Angsuran Rp 2.200.000, and Realisasi YTD', () => {
+      const syncedSummary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 100,
+        totalCollectedYTD: 1100000,
+        projectedNextMonth: 0,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            id: 'loan-tes-2',
+            loanId: 'loan-tes-2',
+            loanNumber: 'LOAN-1795334228834',
+            status: 'active',
+            memberId: 'mem-tes-2',
+            nrp: '200002',
+            nama: 'Anggota Tes 2',
+            loanTypeName: 'Pinjaman Reguler',
+            agreedTenorMonths: 3,
+            tenor: 3,
+            principalAmount: 3300000,
+            totalPaidAllTime: 1100000,
+            paidInstallmentsCount: 1,
+            totalInstallmentsCount: 3,
+            remainingPrincipalAllTime: 2200000,
+            repaymentProgressPct: 33,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 100,
+            hasDueSchedulesYTD: true,
+            months: {
+              ...Array.from({ length: 12 }, (_, idx) => ({
+                month: idx + 1,
+                year: 2026,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+              12: {
+                month: 12,
+                year: 2026,
+                status: 'PAID',
+                targetAmount: 1100000,
+                paidAmount: 1100000,
+                cumulativePaidAmount: 1100000,
+                remainingBalance: 2200000,
+                loanId: 'loan-tes-2',
+                loanNumber: 'LOAN-1795334228834',
+                periodNumber: 1,
+                tenor: 3,
+                dueDate: '2026-12-23',
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={syncedSummary} initialYear={2026} />
+      );
+
+      expect(html).toContain('Anggota Tes 2');
+      expect(html).toContain('LOAN-1795334228834');
+      expect(html).toContain('Rp 1.100.000');
+      expect(html).toContain('1 / 3 Bln');
+      expect(html).toContain('bg-emerald-50 border border-emerald-200 font-semibold">1.100.000');
+      expect(html).toContain('<span class="text-emerald-400 font-semibold">Lunas</span>');
+      expect(html).toContain('<span>Terbayar:</span><span>Rp 1.100.000</span>');
+      expect(html).toContain('<span>Sisa Angsuran:</span><span>Rp 2.200.000</span>');
+      expect(html).toContain('Realisasi YTD');
+      expect(html).toContain('100%');
+    });
+
+    it('synchronizes Angsuran Lunas (1 / 3 Bln and 1 / 11 Bln), green DES cells, tooltip Lunas, and 100% Kepatuhan YTD even when stale cell/row status says PROJECTED and 0%', () => {
+      const staleButPaidSummary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 100,
+        totalCollectedYTD: 1300000,
+        projectedNextMonth: 0,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            id: 'loan-tes-2',
+            loanId: 'loan-tes-2',
+            loanNumber: 'LOAN-1795334228834',
+            status: 'active',
+            memberId: 'mem-tes-2',
+            nrp: '200002',
+            nama: 'Anggota Tes 2',
+            loanTypeName: 'Pinjaman Reguler',
+            agreedTenorMonths: 3,
+            tenor: 3,
+            principalAmount: 3300000,
+            totalPaidAllTime: 1100000,
+            paidInstallmentsCount: 0,
+            totalInstallmentsCount: 3,
+            remainingPrincipalAllTime: 2200000,
+            repaymentProgressPct: 33,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 0,
+            hasDueSchedulesYTD: false,
+            months: {
+              ...Array.from({ length: 12 }, (_, idx) => ({
+                month: idx + 1,
+                year: 2026,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+              12: {
+                month: 12,
+                year: 2026,
+                status: 'PROJECTED',
+                targetAmount: 1100000,
+                paidAmount: 1100000,
+                cumulativePaidAmount: 1100000,
+                remainingBalance: 2200000,
+                loanId: 'loan-tes-2',
+                loanNumber: 'LOAN-1795334228834',
+                periodNumber: 1,
+                tenor: 3,
+                dueDate: '2026-12-22',
+              },
+            },
+          },
+          {
+            id: 'loan-tes-1',
+            loanId: 'loan-tes-1',
+            loanNumber: 'LOAN-1795333396946',
+            status: 'active',
+            memberId: 'mem-tes-1',
+            nrp: '200001',
+            nama: 'anggota tes 1',
+            loanTypeName: 'Pinjaman Reguler',
+            agreedTenorMonths: 11,
+            tenor: 11,
+            principalAmount: 2200000,
+            totalPaidAllTime: 200000,
+            paidInstallmentsCount: 0,
+            totalInstallmentsCount: 11,
+            remainingPrincipalAllTime: 2000000,
+            repaymentProgressPct: 9,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 0,
+            hasDueSchedulesYTD: false,
+            months: {
+              ...Array.from({ length: 12 }, (_, idx) => ({
+                month: idx + 1,
+                year: 2026,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+              12: {
+                month: 12,
+                year: 2026,
+                status: 'PROJECTED',
+                targetAmount: 200000,
+                paidAmount: 200000,
+                cumulativePaidAmount: 200000,
+                remainingBalance: 2000000,
+                loanId: 'loan-tes-1',
+                loanNumber: 'LOAN-1795333396946',
+                periodNumber: 1,
+                tenor: 11,
+                dueDate: '2026-12-22',
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={staleButPaidSummary} initialYear={2026} />
+      );
+
+      expect(html).toContain('Anggota Tes 2');
+      expect(html).toContain('LOAN-1795334228834');
+      expect(html).toContain('1 / 3 Bln');
+      expect(html).toContain('bg-emerald-50 border border-emerald-200 font-semibold">1.100.000');
+
+      expect(html).toContain('anggota tes 1');
+      expect(html).toContain('LOAN-1795333396946');
+      expect(html).toContain('1 / 11 Bln');
+      expect(html).toContain('bg-emerald-50 border border-emerald-200 font-semibold">200.000');
+
+      expect(html).toContain('<span class="text-emerald-400 font-semibold">Lunas</span>');
+      expect(html).toContain('bg-emerald-100 text-emerald-700">100%</div>');
+      expect(html).not.toContain('>0 / 3 Bln<');
+      expect(html).not.toContain('>0 / 11 Bln<');
     });
   });
 });
