@@ -12,6 +12,7 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
   Eye,
   Loader2,
@@ -20,7 +21,10 @@ import {
   TrendingDown,
   TrendingUp,
   CheckCircle2,
-  Clock
+  Clock,
+  Layers,
+  List,
+  Link2
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
@@ -31,6 +35,8 @@ import {
   exportStoreCreditToExcel,
   getActiveStoreCreditPlans,
   syncUnrecordedStoreCreditPaymentsToCashFlow,
+  extractParentInvoiceFromNotes,
+  extractInstallmentPeriodNumber,
   StoreCreditSummary,
   StoreCreditLedgerItem,
   StoreCreditFilter,
@@ -44,6 +50,22 @@ interface MemberOption {
   id: string;
   nama: string;
   nrp: string;
+}
+
+interface LedgerInvoiceGroup {
+  groupKey: string;
+  parentSale: StoreCreditLedgerItem | null;
+  parentInvoiceNo: string;
+  member_id: string;
+  member_name: string;
+  member_nrp: string;
+  member_tanggal_lahir?: string | null;
+  children: StoreCreditLedgerItem[];
+  totalDebit: number;
+  totalPaid: number;
+  remainingDebt: number;
+  status: 'PAID' | 'PARTIAL' | 'UNPAID';
+  progressLabel: string;
 }
 
 const getInitialMonthRange = () => {
@@ -106,6 +128,10 @@ export default function BukuBesarBonToko() {
   const [activePlans, setActivePlans] = useState<StoreCreditPlanWithSchedules[]>([]);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
   const [selectedPlanForSchedule, setSelectedPlanForSchedule] = useState<StoreCreditPlanWithSchedules | null>(null);
+
+  // Parent-Child View Mode & Collapse State
+  const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   // Ref untuk Cetak
   const printAreaRef = useRef<HTMLDivElement>(null);
@@ -180,20 +206,97 @@ export default function BukuBesarBonToko() {
     }
   };
 
+  // Lookup active installment plan by member_id for quick access from ledger rows
+  const activePlanByMemberId = useMemo(() => {
+    const map = new Map<string, StoreCreditPlanWithSchedules>();
+    activePlans.forEach(plan => {
+      if (plan.member_id && !map.has(plan.member_id)) {
+        map.set(plan.member_id, plan);
+      }
+    });
+    return map;
+  }, [activePlans]);
+
+  // In-memory fallback enrichment so legacy payment rows without `Ref: INV-...`
+  // still resolve their parent POS invoice via sale_id, active plan, or member's sales
+  const enrichedItems = useMemo(() => {
+    const saleRefBySaleId = new Map<string, string>();
+    const memberSalesMap = new Map<string, StoreCreditLedgerItem[]>();
+
+    ledgerItems.forEach(item => {
+      if (item.source_type === 'sale') {
+        if (item.sale_id) {
+          saleRefBySaleId.set(item.sale_id, item.reference_no);
+        }
+        if (item.member_id) {
+          const list = memberSalesMap.get(item.member_id) || [];
+          list.push(item);
+          memberSalesMap.set(item.member_id, list);
+        }
+      }
+    });
+
+    return ledgerItems.map(item => {
+      const derivedPeriod =
+        item.period_number ?? extractInstallmentPeriodNumber(item.reference_no, item.notes);
+
+      if (item.source_type === 'sale') {
+        return {
+          ...item,
+          parent_invoice_no: item.parent_invoice_no || item.reference_no,
+          period_number: derivedPeriod
+        };
+      }
+
+      let parentInvoice =
+        item.parent_invoice_no ||
+        extractParentInvoiceFromNotes(item.notes) ||
+        (item.sale_id ? saleRefBySaleId.get(item.sale_id) : undefined);
+
+      if (!parentInvoice && item.member_id) {
+        const plan = activePlanByMemberId.get(item.member_id);
+        if (plan?.latest_sale_id && saleRefBySaleId.has(plan.latest_sale_id)) {
+          parentInvoice = saleRefBySaleId.get(plan.latest_sale_id);
+        }
+      }
+
+      if (!parentInvoice && item.member_id) {
+        const memberSales = memberSalesMap.get(item.member_id) || [];
+        if (memberSales.length === 1) {
+          parentInvoice = memberSales[0].reference_no;
+        } else if (memberSales.length > 1) {
+          const payTime = new Date(item.date).getTime();
+          const priorSales = memberSales.filter(s => new Date(s.date).getTime() <= payTime);
+          parentInvoice =
+            priorSales.length > 0
+              ? priorSales[priorSales.length - 1].reference_no
+              : memberSales[memberSales.length - 1].reference_no;
+        }
+      }
+
+      return {
+        ...item,
+        parent_invoice_no: parentInvoice,
+        period_number: derivedPeriod
+      };
+    });
+  }, [ledgerItems, activePlanByMemberId]);
+
   // Client-side text search filtering
   const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return ledgerItems;
+    if (!searchQuery.trim()) return enrichedItems;
     const q = searchQuery.toLowerCase().trim();
-    return ledgerItems.filter(item => {
+    return enrichedItems.filter(item => {
       return (
         item.member_name.toLowerCase().includes(q) ||
         item.member_nrp.toLowerCase().includes(q) ||
         item.reference_no.toLowerCase().includes(q) ||
+        (item.parent_invoice_no && item.parent_invoice_no.toLowerCase().includes(q)) ||
         (item.notes && item.notes.toLowerCase().includes(q)) ||
         (item.cashier_name && item.cashier_name.toLowerCase().includes(q))
       );
     });
-  }, [ledgerItems, searchQuery]);
+  }, [enrichedItems, searchQuery]);
 
   // Filtered active plans for installment tab
   const filteredPlans = useMemo(() => {
@@ -206,23 +309,155 @@ export default function BukuBesarBonToko() {
     });
   }, [activePlans, searchQuery]);
 
-  // Lookup active installment plan by member_id for quick access from ledger rows
-  const activePlanByMemberId = useMemo(() => {
-    const map = new Map<string, StoreCreditPlanWithSchedules>();
-    activePlans.forEach(plan => {
-      if (plan.member_id && !map.has(plan.member_id)) {
-        map.set(plan.member_id, plan);
+  // Parent-Child Grouping by Parent Invoice
+  const groupedLedger = useMemo<LedgerInvoiceGroup[]>(() => {
+    const groupMap = new Map<string, LedgerInvoiceGroup>();
+    const orderedGroups: LedgerInvoiceGroup[] = [];
+
+    // 1. Register every parent sale as a group header
+    filteredItems.forEach(item => {
+      if (item.source_type === 'sale') {
+        const key = groupMap.has(item.reference_no)
+          ? `${item.reference_no}-${item.id}`
+          : item.reference_no;
+        const group: LedgerInvoiceGroup = {
+          groupKey: key,
+          parentSale: item,
+          parentInvoiceNo: item.reference_no,
+          member_id: item.member_id,
+          member_name: item.member_name,
+          member_nrp: item.member_nrp,
+          member_tanggal_lahir: item.member_tanggal_lahir,
+          children: [],
+          totalDebit: item.debit,
+          totalPaid: 0,
+          remainingDebt: item.debit,
+          status: item.status,
+          progressLabel: ''
+        };
+        groupMap.set(key, group);
+        orderedGroups.push(group);
       }
     });
-    return map;
-  }, [activePlans]);
+
+    // 2. Attach payment rows to matching parent invoice group (or fallback group)
+    filteredItems.forEach(item => {
+      if (item.source_type === 'payment') {
+        const refInvoice = item.parent_invoice_no;
+        let targetGroup = refInvoice ? groupMap.get(refInvoice) : undefined;
+
+        if (!targetGroup) {
+          const fallbackKey = refInvoice
+            ? `orphan-inv-${refInvoice}`
+            : `orphan-member-${item.member_id || 'unknown'}`;
+          targetGroup = groupMap.get(fallbackKey);
+
+          if (!targetGroup) {
+            targetGroup = {
+              groupKey: fallbackKey,
+              parentSale: null,
+              parentInvoiceNo: refInvoice || 'Pelunasan Historis',
+              member_id: item.member_id,
+              member_name: item.member_name,
+              member_nrp: item.member_nrp,
+              member_tanggal_lahir: item.member_tanggal_lahir,
+              children: [],
+              totalDebit: 0,
+              totalPaid: 0,
+              remainingDebt: 0,
+              status: 'PAID',
+              progressLabel: ''
+            };
+            groupMap.set(fallbackKey, targetGroup);
+            orderedGroups.push(targetGroup);
+          }
+        }
+
+        targetGroup.children.push(item);
+      }
+    });
+
+    // 3. Sort children chronologically by period & date, then compute group totals & progress
+    orderedGroups.forEach(group => {
+      group.children.sort((a, b) => {
+        const pa = a.period_number ?? 9999;
+        const pb = b.period_number ?? 9999;
+        if (pa !== pb) return pa - pb;
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+      });
+
+      group.totalPaid = group.children.reduce((sum, c) => sum + c.credit, 0);
+
+      if (group.parentSale) {
+        group.remainingDebt = Math.max(0, group.totalDebit - group.totalPaid);
+        if (group.remainingDebt <= 0 && group.totalDebit > 0) {
+          group.status = 'PAID';
+        } else if (group.totalPaid > 0) {
+          group.status = 'PARTIAL';
+        } else {
+          group.status = 'UNPAID';
+        }
+      } else {
+        const lastChild = group.children[group.children.length - 1];
+        group.remainingDebt = lastChild ? lastChild.running_debt : 0;
+        group.status = group.remainingDebt === 0 ? 'PAID' : 'PARTIAL';
+      }
+
+      const memberPlan = activePlanByMemberId.get(group.member_id);
+      if (group.children.length > 0) {
+        if (group.remainingDebt === 0) {
+          group.progressLabel = `${group.children.length}/${group.children.length} Periode Lunas`;
+        } else if (memberPlan && memberPlan.schedules && memberPlan.schedules.length > 0) {
+          const paidCount = memberPlan.schedules.filter(
+            s => s.status === 'paid' || (s.paid_amount || 0) >= s.target_amount
+          ).length;
+          const totalCount = memberPlan.schedules.length || memberPlan.tenor_months;
+          group.progressLabel =
+            paidCount > 0 ? `${paidCount}/${totalCount} Periode` : `${group.children.length} Cicilan`;
+        } else {
+          group.progressLabel = `${group.children.length} Cicilan`;
+        }
+      } else if (group.parentSale) {
+        if (group.status === 'PAID') {
+          group.progressLabel = 'Lunas';
+        } else if (memberPlan && memberPlan.schedules && memberPlan.schedules.length > 0) {
+          const paidCount = memberPlan.schedules.filter(
+            s => s.status === 'paid' || (s.paid_amount || 0) >= s.target_amount
+          ).length;
+          const totalCount = memberPlan.schedules.length || memberPlan.tenor_months;
+          group.progressLabel = `${paidCount}/${totalCount} Periode`;
+        } else {
+          group.progressLabel = 'Belum Ada Cicilan';
+        }
+      }
+    });
+
+    return orderedGroups;
+  }, [filteredItems, activePlanByMemberId]);
+
+  const toggleGroupCollapse = (groupKey: string) => {
+    setCollapsedGroups(prev => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
+    }));
+  };
+
+  const handleFilterByInvoice = (invoiceNo: string) => {
+    setSearchQuery(invoiceNo);
+    setCurrentPage(1);
+  };
 
   // Pagination calculation
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const activeTotalCount = viewMode === 'grouped' ? groupedLedger.length : filteredItems.length;
+  const totalPages = Math.max(1, Math.ceil(activeTotalCount / pageSize));
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, currentPage, pageSize]);
+  const paginatedGroups = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return groupedLedger.slice(start, start + pageSize);
+  }, [groupedLedger, currentPage, pageSize]);
 
   // Aggregate totals for visible filtered items
   const aggregatedTotals = useMemo(() => {
@@ -658,12 +893,18 @@ export default function BukuBesarBonToko() {
                 type="text"
                 placeholder="Cari nama, NRP, no. struk, bukti bayar..."
                 value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
               />
               {searchQuery && (
                 <button
-                  onClick={() => setSearchQuery('')}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setCurrentPage(1);
+                  }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -678,13 +919,15 @@ export default function BukuBesarBonToko() {
         ======================================================== */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" ref={printAreaRef}>
           {/* Table Header Info */}
-          <div className="px-5 py-4 border-b border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="px-5 py-4 border-b border-gray-200 bg-gray-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-gray-900">
                 Mutasi Piutang Bon Retail Toko
               </h2>
               <p className="text-xs text-gray-500">
-                Menampilkan {filteredItems.length} transaksi bon & pelunasan
+                {viewMode === 'grouped'
+                  ? `Menampilkan ${groupedLedger.length} nota induk (${filteredItems.length} mutasi bon & pelunasan)`
+                  : `Menampilkan ${filteredItems.length} transaksi bon & pelunasan`}
                 {selectedMemberId !== 'all' && (
                   <span className="font-medium text-rose-700 ml-1">
                     (Anggota: {members.find(m => m.id === selectedMemberId)?.nama})
@@ -693,19 +936,55 @@ export default function BukuBesarBonToko() {
               </p>
             </div>
 
-            {/* Subtotal ringkasan baris terfilter */}
-            <div className="flex items-center gap-4 text-xs">
-              <span className="text-gray-600">
-                Tambah Utang (+): <strong className="text-rose-700">{formatCurrency(aggregatedTotals.totalDebit)}</strong>
-              </span>
-              <span className="text-gray-300">|</span>
-              <span className="text-gray-600">
-                Pelunasan (-): <strong className="text-emerald-700">{formatCurrency(aggregatedTotals.totalCredit)}</strong>
-              </span>
-              <span className="text-gray-300">|</span>
-              <span className="text-gray-600">
-                Sisa Piutang: <strong className="text-rose-900 font-bold">{formatCurrency(aggregatedTotals.netOutstanding)}</strong>
-              </span>
+            <div className="flex flex-wrap items-center justify-between lg:justify-end gap-3">
+              {/* View Mode Switcher: Kelompokkan per Nota vs Semua Baris Datar */}
+              <div className="inline-flex rounded-lg border border-gray-300 bg-white p-0.5 shadow-sm print:hidden">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('grouped');
+                    setCurrentPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                    viewMode === 'grouped'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Kelompokkan per Nota</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('flat');
+                    setCurrentPage(1);
+                  }}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                    viewMode === 'flat'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>Semua Baris Datar</span>
+                </button>
+              </div>
+
+              {/* Subtotal ringkasan baris terfilter */}
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <span className="text-gray-600">
+                  Tambah Utang (+): <strong className="text-rose-700">{formatCurrency(aggregatedTotals.totalDebit)}</strong>
+                </span>
+                <span className="text-gray-300">|</span>
+                <span className="text-gray-600">
+                  Pelunasan (-): <strong className="text-emerald-700">{formatCurrency(aggregatedTotals.totalCredit)}</strong>
+                </span>
+                <span className="text-gray-300">|</span>
+                <span className="text-gray-600">
+                  Sisa Piutang: <strong className="text-rose-900 font-bold">{formatCurrency(aggregatedTotals.netOutstanding)}</strong>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -759,6 +1038,328 @@ export default function BukuBesarBonToko() {
                       </div>
                     </td>
                   </tr>
+                ) : viewMode === 'grouped' ? (
+                  paginatedGroups.map((group, gIdx) => {
+                    const groupNumber = (currentPage - 1) * pageSize + gIdx + 1;
+                    const isCollapsed = Boolean(collapsedGroups[group.groupKey]);
+                    const memberPlan = activePlanByMemberId.get(group.member_id);
+                    const parent = group.parentSale;
+                    const hasChildren = group.children.length > 0;
+
+                    return (
+                      <React.Fragment key={group.groupKey}>
+                        {/* PARENT ROW (Nota Induk / Header Kelompok) */}
+                        <tr className="bg-slate-50/90 hover:bg-rose-50/40 border-t-2 border-gray-200 transition-colors text-xs sm:text-sm">
+                          {/* No + Expand/Collapse */}
+                          <td className="px-3 py-3.5 text-center text-gray-700 font-semibold whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => toggleGroupCollapse(group.groupKey)}
+                              className="inline-flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-gray-200/80 text-gray-700 transition-colors"
+                              title={isCollapsed ? 'Bentangkan riwayat pelunasan' : 'Ciutkan riwayat pelunasan'}
+                            >
+                              {isCollapsed ? (
+                                <ChevronRight className="w-4 h-4 text-gray-500" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-rose-600" />
+                              )}
+                              <span>{groupNumber}</span>
+                            </button>
+                          </td>
+
+                          {/* Tanggal & Jam Induk */}
+                          <td className="px-4 py-3.5 whitespace-nowrap text-gray-900">
+                            {parent ? (
+                              <>
+                                <div className="font-semibold">
+                                  {new Date(parent.date).toLocaleDateString('id-ID', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric'
+                                  })}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {new Date(parent.date).toLocaleTimeString('id-ID', {
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })} WIB
+                                </div>
+                              </>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic">Periode Sebelumnya</span>
+                            )}
+                          </td>
+
+                          {/* Anggota & Badge Progres */}
+                          <td className="px-4 py-3.5">
+                            <div className="font-bold text-gray-900">{group.member_name}</div>
+                            <div className="text-xs text-gray-500">
+                              NRP: {group.member_nrp}{' '}
+                              {group.member_tanggal_lahir
+                                ? `| Tgl Lahir: ${formatTanggalLahirWithAge(group.member_tanggal_lahir)}`
+                                : ''}
+                            </div>
+                            {group.progressLabel && (
+                              <div className="mt-1">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                    group.status === 'PAID'
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : group.status === 'PARTIAL'
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}
+                                >
+                                  {group.progressLabel}
+                                </span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Jenis Mutasi Induk */}
+                          <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                            {parent ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                <ShoppingCart className="w-3 h-3 text-rose-600" />
+                                Belanja Bon POS
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                <Layers className="w-3 h-3 text-slate-600" />
+                                Kelompok Pelunasan
+                              </span>
+                            )}
+                          </td>
+
+                          {/* No. Bukti / Struk Induk */}
+                          <td className="px-4 py-3.5 whitespace-nowrap">
+                            <div className="flex flex-col items-start gap-1">
+                              {parent ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenReceipt(parent.reference_no)}
+                                  className="group inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-rose-50 text-rose-800 hover:bg-rose-100 hover:text-rose-900 border border-rose-200 transition-colors text-xs font-semibold cursor-pointer"
+                                  title="Klik untuk melihat rincian barang belanjaan"
+                                >
+                                  <Receipt className="w-3.5 h-3.5 text-rose-600 group-hover:scale-110 transition-transform" />
+                                  <span className="underline decoration-rose-300 underline-offset-2">
+                                    {parent.reference_no}
+                                  </span>
+                                  <Eye className="w-3 h-3 text-rose-500 opacity-60 group-hover:opacity-100" />
+                                </button>
+                              ) : group.parentInvoiceNo.startsWith('INV-') ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenReceipt(group.parentInvoiceNo)}
+                                  className="group inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-100 text-slate-800 hover:bg-slate-200 border border-slate-300 transition-colors text-xs font-semibold cursor-pointer"
+                                >
+                                  <Receipt className="w-3.5 h-3.5 text-slate-600" />
+                                  <span>{group.parentInvoiceNo}</span>
+                                </button>
+                              ) : (
+                                <span className="text-xs font-semibold text-slate-700">
+                                  {group.parentInvoiceNo}
+                                </span>
+                              )}
+                              {hasChildren && (
+                                <span className="text-[11px] text-gray-500 font-medium">
+                                  {group.children.length} Pelunasan Terkait
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Kasir / Petugas Induk */}
+                          <td className="px-4 py-3.5 whitespace-nowrap text-gray-700 font-medium">
+                            {parent?.cashier_name || '-'}
+                          </td>
+
+                          {/* Tambah Utang Induk (+) */}
+                          <td className="px-4 py-3.5 text-right font-bold text-rose-700 whitespace-nowrap">
+                            {group.totalDebit > 0 ? `+${formatCurrency(group.totalDebit)}` : '-'}
+                          </td>
+
+                          {/* Total Pelunasan Kelompok (-) */}
+                          <td className="px-4 py-3.5 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                            {group.totalPaid > 0 ? (
+                              <div className="flex flex-col items-end">
+                                <span>-{formatCurrency(group.totalPaid)}</span>
+                                <span className="text-[10px] font-normal text-emerald-600">
+                                  Total Terbayar
+                                </span>
+                              </div>
+                            ) : (
+                              '-'
+                            )}
+                          </td>
+
+                          {/* Sisa Utang Anggota & Sisa Tagihan Nota */}
+                          <td className="px-4 py-3.5 text-right font-bold text-gray-900 whitespace-nowrap bg-gray-100/60">
+                            <div>{formatCurrency(parent ? parent.running_debt : group.remainingDebt)}</div>
+                            {parent && (
+                              <div className="text-[10px] font-medium text-gray-500">
+                                Sisa Nota: {formatCurrency(group.remainingDebt)}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Status Kelompok */}
+                          <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                            {group.status === 'PAID' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
+                                <CheckCircle2 className="w-3 h-3 text-green-600" />
+                                LUNAS
+                              </span>
+                            ) : group.status === 'PARTIAL' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                <Clock className="w-3 h-3 text-amber-600" />
+                                SEBAGIAN
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                <AlertCircle className="w-3 h-3 text-rose-600" />
+                                BELUM LUNAS
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Aksi */}
+                          <td className="px-4 py-3.5 text-center whitespace-nowrap print:hidden">
+                            {group.status !== 'PAID' && group.remainingDebt > 0 && memberPlan ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenScheduleForPlan(memberPlan)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+                                title="Buka Buku Bantu Angsuran Bon Toko anggota ini"
+                              >
+                                <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Buku Bantu →</span>
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-400 font-medium">-</span>
+                            )}
+                          </td>
+                        </tr>
+
+                        {/* CHILD PAYMENT ROWS */}
+                        {!isCollapsed &&
+                          group.children.map(child => {
+                            const childParentInv = child.parent_invoice_no;
+                            return (
+                              <tr
+                                key={child.id}
+                                className="bg-white hover:bg-emerald-50/30 transition-colors text-xs sm:text-sm"
+                              >
+                                {/* Tree Connector */}
+                                <td className="px-3 py-3 text-center text-gray-400 font-mono font-bold select-none">
+                                  └─
+                                </td>
+
+                                {/* Tanggal & Jam Pelunasan */}
+                                <td className="px-4 py-3 whitespace-nowrap text-gray-800">
+                                  <div className="font-medium">
+                                    {new Date(child.date).toLocaleDateString('id-ID', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                      year: 'numeric'
+                                    })}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {new Date(child.date).toLocaleTimeString('id-ID', {
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })} WIB
+                                  </div>
+                                </td>
+
+                                {/* Identitas Angsuran */}
+                                <td className="px-4 py-3">
+                                  <div className="pl-3 border-l-2 border-emerald-300">
+                                    <div className="font-medium text-gray-800">
+                                      {child.period_number
+                                        ? `Angsuran Periode Ke-${child.period_number}`
+                                        : 'Pelunasan Bon'}
+                                    </div>
+                                    <div className="text-[11px] text-gray-500">
+                                      {child.member_name}
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* Jenis Mutasi Anak */}
+                                <td className="px-4 py-3 text-center whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    Pelunasan Bon
+                                  </span>
+                                </td>
+
+                                {/* No. Kwitansi & Badge Ref: INV-... */}
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <div className="flex flex-col items-start gap-1">
+                                    <span className="text-xs font-semibold text-gray-800 font-mono">
+                                      {child.reference_no}
+                                    </span>
+                                    {childParentInv && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleFilterByInvoice(childParentInv)}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                                        title={`Filter hanya nota ${childParentInv}`}
+                                      >
+                                        <Link2 className="w-3 h-3 text-indigo-600" />
+                                        <span>Ref: {childParentInv}</span>
+                                      </button>
+                                    )}
+                                    {child.notes && (
+                                      <span
+                                        className="text-[11px] text-gray-500 truncate max-w-[210px]"
+                                        title={child.notes}
+                                      >
+                                        {child.notes}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* Petugas */}
+                                <td className="px-4 py-3 whitespace-nowrap text-gray-700">
+                                  {child.cashier_name || 'Kasir Toko'}
+                                </td>
+
+                                {/* Tambah Utang (+) */}
+                                <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">
+                                  -
+                                </td>
+
+                                {/* Pelunasan (-) */}
+                                <td className="px-4 py-3 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                                  {child.credit > 0 ? `-${formatCurrency(child.credit)}` : '-'}
+                                </td>
+
+                                {/* Sisa Utang Anggota Berjalan */}
+                                <td className="px-4 py-3 text-right font-bold text-gray-900 whitespace-nowrap bg-gray-50/50">
+                                  {formatCurrency(child.running_debt)}
+                                </td>
+
+                                {/* Status */}
+                                <td className="px-4 py-3 text-center whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-50 text-green-700 border border-green-200">
+                                    <CheckCircle2 className="w-3 h-3 text-green-600" />
+                                    LUNAS
+                                  </span>
+                                </td>
+
+                                {/* Aksi */}
+                                <td className="px-4 py-3 text-center whitespace-nowrap print:hidden">
+                                  <span className="text-xs text-gray-400 font-medium">-</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </React.Fragment>
+                    );
+                  })
                 ) : (
                   paginatedItems.map((item, idx) => {
                     const rowNumber = (currentPage - 1) * pageSize + idx + 1;
@@ -833,11 +1434,22 @@ export default function BukuBesarBonToko() {
                               <Eye className="w-3 h-3 text-rose-500 opacity-60 group-hover:opacity-100" />
                             </button>
                           ) : (
-                            <div className="flex flex-col">
+                            <div className="flex flex-col items-start gap-1">
                               <span className="text-xs font-medium text-gray-800 font-mono">
                                 {item.reference_no}
                               </span>
-                              <span className="text-[11px] text-gray-500 truncate max-w-[160px]" title={item.notes}>
+                              {item.parent_invoice_no && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleFilterByInvoice(item.parent_invoice_no!)}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                                  title={`Filter hanya nota ${item.parent_invoice_no}`}
+                                >
+                                  <Link2 className="w-3 h-3 text-indigo-600" />
+                                  <span>Ref: {item.parent_invoice_no}</span>
+                                </button>
+                              )}
+                              <span className="text-[11px] text-gray-500 truncate max-w-[180px]" title={item.notes}>
                                 {item.notes}
                               </span>
                             </div>
@@ -940,7 +1552,7 @@ export default function BukuBesarBonToko() {
           </div>
 
           {/* Pagination Controls */}
-          {filteredItems.length > 0 && (
+          {activeTotalCount > 0 && (
             <div className="px-5 py-3.5 border-t border-gray-200 bg-gray-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500 print:hidden">
               <div className="flex items-center gap-2">
                 <span>Tampilkan</span>
@@ -957,7 +1569,11 @@ export default function BukuBesarBonToko() {
                   <option value={50}>50</option>
                   <option value={100}>100</option>
                 </select>
-                <span>baris per halaman (Total {filteredItems.length} transaksi)</span>
+                <span>
+                  {viewMode === 'grouped'
+                    ? `nota per halaman (Total ${groupedLedger.length} nota, ${filteredItems.length} transaksi)`
+                    : `baris per halaman (Total ${filteredItems.length} transaksi)`}
+                </span>
               </div>
 
               <div className="flex items-center gap-2">

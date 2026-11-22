@@ -194,8 +194,8 @@ export default function ApprovalPinjaman({
   };
 
   const getMappedStatus = (status?: string): StatusType => {
-    const s = (status || 'draft').toLowerCase();
-    if (s === 'active' || s === 'approved') return 'approved';
+    const s = (status || 'draft').trim().toLowerCase();
+    if (s === 'active' || s === 'approved' || s === 'berjalan' || s === 'disbursed') return 'approved';
     if (s === 'completed' || s === 'paid_off' || s === 'lunas' || s === 'paid') return 'lunas';
     if (s === 'rejected' || s === 'ditolak') return 'rejected';
     return 'pending';

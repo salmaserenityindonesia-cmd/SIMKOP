@@ -37,39 +37,44 @@ vi.mock('../../lib/supabaseClient', () => ({
 }));
 
 // Mock storeCreditLedgerService
-vi.mock('../../services/storeCreditLedgerService', () => ({
-  getStoreCreditSummary: vi.fn().mockResolvedValue({
-    totalCreditSales: 2500000,
-    totalPaid: 1000000,
-    outstandingDebt: 1500000,
-    activeDebtorCount: 3,
-    totalTransactions: 12,
-  }),
-  getStoreCreditLedger: vi.fn().mockResolvedValue([]),
-  exportStoreCreditToExcel: vi.fn().mockResolvedValue(undefined),
-  getMemberActiveDebt: vi.fn().mockResolvedValue(500000),
-  getMembersWithDebt: vi.fn().mockResolvedValue([]),
-  settleStoreCredit: vi.fn().mockResolvedValue({ id: 'scp-1' }),
-  getActiveStoreCreditPlans: vi.fn().mockResolvedValue([
-    {
-      id: 'plan-1',
-      member_id: 'm-1',
-      previous_unpaid_balance: 300000,
-      new_credit_amount: 300000,
-      total_consolidated_debt: 600000,
-      tenor_months: 3,
-      monthly_installment: 200000,
-      status: 'active',
-      anggota: { id: 'm-1', nama: 'Sertu Budi', nrp: '12345', tanggal_lahir: '1985-05-20' },
-      schedules: [
-        { id: 's-1', plan_id: 'plan-1', member_id: 'm-1', period_number: 1, target_amount: 200000, paid_amount: 200000, status: 'paid', due_date: '2026-12-01' },
-        { id: 's-2', plan_id: 'plan-1', member_id: 'm-1', period_number: 2, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-01-01' },
-        { id: 's-3', plan_id: 'plan-1', member_id: 'm-1', period_number: 3, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-02-01' },
-      ],
-    },
-  ]),
-  payStoreCreditSchedule: vi.fn().mockResolvedValue({ success: true, scheduleId: 's-2' }),
-}));
+vi.mock('../../services/storeCreditLedgerService', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    getStoreCreditSummary: vi.fn().mockResolvedValue({
+      totalCreditSales: 2500000,
+      totalPaid: 1000000,
+      outstandingDebt: 1500000,
+      activeDebtorCount: 3,
+      totalTransactions: 12,
+    }),
+    getStoreCreditLedger: vi.fn().mockResolvedValue({ items: [], summary: {}, totalItems: 0 }),
+    exportStoreCreditToExcel: vi.fn().mockResolvedValue(undefined),
+    getMemberActiveDebt: vi.fn().mockResolvedValue(500000),
+    getMembersWithDebt: vi.fn().mockResolvedValue([]),
+    settleStoreCredit: vi.fn().mockResolvedValue({ id: 'scp-1' }),
+    syncUnrecordedStoreCreditPaymentsToCashFlow: vi.fn().mockResolvedValue({ syncedCount: 0 }),
+    getActiveStoreCreditPlans: vi.fn().mockResolvedValue([
+      {
+        id: 'plan-1',
+        member_id: 'm-1',
+        previous_unpaid_balance: 300000,
+        new_credit_amount: 300000,
+        total_consolidated_debt: 600000,
+        tenor_months: 3,
+        monthly_installment: 200000,
+        status: 'active',
+        anggota: { id: 'm-1', nama: 'Sertu Budi', nrp: '12345', tanggal_lahir: '1985-05-20' },
+        schedules: [
+          { id: 's-1', plan_id: 'plan-1', member_id: 'm-1', period_number: 1, target_amount: 200000, paid_amount: 200000, status: 'paid', due_date: '2026-12-01' },
+          { id: 's-2', plan_id: 'plan-1', member_id: 'm-1', period_number: 2, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-01-01' },
+          { id: 's-3', plan_id: 'plan-1', member_id: 'm-1', period_number: 3, target_amount: 200000, paid_amount: 0, status: 'unpaid', due_date: '2027-02-01' },
+        ],
+      },
+    ]),
+    payStoreCreditSchedule: vi.fn().mockResolvedValue({ success: true, scheduleId: 's-2' }),
+  };
+});
 
 // Mock shoppingSavingsLedgerService
 vi.mock('../../services/shoppingSavingsLedgerService', () => ({
@@ -145,6 +150,13 @@ describe('BukuBesarBonToko Page Component', () => {
 
     expect(html).toContain('Mutasi Buku Besar Bon');
     expect(html).toContain('Jadwal Angsuran Bon Toko (Potong Gaji)');
+  });
+
+  it('renders parent-child view mode toggle buttons (Kelompokkan per Nota vs Semua Baris Datar)', () => {
+    const html = renderToStaticMarkup(<BukuBesarBonToko />);
+
+    expect(html).toContain('Kelompokkan per Nota');
+    expect(html).toContain('Semua Baris Datar');
   });
 
   it('maintains complete isolation from loan matrix and loans table', () => {

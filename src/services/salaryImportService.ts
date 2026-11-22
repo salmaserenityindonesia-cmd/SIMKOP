@@ -14,6 +14,14 @@ export type ReconciliationResult = {
   status: 'MATCH' | 'NOT_FOUND' | 'CONFLICT';
 };
 
+export interface SalaryImportProgress {
+  processed: number;
+  total: number;
+  currentLabel: string;
+  updatedCount: number;
+  skippedCount: number;
+}
+
 export interface ReconciliationItemPayload {
   nrp: string | number;
   gaji_pokok?: any;
@@ -39,6 +47,49 @@ export const cleanNumber = (val: any): number => {
   const cleaned = str.replace(/[^0-9]/g, '');
   return Number(cleaned) || 0;
 };
+
+/**
+ * Mengambil nilai gaji pokok numerik secara konsisten dari berbagai alias kolom pada anggota.
+ * Mengutamakan nilai positif pertama dari master_thp, take_home_pay, gaji_pokok, base_salary, atau salary.
+ */
+export function resolveMemberSalary(
+  member: {
+    master_thp?: any;
+    take_home_pay?: any;
+    gaji_pokok?: any;
+    base_salary?: any;
+    salary?: any;
+  } | null | undefined
+): number {
+  if (!member) return 0;
+  const candidates = [
+    member.master_thp,
+    member.take_home_pay,
+    member.gaji_pokok,
+    member.base_salary,
+    member.salary,
+  ];
+  for (const val of candidates) {
+    if (val !== undefined && val !== null && String(val).trim() !== '') {
+      const num = cleanNumber(val);
+      if (num > 0) return num;
+    }
+  }
+  return 0;
+}
+
+export function normalizeNrpValue(raw: any): string {
+  if (raw === null || raw === undefined) return '';
+  if (typeof raw === 'number') {
+    if (isNaN(raw)) return '';
+    return String(Math.trunc(raw)).trim();
+  }
+  return String(raw).trim();
+}
+
+export function stripLeadingZeros(nrp: string): string {
+  return nrp.replace(/^0+/, '') || nrp;
+}
 
 const extractCellValue = (val: any): any => {
   if (val && typeof val === 'object') {
@@ -105,7 +156,7 @@ export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workb
         nrp: String(anggota.nrp || ''),
         nama: String(anggota.nama || ''),
         nomor_rekening: String(anggota.bank_account_number || ''),
-        gaji_pokok: Number(anggota.master_thp ?? anggota.take_home_pay ?? 0) || 0,
+        gaji_pokok: resolveMemberSalary(anggota),
         angsuran_lain_lain: Number(anggota.angsuran_lain_lain ?? 0) || 0,
       });
       applyRowFormats(row);
@@ -193,8 +244,18 @@ export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> =
 
 export const downloadSalaryTemplate = downloadSalaryReconciliationTemplate;
 
-export const parseSalaryReconciliationFile = async (file: File): Promise<ReconciliationResult[]> => {
+export const parseSalaryReconciliationFile = async (
+  file: File,
+  onProgress?: (progress: SalaryImportProgress) => void
+): Promise<ReconciliationResult[]> => {
   try {
+    onProgress?.({
+      processed: 0,
+      total: 0,
+      currentLabel: 'Membaca file Excel...',
+      updatedCount: 0,
+      skippedCount: 0,
+    });
     const arrayBuffer = await file.arrayBuffer();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(arrayBuffer);
@@ -223,30 +284,28 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
       if (rowNumber === 1) {
         row.eachCell((cell, colNum) => {
           const header = normalizeHeader(cell.value);
-          if (header === 'nrp') {
+          if (header === 'nrp' || header === 'no nrp' || header === 'nomor nrp') {
             colIndex.nrp = colNum;
           } else if (header === 'nama lengkap' || header === 'nama' || header === 'nama anggota') {
             colIndex.nama = colNum;
           } else if (
-            header === 'nomor rekening' ||
-            header === 'no rekening' ||
-            header === 'no. rekening' ||
-            header === 'rekening' ||
+            header.includes('rekening') ||
             header === 'bank account number'
           ) {
             colIndex.account = colNum;
           } else if (
-            header === 'gaji pokok' ||
-            header === 'take home pay (thp)' ||
-            header === 'take home pay' ||
+            header.startsWith('gaji pokok') ||
+            header.includes('take home pay') ||
             header === 'thp' ||
-            header === 'gaji'
+            header === 'master thp' ||
+            header === 'gaji' ||
+            header === 'base salary' ||
+            header === 'salary'
           ) {
             colIndex.gajiPokok = colNum;
           } else if (
-            header === 'angsuran lain lain' ||
-            header === 'angsuran lain' ||
-            header === 'angsuran luar'
+            header.startsWith('angsuran lain') ||
+            header.includes('angsuran luar')
           ) {
             colIndex.angsuranLainLain = colNum;
           }
@@ -255,7 +314,7 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
       }
 
       const rawNrp = extractCellValue(row.getCell(colIndex.nrp).value);
-      const nrp = String(rawNrp ?? '').trim();
+      const nrp = normalizeNrpValue(rawNrp);
 
       const rawNama = extractCellValue(row.getCell(colIndex.nama).value);
       const nama = String(rawNama ?? '').trim();
@@ -286,54 +345,159 @@ export const parseSalaryReconciliationFile = async (file: File): Promise<Reconci
       }
     });
 
-    // Fetch members from DB
-    let anggotaData: any[] = [];
-    if (nrpList.length > 0) {
-      const { data, error } = await supabase
-        .from('anggota')
-        .select('nrp, nama, bank_account_number')
-        .in('nrp', nrpList);
-
-      if (error) {
-        throw error;
-      }
-      anggotaData = data || [];
-    }
-
+    // Fetch members from DB (chunked .in + fallback untuk nol di depan / spasi NRP)
+    const uniqueNrps = Array.from(new Set(nrpList));
     const dbDataMap = new Map<string, any>();
-    if (anggotaData) {
-      anggotaData.forEach((a: any) => {
-        dbDataMap.set(a.nrp, a);
-      });
-    }
 
-    // Classify
-    excelDataMap.forEach((excelRow, nrp) => {
-      const dbRow = dbDataMap.get(nrp);
+    if (uniqueNrps.length > 0) {
+      const CHUNK_SIZE = 500;
+      for (let i = 0; i < uniqueNrps.length; i += CHUNK_SIZE) {
+        const chunk = uniqueNrps.slice(i, i + CHUNK_SIZE);
+        const { data, error } = await supabase
+          .from('anggota')
+          .select('nrp, nama, bank_account_number')
+          .in('nrp', chunk);
 
-      let status: 'MATCH' | 'NOT_FOUND' | 'CONFLICT' = 'MATCH';
+        if (error) {
+          throw error;
+        }
 
-      if (!dbRow) {
-        status = 'NOT_FOUND';
-      } else if (excelRow.account_number && dbRow.bank_account_number && excelRow.account_number !== dbRow.bank_account_number) {
-        status = 'CONFLICT';
-      } else if (excelRow.account_number && !dbRow.bank_account_number) {
-        status = 'CONFLICT';
+        (data || []).forEach((a: any) => {
+          const cleanDbNrp = normalizeNrpValue(a.nrp);
+          if (cleanDbNrp) {
+            dbDataMap.set(cleanDbNrp, a);
+          }
+        });
       }
 
-      results.push({
-        nrp,
-        nama: excelRow.nama,
-        gaji_pokok: excelRow.thp,
-        thp: excelRow.thp,
-        take_home_pay: excelRow.thp,
-        angsuran_lain_lain: excelRow.angsuran_lain_lain ?? 0,
-        rekening_baru: excelRow.account_number || null,
-        excel_account_number: excelRow.account_number || null,
-        db_account_number: dbRow?.bank_account_number || null,
-        status,
+      if (dbDataMap.size < uniqueNrps.length) {
+        try {
+          const missingNrps = uniqueNrps.filter((n) => !dbDataMap.has(n));
+          if (missingNrps.length > 0) {
+            const PAGE_SIZE = 1000;
+            let from = 0;
+            let hasMore = true;
+            const fallbackMembers: any[] = [];
+            while (hasMore) {
+              const table: any = supabase.from('anggota');
+              const selQuery = table?.select?.('nrp, nama, bank_account_number');
+              if (!selQuery || typeof selQuery.range !== 'function') break;
+              const { data: pageData, error: pageErr } = await selQuery.range(from, from + PAGE_SIZE - 1);
+              if (pageErr || !pageData || pageData.length === 0) {
+                hasMore = false;
+              } else {
+                fallbackMembers.push(...pageData);
+                from += PAGE_SIZE;
+                if (pageData.length < PAGE_SIZE) hasMore = false;
+              }
+            }
+
+            if (fallbackMembers.length > 0) {
+              const byStripped = new Map<string, any>();
+              fallbackMembers.forEach((a: any) => {
+                const cleanDbNrp = normalizeNrpValue(a.nrp);
+                if (cleanDbNrp) {
+                  if (!byStripped.has(cleanDbNrp)) {
+                    byStripped.set(cleanDbNrp, a);
+                  }
+                  const stripped = stripLeadingZeros(cleanDbNrp);
+                  if (stripped && !byStripped.has(stripped)) {
+                    byStripped.set(stripped, a);
+                  }
+                }
+              });
+
+              missingNrps.forEach((excelNrp) => {
+                const match =
+                  byStripped.get(excelNrp) || byStripped.get(stripLeadingZeros(excelNrp));
+                if (match) {
+                  dbDataMap.set(excelNrp, match);
+                }
+              });
+            }
+          }
+        } catch {
+          // Abaikan jika environment/mock tidak mendukung query fallback paged
+        }
+      }
+    }
+
+    // Classify in measured chunks so UI progress stays responsive
+    const entries = Array.from(excelDataMap.entries());
+    const total = entries.length;
+    const CHUNK_SIZE = 20;
+    let processed = 0;
+    let matchedCount = 0;
+    let skippedCount = 0;
+
+    if (total === 0) {
+      onProgress?.({
+        processed: 0,
+        total: 0,
+        currentLabel: 'Tidak ada baris data valid',
+        updatedCount: 0,
+        skippedCount: 0,
       });
-    });
+    } else {
+      for (let i = 0; i < total; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        let lastNama = '';
+        let lastCanonicalNrp = '';
+
+        for (const [nrp, excelRow] of chunk) {
+          const dbRow = dbDataMap.get(nrp);
+          const canonicalNrp = dbRow?.nrp ? normalizeNrpValue(dbRow.nrp) : nrp;
+
+          let status: 'MATCH' | 'NOT_FOUND' | 'CONFLICT' = 'MATCH';
+
+          if (!dbRow) {
+            status = 'NOT_FOUND';
+          } else if (
+            excelRow.account_number &&
+            dbRow.bank_account_number &&
+            excelRow.account_number !== dbRow.bank_account_number
+          ) {
+            status = 'CONFLICT';
+          } else if (excelRow.account_number && !dbRow.bank_account_number) {
+            status = 'CONFLICT';
+          }
+
+          results.push({
+            nrp: canonicalNrp,
+            nama: excelRow.nama,
+            gaji_pokok: excelRow.thp,
+            thp: excelRow.thp,
+            take_home_pay: excelRow.thp,
+            angsuran_lain_lain: excelRow.angsuran_lain_lain ?? 0,
+            rekening_baru: excelRow.account_number || null,
+            excel_account_number: excelRow.account_number || null,
+            db_account_number: dbRow?.bank_account_number || null,
+            status,
+          });
+
+          processed += 1;
+          if (status === 'NOT_FOUND') {
+            skippedCount += 1;
+          } else {
+            matchedCount += 1;
+          }
+          lastNama = excelRow.nama || dbRow?.nama || '';
+          lastCanonicalNrp = canonicalNrp;
+        }
+
+        onProgress?.({
+          processed,
+          total,
+          currentLabel: `${lastNama || 'Tanpa Nama'} (NRP: ${lastCanonicalNrp})`,
+          updatedCount: matchedCount,
+          skippedCount,
+        });
+
+        if (onProgress && i + CHUNK_SIZE < total) {
+          await new Promise((resolve) => setTimeout(resolve, 16));
+        }
+      }
+    }
 
     return results;
   } catch (error) {
@@ -354,90 +518,129 @@ export type FinalReconciliationPayload = {
  * Update data Gaji Pokok (master_thp, take_home_pay, salary), Angsuran Lain-lain, dan nomor rekening per baris ke tabel public.anggota.
  */
 export const applySalaryReconciliation = async (
-  previewRows: (ReconciliationItemPayload | ReconciliationResult | FinalReconciliationPayload)[]
+  previewRows: (ReconciliationItemPayload | ReconciliationResult | FinalReconciliationPayload)[],
+  onProgress?: (progress: SalaryImportProgress) => void
 ): Promise<boolean> => {
   const errors: string[] = [];
+  const total = previewRows.length;
+  const CHUNK_SIZE = 20;
+  let processed = 0;
   let updatedCount = 0;
+  let skippedCount = 0;
 
-  for (const item of previewRows) {
-    const rawGajiPokok = (item as any).gaji_pokok ?? (item as any).thp ?? item.take_home_pay;
-    const hasGajiPokok =
-      rawGajiPokok !== undefined && rawGajiPokok !== null && String(rawGajiPokok).trim() !== '';
-    const gajiPokok = cleanNumber(rawGajiPokok);
+  onProgress?.({
+    processed: 0,
+    total,
+    currentLabel: 'Memulai sinkronisasi data...',
+    updatedCount: 0,
+    skippedCount: 0,
+  });
 
-    const rawAngsuranLain =
-      (item as any).angsuran_lain_lain ??
-      (item as any)['Angsuran Lain-lain'] ??
-      (item as any).angsuran_luar;
-    const hasAngsuranLain =
-      rawAngsuranLain !== undefined && rawAngsuranLain !== null && String(rawAngsuranLain).trim() !== '';
-    const angsuranLainLain = cleanNumber(rawAngsuranLain);
+  for (let i = 0; i < total; i += CHUNK_SIZE) {
+    const chunk = previewRows.slice(i, i + CHUNK_SIZE);
 
-    const bankAcc = String(
-      (item as any).rekening_baru ||
-      (item as any).bank_account_number ||
-      (item as any).final_account_number ||
-      (item as any).excel_account_number ||
-      ''
-    ).trim();
+    for (const item of chunk) {
+      const cleanNrp = normalizeNrpValue(item.nrp);
+      const rowName = String((item as any).nama ?? '').trim();
+      const rowLabel = rowName ? `${rowName} (NRP: ${cleanNrp || '-'})` : `NRP: ${cleanNrp || '-'}`;
 
-    const updatePayload: Record<string, any> = {};
+      const rawGajiPokok = (item as any).gaji_pokok ?? (item as any).thp ?? item.take_home_pay;
+      const hasGajiPokok =
+        rawGajiPokok !== undefined && rawGajiPokok !== null && String(rawGajiPokok).trim() !== '';
+      const gajiPokok = cleanNumber(rawGajiPokok);
 
-    if (hasGajiPokok && gajiPokok >= 0) {
-      updatePayload.master_thp = gajiPokok;
-      updatePayload.take_home_pay = gajiPokok;
-      updatePayload.salary = gajiPokok;
-    }
+      const rawAngsuranLain =
+        (item as any).angsuran_lain_lain ??
+        (item as any)['Angsuran Lain-lain'] ??
+        (item as any).angsuran_luar;
+      const hasAngsuranLain =
+        rawAngsuranLain !== undefined && rawAngsuranLain !== null && String(rawAngsuranLain).trim() !== '';
+      const angsuranLainLain = cleanNumber(rawAngsuranLain);
 
-    if (hasAngsuranLain && angsuranLainLain >= 0) {
-      updatePayload.angsuran_lain_lain = angsuranLainLain;
-    }
+      const bankAcc = String(
+        (item as any).rekening_baru ||
+        (item as any).bank_account_number ||
+        (item as any).final_account_number ||
+        (item as any).excel_account_number ||
+        ''
+      ).trim();
 
-    if (bankAcc) {
-      updatePayload.bank_account_number = bankAcc;
-    }
+      const updatePayload: Record<string, any> = {};
 
-    if (Object.keys(updatePayload).length === 0) {
-      continue;
-    }
-
-    let { error } = await supabase
-      .from('anggota')
-      .update(updatePayload)
-      .eq('nrp', String(item.nrp).trim());
-
-    // Defensive retry jika kolom opsional belum ada di skema database / schema cache
-    if (error && error.message) {
-      const errMsg = error.message.toLowerCase();
-      let needsRetry = false;
-
-      if (errMsg.includes('salary') && 'salary' in updatePayload) {
-        delete updatePayload.salary;
-        needsRetry = true;
-      }
-      if (errMsg.includes('angsuran_lain_lain') && 'angsuran_lain_lain' in updatePayload) {
-        delete updatePayload.angsuran_lain_lain;
-        needsRetry = true;
-      }
-      if (errMsg.includes('updated_at') && 'updated_at' in updatePayload) {
-        delete updatePayload.updated_at;
-        needsRetry = true;
+      if (hasGajiPokok && gajiPokok >= 0) {
+        updatePayload.master_thp = gajiPokok;
+        updatePayload.take_home_pay = gajiPokok;
+        updatePayload.salary = gajiPokok;
       }
 
-      if (needsRetry && Object.keys(updatePayload).length > 0) {
+      if (hasAngsuranLain && angsuranLainLain >= 0) {
+        updatePayload.angsuran_lain_lain = angsuranLainLain;
+      }
+
+      if (bankAcc) {
+        updatePayload.bank_account_number = bankAcc;
+      }
+
+      if ((item as any).status === 'NOT_FOUND' || !cleanNrp || Object.keys(updatePayload).length === 0) {
+        skippedCount += 1;
+        processed += 1;
+        onProgress?.({
+          processed,
+          total,
+          currentLabel: rowLabel,
+          updatedCount,
+          skippedCount,
+        });
+        continue;
+      }
+
+      let { error } = await supabase
+        .from('anggota')
+        .update(updatePayload)
+        .eq('nrp', cleanNrp);
+
+      // Defensive multi-retry jika kolom opsional belum ada di skema database / schema cache
+      let retryCount = 0;
+      const optionalCols = ['salary', 'angsuran_lain_lain', 'take_home_pay', 'updated_at'] as const;
+      while (error && error.message && retryCount < 4) {
+        const errMsg = error.message.toLowerCase();
+        let removedAny = false;
+        for (const col of optionalCols) {
+          if (errMsg.includes(col) && col in updatePayload) {
+            delete updatePayload[col];
+            removedAny = true;
+          }
+        }
+        if (!removedAny || Object.keys(updatePayload).length === 0) {
+          break;
+        }
+        retryCount += 1;
         const retryResult = await supabase
           .from('anggota')
           .update(updatePayload)
-          .eq('nrp', String(item.nrp).trim());
+          .eq('nrp', cleanNrp);
         error = retryResult.error;
       }
+
+      if (error) {
+        console.error(`Gagal update anggota NRP ${item.nrp}:`, error);
+        errors.push(`Gagal update NRP ${item.nrp}: ${error.message}`);
+      } else {
+        updatedCount += 1;
+      }
+
+      processed += 1;
+      onProgress?.({
+        processed,
+        total,
+        currentLabel: rowLabel,
+        updatedCount,
+        skippedCount,
+      });
     }
 
-    if (error) {
-      console.error(`Gagal update anggota NRP ${item.nrp}:`, error);
-      errors.push(`Gagal update NRP ${item.nrp}: ${error.message}`);
-    } else {
-      updatedCount += 1;
+    if (onProgress && i + CHUNK_SIZE < total) {
+      await new Promise((resolve) => setTimeout(resolve, 16));
     }
   }
 
@@ -506,6 +709,8 @@ export interface MemberSalaryAccountItem {
   bank_account_number?: string | null;
   take_home_pay?: number | null;
   master_thp?: number | null;
+  gaji_pokok?: number | null;
+  base_salary?: number | null;
   salary?: number | null;
   angsuran_lain_lain?: number | null;
   status?: string | null;
@@ -513,6 +718,16 @@ export interface MemberSalaryAccountItem {
   created_at?: string | null;
   updated_at?: string | null;
 }
+
+const OPTIONAL_MEMBER_SALARY_SELECT_COLS = [
+  'salary',
+  'angsuran_lain_lain',
+  'gaji_pokok',
+  'take_home_pay',
+  'master_thp',
+  'tanggal_lahir',
+  'membership_status',
+];
 
 export function isFallbackError(error: any): boolean {
   if (!error) return false;
@@ -540,20 +755,21 @@ export async function fetchMemberSalaryData(): Promise<MemberSalaryAccountItem[]
       .select(selectFields.join(', '))
       .order('nama', { ascending: true });
 
-    if (error && error.message) {
+    let retryCount = 0;
+    while (error && error.message && retryCount < 4) {
       const errMsg = error.message.toLowerCase();
-      const missingSalary = errMsg.includes('salary');
-      const missingAngsuran = errMsg.includes('angsuran_lain_lain');
-      if (missingSalary || missingAngsuran) {
-        if (missingSalary) selectFields = selectFields.filter((f) => f !== 'salary');
-        if (missingAngsuran) selectFields = selectFields.filter((f) => f !== 'angsuran_lain_lain');
-        const retry = await supabase
-          .from('anggota')
-          .select(selectFields.join(', '))
-          .order('nama', { ascending: true });
-        data = retry.data;
-        error = retry.error;
-      }
+      const toRemove = OPTIONAL_MEMBER_SALARY_SELECT_COLS.filter(
+        (col) => errMsg.includes(col) && selectFields.includes(col)
+      );
+      if (toRemove.length === 0) break;
+      selectFields = selectFields.filter((f) => !toRemove.includes(f));
+      retryCount += 1;
+      const retry = await supabase
+        .from('anggota')
+        .select(selectFields.join(', '))
+        .order('nama', { ascending: true });
+      data = retry.data;
+      error = retry.error;
     }
 
     if (error) {
@@ -605,21 +821,22 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
         .order('nama', { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
 
-      if (error && error.message) {
+      let retryCount = 0;
+      while (error && error.message && retryCount < 4) {
         const errMsg = error.message.toLowerCase();
-        const missingSalary = errMsg.includes('salary');
-        const missingAngsuran = errMsg.includes('angsuran_lain_lain');
-        if (missingSalary || missingAngsuran) {
-          if (missingSalary) selectFields = selectFields.filter((f) => f !== 'salary');
-          if (missingAngsuran) selectFields = selectFields.filter((f) => f !== 'angsuran_lain_lain');
-          const retry = await supabase
-            .from('anggota')
-            .select(selectFields.join(', '))
-            .order('nama', { ascending: true })
-            .range(from, from + PAGE_SIZE - 1);
-          data = retry.data;
-          error = retry.error;
-        }
+        const toRemove = OPTIONAL_MEMBER_SALARY_SELECT_COLS.filter(
+          (col) => errMsg.includes(col) && selectFields.includes(col)
+        );
+        if (toRemove.length === 0) break;
+        selectFields = selectFields.filter((f) => !toRemove.includes(f));
+        retryCount += 1;
+        const retry = await supabase
+          .from('anggota')
+          .select(selectFields.join(', '))
+          .order('nama', { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+        data = retry.data;
+        error = retry.error;
       }
 
       if (error) {

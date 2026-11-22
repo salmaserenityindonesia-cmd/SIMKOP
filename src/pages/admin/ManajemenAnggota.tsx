@@ -248,6 +248,12 @@ export default function ManajemenAnggota({
 
   const handleOpenEditModal = (anggota: Anggota) => {
     setEditingAnggota(anggota);
+    const resolvedMasterThp =
+      Number(anggota.master_thp) > 0
+        ? Number(anggota.master_thp)
+        : Number(anggota.take_home_pay) > 0
+        ? Number(anggota.take_home_pay)
+        : Number(anggota.master_thp) || 0;
     setFormData({
       nomor_referensi: anggota.nomor_referensi || '',
       nrp: anggota.nrp || '',
@@ -256,7 +262,7 @@ export default function ManajemenAnggota({
       status: anggota.status || 'aktif',
       membership_status: anggota.membership_status || (anggota.status === 'nonaktif' ? 'RESIGNED' : 'ACTIVE'),
       suspension_reason: anggota.suspension_reason || '',
-      master_thp: anggota.master_thp || 0,
+      master_thp: resolvedMasterThp,
       bank_account_number: anggota.bank_account_number || '',
       tgl_awal_anggota: anggota.created_at ? anggota.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
     });
@@ -290,13 +296,15 @@ export default function ManajemenAnggota({
     e.preventDefault();
     try {
       setIsSubmitting(true);
+      const normalizedMasterThp = Number(formData.master_thp) || 0;
       if (editingAnggota) {
         const updatePayload: Partial<Omit<Anggota, 'id' | 'created_at'>> = {
           nomor_referensi: formData.nomor_referensi?.trim() || null,
           nrp: formData.nrp,
           nama: formData.nama,
           tanggal_lahir: formData.tanggal_lahir || null,
-          master_thp: formData.master_thp,
+          master_thp: normalizedMasterThp,
+          take_home_pay: normalizedMasterThp,
           bank_account_number: formData.bank_account_number,
         };
         await updateAnggota(editingAnggota.id, updatePayload);
@@ -307,7 +315,8 @@ export default function ManajemenAnggota({
           nrp: formData.nrp,
           nama: formData.nama,
           tanggal_lahir: formData.tanggal_lahir || null,
-          master_thp: formData.master_thp,
+          master_thp: normalizedMasterThp,
+          take_home_pay: normalizedMasterThp,
           bank_account_number: formData.bank_account_number,
           tgl_awal_anggota: formData.tgl_awal_anggota,
         });

@@ -382,6 +382,11 @@ export interface SyncMatrixDepositsToCashFlowResult {
   skippedCount: number;
 }
 
+export interface SyncApprovedLoansToCashFlowResult {
+  syncedCount: number;
+  skippedCount: number;
+}
+
 export type CashFlowReferenceBreakdown =
   | {
       kind: 'opening_savings';
@@ -6235,5 +6240,259 @@ export async function syncMatrixDepositsToCashFlow(): Promise<SyncMatrixDeposits
     }
   });
   activeMatrixDepositSyncPromise = runPromise;
+  return runPromise;
+}
+
+const ACTIVE_OR_SETTLED_LOAN_STATUSES = new Set([
+  'active',
+  'approved',
+  'berjalan',
+  'disbursed',
+  'paid_off',
+  'completed',
+  'lunas',
+]);
+
+let activeApprovedLoanSyncPromise: Promise<SyncApprovedLoansToCashFlowResult> | null = null;
+
+function resolveApprovedLoanCashFlowTimestamp(loan: any): string {
+  const disbursed = String(loan?.disbursed_at || '').trim();
+  const created = String(loan?.created_at || '').trim();
+  if (disbursed) {
+    if (disbursed.includes('T')) return disbursed;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(disbursed)) {
+      if (created && created.startsWith(disbursed)) return created;
+      return `${disbursed}T00:00:00.000Z`;
+    }
+  }
+  return created || new Date().toISOString();
+}
+
+async function runSyncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCashFlowResult> {
+  const emptyResult: SyncApprovedLoansToCashFlowResult = {
+    syncedCount: 0,
+    skippedCount: 0,
+  };
+
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return emptyResult;
+    }
+
+    let loanRes = await safeFetchAllPaged<any>(
+      'loans',
+      'id, loan_number, member_id, loan_type_id, principal_amount, amount, cost_price, markup_amount, item_description, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at, notes'
+    );
+    if (loanRes.error && isPostgrestColumnError(loanRes.error)) {
+      loanRes = await safeFetchAllPaged<any>(
+        'loans',
+        'id, loan_number, member_id, loan_type_id, principal_amount, amount, topup_settlement_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at, notes'
+      );
+    }
+    if (loanRes.error) {
+      return emptyResult;
+    }
+
+    const candidateLoans = (loanRes.data || []).filter((loan: any) => {
+      if (!loan?.id) return false;
+      const statusNorm = String(loan?.status || '').trim().toLowerCase();
+      if (!ACTIVE_OR_SETTLED_LOAN_STATUSES.has(statusNorm)) return false;
+
+      const loanNumberUpper = String(loan?.loan_number || '').trim().toUpperCase();
+      if (loanNumberUpper.startsWith('SALDO-AWAL-')) return false;
+
+      const notesLower = String(loan?.notes || '').toLowerCase();
+      if (
+        notesLower.includes('saldo awal') ||
+        notesLower.includes('migrasi') ||
+        notesLower.includes('cut-off')
+      ) {
+        return false;
+      }
+
+      const rawEffectiveDate = String(loan?.disbursed_at || loan?.created_at || '').trim();
+      const ymdMatch = rawEffectiveDate.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (ymdMatch && ymdMatch[1] < '2026-01-01') return false;
+
+      return true;
+    });
+
+    if (candidateLoans.length === 0) {
+      return emptyResult;
+    }
+
+    let [ltRes, cfRes] = await Promise.all([
+      safeFetchAllPaged<any>('loan_types', 'id, code, name, financing_scheme'),
+      safeFetchAllPaged<any>('cash_flow', 'id, category, direction, reference_id, description'),
+    ]);
+    if (ltRes.error && isPostgrestColumnError(ltRes.error)) {
+      ltRes = await safeFetchAllPaged<any>('loan_types', 'id, code, name');
+    }
+    if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+      cfRes = await safeFetchAllPaged<any>('cash_flow', 'id, category, direction, reference_id');
+    }
+    if (cfRes.error) {
+      return emptyResult;
+    }
+
+    const loanTypeMap = new Map<string, any>();
+    for (const lt of ltRes.data || []) {
+      if (lt?.id) loanTypeMap.set(String(lt.id), lt);
+    }
+
+    const existingOutRefIds = new Set<string>();
+    const existingOutLoanNumbers = new Set<string>();
+    for (const cf of cfRes.data || []) {
+      const dir = String(cf?.direction ?? cf?.type ?? '').trim().toLowerCase();
+      if (dir !== 'out') continue;
+      if (cf?.reference_id) {
+        existingOutRefIds.add(String(cf.reference_id));
+      }
+      if (typeof cf?.description === 'string') {
+        const matches = cf.description.match(/\bLOAN-[A-Z0-9-]+\b/gi) || [];
+        for (const code of matches) {
+          existingOutLoanNumbers.add(code.toUpperCase());
+        }
+      }
+    }
+
+    const pendingToInsert: Array<{
+      loan: any;
+      isGoodsMarkup: boolean;
+      finalPrincipal: number;
+      outflowAmount: number;
+    }> = [];
+
+    for (const loan of candidateLoans) {
+      if (existingOutRefIds.has(String(loan.id))) continue;
+      const loanNumberUpper = String(loan?.loan_number || '').trim().toUpperCase();
+      if (loanNumberUpper && existingOutLoanNumbers.has(loanNumberUpper)) continue;
+
+      const lt = loan?.loan_type_id ? loanTypeMap.get(String(loan.loan_type_id)) : undefined;
+      const ltCodeUpper = String(lt?.code || '').trim().toUpperCase();
+      const isGoodsMarkup =
+        lt?.financing_scheme === 'GOODS_MARKUP' ||
+        ltCodeUpper === 'PEMBIAYAAN_BARANG' ||
+        ltCodeUpper === 'GOODS_MARKUP' ||
+        Number(loan?.markup_amount || 0) > 0 ||
+        Boolean(String(loan?.item_description || '').trim());
+
+      const finalPrincipal = Math.max(
+        0,
+        Math.round(Number(loan?.principal_amount ?? loan?.amount ?? 0))
+      );
+      const markupAmount = isGoodsMarkup
+        ? Math.max(0, Math.round(Number(loan?.markup_amount ?? 0)))
+        : 0;
+      const rawCostPrice = loan?.cost_price;
+      const outflowAmount = isGoodsMarkup
+        ? Math.max(
+            0,
+            Math.round(
+              rawCostPrice !== null && rawCostPrice !== undefined && Number(rawCostPrice) > 0
+                ? Number(rawCostPrice)
+                : Math.max(0, finalPrincipal - markupAmount)
+            )
+          )
+        : Math.max(
+            0,
+            finalPrincipal - Math.max(0, Math.round(Number(loan?.topup_settlement_amount ?? 0)))
+          );
+
+      if (outflowAmount <= 0) continue;
+
+      pendingToInsert.push({
+        loan,
+        isGoodsMarkup,
+        finalPrincipal,
+        outflowAmount,
+      });
+    }
+
+    const skippedCount = candidateLoans.length - pendingToInsert.length;
+    if (pendingToInsert.length === 0) {
+      return { syncedCount: 0, skippedCount };
+    }
+
+    const memberIds = Array.from(
+      new Set(pendingToInsert.map((item) => String(item.loan?.member_id || '')).filter(Boolean))
+    );
+    const memberRows = await safeFetchByIds<any>('anggota', 'id, nrp, nama', memberIds);
+    const memberMap = new Map<string, any>();
+    for (const m of memberRows) {
+      if (m?.id) memberMap.set(String(m.id), m);
+    }
+
+    const cfTable: any = supabase?.from?.('cash_flow');
+    if (!cfTable || typeof cfTable.insert !== 'function') {
+      return { syncedCount: 0, skippedCount };
+    }
+
+    const fmtRp = (val: number) => Math.round(Number(val) || 0).toLocaleString('id-ID');
+
+    const cashFlowPayloads = pendingToInsert.map(({ loan, isGoodsMarkup, finalPrincipal, outflowAmount }) => {
+      const member = loan?.member_id ? memberMap.get(String(loan.member_id)) : undefined;
+      const nrpStr = String(member?.nrp || '').trim();
+      const namaStr = String(member?.nama || '').trim();
+      const memberSegment = [nrpStr, namaStr].filter(Boolean).join(' - ') || 'Anggota';
+      const loanNumberStr = String(loan?.loan_number || '').trim();
+      const loanNumberSeg = loanNumberStr ? ` [${loanNumberStr}]` : '';
+      const tenor = Math.max(1, Math.floor(Number(loan?.agreed_tenor_months ?? loan?.tenor ?? 1)));
+      const itemDesc = String(loan?.item_description || loan?.notes || 'Barang').trim();
+      const settlementAmt = Math.max(0, Math.round(Number(loan?.topup_settlement_amount ?? 0)));
+
+      const description = isGoodsMarkup
+        ? `Pencairan Pembiayaan Barang (${itemDesc})${loanNumberSeg} — ${memberSegment} (Modal: Rp ${fmtRp(outflowAmount)}, Akad: Rp ${fmtRp(finalPrincipal)})`
+        : `Pencairan Pinjaman${loanNumberSeg} — ${memberSegment} (Tenor ${tenor} Bln${settlementAmt > 0 ? `, Potong Top-Up: Rp ${fmtRp(settlementAmt)}` : ''})`;
+
+      return {
+        direction: 'out' as const,
+        category: isGoodsMarkup ? 'pembiayaan_barang' : 'pencairan_pinjaman',
+        amount: outflowAmount,
+        reference_id: loan.id,
+        description,
+        created_at: resolveApprovedLoanCashFlowTimestamp(loan),
+      };
+    });
+
+    let syncedCount = 0;
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < cashFlowPayloads.length; i += CHUNK_SIZE) {
+      const chunk = cashFlowPayloads.slice(i, i + CHUNK_SIZE);
+      let res: any = await cfTable.insert(chunk);
+      if (res?.error && isPostgrestColumnError(res.error)) {
+        const fallbackChunk = chunk.map(({ description: _desc, ...rest }) => rest);
+        res = await cfTable.insert(fallbackChunk);
+      }
+      if (res?.error) {
+        console.error('[syncApprovedLoansToCashFlow] Insert gagal:', res.error);
+      } else {
+        syncedCount += chunk.length;
+      }
+    }
+
+    return { syncedCount, skippedCount };
+  } catch (err) {
+    console.warn('Warning syncApprovedLoansToCashFlow:', err);
+    return emptyResult;
+  }
+}
+
+/**
+ * Menyinkronkan (backfill idempoten) pencairan pinjaman dan pembiayaan barang berstatus
+ * berjalan/disetujui/lunas (pasca-cut-off, non saldo awal) yang belum memiliki entri
+ * Kas Keluar di `public.cash_flow`, dengan in-flight promise lock anti-duplikasi.
+ */
+export async function syncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCashFlowResult> {
+  if (activeApprovedLoanSyncPromise) {
+    return activeApprovedLoanSyncPromise;
+  }
+
+  const runPromise = runSyncApprovedLoansToCashFlow().finally(() => {
+    if (activeApprovedLoanSyncPromise === runPromise) {
+      activeApprovedLoanSyncPromise = null;
+    }
+  });
+  activeApprovedLoanSyncPromise = runPromise;
   return runPromise;
 }

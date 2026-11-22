@@ -93,8 +93,13 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
 };
 
 const getRowComplianceInfo = (row: LoanMatrixMember, fallbackYear: number) => {
+  const rowStatusLower = String((row as any).status || '').trim().toLowerCase();
   const isLoanCompleted =
-    !row.isLoanActive || (row as any).status === 'completed' || (row as any).status === 'paid_off';
+    !row.isLoanActive ||
+    rowStatusLower === 'completed' ||
+    rowStatusLower === 'paid_off' ||
+    rowStatusLower === 'lunas' ||
+    rowStatusLower === 'paid';
   const monthCells = Object.values(row.months || {});
   const hasDueFromMonths = monthCells.some(cell => {
     const st = (cell?.status || '').toUpperCase();
@@ -319,10 +324,17 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         (m.loan_number || '').toLowerCase().includes(search.toLowerCase()) ||
         (m.loanTypeName || m.loan_types?.name || '').toLowerCase().includes(search.toLowerCase()) ||
         (m.loanTypeCode || m.loan_types?.code || '').toLowerCase().includes(search.toLowerCase());
+      const rowStatusLower = String(m.status || '').trim().toLowerCase();
+      const isRowCompleted =
+        !m.isLoanActive ||
+        rowStatusLower === 'completed' ||
+        rowStatusLower === 'paid_off' ||
+        rowStatusLower === 'lunas' ||
+        rowStatusLower === 'paid';
       const matchStatus = 
         statusFilter === 'ALL' ? true :
         statusFilter === 'ACTIVE' ? m.isLoanActive :
-        statusFilter === 'PAID' ? (!m.isLoanActive || m.status === 'completed' || m.status === 'paid_off') :
+        statusFilter === 'PAID' ? isRowCompleted :
         statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
         statusFilter === 'FROZEN' ? (
           (m.membershipStatus || '').toUpperCase() === 'SUSPENDED' ||

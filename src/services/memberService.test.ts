@@ -1105,6 +1105,59 @@ describe('memberService - CRUD and Aggregation', () => {
       expect(res).toEqual(returned);
     });
 
+    it('updateAnggota menyinkronkan take_home_pay saat master_thp diperbarui dan melakukan fallback jika kolom take_home_pay tidak ada', async () => {
+      const updatePayloads: any[] = [];
+      let callCount = 0;
+
+      (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            update: vi.fn().mockImplementation((payload: any) => {
+              updatePayloads.push(payload);
+              return {
+                eq: vi.fn().mockReturnValue({
+                  select: vi.fn().mockReturnValue({
+                    single: vi.fn().mockImplementation(() => {
+                      callCount += 1;
+                      if (callCount === 1) {
+                        return Promise.resolve({
+                          data: { id: 'm-sync', master_thp: 4000000, take_home_pay: 4000000 },
+                          error: null,
+                        });
+                      }
+                      if (callCount === 2) {
+                        return Promise.resolve({
+                          data: null,
+                          error: { message: 'column "take_home_pay" of relation "anggota" does not exist' },
+                        });
+                      }
+                      return Promise.resolve({
+                        data: { id: 'm-fallback', master_thp: 4500000 },
+                        error: null,
+                      });
+                    }),
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res1 = await updateAnggota('m-sync', { master_thp: 4000000 });
+      expect(res1.master_thp).toBe(4000000);
+      expect(updatePayloads[0]).toEqual({
+        master_thp: 4000000,
+        take_home_pay: 4000000,
+      });
+
+      const res2 = await updateAnggota('m-fallback', { master_thp: 4500000 });
+      expect(res2.master_thp).toBe(4500000);
+      expect(updatePayloads[1]).toEqual({ master_thp: 4500000, take_home_pay: 4500000 });
+      expect(updatePayloads[2]).toEqual({ master_thp: 4500000 });
+    });
+
     it('deleteAnggota menghapus anggota berdasarkan id', async () => {
       (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
         if (table === 'anggota') {

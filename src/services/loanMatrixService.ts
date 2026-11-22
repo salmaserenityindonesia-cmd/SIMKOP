@@ -16,8 +16,94 @@ function isMissingMatrixColumnError(error: any): boolean {
     msg.includes('markup_amount') ||
     msg.includes('principal_portion') ||
     msg.includes('margin_portion') ||
-    msg.includes('description')
+    msg.includes('description') ||
+    msg.includes('tanggal_lahir') ||
+    msg.includes('approved_at')
   );
+}
+
+export const ACTIVE_LOAN_STATUSES_EXTENDED = ['active', 'approved', 'berjalan', 'disbursed'];
+export const ACTIVE_LOAN_STATUSES_ENUM_SAFE = ['active', 'approved'];
+
+export function isActiveLoanStatus(status?: string | null): boolean {
+  return ACTIVE_LOAN_STATUSES_EXTENDED.includes(String(status || '').trim().toLowerCase());
+}
+
+export function isCompletedLoanStatus(status?: string | null): boolean {
+  return ['completed', 'paid_off', 'lunas', 'paid'].includes(String(status || '').trim().toLowerCase());
+}
+
+function isInvalidEnumError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return code === '22P02' || msg.includes('invalid input value for enum');
+}
+
+function buildFallbackMonthlyDueDate(baseDateStr: string, periodNumber: number): string {
+  const parts = baseDateStr.split('-').map((p) => parseInt(p, 10));
+  const baseYear = parts[0];
+  const baseMonth = parts[1] - 1;
+  const baseDay = parts[2];
+
+  const targetMonthOffset = baseMonth + periodNumber;
+  const targetYear = baseYear + Math.floor(targetMonthOffset / 12);
+  const targetMonth = ((targetMonthOffset % 12) + 12) % 12;
+  const maxDayInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const clampedDay = Math.min(baseDay, maxDayInMonth);
+
+  return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+}
+
+export function buildFallbackSchedulesForLoan(loan: any): any[] {
+  const tenor = Math.max(1, Math.floor(Number(loan?.agreed_tenor_months || loan?.tenor || 1)));
+  const principal = Number(loan?.principal_amount || loan?.amount || 0);
+  const rawTarget = Number(loan?.monthly_target || loan?.planned_installment_amount || 0);
+  const monthlyTarget = rawTarget > 0 ? Math.round(rawTarget) : Math.round(principal / tenor);
+
+  const baseDateRaw = loan?.disbursed_at || loan?.approved_at || loan?.created_at;
+  let baseDateStr = '';
+  if (baseDateRaw) {
+    const trimmed = String(baseDateRaw).trim();
+    const ymdMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (ymdMatch) {
+      baseDateStr = ymdMatch[1];
+    } else {
+      const parsed = new Date(trimmed);
+      if (!isNaN(parsed.getTime())) {
+        baseDateStr = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+      }
+    }
+  }
+  if (!baseDateStr) {
+    const now = new Date();
+    baseDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  }
+
+  const schedules: any[] = [];
+  for (let period = 1; period <= tenor; period++) {
+    schedules.push({
+      id: `fallback-${loan.id}-${period}`,
+      loan_id: loan.id,
+      period_number: period,
+      due_date: buildFallbackMonthlyDueDate(baseDateStr, period),
+      target_amount: monthlyTarget,
+      paid_amount: 0,
+      status: 'unpaid',
+      loan,
+    });
+  }
+  return schedules;
+}
+
+async function executeEnumSafeStatusQuery(
+  runWithStatuses: (statuses: string[]) => Promise<any>
+): Promise<any> {
+  const primaryRes = await runWithStatuses(ACTIVE_LOAN_STATUSES_EXTENDED);
+  if (primaryRes?.error && isInvalidEnumError(primaryRes.error)) {
+    return await runWithStatuses(ACTIVE_LOAN_STATUSES_ENUM_SAFE);
+  }
+  return primaryRes;
 }
 
 function formatMatrixRp(val: number): string {
@@ -330,12 +416,23 @@ export const getLoanMatrix = async (
   let loanIds = Array.from(new Set(scheduleLoanIds));
 
   // Ambil juga pinjaman aktif/disetujui yang relevan jika tabel loans tersedia
+  const activeLoanIdsFromDb = new Set<string>();
   try {
-    const loanQuery = supabase.from('loans')?.select('id');
-    if (loanQuery && typeof loanQuery.in === 'function') {
-      const { data: activeLoans } = await loanQuery.in('status', ['active', 'approved']);
-      if (activeLoans && activeLoans.length > 0) {
-        loanIds = Array.from(new Set([...loanIds, ...activeLoans.map((l: any) => l.id)]));
+    const loanTableCheck: any = supabase.from('loans');
+    if (loanTableCheck && typeof loanTableCheck.select === 'function') {
+      const activeRes = await executeEnumSafeStatusQuery(async (statuses) => {
+        const q: any = supabase.from('loans')?.select('id');
+        if (q && typeof q.in === 'function') {
+          return await q.in('status', statuses);
+        }
+        return { data: null, error: null };
+      });
+      const activeLoans = Array.isArray(activeRes?.data) ? activeRes.data : [];
+      if (activeLoans.length > 0) {
+        activeLoans.forEach((l: any) => {
+          if (l?.id) activeLoanIdsFromDb.add(l.id);
+        });
+        loanIds = Array.from(new Set([...loanIds, ...activeLoanIdsFromDb]));
       }
     }
   } catch {
@@ -438,6 +535,26 @@ export const getLoanMatrix = async (
         notes,
         loan_types ( id, code, name ),
       `;
+    const memberCols = withGoodsCols
+      ? `
+          id,
+          nrp,
+          nama,
+          tanggal_lahir,
+          status,
+          membership_status,
+          suspended_at,
+          suspension_reason
+        `
+      : `
+          id,
+          nrp,
+          nama,
+          status,
+          membership_status,
+          suspended_at,
+          suspension_reason
+        `;
     return await supabase
       .from('loan_schedules')
       .select(`
@@ -450,14 +567,7 @@ export const getLoanMatrix = async (
       loan:loans (
         ${loanCols}
         member:anggota (
-          id,
-          nrp,
-          nama,
-          tanggal_lahir,
-          status,
-          membership_status,
-          suspended_at,
-          suspension_reason
+          ${memberCols}
         )
       )
     `)
@@ -525,7 +635,7 @@ export const getLoanMatrix = async (
       return;
     }
 
-    if (['paid_off', 'completed'].includes(statusLower)) {
+    if (isCompletedLoanStatus(statusLower)) {
       return;
     }
 
@@ -548,9 +658,101 @@ export const getLoanMatrix = async (
     activeLoanIdsSet.add(loanId);
   });
 
-  const activeSchedules = (schedules || []).filter(
-    (sched: any) => sched?.loan?.id && activeLoanIdsSet.has(sched.loan.id)
-  );
+  // Fallback untuk pinjaman aktif/berjalan (atau pinjaman lunas yang dicari) yang belum memiliki baris di loan_schedules
+  const syntheticSchedulesToProcess: any[] = [];
+  const missingCompletedLoans: any[] = [];
+  const missingScheduleLoanIds = Array.from(
+    new Set([...activeLoanIdsFromDb, ...explicitlyIncludedLoanIds])
+  ).filter((id) => !schedulesByLoan[id]);
+
+  if (missingScheduleLoanIds.length > 0) {
+    try {
+      const fetchMissingLoans = async (withExtendedCols: boolean) => {
+        const selectStr = withExtendedCols
+          ? `
+            id,
+            loan_number,
+            member_id,
+            principal_amount,
+            amount,
+            item_description,
+            cost_price,
+            markup_amount,
+            tenor,
+            agreed_tenor_months,
+            monthly_target,
+            planned_installment_amount,
+            disbursed_at,
+            created_at,
+            status,
+            notes,
+            loan_types ( id, code, name, financing_scheme ),
+            member:anggota ( id, nrp, nama, tanggal_lahir, status, membership_status, suspended_at, suspension_reason )
+          `
+          : `
+            id,
+            loan_number,
+            member_id,
+            principal_amount,
+            amount,
+            tenor,
+            agreed_tenor_months,
+            monthly_target,
+            planned_installment_amount,
+            disbursed_at,
+            created_at,
+            status,
+            notes,
+            loan_types ( id, code, name ),
+            member:anggota ( id, nrp, nama, status, membership_status, suspended_at, suspension_reason )
+          `;
+        const missingQ: any = (supabase.from('loans') as any)?.select(selectStr);
+        if (missingQ && typeof missingQ.in === 'function') {
+          return await missingQ.in('id', missingScheduleLoanIds);
+        }
+        return { data: [], error: null };
+      };
+
+      let missingRes = await fetchMissingLoans(true);
+      if (missingRes?.error && isMissingMatrixColumnError(missingRes.error)) {
+        missingRes = await fetchMissingLoans(false);
+      }
+
+      const missingLoans = Array.isArray(missingRes?.data) ? missingRes.data : [];
+      missingLoans.forEach((loan: any) => {
+        const member = loan?.member || loan?.anggota;
+        if (!loan?.id || !member) return;
+
+        const statusLower = String(loan.status || '').trim().toLowerCase();
+        if (['rejected', 'draft', 'cancelled'].includes(statusLower)) return;
+
+        if (isActiveLoanStatus(loan.status)) {
+          const syntheticSchedules = buildFallbackSchedulesForLoan(loan);
+          schedulesByLoan[loan.id] = syntheticSchedules;
+          activeLoanIdsSet.add(loan.id);
+          syntheticSchedulesToProcess.push(...syntheticSchedules);
+        } else {
+          const isExplicit =
+            includePaidOff ||
+            (Boolean(includeSearchNorm) &&
+              (explicitlyIncludedLoanIds.has(loan.id) ||
+                String(loan.loan_number || '').toLowerCase().includes(includeSearchNorm)));
+          if (isExplicit) {
+            missingCompletedLoans.push(loan);
+          }
+        }
+      });
+    } catch {
+      // Non-fatal fallback for schedule-less loans
+    }
+  }
+
+  const activeSchedules = [
+    ...(schedules || []).filter(
+      (sched: any) => sched?.loan?.id && activeLoanIdsSet.has(sched.loan.id)
+    ),
+    ...syntheticSchedulesToProcess,
+  ];
 
   activeSchedules.forEach((sched: any) => {
     const loan = sched.loan;
@@ -589,7 +791,7 @@ export const getLoanMatrix = async (
     const loanType = loan.loan_types || loan.loanType || loan.loan_type;
 
     if (!loansMap[loan.id]) {
-      const isLoanActive = loan.status === 'active' || loan.status === 'approved';
+      const isLoanActive = isActiveLoanStatus(loan.status);
       loansMap[loan.id] = {
         id: loan.id,
         loanId: loan.id,
@@ -641,7 +843,7 @@ export const getLoanMatrix = async (
         };
       }
     } else {
-      if (loan.status === 'active' || loan.status === 'approved') {
+      if (isActiveLoanStatus(loan.status)) {
         loansMap[loan.id].isLoanActive = true;
       }
       if (loan.status) {
@@ -649,7 +851,7 @@ export const getLoanMatrix = async (
       }
     }
 
-    const isLoanCompleted = loan.status === 'completed' || loan.status === 'paid_off';
+    const isLoanCompleted = isCompletedLoanStatus(loan.status);
     const isMemberSuspended = (member.membership_status || '').toUpperCase() === 'SUSPENDED';
 
     // Populate matrix cell and YTD stats whenever the schedule falls in the requested year
@@ -751,7 +953,7 @@ export const getLoanMatrix = async (
       }
     }
 
-    const isRowCompleted = !row.isLoanActive || row.status === 'completed' || row.status === 'paid_off';
+    const isRowCompleted = !row.isLoanActive || isCompletedLoanStatus(row.status);
 
     if (isRowCompleted) {
       row.complianceYTD = 100;
@@ -832,103 +1034,80 @@ export const getLoanMatrix = async (
   });
 
   // Fallback untuk pinjaman lunas yang dicari via URL namun belum memiliki baris di loan_schedules
-  if (explicitlyIncludedLoanIds.size > 0) {
-    const missingIds = Array.from(explicitlyIncludedLoanIds).filter((id) => !loansMap[id]);
-    if (missingIds.length > 0) {
-      try {
-        const missingQ: any = supabase
-          .from('loans')
-          ?.select(`
-            id,
-            loan_number,
-            member_id,
-            principal_amount,
-            amount,
-            tenor,
-            agreed_tenor_months,
-            monthly_target,
-            planned_installment_amount,
-            disbursed_at,
-            status,
-            loan_types ( id, code, name ),
-            member:anggota ( id, nrp, nama, tanggal_lahir, status, membership_status, suspended_at, suspension_reason )
-          `);
-        if (missingQ && typeof missingQ.in === 'function') {
-          const { data: missingLoans } = await missingQ.in('id', missingIds);
-          (missingLoans || []).forEach((loan: any) => {
-            const member = loan.member || loan.anggota;
-            if (!loan?.id || !member) return;
-            const loanType = loan.loan_types || loan.loanType || loan.loan_type;
-            const principalAmt = Number(loan.principal_amount || loan.amount || 0);
-            const tenorVal = Number(loan.agreed_tenor_months || loan.tenor || 0);
-            const isLoanActive = loan.status === 'active' || loan.status === 'approved';
-            const emptyMonths: Record<number, LoanMatrixMonth> = {};
-            for (let i = 1; i <= 12; i++) {
-              emptyMonths[i] = {
-                month: i,
-                year,
-                status: 'NONE',
-                targetAmount: 0,
-                paidAmount: 0,
-                loanId: loan.id,
-                loanNumber: loan.loan_number,
-                tenor: loan.tenor,
-              };
-            }
-            loansMap[loan.id] = {
-              id: loan.id,
-              loanId: loan.id,
-              loanNumber: loan.loan_number || '',
-              status: loan.status || 'completed',
-              memberId: member.id,
-              nrp: member.nrp,
-              nama: member.nama,
-              tanggal_lahir: member.tanggal_lahir ?? loan.tanggal_lahir ?? null,
-              loanTypeName: loanType?.name || 'Pinjaman Reguler',
-              loanTypeCode: loanType?.code || 'REGULER',
-              agreedTenorMonths: tenorVal,
-              tenor: Number(loan.tenor || tenorVal || 0),
-              monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
-              principalAmount: principalAmt,
-              disbursedAt: loan.disbursed_at || null,
-              isLoanActive,
-              totalLoans: 1,
-              months: emptyMonths,
-              complianceYTD: isLoanActive ? 0 : 100,
-              ytdCompliance: isLoanActive ? 0 : 100,
-              hasDueSchedulesYTD: !isLoanActive,
-              dueInstallmentsYTD: tenorVal,
-              paidInstallmentsYTD: isLoanActive ? 0 : tenorVal,
-              firstInstallmentLabel: null,
-              priorYearPaid: isLoanActive ? 0 : principalAmt,
-              priorYearRemaining: isLoanActive ? principalAmt : 0,
-              openingPaid: isLoanActive ? 0 : principalAmt,
-              openingRemaining: isLoanActive ? principalAmt : 0,
-              totalPaidAllTime: isLoanActive ? 0 : principalAmt,
-              paidInstallmentsCount: isLoanActive ? 0 : tenorVal,
-              totalInstallmentsCount: tenorVal,
-              remainingPrincipalAllTime: isLoanActive ? principalAmt : 0,
-              repaymentProgressPct: isLoanActive ? 0 : 100,
-              cutoffDate: null,
-              membershipStatus: member.membership_status,
-              suspendedAt: member.suspended_at ?? null,
-              suspensionReason: member.suspension_reason ?? null,
-              anggota: member,
-              loan_types: loanType,
-            };
-          });
-
-          const updatedCounts: Record<string, number> = {};
-          Object.values(loansMap).forEach((r) => {
-            updatedCounts[r.memberId] = (updatedCounts[r.memberId] || 0) + 1;
-          });
-          Object.values(loansMap).forEach((r) => {
-            r.totalLoans = updatedCounts[r.memberId] || 1;
-          });
-        }
-      } catch {
-        // Non-fatal fallback for schedule-less loans
+  if (missingCompletedLoans.length > 0) {
+    let addedMissingLoan = false;
+    missingCompletedLoans.forEach((loan: any) => {
+      const member = loan.member || loan.anggota;
+      if (!loan?.id || !member || loansMap[loan.id]) return;
+      addedMissingLoan = true;
+      const loanType = loan.loan_types || loan.loanType || loan.loan_type;
+      const principalAmt = Number(loan.principal_amount || loan.amount || 0);
+      const tenorVal = Number(loan.agreed_tenor_months || loan.tenor || 0);
+      const isLoanActive = isActiveLoanStatus(loan.status);
+      const emptyMonths: Record<number, LoanMatrixMonth> = {};
+      for (let i = 1; i <= 12; i++) {
+        emptyMonths[i] = {
+          month: i,
+          year,
+          status: 'NONE',
+          targetAmount: 0,
+          paidAmount: 0,
+          loanId: loan.id,
+          loanNumber: loan.loan_number,
+          tenor: loan.tenor,
+        };
       }
+      loansMap[loan.id] = {
+        id: loan.id,
+        loanId: loan.id,
+        loanNumber: loan.loan_number || '',
+        status: loan.status || 'completed',
+        memberId: member.id,
+        nrp: member.nrp,
+        nama: member.nama,
+        tanggal_lahir: member.tanggal_lahir ?? loan.tanggal_lahir ?? null,
+        loanTypeName: loanType?.name || 'Pinjaman Reguler',
+        loanTypeCode: loanType?.code || 'REGULER',
+        agreedTenorMonths: tenorVal,
+        tenor: Number(loan.tenor || tenorVal || 0),
+        monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
+        principalAmount: principalAmt,
+        disbursedAt: loan.disbursed_at || null,
+        isLoanActive,
+        totalLoans: 1,
+        months: emptyMonths,
+        complianceYTD: isLoanActive ? 0 : 100,
+        ytdCompliance: isLoanActive ? 0 : 100,
+        hasDueSchedulesYTD: !isLoanActive,
+        dueInstallmentsYTD: tenorVal,
+        paidInstallmentsYTD: isLoanActive ? 0 : tenorVal,
+        firstInstallmentLabel: null,
+        priorYearPaid: isLoanActive ? 0 : principalAmt,
+        priorYearRemaining: isLoanActive ? principalAmt : 0,
+        openingPaid: isLoanActive ? 0 : principalAmt,
+        openingRemaining: isLoanActive ? principalAmt : 0,
+        totalPaidAllTime: isLoanActive ? 0 : principalAmt,
+        paidInstallmentsCount: isLoanActive ? 0 : tenorVal,
+        totalInstallmentsCount: tenorVal,
+        remainingPrincipalAllTime: isLoanActive ? principalAmt : 0,
+        repaymentProgressPct: isLoanActive ? 0 : 100,
+        cutoffDate: null,
+        membershipStatus: member.membership_status,
+        suspendedAt: member.suspended_at ?? null,
+        suspensionReason: member.suspension_reason ?? null,
+        anggota: member,
+        loan_types: loanType,
+      };
+    });
+
+    if (addedMissingLoan) {
+      const updatedCounts: Record<string, number> = {};
+      Object.values(loansMap).forEach((r) => {
+        updatedCounts[r.memberId] = (updatedCounts[r.memberId] || 0) + 1;
+      });
+      Object.values(loansMap).forEach((r) => {
+        r.totalLoans = updatedCounts[r.memberId] || 1;
+      });
     }
   }
 
@@ -976,13 +1155,16 @@ export const getLoanMatrixAvailableYears = async (): Promise<number[]> => {
     let startYear = currentYear;
     let endYear = currentYear;
 
-    const { data: oldestActiveLoan, error: oldestError } = await supabase
-      .from('loans')
-      .select('disbursed_at, created_at, notes')
-      .in('status', ['active', 'approved'])
-      .order('disbursed_at', { ascending: true, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
+    const oldestRes = await executeEnumSafeStatusQuery(async (statuses) =>
+      await supabase
+        .from('loans')
+        .select('disbursed_at, created_at, notes')
+        .in('status', statuses)
+        .order('disbursed_at', { ascending: true, nullsFirst: false })
+        .limit(1)
+        .maybeSingle()
+    );
+    const { data: oldestActiveLoan, error: oldestError } = oldestRes || { data: null, error: null };
 
     if (oldestError) {
       console.error('Error fetching oldest active loan:', oldestError);

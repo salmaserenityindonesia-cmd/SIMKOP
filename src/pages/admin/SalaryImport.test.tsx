@@ -48,14 +48,17 @@ const { mockMemberList } = vi.hoisted(() => ({
   ],
 }));
 
-vi.mock('../../services/salaryImportService', () => ({
-  parseSalaryReconciliationFile: vi.fn().mockResolvedValue([]),
-  confirmSalaryReconciliation: vi.fn().mockResolvedValue(true),
-  applySalaryReconciliation: vi.fn().mockResolvedValue(true),
-  fetchMembersSalaryAndAccounts: vi.fn().mockResolvedValue(mockMemberList),
-  fetchMemberSalaryData: vi.fn().mockResolvedValue(mockMemberList),
-  cleanNumber: (val: any) => (typeof val === 'number' ? val : Number(String(val || '').replace(/[^0-9]/g, '')) || 0),
-}));
+vi.mock('../../services/salaryImportService', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    parseSalaryReconciliationFile: vi.fn().mockResolvedValue([]),
+    confirmSalaryReconciliation: vi.fn().mockResolvedValue(true),
+    applySalaryReconciliation: vi.fn().mockResolvedValue(true),
+    fetchMembersSalaryAndAccounts: vi.fn().mockResolvedValue(mockMemberList),
+    fetchMemberSalaryData: vi.fn().mockResolvedValue(mockMemberList),
+  };
+});
 
 describe('SalaryImport Page Integration', () => {
   beforeEach(() => {
@@ -175,5 +178,42 @@ describe('SalaryImport Page Integration', () => {
     expect(html).toContain('Agus Susanto');
     expect(html).toContain('Rp 6.000.000');
     expect(html).toContain('Rp 1.000.000');
+  });
+
+  it('displays Rp 4.000.000 when master_thp is 4000000 even if take_home_pay is 0 (anggota tes 1 / 99999999)', () => {
+    const members = [
+      {
+        id: 'm-tes-1',
+        nrp: '99999999',
+        nama: 'anggota tes 1',
+        tanggal_lahir: null,
+        bank_account_number: '11223344',
+        master_thp: 4000000,
+        take_home_pay: 0,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<SalaryImport initialMembers={members} />);
+    expect(html).toContain('anggota tes 1');
+    expect(html).toContain('99999999');
+    expect(html).toContain('Rp 4.000.000');
+  });
+
+  it('displays Rp 4.500.000 when master_thp is 0 and take_home_pay is 4500000', () => {
+    const members = [
+      {
+        id: 'm-thp-fallback',
+        nrp: '88888888',
+        nama: 'Anggota Fallback THP',
+        tanggal_lahir: null,
+        bank_account_number: null,
+        master_thp: 0,
+        take_home_pay: 4500000,
+      },
+    ];
+
+    const html = renderToStaticMarkup(<SalaryImport initialMembers={members} />);
+    expect(html).toContain('Anggota Fallback THP');
+    expect(html).toContain('Rp 4.500.000');
   });
 });

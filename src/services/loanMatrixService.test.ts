@@ -3442,6 +3442,189 @@ describe('loanMatrixService - SUSPENDED (Nonaktif Sementara)', () => {
       repaymentProgressPct: 100,
     });
   });
+
+  it('synthesizes monthly projections in getLoanMatrix for active/berjalan loans with empty loan_schedules', async () => {
+    vi.setSystemTime(new Date('2026-11-22T15:10:00.000+07:00'));
+
+    const activeLoansWithoutSchedules = [
+      {
+        id: 'loan-tes-2',
+        loan_number: 'LOAN-1795334228834',
+        member_id: 'mem-tes-2',
+        principal_amount: 3300000,
+        amount: 3300000,
+        tenor: 3,
+        agreed_tenor_months: 3,
+        monthly_target: 1100000,
+        planned_installment_amount: 1100000,
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T08:00:00.000Z',
+        status: 'berjalan',
+        loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+        member: {
+          id: 'mem-tes-2',
+          nrp: '200002',
+          nama: 'Anggota Tes 2',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+        },
+      },
+      {
+        id: 'loan-tes-1',
+        loan_number: 'LOAN-1795333396946',
+        member_id: 'mem-tes-1',
+        principal_amount: 2200000,
+        amount: 2200000,
+        tenor: 11,
+        agreed_tenor_months: 11,
+        monthly_target: 200000,
+        planned_installment_amount: 200000,
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T07:00:00.000Z',
+        status: 'active',
+        loan_types: { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler' },
+        member: {
+          id: 'mem-tes-1',
+          nrp: '200001',
+          nama: 'anggota tes 1',
+          status: 'aktif',
+          membership_status: 'ACTIVE',
+        },
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'id') {
+              return {
+                in: vi.fn().mockResolvedValue({
+                  data: activeLoansWithoutSchedules.map((l) => ({ id: l.id })),
+                  error: null,
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockResolvedValue({
+                data: activeLoansWithoutSchedules,
+                error: null,
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(summary.members).toHaveLength(2);
+    expect(summary.projectedNextMonth).toBe(1300000);
+
+    const rowTes2 = summary.members.find((m) => m.loanNumber === 'LOAN-1795334228834');
+    expect(rowTes2).toBeDefined();
+    expect(rowTes2?.isLoanActive).toBe(true);
+    expect(rowTes2?.months[12].status).toBe('PROJECTED');
+    expect(rowTes2?.months[12].targetAmount).toBe(1100000);
+    expect(rowTes2?.totalInstallmentsCount).toBe(3);
+
+    const rowTes1 = summary.members.find((m) => m.loanNumber === 'LOAN-1795333396946');
+    expect(rowTes1).toBeDefined();
+    expect(rowTes1?.isLoanActive).toBe(true);
+    expect(rowTes1?.months[12].status).toBe('PROJECTED');
+    expect(rowTes1?.months[12].targetAmount).toBe(200000);
+    expect(rowTes1?.totalInstallmentsCount).toBe(11);
+  });
+
+  it('falls back safely to enum-safe statuses when Postgres rejects extended status in loan_status enum', async () => {
+    vi.setSystemTime(new Date('2026-11-22T15:10:00.000+07:00'));
+
+    const activeLoan = {
+      id: 'loan-enum-safe',
+      loan_number: 'LOAN-ENUM-001',
+      member_id: 'mem-enum-1',
+      principal_amount: 1200000,
+      amount: 1200000,
+      tenor: 4,
+      agreed_tenor_months: 4,
+      monthly_target: 300000,
+      disbursed_at: '2026-11-22',
+      status: 'active',
+      member: { id: 'mem-enum-1', nrp: '300001', nama: 'Anggota Enum', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const statusInSpy = vi.fn().mockImplementation((_col: string, statuses: string[]) => {
+      if (statuses.includes('berjalan')) {
+        return Promise.resolve({
+          data: null,
+          error: { code: '22P02', message: 'invalid input value for enum loan_status: "berjalan"' },
+        });
+      }
+      return Promise.resolve({
+        data: [{ id: activeLoan.id }],
+        error: null,
+      });
+    });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'id') {
+              return { in: statusInSpy };
+            }
+            return {
+              in: vi.fn().mockResolvedValue({ data: [activeLoan], error: null }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getLoanMatrix(2026);
+    expect(statusInSpy).toHaveBeenCalledTimes(2);
+    expect(summary.members).toHaveLength(1);
+    expect(summary.members[0].loanNumber).toBe('LOAN-ENUM-001');
+    expect(summary.members[0].months[12].targetAmount).toBe(300000);
+    expect(summary.members[0].months[12].status).toBe('PROJECTED');
+  });
 });
 
 

@@ -12,6 +12,7 @@ import {
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
   getTraceBackDepositRows,
+  syncApprovedLoansToCashFlow,
   syncMatrixDepositsToCashFlow,
   syncPosCashSalesToCashFlow,
   syncResignedMemberClearanceToCashFlow,
@@ -3551,6 +3552,348 @@ describe('cashFlowAuditService - syncMatrixDepositsToCashFlow', () => {
     const [res1, res2] = await Promise.all([
       syncMatrixDepositsToCashFlow(),
       syncMatrixDepositsToCashFlow(),
+    ]);
+
+    expect(res1).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(res2).toEqual({ syncedCount: 1, skippedCount: 0 });
+    expect(insertCalls).toBe(1);
+    expect(cashFlowRows).toHaveLength(1);
+  });
+});
+
+describe('cashFlowAuditService - syncApprovedLoansToCashFlow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('backfills missed active/approved loans using supplier cost_price for goods markup and net principal for cash loans while skipping SALDO-AWAL and already recorded entries', async () => {
+    const loans = [
+      {
+        id: 'loan-1',
+        loan_number: 'LOAN-1795338673852',
+        member_id: 'm-1',
+        loan_type_id: 'lt-brg',
+        principal_amount: 70000000,
+        amount: 70000000,
+        cost_price: 50000000,
+        markup_amount: 20000000,
+        item_description: 'Mobil Operasional',
+        tenor: 24,
+        status: 'berjalan',
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T09:00:00.000Z',
+        notes: 'Pembiayaan Barang: Mobil Operasional',
+      },
+      {
+        id: 'loan-2',
+        loan_number: 'LOAN-1795334228834',
+        member_id: 'm-2',
+        loan_type_id: 'lt-brg',
+        principal_amount: 3300000,
+        amount: 3300000,
+        cost_price: 3000000,
+        markup_amount: 300000,
+        item_description: 'Kulkas 2 Pintu',
+        tenor: 6,
+        status: 'active',
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T10:00:00.000Z',
+        notes: 'Pembiayaan Barang: Kulkas 2 Pintu',
+      },
+      {
+        id: 'loan-3',
+        loan_number: 'LOAN-1795333396946',
+        member_id: 'm-3',
+        loan_type_id: 'lt-brg',
+        principal_amount: 2200000,
+        amount: 2200000,
+        cost_price: 2000000,
+        markup_amount: 200000,
+        item_description: 'Mesin Cuci',
+        tenor: 5,
+        status: 'active',
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T11:00:00.000Z',
+        notes: 'Pembiayaan Barang: Mesin Cuci',
+      },
+      {
+        id: 'loan-cash-topup',
+        loan_number: 'LOAN-1795339990001',
+        member_id: 'm-1',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 5000000,
+        amount: 5000000,
+        topup_settlement_amount: 1000000,
+        tenor: 10,
+        status: 'approved',
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T12:00:00.000Z',
+        notes: 'Kebutuhan Pendidikan',
+      },
+      // Excluded: SALDO-AWAL migration loan
+      {
+        id: 'loan-saldo-awal',
+        loan_number: 'SALDO-AWAL-88010001-TUNAI',
+        member_id: 'm-1',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 10000000,
+        amount: 10000000,
+        tenor: 12,
+        status: 'active',
+        disbursed_at: '2026-03-01',
+        created_at: '2026-03-01T00:00:00.000Z',
+        notes: 'Saldo Awal Pinjaman',
+      },
+      // Excluded: already recorded by reference_id
+      {
+        id: 'loan-existing-ref',
+        loan_number: 'LOAN-EXISTING-REF',
+        member_id: 'm-2',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 1500000,
+        amount: 1500000,
+        tenor: 6,
+        status: 'active',
+        disbursed_at: '2026-11-20',
+        created_at: '2026-11-20T08:00:00.000Z',
+        notes: '',
+      },
+      // Excluded: already recorded by loan_number in description
+      {
+        id: 'loan-existing-num',
+        loan_number: 'LOAN-1795000000001',
+        member_id: 'm-3',
+        loan_type_id: 'lt-brg',
+        principal_amount: 1100000,
+        amount: 1100000,
+        cost_price: 1000000,
+        markup_amount: 100000,
+        item_description: 'TV LED',
+        tenor: 4,
+        status: 'lunas',
+        disbursed_at: '2026-11-18',
+        created_at: '2026-11-18T08:00:00.000Z',
+        notes: '',
+      },
+      // Excluded: pre-2026
+      {
+        id: 'loan-old-2025',
+        loan_number: 'LOAN-2025-001',
+        member_id: 'm-1',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 3000000,
+        amount: 3000000,
+        tenor: 6,
+        status: 'active',
+        disbursed_at: '2025-12-15',
+        created_at: '2025-12-15T08:00:00.000Z',
+        notes: '',
+      },
+      // Excluded: pending/draft
+      {
+        id: 'loan-draft',
+        loan_number: 'LOAN-DRAFT-001',
+        member_id: 'm-1',
+        loan_type_id: 'lt-tunai',
+        principal_amount: 2000000,
+        amount: 2000000,
+        tenor: 6,
+        status: 'draft',
+        disbursed_at: null,
+        created_at: '2026-11-22T13:00:00.000Z',
+        notes: '',
+      },
+    ];
+
+    const loanTypes = [
+      { id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang', financing_scheme: 'GOODS_MARKUP' },
+      { id: 'lt-tunai', code: 'PINJ_TUNAI', name: 'Pinjaman Tunai', financing_scheme: 'ZERO_INTEREST' },
+    ];
+
+    const members = [
+      { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso' },
+      { id: 'm-2', nrp: '88010002', nama: 'Siti Aminah' },
+      { id: 'm-3', nrp: '88010003', nama: 'Andi Wijaya' },
+    ];
+
+    const cashFlowRows: any[] = [
+      {
+        id: 'cf-kas-kecil',
+        direction: 'out',
+        category: 'beban_operasional',
+        amount: 100000,
+        reference_id: null,
+        description: 'Kas Kecil Kasir',
+      },
+      {
+        id: 'cf-existing-ref',
+        direction: 'out',
+        category: 'pencairan_pinjaman',
+        amount: 1500000,
+        reference_id: 'loan-existing-ref',
+        description: 'Pencairan Pinjaman',
+      },
+      {
+        id: 'cf-existing-num',
+        direction: 'out',
+        category: 'pembiayaan_barang',
+        amount: 1000000,
+        reference_id: null,
+        description: 'Pencairan Pembiayaan Barang (TV LED) [LOAN-1795000000001]',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: loans, error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: loanTypes, error: null }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: members, error: null }),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async () => ({
+              data: [...cashFlowRows],
+              error: null,
+            })),
+          }),
+          insert: vi.fn().mockImplementation(async (rows: any[]) => {
+            const items = Array.isArray(rows) ? rows : [rows];
+            for (const r of items) {
+              cashFlowRows.push({ id: `cf-${cashFlowRows.length + 1}`, ...r });
+            }
+            return { data: items, error: null };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const firstRes = await syncApprovedLoansToCashFlow();
+    expect(firstRes).toEqual({ syncedCount: 4, skippedCount: 2 });
+
+    const insertedLoansCf = cashFlowRows.slice(3);
+    expect(insertedLoansCf).toHaveLength(4);
+    expect(insertedLoansCf.map((r) => r.amount)).toEqual([50000000, 3000000, 2000000, 4000000]);
+    expect(insertedLoansCf[0]).toMatchObject({
+      direction: 'out',
+      category: 'pembiayaan_barang',
+      amount: 50000000,
+      reference_id: 'loan-1',
+    });
+    expect(insertedLoansCf[0].description).toContain('[LOAN-1795338673852]');
+    expect(insertedLoansCf[0].description).toContain('88010001 - Budi Santoso');
+    expect(insertedLoansCf[0].description).toContain('Modal: Rp 50.000.000');
+    expect(insertedLoansCf[0].description).toContain('Akad: Rp 70.000.000');
+    expect(insertedLoansCf[3]).toMatchObject({
+      direction: 'out',
+      category: 'pencairan_pinjaman',
+      amount: 4000000,
+      reference_id: 'loan-cash-topup',
+    });
+    expect(insertedLoansCf[3].description).toContain('[LOAN-1795339990001]');
+    expect(insertedLoansCf[3].description).toContain('Potong Top-Up: Rp 1.000.000');
+
+    // Re-running is idempotent
+    const secondRes = await syncApprovedLoansToCashFlow();
+    expect(secondRes).toEqual({ syncedCount: 0, skippedCount: 6 });
+    expect(cashFlowRows).toHaveLength(7);
+  });
+
+  it('prevents duplicate cash_flow inserts when syncApprovedLoansToCashFlow is called concurrently (in-flight lock)', async () => {
+    const loans = [
+      {
+        id: 'loan-concurrent-1',
+        loan_number: 'LOAN-1795338673852',
+        member_id: 'm-1',
+        loan_type_id: 'lt-brg',
+        principal_amount: 70000000,
+        amount: 70000000,
+        cost_price: 50000000,
+        markup_amount: 20000000,
+        item_description: 'Mobil Operasional',
+        tenor: 24,
+        status: 'berjalan',
+        disbursed_at: '2026-11-22',
+        created_at: '2026-11-22T09:00:00.000Z',
+      },
+    ];
+    const cashFlowRows: any[] = [];
+    let insertCalls = 0;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(
+              () =>
+                new Promise((resolve) =>
+                  setTimeout(() => resolve({ data: loans, error: null }), 15)
+                )
+            ),
+          }),
+        };
+      }
+      if (table === 'loan_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({
+              data: [{ id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', financing_scheme: 'GOODS_MARKUP' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-1', nrp: '88010001', nama: 'Budi Santoso' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockImplementation(async () => ({
+              data: [...cashFlowRows],
+              error: null,
+            })),
+          }),
+          insert: vi.fn().mockImplementation(async (rows: any[]) => {
+            insertCalls += 1;
+            const items = Array.isArray(rows) ? rows : [rows];
+            for (const r of items) {
+              cashFlowRows.push({ id: `cf-${cashFlowRows.length + 1}`, ...r });
+            }
+            return { data: items, error: null };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const [res1, res2] = await Promise.all([
+      syncApprovedLoansToCashFlow(),
+      syncApprovedLoansToCashFlow(),
     ]);
 
     expect(res1).toEqual({ syncedCount: 1, skippedCount: 0 });

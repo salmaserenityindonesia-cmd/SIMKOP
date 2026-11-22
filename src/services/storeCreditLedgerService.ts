@@ -29,6 +29,8 @@ export interface StoreCreditLedgerItem {
   cashier_name?: string;     // Kasir Toko atau Petugas Penerima
   created_at: string;
   is_pos_sale: boolean;
+  parent_invoice_no?: string; // Referensi struk POS induk (INV-...) untuk baris pelunasan
+  period_number?: number;     // Nomor periode angsuran (mis. 1, 2, 3) bila terdeteksi
 }
 
 export interface StoreCreditFilter {
@@ -122,6 +124,44 @@ export const sanitizeNumber = (val: any, fallback = 0): number => {
   const num = Number(val);
   return isNaN(num) ? fallback : num;
 };
+
+export function extractParentInvoiceFromNotes(notes?: string | null): string | undefined {
+  if (!notes) return undefined;
+  const match = String(notes).match(/Ref:\s*([A-Za-z0-9_-]+)/i);
+  return match?.[1]?.trim() || undefined;
+}
+
+export function extractInstallmentPeriodNumber(
+  referenceNo?: string | null,
+  notes?: string | null
+): number | undefined {
+  if (referenceNo) {
+    const refMatch = String(referenceNo).match(/-P(\d+)(?:-|$)/i);
+    if (refMatch) {
+      const n = Number(refMatch[1]);
+      if (!Number.isNaN(n) && n > 0) return n;
+    }
+  }
+  if (notes) {
+    const noteMatch = String(notes).match(/Periode(?:\s+Ke-?)?\s*(\d+)/i);
+    if (noteMatch) {
+      const n = Number(noteMatch[1]);
+      if (!Number.isNaN(n) && n > 0) return n;
+    }
+  }
+  return undefined;
+}
+
+export function resolvePaymentEffectiveTimestamp(p: {
+  created_at?: string | null;
+  payment_date?: string | null;
+}): string {
+  const created = String(p.created_at || '').trim();
+  if (created) return created;
+  const payDate = String(p.payment_date || '').trim();
+  if (payDate) return payDate;
+  return new Date().toISOString();
+}
 
 export interface OutstandingStoreCreditSummary {
   totalOutstandingReceivable: number;
@@ -344,8 +384,18 @@ export async function getStoreCreditLedger(
     );
 
     const saleMap = new Map<string, any>();
+    const saleNumberMap = new Map<string, string>();
+    const saleTimeMap = new Map<string, number>();
     validSales.forEach((s: any) => {
-      if (s.id) saleMap.set(s.id, s);
+      if (s.id) {
+        saleMap.set(s.id, s);
+        const invNo = s.sale_number || `INV-${s.id.slice(0, 8)}`;
+        saleNumberMap.set(s.id, invNo);
+        const saleTs = new Date(s.created_at || new Date().toISOString()).getTime();
+        if (!Number.isNaN(saleTs)) {
+          saleTimeMap.set(s.id, saleTs);
+        }
+      }
     });
 
     // 2. Kueri data pelunasan dari store_credit_payments
@@ -477,6 +527,8 @@ export async function getStoreCreditLedger(
       created_at: string;
       is_pos_sale: boolean;
       status: 'PAID' | 'PARTIAL' | 'UNPAID';
+      parent_invoice_no?: string;
+      period_number?: number;
     }[] = [];
 
     // Tambah baris penjualan bon
@@ -507,7 +559,8 @@ export async function getStoreCreditLedger(
         cashier_id: s.cashier_id,
         created_at: s.created_at || new Date().toISOString(),
         is_pos_sale: true,
-        status: status
+        status: status,
+        parent_invoice_no: invNo
       });
     });
 
@@ -515,7 +568,10 @@ export async function getStoreCreditLedger(
     validPayments.forEach((p: any) => {
       const creditAmt = sanitizeNumber(p.amount);
       const refNo = p.reference_no || `BYR-${p.id.slice(0, 8)}`;
-      const pDate = p.payment_date || p.created_at || new Date().toISOString();
+      const pDate = resolvePaymentEffectiveTimestamp(p);
+      const parentInvoiceNo =
+        (p.sale_id && saleNumberMap.get(p.sale_id)) || extractParentInvoiceFromNotes(p.notes);
+      const periodNo = extractInstallmentPeriodNumber(refNo, p.notes);
 
       unifiedList.push({
         id: `pay-${p.id}`,
@@ -531,15 +587,42 @@ export async function getStoreCreditLedger(
         cashier_id: p.received_by,
         created_at: p.created_at || pDate,
         is_pos_sale: false,
-        status: 'PAID'
+        status: 'PAID',
+        parent_invoice_no: parentInvoiceNo,
+        period_number: periodNo
       });
     });
 
-    // 8. Urutkan kronologis ascending (waktu terlama ke terbaru)
+    // 8. Urutkan kronologis ascending (waktu terlama ke terbaru, nota induk selalu mendahului pelunasannya)
+    const getEffectiveSortTime = (tx: typeof unifiedList[number]) => {
+      const rawTime = new Date(tx.date).getTime();
+      const safeTime = Number.isNaN(rawTime) ? 0 : rawTime;
+      if (tx.source_type === 'payment' && tx.sale_id && saleTimeMap.has(tx.sale_id)) {
+        const parentTime = saleTimeMap.get(tx.sale_id)!;
+        if (safeTime < parentTime) {
+          return parentTime + (tx.period_number || 1);
+        }
+      }
+      return safeTime;
+    };
+
     unifiedList.sort((a, b) => {
-      const timeA = new Date(a.date).getTime();
-      const timeB = new Date(b.date).getTime();
-      return timeA - timeB;
+      const timeDiff = getEffectiveSortTime(a) - getEffectiveSortTime(b);
+      if (timeDiff !== 0) return timeDiff;
+      if (a.source_type !== b.source_type) {
+        return a.source_type === 'sale' ? -1 : 1;
+      }
+      if (
+        a.source_type === 'payment' &&
+        b.source_type === 'payment' &&
+        a.member_id === b.member_id &&
+        a.period_number !== undefined &&
+        b.period_number !== undefined &&
+        a.period_number !== b.period_number
+      ) {
+        return a.period_number - b.period_number;
+      }
+      return a.id.localeCompare(b.id);
     });
 
     // 9. Hitung Running Debt Balance per Anggota
@@ -612,7 +695,9 @@ export async function getStoreCreditLedger(
         payment_method: tx.payment_method,
         cashier_name: cashierName,
         created_at: tx.created_at,
-        is_pos_sale: tx.is_pos_sale
+        is_pos_sale: tx.is_pos_sale,
+        parent_invoice_no: tx.parent_invoice_no,
+        period_number: tx.period_number
       };
 
       // Filter Search Query
@@ -623,8 +708,9 @@ export async function getStoreCreditLedger(
         const matchesRef = tx.reference_no.toLowerCase().includes(q);
         const matchesNotes = (tx.notes || '').toLowerCase().includes(q);
         const matchesCashier = cashierName.toLowerCase().includes(q);
+        const matchesParentInvoice = (tx.parent_invoice_no || '').toLowerCase().includes(q);
 
-        if (!matchesName && !matchesNrp && !matchesRef && !matchesNotes && !matchesCashier) {
+        if (!matchesName && !matchesNrp && !matchesRef && !matchesNotes && !matchesCashier && !matchesParentInvoice) {
           continue;
         }
       }
@@ -958,13 +1044,14 @@ export async function settleStoreCredit(
     // Tentukan alokasi nota sales (spesifik atau FIFO) & hitung total piutang anggota sebelum bayar
     let allocations: { saleId: string; amount: number }[] = [];
     let runningDebtBeforePayment = amount;
+    const saleNumberMap = new Map<string, string>();
 
     if (payload.saleId) {
       allocations = [{ saleId: payload.saleId, amount }];
       try {
         const salesTable: any = supabase.from('sales');
         if (salesTable && typeof salesTable.select === 'function') {
-          let sQuery: any = salesTable.select('id, paid_credit, created_at, sale_status');
+          let sQuery: any = salesTable.select('id, sale_number, paid_credit, created_at, sale_status');
           if (sQuery && typeof sQuery.eq === 'function') {
             sQuery = sQuery.eq('member_id', payload.memberId);
           }
@@ -980,6 +1067,11 @@ export async function settleStoreCredit(
               Number(s.paid_credit) > 0 &&
               (!s.sale_status || s.sale_status === 'completed' || s.sale_status === 'success')
           );
+          validSales.forEach((s: any) => {
+            if (s.id && s.sale_number) {
+              saleNumberMap.set(s.id, s.sale_number);
+            }
+          });
           if (validSales.length > 0) {
             const totalCredit = validSales.reduce(
               (sum: number, s: any) => sum + sanitizeNumber(s.paid_credit),
@@ -1011,7 +1103,7 @@ export async function settleStoreCredit(
       // Pelunasan global: cari nota sales milik anggota dengan paid_credit > 0 urut FIFO (terlama)
       let salesQuery: any = supabase
         .from('sales')
-        .select('id, paid_credit, created_at, sale_status')
+        .select('id, sale_number, paid_credit, created_at, sale_status')
         .eq('member_id', payload.memberId);
 
       if (salesQuery && typeof salesQuery.gt === 'function') {
@@ -1035,6 +1127,12 @@ export async function settleStoreCredit(
       if (validSales.length === 0) {
         return { success: false, error: 'Tidak ditemukan transaksi bon terbuka untuk anggota ini.' };
       }
+
+      validSales.forEach((s: any) => {
+        if (s.id && s.sale_number) {
+          saleNumberMap.set(s.id, s.sale_number);
+        }
+      });
 
       const saleIds = validSales.map((s: any) => s.id).filter(Boolean);
 
@@ -1125,7 +1223,12 @@ export async function settleStoreCredit(
     for (let i = 0; i < allocations.length; i++) {
       const alloc = allocations[i];
       const itemRefNo = allocations.length > 1 ? `${refNo}-${i + 1}` : refNo;
-      const formattedNotes = `[${methodLabel}] ${payload.notes || 'Pelunasan Bon Toko'}`.trim();
+      const parentInvoiceNo = saleNumberMap.get(alloc.saleId);
+      const baseNotes = (payload.notes || 'Pelunasan Bon Toko').trim();
+      const hasRefTag = /\bRef:\s*[A-Za-z0-9_-]+/i.test(baseNotes);
+      const notesWithRef =
+        parentInvoiceNo && !hasRefTag ? `${baseNotes} | Ref: ${parentInvoiceNo}` : baseNotes;
+      const formattedNotes = `[${methodLabel}] ${notesWithRef}`.trim();
       const nowIso = new Date().toISOString();
 
       const insertPayload = {
@@ -1847,12 +1950,19 @@ export async function payStoreCreditSchedule(
 
     // 3. Langkah A (Pertama): Simpan pembayaran ke store_credit_payments & cash_flow terlebih dahulu
     // agar jika INSERT gagal (mis. constraint unik), jadwal tidak ikut berubah menjadi paid secara diam-diam.
+    const trimmedNote = payload.notes?.trim();
+    const installmentNote = trimmedNote
+      ? /periode/i.test(trimmedNote)
+        ? trimmedNote
+        : `Angsuran Bon Periode Ke-${schedule.period_number} - ${trimmedNote}`
+      : `Angsuran Bon Periode Ke-${schedule.period_number}`;
+
     const settleRes = await settleStoreCredit({
       memberId: plan.member_id,
       amount: payAmount,
       paymentMethod: payload.paymentMethod || 'potong_gaji',
       referenceNo: uniqueReceiptNumber,
-      notes: payload.notes || `Angsuran Bon Periode ${schedule.period_number}`,
+      notes: installmentNote,
       receivedBy: payload.receivedBy
     });
 

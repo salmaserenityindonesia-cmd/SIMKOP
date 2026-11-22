@@ -952,7 +952,13 @@ export const loanService = {
       return Number(str.replace(/[^0-9]/g, '')) || 0;
     };
 
-    const candidates = [memberData?.take_home_pay, memberData?.master_thp, memberData?.salary];
+    const candidates = [
+      memberData?.master_thp,
+      memberData?.take_home_pay,
+      memberData?.gaji_pokok,
+      memberData?.base_salary,
+      memberData?.salary,
+    ];
     let resolvedThp = 0;
     for (const c of candidates) {
       if (c !== undefined && c !== null && c !== '') {
@@ -1493,90 +1499,119 @@ export const loanService = {
       }
     }
 
-    // 4c. Catat pengeluaran kas riil ke public.cash_flow
+    // 4c. Catat pengeluaran kas riil ke public.cash_flow secara idempoten
     // Untuk Pembiayaan Barang: kas keluar dicatat sebesar Harga Beli/Modal ke Supplier (cost_price)
-    if (isGoodsMarkup) {
-      if (costPrice > 0) {
-        try {
-          let memberInfo: any = Array.isArray(existingLoan?.anggota)
-            ? existingLoan.anggota[0]
-            : existingLoan?.anggota || (Array.isArray(loanRecord?.anggota) ? loanRecord.anggota[0] : loanRecord?.anggota);
-
-          if (!memberInfo && memberIdForTopup) {
-            try {
-              const memberTable: any = supabase.from('anggota');
-              if (memberTable && typeof memberTable.select === 'function') {
-                const mQ = memberTable.select('nrp, nama').eq('id', memberIdForTopup);
-                const mRes = typeof mQ?.maybeSingle === 'function'
-                  ? await mQ.maybeSingle()
-                  : typeof mQ?.single === 'function'
-                    ? await mQ.single()
-                    : await mQ;
-                if (mRes?.data) {
-                  memberInfo = Array.isArray(mRes.data) ? mRes.data[0] : mRes.data;
-                }
-              }
-            } catch {
-              // Non-blocking member lookup
-            }
-          }
-
-          const nrpStr = String(memberInfo?.nrp || '').trim();
-          const namaStr = String(memberInfo?.nama || '').trim();
-          const memberSegment = [nrpStr, namaStr].filter(Boolean).join(' - ') || 'Anggota';
-          const itemDesc = String(
-            loanRecord.item_description ||
-              existingLoan?.item_description ||
-              loanRecord.notes ||
-              existingLoan?.notes ||
-              'Barang'
-          ).trim();
-          const cfDescription = `Pembiayaan Barang (${itemDesc}) — ${memberSegment} | Modal Supplier: Rp ${formatRupiahPlain(costPrice)} (Harga Jual Akad: Rp ${formatRupiahPlain(finalPrincipal)})`;
-
-          const cfTable: any = supabase.from('cash_flow');
-          if (cfTable && typeof cfTable.insert === 'function') {
-            const cfRes = await cfTable.insert([{
-              direction: 'out',
-              amount: costPrice,
-              category: 'pembiayaan_barang',
-              reference_id: targetLoanId,
-              description: cfDescription,
-              created_at: new Date().toISOString(),
-            }]);
-            if (cfRes?.error && isMissingColumnError(cfRes.error)) {
-              await cfTable.insert([{
-                direction: 'out',
-                amount: costPrice,
-                category: 'pembiayaan_barang',
-                reference_id: targetLoanId,
-                created_at: new Date().toISOString(),
-              }]);
-            }
-          }
-        } catch (cfErr) {
-          console.warn('Gagal mencatat pencairan pembiayaan barang ke cash_flow:', cfErr);
-        }
-      }
-    } else {
-      const effectiveSettlement = totalSettlementAmt > 0
+    const effectiveSettlement = isGoodsMarkup
+      ? 0
+      : totalSettlementAmt > 0
         ? totalSettlementAmt
         : Math.max(0, Number(loanRecord.topup_settlement_amount ?? existingLoan?.topup_settlement_amount ?? 0));
-      const netDisbursedAmount = Math.max(0, finalPrincipal - effectiveSettlement);
-      if (netDisbursedAmount > 0) {
-        try {
-          const cfTable: any = supabase.from('cash_flow');
-          if (cfTable && typeof cfTable.insert === 'function') {
-            await cfTable.insert([{
-              direction: 'out',
-              amount: netDisbursedAmount,
-              category: 'pencairan_pinjaman',
-              reference_id: targetLoanId,
-              created_at: new Date().toISOString(),
-            }]);
+    const disbursementOutflowAmount = isGoodsMarkup
+      ? costPrice
+      : Math.max(0, finalPrincipal - effectiveSettlement);
+
+    if (disbursementOutflowAmount > 0) {
+      try {
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          let alreadyRecorded = false;
+          if (typeof cfTable.select === 'function') {
+            try {
+              const cfSelectQ: any = cfTable.select('id, direction, reference_id');
+              if (cfSelectQ && typeof cfSelectQ.eq === 'function') {
+                let checkQ: any = cfSelectQ.eq('reference_id', targetLoanId);
+                if (checkQ && typeof checkQ.eq === 'function') {
+                  checkQ = checkQ.eq('direction', 'out');
+                }
+                if (checkQ && typeof checkQ.limit === 'function') {
+                  checkQ = checkQ.limit(1);
+                }
+                const existingCfRes = await checkQ;
+                const existingCfRows = Array.isArray(existingCfRes?.data)
+                  ? existingCfRes.data
+                  : existingCfRes?.data
+                    ? [existingCfRes.data]
+                    : [];
+                alreadyRecorded = existingCfRows.some(
+                  (r: any) =>
+                    String(r?.reference_id || '') === String(targetLoanId) &&
+                    (!r?.direction || String(r.direction).toLowerCase() === 'out')
+                );
+              }
+            } catch {
+              // Non-blocking idempotency check fallback
+            }
           }
-        } catch (cfErr) {
-          console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
+
+          if (!alreadyRecorded) {
+            let memberInfo: any = Array.isArray(existingLoan?.anggota)
+              ? existingLoan.anggota[0]
+              : existingLoan?.anggota || (Array.isArray(loanRecord?.anggota) ? loanRecord.anggota[0] : loanRecord?.anggota);
+
+            if (!memberInfo && memberIdForTopup) {
+              try {
+                const memberTable: any = supabase.from('anggota');
+                if (memberTable && typeof memberTable.select === 'function') {
+                  const mQ = memberTable.select('nrp, nama').eq('id', memberIdForTopup);
+                  const mRes = typeof mQ?.maybeSingle === 'function'
+                    ? await mQ.maybeSingle()
+                    : typeof mQ?.single === 'function'
+                      ? await mQ.single()
+                      : await mQ;
+                  if (mRes?.data) {
+                    memberInfo = Array.isArray(mRes.data) ? mRes.data[0] : mRes.data;
+                  }
+                }
+              } catch {
+                // Non-blocking member lookup
+              }
+            }
+
+            const nrpStr = String(memberInfo?.nrp || '').trim();
+            const namaStr = String(memberInfo?.nama || '').trim();
+            const memberSegment = [nrpStr, namaStr].filter(Boolean).join(' - ') || 'Anggota';
+            const loanNumber = String(loanRecord.loan_number || existingLoan?.loan_number || '').trim();
+            const loanNumberSeg = loanNumber ? ` [${loanNumber}]` : '';
+            const itemDesc = String(
+              loanRecord.item_description ||
+                existingLoan?.item_description ||
+                loanRecord.notes ||
+                existingLoan?.notes ||
+                'Barang'
+            ).trim();
+
+            const cfDescription = isGoodsMarkup
+              ? `Pembiayaan Barang (${itemDesc}) — ${memberSegment} | Modal Supplier: Rp ${formatRupiahPlain(costPrice)} (Harga Jual Akad: Rp ${formatRupiahPlain(finalPrincipal)})`
+              : `Pencairan Pinjaman${loanNumberSeg} — ${memberSegment} (Tenor ${tenor} Bln${effectiveSettlement > 0 ? `, Potong Top-Up: Rp ${formatRupiahPlain(effectiveSettlement)}` : ''})`;
+
+            const cfCategory = isGoodsMarkup ? 'pembiayaan_barang' : 'pencairan_pinjaman';
+            const roundedAmount = Math.round(disbursementOutflowAmount);
+            const createdAtIso = new Date().toISOString();
+
+            let cfRes: any = await cfTable.insert([{
+              direction: 'out',
+              amount: roundedAmount,
+              category: cfCategory,
+              reference_id: targetLoanId,
+              description: cfDescription,
+              created_at: createdAtIso,
+            }]);
+            if (cfRes?.error && isMissingColumnError(cfRes.error)) {
+              cfRes = await cfTable.insert([{
+                direction: 'out',
+                amount: roundedAmount,
+                category: cfCategory,
+                reference_id: targetLoanId,
+                created_at: createdAtIso,
+              }]);
+            }
+            if (cfRes?.error) {
+              console.error('[approveLoan -> cash_flow] Gagal mencatat kas keluar pencairan:', cfRes.error);
+            }
+          }
         }
+      } catch (cfErr) {
+        console.warn('Gagal mencatat pencairan pinjaman ke cash_flow:', cfErr);
       }
     }
 

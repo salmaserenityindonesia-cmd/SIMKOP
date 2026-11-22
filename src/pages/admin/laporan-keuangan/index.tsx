@@ -22,6 +22,7 @@ import {
   enrichPosCashFlowDescriptions,
   enrichStoreCreditCashFlowDescriptions,
   enrichWithdrawalCashFlowDescriptions,
+  syncApprovedLoansToCashFlow,
   syncMatrixDepositsToCashFlow,
   syncPosCashSalesToCashFlow,
   syncResignedMemberClearanceToCashFlow,
@@ -649,6 +650,9 @@ export async function getCashFlowReport(
   });
   await syncPosCashSalesToCashFlow().catch(() => { });
   await syncResignedMemberClearanceToCashFlow().catch(() => { });
+  await syncApprovedLoansToCashFlow().catch((err) => {
+    console.error('[LaporanKeuangan] syncApprovedLoansToCashFlow gagal:', err);
+  });
   const memberDepositEnrichRes = await enrichMemberDepositCashFlowDescriptions().catch(() => ({
     updatedCount: 0,
     skippedCount: 0,

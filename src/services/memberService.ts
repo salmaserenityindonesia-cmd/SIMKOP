@@ -88,6 +88,7 @@ export interface CreateMemberInput {
   nama: string;
   tanggal_lahir?: string | null;
   master_thp?: number;
+  take_home_pay?: number;
   bank_account_number?: string;
   tgl_awal_anggota?: string;
   status?: string;
@@ -120,6 +121,10 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
     created_at: createdAt,
   };
 
+  if (input.take_home_pay !== undefined) {
+    anggotaPayload.take_home_pay = Number(input.take_home_pay) || 0;
+  }
+
   if (resolvedMembershipStatus === 'SUSPENDED' || input.suspended_at !== undefined) {
     anggotaPayload.suspended_at = input.suspended_at ?? new Date().toISOString();
   }
@@ -127,11 +132,27 @@ export async function createMember(input: CreateMemberInput): Promise<Anggota> {
     anggotaPayload.suspension_reason = input.suspension_reason ?? null;
   }
 
-  const { data: member, error: memberErr } = await supabase
+  let { data: member, error: memberErr } = await supabase
     .from('anggota')
     .insert([anggotaPayload])
     .select()
     .single();
+
+  if (
+    memberErr &&
+    'take_home_pay' in anggotaPayload &&
+    String(memberErr.message || '').toLowerCase().includes('take_home_pay')
+  ) {
+    const fallbackPayload = { ...anggotaPayload };
+    delete fallbackPayload.take_home_pay;
+    const retryRes = await supabase
+      .from('anggota')
+      .insert([fallbackPayload])
+      .select()
+      .single();
+    member = retryRes.data;
+    memberErr = retryRes.error;
+  }
 
   if (memberErr) {
     throw new Error(`Gagal mendaftarkan anggota baru: ${memberErr.message}`);
@@ -309,6 +330,10 @@ export async function addAnggota(data: Omit<Anggota, 'id' | 'created_at'>): Prom
 export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, 'id' | 'created_at'>>): Promise<Anggota> {
   const payload: Partial<Omit<Anggota, 'id' | 'created_at'>> = { ...updates };
 
+  if (updates.master_thp !== undefined && updates.take_home_pay === undefined) {
+    payload.take_home_pay = Number(updates.master_thp) || 0;
+  }
+
   if (updates.membership_status) {
     payload.status = updates.membership_status === 'ACTIVE' ? 'aktif' : 'nonaktif';
     if (updates.membership_status === 'SUSPENDED') {
@@ -320,12 +345,29 @@ export async function updateAnggota(id: string, updates: Partial<Omit<Anggota, '
     }
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('anggota')
     .update(payload)
     .eq('id', id)
     .select()
     .single();
+
+  if (
+    error &&
+    'take_home_pay' in payload &&
+    String(error.message || '').toLowerCase().includes('take_home_pay')
+  ) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.take_home_pay;
+    const retryRes = await supabase
+      .from('anggota')
+      .update(fallbackPayload)
+      .eq('id', id)
+      .select()
+      .single();
+    data = retryRes.data;
+    error = retryRes.error;
+  }
 
   if (error) {
     console.error(`Error updating anggota ${id}:`, error.message);
@@ -803,14 +845,20 @@ export function cleanThpNumber(val: any): number {
 export function extractMemberTHP(member: any): number {
   if (!member) return 0;
   // Cari kolom yang memiliki nominal > 0 terlebih dahulu
-  const candidates = [member.take_home_pay, member.master_thp, member.salary];
+  const candidates = [
+    member.master_thp,
+    member.take_home_pay,
+    member.gaji_pokok,
+    member.base_salary,
+    member.salary,
+  ];
   for (const c of candidates) {
     if (c !== undefined && c !== null && c !== '') {
       const num = cleanThpNumber(c);
       if (num > 0) return num;
     }
   }
-  const rawThp = member.take_home_pay ?? member.master_thp ?? member.salary ?? 0;
+  const rawThp = member.master_thp ?? member.take_home_pay ?? member.gaji_pokok ?? member.base_salary ?? member.salary ?? 0;
   return cleanThpNumber(rawThp);
 }
 

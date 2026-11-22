@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Loader2 } from 'lucide-react';
 import { downloadSalaryTemplate } from '../../services/salaryTemplateService';
 import {
   parseSalaryReconciliationFile,
   ReconciliationResult,
+  SalaryImportProgress,
   confirmSalaryReconciliation,
   applySalaryReconciliation,
   fetchMembersSalaryAndAccounts,
-  fetchMemberSalaryData as fetchMemberSalaryDataService,
+  resolveMemberSalary,
   MemberSalaryAccountItem
 } from '../../services/salaryImportService';
-import { supabase } from '../../lib/supabaseClient';
 import { MemberSearchAutocomplete } from '../../components/common/MemberSearchAutocomplete';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -42,6 +43,28 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState<{
+    active: boolean;
+    phase: 'parse' | 'save';
+    processed: number;
+    total: number;
+    currentLabel: string;
+    updatedCount: number;
+    skippedCount: number;
+  }>({
+    active: false,
+    phase: 'parse',
+    processed: 0,
+    total: 0,
+    currentLabel: '',
+    updatedCount: 0,
+    skippedCount: 0,
+  });
+  const [importSummary, setImportSummary] = useState<{
+    updatedCount: number;
+    skippedCount: number;
+    total: number;
+  } | null>(null);
 
   const [editingRowIdx, setEditingRowIdx] = useState<number | null>(null);
   const [tempAccountNumber, setTempAccountNumber] = useState<string>('');
@@ -64,51 +87,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const fetchMemberSalaryData = async () => {
     setIsLoadingMembers(true);
     try {
-      // Query langsung ke Supabase dengan fallback field opsional bila perlu
-      let data: MemberSalaryAccountItem[] | null = null;
-      try {
-        let selectFields = [
-          'id',
-          'nrp',
-          'nama',
-          'tanggal_lahir',
-          'bank_account_number',
-          'take_home_pay',
-          'master_thp',
-          'salary',
-          'angsuran_lain_lain',
-        ];
-        let res: any = await supabase
-          .from('anggota')
-          .select(selectFields.join(', '))
-          .order('nama', { ascending: true });
-
-        if (res.error && res.error.message) {
-          const errMsg = res.error.message.toLowerCase();
-          const missingSalary = errMsg.includes('salary');
-          const missingAngsuran = errMsg.includes('angsuran_lain_lain');
-          if (missingSalary || missingAngsuran) {
-            if (missingSalary) selectFields = selectFields.filter((f) => f !== 'salary');
-            if (missingAngsuran) selectFields = selectFields.filter((f) => f !== 'angsuran_lain_lain');
-            const retry = await supabase
-              .from('anggota')
-              .select(selectFields.join(', '))
-              .order('nama', { ascending: true });
-            res = retry;
-          }
-        }
-
-        if (!res.error && res.data) {
-          data = res.data as MemberSalaryAccountItem[];
-        }
-      } catch {
-        // Fallback ke service helper
-      }
-
-      if (!data) {
-        data = await fetchMembersSalaryAndAccounts();
-      }
-
+      const data = await fetchMembersSalaryAndAccounts();
       setMemberList(data || []);
     } catch (err: any) {
       console.error('Error loading member salary data:', err);
@@ -166,6 +145,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
       setResults([]);
       setErrorMsg(null);
       setSuccessMsg(null);
+      setImportSummary(null);
     }
   };
 
@@ -173,14 +153,32 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
     if (!file) return;
     setIsParsing(true);
     setErrorMsg(null);
+    setSuccessMsg(null);
+    setImportSummary(null);
+    setImportProgress({
+      active: true,
+      phase: 'parse',
+      processed: 0,
+      total: 0,
+      currentLabel: 'Membaca file Excel...',
+      updatedCount: 0,
+      skippedCount: 0,
+    });
     try {
-      const data = await parseSalaryReconciliationFile(file);
+      const data = await parseSalaryReconciliationFile(file, (prog) => {
+        setImportProgress({
+          active: true,
+          phase: 'parse',
+          ...prog,
+        });
+      });
       setResults(data);
       setReconCurrentPage(1);
     } catch (err: any) {
       setErrorMsg('Gagal memproses file: ' + err.message);
     } finally {
       setIsParsing(false);
+      setImportProgress((prev) => ({ ...prev, active: false }));
     }
   };
 
@@ -191,8 +189,34 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
     if (previewRows.length === 0) return;
     setIsConfirming(true);
     setErrorMsg(null);
+    setSuccessMsg(null);
+    setImportSummary(null);
+    let latestProgress: SalaryImportProgress = {
+      processed: 0,
+      total: previewRows.length,
+      currentLabel: 'Memulai sinkronisasi data...',
+      updatedCount: 0,
+      skippedCount: 0,
+    };
+    setImportProgress({
+      active: true,
+      phase: 'save',
+      ...latestProgress,
+    });
     try {
-      await applySalaryReconciliation(previewRows);
+      await applySalaryReconciliation(previewRows, (prog) => {
+        latestProgress = prog;
+        setImportProgress({
+          active: true,
+          phase: 'save',
+          ...prog,
+        });
+      });
+      setImportSummary({
+        updatedCount: latestProgress.updatedCount,
+        skippedCount: latestProgress.skippedCount,
+        total: latestProgress.total || previewRows.length,
+      });
       toast.success('Data gaji dan rekening berhasil diperbarui!');
       setSuccessMsg('Data gaji dan rekening berhasil diperbarui!');
       setPreviewRows([]); // Tutup tabel preview
@@ -209,6 +233,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
       }
     } finally {
       setIsConfirming(false);
+      setImportProgress((prev) => ({ ...prev, active: false }));
     }
   };
 
@@ -232,6 +257,55 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const totalReconPages = Math.ceil(totalReconItems / reconItemsPerPage);
   const paginatedResults = results.slice((reconCurrentPage - 1) * reconItemsPerPage, reconCurrentPage * reconItemsPerPage);
 
+  const isBusy = isParsing || isConfirming || importProgress.active;
+  const progressPercentage =
+    importProgress.total > 0
+      ? Math.min(100, Math.round((importProgress.processed / importProgress.total) * 100))
+      : 0;
+
+  const renderProgressCard = () => (
+    <div className="mt-4 p-4 rounded-xl bg-surface-container-low border border-outline-variant/40 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 text-sm font-semibold text-on-surface">
+          <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+          <span>
+            {importProgress.total > 0
+              ? `Memproses Baris ${importProgress.processed} dari ${importProgress.total} (${progressPercentage}%)`
+              : 'Memproses file rekonsiliasi...'}
+          </span>
+        </div>
+        {importProgress.total > 0 && (
+          <div className="flex items-center gap-2 text-xs text-on-surface-variant tabular-nums">
+            <span>{importProgress.updatedCount} cocok/diperbarui</span>
+            {importProgress.skippedCount > 0 && (
+              <span className="text-amber-700">• {importProgress.skippedCount} dilewati</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div
+        role="progressbar"
+        aria-valuenow={progressPercentage}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="w-full h-2.5 rounded-full bg-surface-container-high overflow-hidden"
+      >
+        <div
+          className="h-full bg-emerald-600 transition-all duration-150 rounded-full"
+          style={{ width: `${progressPercentage}%` }}
+        />
+      </div>
+
+      {importProgress.currentLabel && (
+        <p className="text-xs text-on-surface-variant truncate">
+          Sedang menyinkronkan:{' '}
+          <span className="font-medium text-on-surface">{importProgress.currentLabel}</span>
+        </p>
+      )}
+    </div>
+  );
+
   return (
     <AdminLayout>
       <div className="max-w-6xl mx-auto space-y-6">
@@ -254,6 +328,18 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
           </div>
         )}
 
+        {importSummary && (
+          <div className="p-4 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm">
+            Ringkasan Sinkronisasi: <strong>{importSummary.updatedCount}</strong> data anggota berhasil diperbarui
+            {importSummary.skippedCount > 0 && (
+              <>
+                , <strong>{importSummary.skippedCount}</strong> baris NRP tidak cocok / dilewati
+              </>
+            )}{' '}
+            (dari total {importSummary.total} baris).
+          </div>
+        )}
+
         <div className="p-6 rounded-2xl bg-surface-container-lowest border border-outline-variant/30 space-y-6 shadow-sm">
           <div className="flex gap-4">
             <button
@@ -272,21 +358,31 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                 type="file"
                 accept=".xlsx"
                 onChange={handleFileChange}
+                disabled={isBusy}
                 className="block w-full text-sm text-on-surface-variant
                   file:mr-4 file:py-2 file:px-4
                   file:rounded-lg file:border-0
                   file:text-sm file:font-semibold
                   file:bg-secondary-container file:text-on-secondary-container
-                  hover:file:bg-secondary-container/80"
+                  hover:file:bg-secondary-container/80
+                  disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <button
                 onClick={handleParse}
-                disabled={!file || isParsing}
-                className="px-6 py-2 rounded-lg bg-secondary text-on-secondary font-label-lg transition-colors hover:bg-secondary/90 disabled:opacity-50 whitespace-nowrap"
+                disabled={!file || isBusy}
+                className="px-6 py-2 rounded-lg bg-secondary text-on-secondary font-label-lg transition-colors hover:bg-secondary/90 disabled:opacity-50 whitespace-nowrap inline-flex items-center gap-2"
               >
-                {isParsing ? 'Memproses...' : 'Proses File'}
+                {isParsing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Memproses...</span>
+                  </>
+                ) : (
+                  'Proses File'
+                )}
               </button>
             </div>
+            {importProgress.active && importProgress.phase === 'parse' && renderProgressCard()}
           </div>
         </div>
 
@@ -308,22 +404,32 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                       setFile(null);
                       setErrorMsg(null);
                       setSuccessMsg(null);
+                      setImportSummary(null);
                     }
                   }}
-                  disabled={isConfirming}
+                  disabled={isBusy}
                   className="px-6 py-2 rounded-lg border border-outline-variant text-on-surface-variant font-label-lg transition-colors hover:bg-surface-container-high hover:text-on-surface disabled:opacity-50"
                 >
                   Batal Konfirmasi
                 </button>
                 <button
                   onClick={handleSaveConfirm}
-                  disabled={isConfirming}
-                  className="px-6 py-2 rounded-lg bg-primary text-on-primary font-label-lg transition-colors hover:bg-primary/90 disabled:opacity-50"
+                  disabled={isBusy}
+                  className="px-6 py-2 rounded-lg bg-primary text-on-primary font-label-lg transition-colors hover:bg-primary/90 disabled:opacity-50 inline-flex items-center gap-2"
                 >
-                  {isConfirming ? 'Menyimpan...' : 'Simpan Konfirmasi'}
+                  {isConfirming ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan...</span>
+                    </>
+                  ) : (
+                    'Simpan Konfirmasi'
+                  )}
                 </button>
               </div>
             </div>
+
+            {importProgress.active && importProgress.phase === 'save' && renderProgressCard()}
 
             <div className="overflow-x-auto rounded-lg border border-outline-variant/30">
               <table className="w-full text-left text-sm">
@@ -507,7 +613,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                   {paginatedData.map((m) => {
                     const row = m;
                     const hasAccount = Boolean(row.bank_account_number && row.bank_account_number.trim() !== '');
-                    const salaryVal = row.take_home_pay ?? row.master_thp ?? row.salary ?? 0;
+                    const salaryVal = resolveMemberSalary(row);
                     const externalInstallmentVal = Number(row.angsuran_lain_lain ?? 0);
 
                     return (

@@ -1497,6 +1497,188 @@ describe('storeCreditLedgerService', () => {
       expect(cashFlowInserts[1].description).toContain('Piutang -Rp 60.000 (Sisa Piutang: Rp 0)');
     });
   });
+
+  describe('Parent Invoice Reference (Ref: INV-...) & Chronological Running Debt', () => {
+    it('mengurutkan belanja POS sebelum cicilan di hari yang sama (meski payment_date berupa YYYY-MM-DD), menghitung running_debt bertahap, dan menautkan parent_invoice_no', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gt: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'sale-hariyanto',
+                    sale_number: 'INV-1795320240356',
+                    member_id: 'm-hari',
+                    cashier_id: 'p-1',
+                    paid_credit: 90000,
+                    total_amount: 90000,
+                    payment_scheme: 'store_credit',
+                    sale_status: 'completed',
+                    created_at: '2026-11-22T04:04:00.000Z' // 11:04 WIB
+                  }
+                ],
+                error: null
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'pay-p1',
+                  sale_id: 'sale-hariyanto',
+                  amount: 30000,
+                  payment_date: '2026-11-22', // Date-only 00:00Z = 07:00 WIB (sebelum 11:04 WIB)
+                  receipt_number: 'KWT-ANGS-237087-P1-461',
+                  notes: '[Potong Gaji] Angsuran Bon Periode 1', // Belum ada Ref: INV-...
+                  created_by: 'p-1',
+                  created_at: '2026-11-22T05:10:00.000Z'
+                },
+                {
+                  id: 'pay-p2',
+                  sale_id: 'sale-hariyanto',
+                  amount: 30000,
+                  payment_date: '2026-11-22',
+                  receipt_number: 'KWT-ANGS-237087-P2-512',
+                  notes: '[Potong Gaji] Angsuran Bon Periode 2',
+                  created_by: 'p-1',
+                  created_at: '2026-11-22T05:15:00.000Z'
+                },
+                {
+                  id: 'pay-p3',
+                  sale_id: 'sale-hariyanto',
+                  amount: 30000,
+                  payment_date: '2026-11-22',
+                  receipt_number: 'KWT-ANGS-237087-P3-699',
+                  notes: '[Potong Gaji] Angsuran Bon Periode 3',
+                  created_by: 'p-1',
+                  created_at: '2026-11-22T05:20:00.000Z'
+                }
+              ],
+              error: null
+            })
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'm-hari', nama: 'HARIYANTO', nrp: '31001234', tanggal_lahir: null }],
+                error: null
+              })
+            })
+          };
+        }
+        if (table === 'pengelola') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'p-1', nama: 'Admin Koperasi' }],
+              error: null
+            })
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const ledger = await getStoreCreditLedger();
+
+      expect(ledger.items).toHaveLength(4);
+
+      // Baris 0: Nota Induk Belanja Bon POS
+      expect(ledger.items[0].source_type).toBe('sale');
+      expect(ledger.items[0].reference_no).toBe('INV-1795320240356');
+      expect(ledger.items[0].running_debt).toBe(90000);
+
+      // Baris 1-3: Pelunasan P1, P2, P3 bertahap 90k -> 60k -> 30k -> 0
+      expect(ledger.items[1].reference_no).toBe('KWT-ANGS-237087-P1-461');
+      expect(ledger.items[1].parent_invoice_no).toBe('INV-1795320240356');
+      expect(ledger.items[1].period_number).toBe(1);
+      expect(ledger.items[1].date).toBe('2026-11-22T05:10:00.000Z');
+      expect(ledger.items[1].running_debt).toBe(60000);
+
+      expect(ledger.items[2].reference_no).toBe('KWT-ANGS-237087-P2-512');
+      expect(ledger.items[2].parent_invoice_no).toBe('INV-1795320240356');
+      expect(ledger.items[2].period_number).toBe(2);
+      expect(ledger.items[2].running_debt).toBe(30000);
+
+      expect(ledger.items[3].reference_no).toBe('KWT-ANGS-237087-P3-699');
+      expect(ledger.items[3].parent_invoice_no).toBe('INV-1795320240356');
+      expect(ledger.items[3].period_number).toBe(3);
+      expect(ledger.items[3].running_debt).toBe(0);
+    });
+
+    it('settleStoreCredit menyematkan | Ref: INV-... pada kolom notes saat sale_number tersedia', async () => {
+      const insertedPayloads: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                gt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockResolvedValue({
+                    data: [
+                      {
+                        id: 'sale-ref-1',
+                        sale_number: 'INV-1795320240356',
+                        paid_credit: 90000,
+                        sale_status: 'completed',
+                        created_at: '2026-11-22T04:04:00Z'
+                      }
+                    ],
+                    error: null
+                  })
+                })
+              })
+            })
+          };
+        }
+        if (table === 'store_credit_payments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: [], error: null })
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              insertedPayloads.push(payload);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: { id: 'pay-ref-1' }, error: null })
+                })
+              };
+            })
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+              })
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null })
+          };
+        }
+        return {};
+      });
+
+      const res = await settleStoreCredit({
+        memberId: 'm-hari',
+        amount: 30000,
+        paymentMethod: 'potong_gaji',
+        referenceNo: 'KWT-ANGS-111-P1-123',
+        notes: 'Angsuran Bon Periode Ke-1'
+      });
+
+      expect(res.success).toBe(true);
+      expect(insertedPayloads).toHaveLength(1);
+      expect(insertedPayloads[0].notes).toBe(
+        '[Potong Gaji] Angsuran Bon Periode Ke-1 | Ref: INV-1795320240356'
+      );
+    });
+  });
 });
 
 

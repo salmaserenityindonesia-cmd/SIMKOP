@@ -8,7 +8,9 @@ import {
   buildSalaryReconciliationWorkbook,
   downloadSalaryReconciliationTemplate,
   cleanNumber,
+  resolveMemberSalary,
   MemberSalaryAccountItem,
+  SalaryImportProgress,
 } from './salaryImportService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -666,6 +668,221 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         gaji_pokok: 6250000,
         angsuran_lain_lain: 350000,
         status: 'MATCH',
+      });
+    });
+
+    it('mencocokkan NRP numerik 99999999, NRP nol di depan (00050543), serta header Gaji Pokok (Rp) & Angsuran Lain-lain (Rp)', async () => {
+      const dbMembers = [
+        { nrp: '99999999', nama: 'anggota tes 1', bank_account_number: '112233' },
+        { nrp: '00050543', nama: 'Anggota Nol Depan', bank_account_number: '445566' },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((_col: string, nrps: string[]) => {
+                const matched = dbMembers.filter((m) => nrps.includes(m.nrp));
+                return Promise.resolve({ data: matched, error: null });
+              }),
+              range: vi.fn().mockResolvedValue({ data: dbMembers, error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Rekonsiliasi');
+      ws.addRow(['NRP', 'Nama Lengkap', 'No. Rekening Bank', 'Gaji Pokok (Rp)', 'Angsuran Lain-lain (Rp)']);
+      ws.addRow([99999999, 'anggota tes 1', '112233', 'Rp 4.000.000', '250.000']);
+      ws.addRow([50543, 'Anggota Nol Depan', '445566', 5250000, 0]);
+      const buf = await wb.xlsx.writeBuffer();
+      const file = { arrayBuffer: async () => buf } as unknown as File;
+
+      const res = await parseSalaryReconciliationFile(file);
+      expect(res).toHaveLength(2);
+      expect(res[0]).toMatchObject({
+        nrp: '99999999',
+        gaji_pokok: 4000000,
+        take_home_pay: 4000000,
+        angsuran_lain_lain: 250000,
+        status: 'MATCH',
+      });
+      expect(res[1]).toMatchObject({
+        nrp: '00050543',
+        gaji_pokok: 5250000,
+        take_home_pay: 5250000,
+        angsuran_lain_lain: 0,
+        status: 'MATCH',
+      });
+    });
+  });
+
+  describe('resolveMemberSalary & multi-column retry in applySalaryReconciliation', () => {
+    it('resolveMemberSalary menangani kombinasi master_thp, take_home_pay, string terformat, dan 0', () => {
+      expect(resolveMemberSalary({ master_thp: 4000000, take_home_pay: 0 })).toBe(4000000);
+      expect(resolveMemberSalary({ master_thp: 0, take_home_pay: 4500000 })).toBe(4500000);
+      expect(resolveMemberSalary({ master_thp: 'Rp 4.000.000', take_home_pay: 0 })).toBe(4000000);
+      expect(resolveMemberSalary({ master_thp: 0, take_home_pay: 0, salary: 0 })).toBe(0);
+      expect(resolveMemberSalary(null)).toBe(0);
+    });
+
+    it('applySalaryReconciliation melakukan retry berulang saat salary DAN angsuran_lain_lain keduanya tidak ada di DB', async () => {
+      let callCount = 0;
+      const mockEq = vi.fn().mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.resolve({
+            error: { message: 'column "salary" of relation "anggota" does not exist' },
+          });
+        }
+        if (callCount === 2) {
+          return Promise.resolve({
+            error: { message: 'column "angsuran_lain_lain" of relation "anggota" does not exist' },
+          });
+        }
+        return Promise.resolve({ error: null });
+      });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const ok = await applySalaryReconciliation([
+        {
+          nrp: '99999999',
+          gaji_pokok: 4000000,
+          angsuran_lain_lain: 200000,
+        },
+      ]);
+
+      expect(ok).toBe(true);
+      expect(mockUpdate).toHaveBeenCalledTimes(3);
+      expect(mockUpdate).toHaveBeenLastCalledWith({
+        master_thp: 4000000,
+        take_home_pay: 4000000,
+      });
+      expect(mockEq).toHaveBeenCalledWith('nrp', '99999999');
+    });
+  });
+
+  describe('row-by-row & chunked progress callbacks', () => {
+    it('parseSalaryReconciliationFile memanggil onProgress secara bertahap per chunk (>20 baris)', async () => {
+      const dbMembers = Array.from({ length: 24 }, (_, idx) => ({
+        nrp: String(10000 + idx),
+        nama: `Anggota ${idx + 1}`,
+        bank_account_number: `REK-${idx + 1}`,
+      }));
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: dbMembers, error: null }),
+              range: vi.fn().mockResolvedValue({ data: dbMembers, error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Template Rekonsiliasi');
+      ws.addRow(['NRP', 'Nama Lengkap', 'Nomor Rekening', 'Gaji Pokok', 'Angsuran Lain-lain']);
+      for (let i = 0; i < 25; i++) {
+        ws.addRow([String(10000 + i), `Anggota ${i + 1}`, `REK-${i + 1}`, 5000000, 100000]);
+      }
+      const buf = await wb.xlsx.writeBuffer();
+      const file = { arrayBuffer: async () => buf } as unknown as File;
+
+      const progressUpdates: SalaryImportProgress[] = [];
+      const results = await parseSalaryReconciliationFile(file, (prog) => {
+        progressUpdates.push(prog);
+      });
+
+      expect(results).toHaveLength(25);
+      // 1 initial + chunk 1 (20) + chunk 2 (5)
+      expect(progressUpdates.length).toBeGreaterThanOrEqual(3);
+      expect(progressUpdates[0].processed).toBe(0);
+      expect(progressUpdates[1]).toMatchObject({
+        processed: 20,
+        total: 25,
+        updatedCount: 20,
+        skippedCount: 0,
+      });
+      expect(progressUpdates[progressUpdates.length - 1]).toMatchObject({
+        processed: 25,
+        total: 25,
+        updatedCount: 24,
+        skippedCount: 1,
+        currentLabel: 'Anggota 25 (NRP: 10024)',
+      });
+    });
+
+    it('applySalaryReconciliation memanggil onProgress per baris, melewati NOT_FOUND ke skippedCount, dan tetap mengembalikan true', async () => {
+      const mockEq = vi.fn().mockResolvedValue({ error: null });
+      const mockUpdate = vi.fn().mockReturnValue({ eq: mockEq });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { update: mockUpdate };
+        }
+        return {};
+      });
+
+      const progressUpdates: SalaryImportProgress[] = [];
+      const ok = await applySalaryReconciliation(
+        [
+          {
+            nrp: '10001',
+            nama: 'Budi',
+            gaji_pokok: 5500000,
+            take_home_pay: 5500000,
+            angsuran_lain_lain: 200000,
+            excel_account_number: '111222',
+            db_account_number: '111222',
+            status: 'MATCH',
+          },
+          {
+            nrp: '99999',
+            nama: 'Tidak Terdaftar',
+            gaji_pokok: 4000000,
+            take_home_pay: 4000000,
+            angsuran_lain_lain: 0,
+            excel_account_number: null,
+            db_account_number: null,
+            status: 'NOT_FOUND',
+          },
+        ],
+        (prog) => progressUpdates.push(prog)
+      );
+
+      expect(ok).toBe(true);
+      expect(mockEq).toHaveBeenCalledTimes(1);
+      expect(mockEq).toHaveBeenCalledWith('nrp', '10001');
+      expect(progressUpdates).toHaveLength(3);
+      expect(progressUpdates[0]).toMatchObject({
+        processed: 0,
+        total: 2,
+        updatedCount: 0,
+        skippedCount: 0,
+      });
+      expect(progressUpdates[1]).toMatchObject({
+        processed: 1,
+        total: 2,
+        updatedCount: 1,
+        skippedCount: 0,
+        currentLabel: 'Budi (NRP: 10001)',
+      });
+      expect(progressUpdates[2]).toMatchObject({
+        processed: 2,
+        total: 2,
+        updatedCount: 1,
+        skippedCount: 1,
+        currentLabel: 'Tidak Terdaftar (NRP: 99999)',
       });
     });
   });
