@@ -387,4 +387,223 @@ describe('orphanAuditService', () => {
       { table: 'loans', ids: ['loan-9'] },
     ]);
   });
+
+  it('fetches >1000 rows across multiple pages via fetchAllPaginated and does not falsely flag page-2 loan_schedules (e.g. fde606c3-4205-4314-aaaf-97e907c936d6)', async () => {
+    const targetLoanId = 'fde606c3-4205-4314-aaaf-97e907c936d6';
+    const membersPage1 = Array.from({ length: 1000 }, (_, i) => ({
+      id: `mem-${i}`,
+      nrp: `8611${String(i).padStart(4, '0')}`,
+      nama: `Anggota ${i}`,
+      status: 'aktif',
+    }));
+    const membersPage2 = [
+      { id: 'mem-target', nrp: '86111093', nama: 'Anggota Target', status: 'aktif' },
+    ];
+
+    const loansPage1 = Array.from({ length: 1000 }, (_, i) => ({
+      id: `loan-${i}`,
+      loan_number: `LOAN-${i}`,
+      member_id: `mem-${i}`,
+      amount: 1000000,
+      status: 'active',
+    }));
+    const loansPage2 = [
+      {
+        id: targetLoanId,
+        loan_number: 'SALDO-AWAL-86111093-GAJISIPA',
+        member_id: 'mem-target',
+        amount: 3500000,
+        status: 'active',
+      },
+    ];
+
+    const schedulesPage1 = Array.from({ length: 1000 }, (_, i) => ({
+      id: `sch-${i}`,
+      loan_id: `loan-${i}`,
+      period_number: 1,
+      due_date: '2026-11-01',
+      target_amount: 100000,
+      status: 'unpaid',
+    }));
+    const schedulesPage2 = [
+      {
+        id: 'sch-target-1',
+        loan_id: targetLoanId,
+        period_number: 1,
+        due_date: '2026-12-01',
+        target_amount: 350000,
+        status: 'unpaid',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => ({
+      select: vi.fn((cols: string) => {
+        const makeRange = () => ({
+          range: vi.fn(async (from: number, _to: number) => {
+            // Simulasikan PostgREST error jika ada kolom tidak dikenal pada loans
+            if (table === 'loans' && cols.includes('purpose')) {
+              return { data: null, error: { code: '42703', message: 'column loans.purpose does not exist' } };
+            }
+            if (table === 'anggota') {
+              return { data: from === 0 ? membersPage1 : from === 1000 ? membersPage2 : [], error: null };
+            }
+            if (table === 'loans') {
+              return { data: from === 0 ? loansPage1 : from === 1000 ? loansPage2 : [], error: null };
+            }
+            if (table === 'loan_schedules') {
+              return { data: from === 0 ? schedulesPage1 : from === 1000 ? schedulesPage2 : [], error: null };
+            }
+            return { data: [], error: null };
+          }),
+        });
+        return {
+          order: vi.fn(() => makeRange()),
+        };
+      }),
+    }));
+
+    const result = await scanAllOrphanRecords();
+    expect(result.items).toEqual([]);
+    expect(result.summary.totalCount).toBe(0);
+  });
+
+  it('recovers from missing-column errors on loans and validates schema FK rules (refinanced_loan_id, loan_repayments, deposit_transactions, loan_installments, SALDO-AWAL)', async () => {
+    (supabase.from as any).mockImplementation((table: string) => ({
+      select: vi.fn((cols: string) => ({
+        order: vi.fn(() => ({
+          range: vi.fn(async (from: number) => {
+            if (from > 0) return { data: [], error: null };
+            if (table === 'loans' && (cols.includes('item_description') || cols.includes('purpose'))) {
+              return { data: null, error: { code: '42703', message: 'column does not exist' } };
+            }
+            if (table === 'anggota') {
+              return { data: [{ id: 'mem-1', nrp: '86111093', nama: 'Budi', status: 'aktif' }], error: null };
+            }
+            if (table === 'loans') {
+              return {
+                data: [
+                  {
+                    id: 'loan-valid',
+                    loan_number: 'SALDO-AWAL-86111093-GAJISIPA',
+                    member_id: 'mem-1',
+                    refinanced_loan_id: null,
+                    amount: 1000000,
+                    status: 'active',
+                  },
+                  {
+                    id: 'loan-bad-refinance',
+                    loan_number: 'LOAN-TOPUP-1',
+                    member_id: 'mem-1',
+                    refinanced_loan_id: 'missing-old-loan',
+                    amount: 2000000,
+                    status: 'active',
+                  },
+                ],
+                error: null,
+              };
+            }
+            if (table === 'loan_schedules') {
+              return {
+                data: [{ id: 'sch-valid', loan_id: 'loan-valid', period_number: 1, target_amount: 100000 }],
+                error: null,
+              };
+            }
+            if (table === 'loan_installments') {
+              return { data: [{ id: 'inst-valid', loan_id: 'loan-valid' }], error: null };
+            }
+            if (table === 'loan_repayments') {
+              return {
+                data: [
+                  { id: 'rep-bad-sched', loan_id: 'loan-valid', schedule_id: 'missing-schedule', amount_paid: 100000 },
+                ],
+                error: null,
+              };
+            }
+            if (table === 'member_deposits') {
+              return { data: [{ id: 'md-valid', member_id: 'mem-1', balance: 500000 }], error: null };
+            }
+            if (table === 'deposit_transactions') {
+              return {
+                data: [
+                  { id: 'dtx-orphan', member_deposit_id: 'missing-md', reference_no: 'KW-999', amount: 50000 },
+                ],
+                error: null,
+              };
+            }
+            if (table === 'cash_flow') {
+              return {
+                data: [
+                  {
+                    id: 'cf-inst-valid',
+                    direction: 'in',
+                    amount: 100000,
+                    category: 'angsuran_pinjaman',
+                    reference_id: 'inst-valid',
+                    description: 'Angsuran SALDO-AWAL-86111093-GAJISIPA',
+                    created_at: '2026-11-15T08:00:00Z',
+                  },
+                  {
+                    id: 'cf-saldo-awal-exempt',
+                    direction: 'in',
+                    amount: 5000000,
+                    category: 'SALDO-AWAL',
+                    reference_id: null,
+                    description: 'Saldo Awal Kas',
+                    created_at: '2026-01-01T00:00:00Z',
+                  },
+                ],
+                error: null,
+              };
+            }
+            return { data: [], error: null };
+          }),
+        })),
+      })),
+    }));
+
+    const result = await scanAllOrphanRecords();
+    expect(result.items.map((i) => i.sourceTable)).toEqual(
+      expect.arrayContaining(['loans', 'loan_repayments', 'deposit_transactions'])
+    );
+    expect(result.items).toHaveLength(3);
+    expect(result.summary.cashInImpact).toBe(0);
+    expect(result.summary.cashOutImpact).toBe(0);
+    expect(result.summary.cashFlowOrphanCount).toBe(0);
+  });
+
+  it('buildOrphanScanSummary excludes non-cash_flow items from cashInImpact and cashOutImpact', () => {
+    const summary = buildOrphanScanSummary([
+      {
+        id: 'sch-1',
+        sourceTable: 'loan_schedules',
+        referenceCode: 'SCH-00000001',
+        transactionDate: '2026-11-01',
+        moduleCategory: 'Jadwal Angsuran',
+        description: 'Jadwal yatim',
+        amount: 9999999,
+        direction: 'in',
+        missingTarget: 'loans',
+        reason: 'test',
+        rawRecord: {},
+      },
+      {
+        id: 'cf-1',
+        sourceTable: 'cash_flow',
+        referenceCode: 'CF-00000001',
+        transactionDate: '2026-11-01',
+        moduleCategory: 'Arus Kas Pinjaman',
+        description: 'Angsuran yatim',
+        amount: 250000,
+        direction: 'in',
+        missingTarget: 'loans',
+        reason: 'test',
+        rawRecord: {},
+      },
+    ]);
+
+    expect(summary.totalCount).toBe(2);
+    expect(summary.cashFlowOrphanCount).toBe(1);
+    expect(summary.cashInImpact).toBe(250000);
+    expect(summary.cashOutImpact).toBe(0);
+  });
 });

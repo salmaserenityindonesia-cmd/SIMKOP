@@ -40,6 +40,8 @@ const MODULE_OPTIONS: Array<'ALL' | OrphanModuleCategory> = [
   'Kontrak Pinjaman',
   'Rekening Simpanan',
   'Jadwal Angsuran',
+  'Pembayaran Angsuran',
+  'Transaksi Simpanan',
 ];
 
 function formatAuditDate(dateStr?: string): string {
@@ -101,7 +103,27 @@ export default function AuditDataOrphan({
     }
   }, [initialItems, skipInitialScan, runScan]);
 
-  const summary = useMemo(() => buildOrphanScanSummary(items), [items]);
+  const summary = useMemo(() => {
+    const base = buildOrphanScanSummary(items);
+    let cashInImpact = 0;
+    let cashOutImpact = 0;
+
+    for (const item of items) {
+      if (item.sourceTable !== 'cash_flow') continue;
+      const amt = Number(item.amount || 0);
+      if (item.direction === 'in') {
+        cashInImpact += amt;
+      } else if (item.direction === 'out') {
+        cashOutImpact += amt;
+      }
+    }
+
+    return {
+      ...base,
+      cashInImpact,
+      cashOutImpact,
+    };
+  }, [items]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -157,10 +179,28 @@ export default function AuditDataOrphan({
     [items, selectedIds]
   );
 
-  const pendingDeleteSummary = useMemo(
-    () => buildOrphanScanSummary(pendingDeleteItems ?? []),
-    [pendingDeleteItems]
-  );
+  const pendingDeleteSummary = useMemo(() => {
+    const targetItems = pendingDeleteItems ?? [];
+    const base = buildOrphanScanSummary(targetItems);
+    let cashInImpact = 0;
+    let cashOutImpact = 0;
+
+    for (const item of targetItems) {
+      if (item.sourceTable !== 'cash_flow') continue;
+      const amt = Number(item.amount || 0);
+      if (item.direction === 'in') {
+        cashInImpact += amt;
+      } else if (item.direction === 'out') {
+        cashOutImpact += amt;
+      }
+    }
+
+    return {
+      ...base,
+      cashInImpact,
+      cashOutImpact,
+    };
+  }, [pendingDeleteItems]);
 
   const handleConfirmDelete = async () => {
     if (!pendingDeleteItems || pendingDeleteItems.length === 0) return;

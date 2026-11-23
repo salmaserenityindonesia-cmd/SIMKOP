@@ -82,4 +82,61 @@ describe('AuditDataOrphan Page', () => {
     expect(html).toContain('Detail');
     expect(html).toContain('Hapus');
   });
+
+  it('calculates Dampak Kas Masuk/Keluar strictly from cash_flow records and ignores loan_schedules amounts', () => {
+    const mixedItems: OrphanRecordItem[] = [
+      {
+        id: 'sch-orphan-1',
+        sourceTable: 'loan_schedules',
+        referenceCode: 'SCH-11111111',
+        transactionDate: '2026-11-05T00:00:00.000Z',
+        moduleCategory: 'Jadwal Angsuran',
+        description: 'Jadwal angsuran non-kas',
+        amount: 50000000,
+        direction: 'in',
+        missingTarget: 'loans',
+        reason: 'loan_id hilang',
+        rawRecord: { id: 'sch-orphan-1' },
+      },
+      {
+        id: 'cf-in-1',
+        sourceTable: 'cash_flow',
+        referenceCode: 'CF-22222222',
+        transactionDate: '2026-11-10T08:00:00.000Z',
+        moduleCategory: 'Arus Kas Pinjaman',
+        description: 'Kas masuk orphan',
+        amount: 350000,
+        direction: 'in',
+        missingTarget: 'loans',
+        reason: 'Induk pinjaman hilang',
+        rawRecord: { id: 'cf-in-1' },
+      },
+      {
+        id: 'cf-out-1',
+        sourceTable: 'cash_flow',
+        referenceCode: 'CF-33333333',
+        transactionDate: '2026-11-11T08:00:00.000Z',
+        moduleCategory: 'Arus Kas Simpanan',
+        description: 'Kas keluar orphan',
+        amount: 125000,
+        direction: 'out',
+        missingTarget: 'deposit_transactions',
+        reason: 'Transaksi simpanan hilang',
+        rawRecord: { id: 'cf-out-1' },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/audit-orphan']}>
+        <AuditDataOrphan
+          initialItems={mixedItems}
+          initialScannedAt="2026-11-23T10:00:00.000Z"
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('350.000');
+    expect(html).toContain('125.000');
+    expect(html).not.toContain('50.350.000');
+  });
 });

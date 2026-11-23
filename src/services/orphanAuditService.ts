@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { fetchAllPaginated } from '../utils/supabasePagination';
 import { stripResignedNrpPrefix } from '../utils/clearanceCashFlowFormat';
 
 export const ORPHAN_AUDIT_UPDATED_EVENT = 'simkop:orphan-audit-updated';
@@ -17,7 +18,9 @@ export type OrphanSourceTable =
   | 'cash_flow'
   | 'loans'
   | 'member_deposits'
-  | 'loan_schedules';
+  | 'loan_schedules'
+  | 'loan_repayments'
+  | 'deposit_transactions';
 
 export type OrphanModuleCategory =
   | 'Arus Kas Pinjaman'
@@ -25,7 +28,9 @@ export type OrphanModuleCategory =
   | 'Arus Kas Retail/Bon'
   | 'Kontrak Pinjaman'
   | 'Rekening Simpanan'
-  | 'Jadwal Angsuran';
+  | 'Jadwal Angsuran'
+  | 'Pembayaran Angsuran'
+  | 'Transaksi Simpanan';
 
 export interface OrphanRecordItem {
   id: string;
@@ -59,6 +64,7 @@ export interface OrphanScanDataset {
   loans: any[];
   loanSchedules: any[];
   loanRepayments: any[];
+  loanInstallments?: any[];
   members: any[];
   memberDeposits: any[];
   depositTransactions: any[];
@@ -69,6 +75,8 @@ export interface OrphanScanDataset {
 
 const EXEMPT_CASH_FLOW_CATEGORIES = new Set<string>([
   'SALDO_AWAL_SIMPANAN',
+  'SALDO_AWAL',
+  'SALDO-AWAL',
   'MODAL_KASIR_AWAL',
   'PENUTUPAN_KASIR',
   'PENJUALAN_KASIR_TUNAI',
@@ -84,6 +92,8 @@ const ALLOWED_DELETE_TABLES = new Set<OrphanSourceTable>([
   'loans',
   'member_deposits',
   'loan_schedules',
+  'loan_repayments',
+  'deposit_transactions',
 ]);
 
 function isPostgrestColumnOrMissingTableError(err: any): boolean {
@@ -112,19 +122,22 @@ function isEightDigitDateStamp(token: string): boolean {
 }
 
 function extractContractCodes(description: string): string[] {
-  const matches = description.match(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+)\b/gi) || [];
+  const matches =
+    description.match(/\b((?:LOAN|PJ)-[A-Z0-9-]+|SALDO-AWAL-[^\s—|,)\]"']+)/gi) || [];
   return Array.from(new Set(matches.map((m) => m.toUpperCase())));
 }
 
 function extractReceiptCodes(description: string): string[] {
-  const matches = description.match(/\b(KW-SETOR-[A-Z0-9-]+)\b/gi) || [];
+  const matches = description.match(/\b(KW-[A-Z0-9-]+)\b/gi) || [];
   return Array.from(new Set(matches.map((m) => m.toUpperCase())));
 }
 
 function extractCandidateNrps(description: string): string[] {
   if (!description) return [];
-  const cleaned = description
-    .replace(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+|KW-SETOR-[A-Z0-9-]+|CF-[A-Z0-9-]+)\b/gi, ' ');
+  const cleaned = description.replace(
+    /\b((?:LOAN|PJ)-[A-Z0-9-]+|SALDO-AWAL-[^\s—|,)\]"']+|KW-[A-Z0-9-]+|CF-[A-Z0-9-]+)\b/gi,
+    ' '
+  );
 
   const candidates: string[] = [];
 
@@ -152,7 +165,7 @@ function extractCandidateNrps(description: string): string[] {
   return Array.from(new Set(candidates));
 }
 
-async function safeFetchAllPaged<T = any>(
+async function fetchAllPaginatedRows<T = any>(
   table: string,
   columns: string,
   fallbackColumns: string[] = []
@@ -161,50 +174,38 @@ async function safeFetchAllPaged<T = any>(
 
   for (const cols of columnVariants) {
     try {
-      const pageSize = 1000;
-      let offset = 0;
-      const allRows: T[] = [];
-      let shouldRetryWithFallback = false;
-
-      while (true) {
+      const rows = await fetchAllPaginated<T>(async (from, to) => {
         const tableRef: any = supabase?.from?.(table);
         if (!tableRef || typeof tableRef.select !== 'function') {
-          return [];
+          return { data: [], error: null };
         }
 
-        const query: any = tableRef.select(cols);
+        let query: any = tableRef.select(cols);
+        if (query && typeof query.order === 'function') {
+          query = query.order('id', { ascending: true });
+        }
+
         if (query && typeof query.range === 'function') {
-          const res = await query.range(offset, offset + pageSize - 1);
-          if (res?.error) {
-            if (isPostgrestColumnOrMissingTableError(res.error)) {
-              shouldRetryWithFallback = true;
-              break;
-            }
-            return allRows;
-          }
-          const rows = Array.isArray(res?.data) ? res.data : [];
-          allRows.push(...rows);
-          if (rows.length < pageSize) break;
-          offset += pageSize;
-        } else if (query && typeof query.then === 'function') {
-          const res = await query;
-          if (res?.error) {
-            if (isPostgrestColumnOrMissingTableError(res.error)) {
-              shouldRetryWithFallback = true;
-              break;
-            }
-            return [];
-          }
-          return Array.isArray(res?.data) ? res.data : [];
-        } else {
-          return [];
+          const res = await query.range(from, to);
+          return res ?? { data: [], error: null };
         }
-      }
 
-      if (!shouldRetryWithFallback) {
-        return allRows;
+        if (query && typeof query.then === 'function') {
+          if (from > 0) {
+            return { data: [], error: null };
+          }
+          const res = await query;
+          return res ?? { data: [], error: null };
+        }
+
+        return { data: [], error: null };
+      }, 1000);
+
+      return rows;
+    } catch (err) {
+      if (isPostgrestColumnOrMissingTableError(err)) {
+        continue;
       }
-    } catch {
       return [];
     }
   }
@@ -262,7 +263,13 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     if (rep?.id) validRepaymentIds.add(String(rep.id));
   }
 
+  const validLoanInstallmentIds = new Set<string>();
+  for (const inst of dataset.loanInstallments || []) {
+    if (inst?.id) validLoanInstallmentIds.add(String(inst.id));
+  }
+
   const validMemberIds = new Set<string>();
+  const validMemberNrps = new Set<string>();
   const nrpToMemberId = new Map<string, string>();
   for (const member of dataset.members || []) {
     if (!member?.id) continue;
@@ -271,12 +278,19 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
 
     const rawNrp = String(member.nrp || '').trim().toUpperCase();
     if (rawNrp) {
+      validMemberNrps.add(rawNrp);
       nrpToMemberId.set(rawNrp, memberId);
       const stripped = stripResignedNrpPrefix(rawNrp).toUpperCase();
       if (stripped) {
+        validMemberNrps.add(stripped);
         nrpToMemberId.set(stripped, memberId);
       }
     }
+  }
+
+  const validMemberDepositIds = new Set<string>();
+  for (const md of dataset.memberDeposits || []) {
+    if (md?.id) validMemberDepositIds.add(String(md.id));
   }
 
   const validDepositTxIds = new Set<string>();
@@ -313,6 +327,19 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     }
   }
 
+  const allValidReferenceIds = new Set<string>([
+    ...validLoanIds,
+    ...validScheduleIds,
+    ...validRepaymentIds,
+    ...validLoanInstallmentIds,
+    ...validDepositTxIds,
+    ...validMemberDepositIds,
+    ...validMemberIds,
+    ...validLebaranCycleIds,
+    ...validSaleIds,
+    ...validCreditPaymentIds,
+  ]);
+
   const findings: OrphanRecordItem[] = [];
 
   // 1. Scan public.cash_flow
@@ -328,21 +355,23 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     const refId = cf.reference_id ? String(cf.reference_id).trim() : '';
     const catKey = normalizeCategoryKey(cf.category);
 
-    if (!catKey || EXEMPT_CASH_FLOW_CATEGORIES.has(catKey)) {
+    if (
+      !catKey ||
+      EXEMPT_CASH_FLOW_CATEGORIES.has(catKey) ||
+      catKey.startsWith('SALDO_AWAL') ||
+      catKey.startsWith('SALDO-AWAL')
+    ) {
       continue;
     }
 
     const candidateNrps = extractCandidateNrps(description);
+    const hasValidGenericRefId = Boolean(refId) && allValidReferenceIds.has(refId);
 
     // 1a. Mutasi Pinjaman & Pembiayaan
     if (catKey.includes('PINJAMAN') || catKey.includes('PEMBIAYAAN')) {
       const contractCodes = extractContractCodes(description);
       const hasValidRefId =
-        Boolean(refId) &&
-        (validLoanIds.has(refId) ||
-          validScheduleIds.has(refId) ||
-          validRepaymentIds.has(refId) ||
-          validLoanNumbers.has(refId.toUpperCase()));
+        hasValidGenericRefId || (Boolean(refId) && validLoanNumbers.has(refId.toUpperCase()));
       const hasValidContractInDesc = contractCodes.some((code) =>
         validLoanNumbers.has(code)
       );
@@ -354,8 +383,8 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
         missingTarget = 'loans (kontrak)';
         reason = `Nomor kontrak ${contractCodes.join(', ')} pada deskripsi tidak ditemukan di tabel loans.`;
       } else if (refId && !hasValidRefId) {
-        missingTarget = 'loans / loan_schedules / loan_repayments';
-        reason = `reference_id "${refId}" tidak ditemukan pada tabel loans, loan_schedules, maupun loan_repayments.`;
+        missingTarget = 'loans / loan_schedules / loan_repayments / loan_installments';
+        reason = `reference_id "${refId}" tidak ditemukan pada tabel loans, loan_schedules, loan_repayments, maupun loan_installments.`;
       } else if (!refId && !hasValidContractInDesc) {
         if (candidateNrps.length > 0) {
           const matchedMemberWithLoan = candidateNrps.some((nrp) => {
@@ -364,7 +393,7 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
           });
 
           if (!matchedMemberWithLoan) {
-            const anyMemberExists = candidateNrps.some((nrp) => nrpToMemberId.has(nrp));
+            const anyMemberExists = candidateNrps.some((nrp) => validMemberNrps.has(nrp));
             if (anyMemberExists) {
               missingTarget = 'loans';
               reason = `Anggota NRP ${candidateNrps.join(', ')} tidak lagi memiliki data kontrak pinjaman di tabel loans (kemungkinan sudah dihapus) dan reference_id kosong.`;
@@ -407,13 +436,21 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
       catKey === 'KLIRING_ANGGOTA_KELUAR'
     ) {
       const receiptCodes = extractReceiptCodes(description);
+      const hasValidReceiptInDesc = receiptCodes.some((code) =>
+        validDepositReceipts.has(code)
+      );
+      const hasValidMemberNrp = candidateNrps.some((nrp) => validMemberNrps.has(nrp));
+
       let missingTarget = '';
       let reason = '';
 
       if (catKey === 'KLIRING_ANGGOTA_KELUAR') {
         const hasValidKliringRef =
-          Boolean(refId) && (validMemberIds.has(refId) || validDepositTxIds.has(refId));
-        const hasValidMemberNrp = candidateNrps.some((nrp) => nrpToMemberId.has(nrp));
+          hasValidGenericRefId ||
+          (Boolean(refId) &&
+            (validMemberIds.has(refId) ||
+              validDepositTxIds.has(refId) ||
+              validMemberDepositIds.has(refId)));
 
         if (!hasValidKliringRef && !hasValidMemberNrp) {
           missingTarget = 'anggota / deposit_transactions';
@@ -423,30 +460,52 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
         }
       } else if (catKey === 'PENARIKAN_SIMPANAN') {
         const hasValidWithdrawalRef =
-          validDepositTxIds.has(refId) ||
-          validLebaranCycleIds.has(refId) ||
-          validMemberIds.has(refId);
+          hasValidGenericRefId ||
+          (Boolean(refId) &&
+            (validDepositTxIds.has(refId) ||
+              validMemberDepositIds.has(refId) ||
+              validLebaranCycleIds.has(refId) ||
+              validMemberIds.has(refId)));
 
         if (refId && !hasValidWithdrawalRef) {
           missingTarget = 'deposit_transactions / lebaran_disbursement_cycles';
           reason = `reference_id "${refId}" pada mutasi penarikan simpanan tidak ditemukan di deposit_transactions maupun lebaran_disbursement_cycles.`;
+        } else if (!refId) {
+          if (receiptCodes.length > 0 && !hasValidReceiptInDesc) {
+            missingTarget = 'deposit_transactions';
+            reason = `Kode kwitansi ${receiptCodes.join(', ')} pada penarikan simpanan tidak ditemukan di tabel deposit_transactions.`;
+          } else if (
+            receiptCodes.length === 0 &&
+            candidateNrps.length > 0 &&
+            !hasValidMemberNrp
+          ) {
+            missingTarget = 'anggota / deposit_transactions';
+            reason = `NRP ${candidateNrps.join(', ')} pada penarikan simpanan tidak ditemukan di tabel anggota.`;
+          }
         }
       } else {
         const hasValidDepositRef =
-          Boolean(refId) &&
-          (validDepositTxIds.has(refId) ||
-            validMemberIds.has(refId) ||
-            validDepositReceipts.has(refId.toUpperCase()));
-        const hasValidReceiptInDesc = receiptCodes.some((code) =>
-          validDepositReceipts.has(code)
-        );
+          hasValidGenericRefId ||
+          (Boolean(refId) &&
+            (validDepositTxIds.has(refId) ||
+              validMemberDepositIds.has(refId) ||
+              validMemberIds.has(refId) ||
+              validDepositReceipts.has(refId.toUpperCase())));
 
         if (receiptCodes.length > 0 && !hasValidReceiptInDesc && !hasValidDepositRef) {
           missingTarget = 'deposit_transactions';
           reason = `Kode kwitansi ${receiptCodes.join(', ')} tidak lagi ditemukan di tabel deposit_transactions.`;
         } else if (refId && !hasValidDepositRef) {
-          missingTarget = 'deposit_transactions / anggota';
-          reason = `reference_id "${refId}" pada mutasi simpanan tidak ditemukan di deposit_transactions maupun anggota.`;
+          missingTarget = 'deposit_transactions / member_deposits / anggota';
+          reason = `reference_id "${refId}" pada mutasi simpanan tidak ditemukan di deposit_transactions, member_deposits, maupun anggota.`;
+        } else if (
+          !refId &&
+          receiptCodes.length === 0 &&
+          candidateNrps.length > 0 &&
+          !hasValidMemberNrp
+        ) {
+          missingTarget = 'anggota / deposit_transactions';
+          reason = `NRP ${candidateNrps.join(', ')} pada mutasi simpanan tidak ditemukan di tabel anggota.`;
         }
       }
 
@@ -479,16 +538,20 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
 
       if (catKey === 'PELUNASAN_BON_TOKO') {
         const hasValidBonRef =
-          validCreditPaymentIds.has(refId) ||
-          validSaleIds.has(refId) ||
-          validCreditReceipts.has(refId.toUpperCase());
+          hasValidGenericRefId ||
+          (Boolean(refId) &&
+            (validCreditPaymentIds.has(refId) ||
+              validSaleIds.has(refId) ||
+              validCreditReceipts.has(refId.toUpperCase())));
         if (refId && !hasValidBonRef) {
           missingTarget = 'store_credit_payments';
           reason = `reference_id "${refId}" pada pelunasan bon toko tidak ditemukan di tabel store_credit_payments maupun sales.`;
         }
       } else {
         const hasValidSaleRef =
-          validSaleIds.has(refId) || validSaleNumbers.has(refId.toUpperCase());
+          hasValidGenericRefId ||
+          (Boolean(refId) &&
+            (validSaleIds.has(refId) || validSaleNumbers.has(refId.toUpperCase())));
         if (refId && !hasValidSaleRef) {
           missingTarget = 'sales';
           reason = `reference_id "${refId}" pada penjualan POS tidak ditemukan di tabel sales.`;
@@ -513,11 +576,16 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     }
   }
 
-  // 2. Scan public.loans without valid anggota
+  // 2. Scan public.loans without valid anggota or refinanced_loan_id
   for (const loan of dataset.loans || []) {
     if (!loan?.id) continue;
     const memberId = loan.member_id ? String(loan.member_id) : '';
-    if (!memberId || !validMemberIds.has(memberId)) {
+    const refinancedLoanId = loan.refinanced_loan_id ? String(loan.refinanced_loan_id) : '';
+    const missingMember = !memberId || !validMemberIds.has(memberId);
+    const missingRefinancedLoan =
+      refinancedLoanId !== '' && !validLoanIds.has(refinancedLoanId);
+
+    if (missingMember || missingRefinancedLoan) {
       const id = String(loan.id);
       const loanCode = loan.loan_number
         ? String(loan.loan_number)
@@ -526,13 +594,17 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
         id,
         sourceTable: 'loans',
         referenceCode: loanCode,
-        transactionDate: String(loan.applied_at || loan.created_at || ''),
+        transactionDate: String(loan.created_at || loan.applied_at || ''),
         moduleCategory: 'Kontrak Pinjaman',
-        description: String(loan.purpose || `Kontrak pinjaman ${loanCode}`),
-        amount: Number(loan.amount || 0),
+        description: String(
+          loan.purpose || loan.item_description || loan.notes || `Kontrak pinjaman ${loanCode}`
+        ),
+        amount: Number(loan.amount ?? loan.principal_amount ?? 0),
         direction: 'neutral',
-        missingTarget: 'anggota',
-        reason: `member_id "${memberId || '-'}" pada kontrak pinjaman tidak terdaftar di tabel anggota.`,
+        missingTarget: missingMember ? 'anggota' : 'loans (refinanced_loan_id)',
+        reason: missingMember
+          ? `member_id "${memberId || '-'}" pada kontrak pinjaman tidak terdaftar di tabel anggota.`
+          : `refinanced_loan_id "${refinancedLoanId}" pada kontrak pinjaman tidak ditemukan di tabel loans.`,
         rawRecord: loan,
       });
     }
@@ -560,7 +632,34 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     }
   }
 
-  // 4. Scan public.loan_schedules without valid loans
+  // 4. Scan public.deposit_transactions without valid member_deposits
+  for (const dt of dataset.depositTransactions || []) {
+    if (!dt?.id) continue;
+    const memberDepositId = dt.member_deposit_id ? String(dt.member_deposit_id) : '';
+    if (!memberDepositId || !validMemberDepositIds.has(memberDepositId)) {
+      const id = String(dt.id);
+      const refCode = dt.reference_no
+        ? String(dt.reference_no)
+        : `DTX-${id.slice(0, 8).toUpperCase()}`;
+      findings.push({
+        id,
+        sourceTable: 'deposit_transactions',
+        referenceCode: refCode,
+        transactionDate: String(dt.created_at || ''),
+        moduleCategory: 'Transaksi Simpanan',
+        description: String(
+          dt.description || dt.notes || `Transaksi simpanan yatim (${refCode})`
+        ),
+        amount: Number(dt.amount || 0),
+        direction: 'neutral',
+        missingTarget: 'member_deposits',
+        reason: `member_deposit_id "${memberDepositId || '-'}" pada transaksi simpanan tidak ditemukan di tabel member_deposits.`,
+        rawRecord: dt,
+      });
+    }
+  }
+
+  // 5. Scan public.loan_schedules without valid loans
   for (const sch of dataset.loanSchedules || []) {
     if (!sch?.id) continue;
     const loanId = sch.loan_id ? String(sch.loan_id) : '';
@@ -582,6 +681,34 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
     }
   }
 
+  // 6. Scan public.loan_repayments without valid loans or loan_schedules
+  for (const rep of dataset.loanRepayments || []) {
+    if (!rep?.id) continue;
+    const loanId = rep.loan_id ? String(rep.loan_id) : '';
+    const scheduleId = rep.schedule_id ? String(rep.schedule_id) : '';
+    const missingLoan = !loanId || !validLoanIds.has(loanId);
+    const missingSchedule = scheduleId !== '' && !validScheduleIds.has(scheduleId);
+
+    if (missingLoan || missingSchedule) {
+      const id = String(rep.id);
+      findings.push({
+        id,
+        sourceTable: 'loan_repayments',
+        referenceCode: `REP-${id.slice(0, 8).toUpperCase()}`,
+        transactionDate: String(rep.payment_date || rep.created_at || ''),
+        moduleCategory: 'Pembayaran Angsuran',
+        description: `Pembayaran angsuran yatim (loan_id: ${loanId || '-'})`,
+        amount: Number(rep.amount_paid || 0),
+        direction: 'neutral',
+        missingTarget: missingLoan ? 'loans' : 'loan_schedules',
+        reason: missingLoan
+          ? `loan_id "${loanId || '-'}" pada pembayaran angsuran tidak ditemukan di tabel loans.`
+          : `schedule_id "${scheduleId}" pada pembayaran angsuran tidak ditemukan di tabel loan_schedules.`,
+        rawRecord: rep,
+      });
+    }
+  }
+
   return findings.sort((a, b) =>
     String(b.transactionDate || '').localeCompare(String(a.transactionDate || ''))
   );
@@ -589,7 +716,7 @@ export function analyzeOrphanRecords(dataset: OrphanScanDataset): OrphanRecordIt
 
 /**
  * Memindai seluruh tabel transaksi utama secara paralel (tanpa N+1 query)
- * untuk menemukan data yatim (orphan) lintas modul.
+ * menggunakan paginasi penuh untuk menemukan data yatim (orphan) lintas modul.
  */
 export async function scanAllOrphanRecords(): Promise<OrphanScanResult> {
   const [
@@ -597,6 +724,7 @@ export async function scanAllOrphanRecords(): Promise<OrphanScanResult> {
     loans,
     loanSchedules,
     loanRepayments,
+    loanInstallments,
     members,
     memberDeposits,
     depositTransactions,
@@ -604,39 +732,65 @@ export async function scanAllOrphanRecords(): Promise<OrphanScanResult> {
     sales,
     storeCreditPayments,
   ] = await Promise.all([
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>(
       'cash_flow',
       'id, direction, amount, category, reference_id, description, created_at',
-      ['id, direction, amount, category, reference_id, created_at']
+      [
+        'id, direction, amount, category, reference_id, created_at',
+        'id, direction, amount, category, reference_id',
+      ]
     ),
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>(
       'loans',
-      'id, loan_number, member_id, purpose, amount, status, applied_at, created_at',
-      ['id, member_id, purpose, amount, status, applied_at']
+      'id, loan_number, member_id, refinanced_loan_id, principal_amount, amount, item_description, notes, status, created_at',
+      [
+        'id, loan_number, member_id, refinanced_loan_id, amount, status, created_at',
+        'id, loan_number, member_id, amount, status, created_at',
+        'id, loan_number, member_id, purpose, amount, status, applied_at, created_at',
+        'id, member_id, amount, status',
+        'id, member_id',
+      ]
     ),
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>(
       'loan_schedules',
       'id, loan_id, period_number, due_date, target_amount, status',
-      ['id, loan_id']
+      ['id, loan_id, period_number, due_date, target_amount', 'id, loan_id']
     ),
-    safeFetchAllPaged<any>('loan_repayments', 'id, loan_id, schedule_id', ['id, loan_id']),
-    safeFetchAllPaged<any>('anggota', 'id, nrp, nama, status', ['id, nrp']),
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>(
+      'loan_repayments',
+      'id, loan_id, schedule_id, amount_paid, payment_date, created_at',
+      [
+        'id, loan_id, schedule_id, amount_paid, payment_date',
+        'id, loan_id, schedule_id',
+        'id, loan_id',
+      ]
+    ),
+    fetchAllPaginatedRows<any>('loan_installments', 'id, loan_id', ['id']),
+    fetchAllPaginatedRows<any>('anggota', 'id, nrp, nama, status', ['id, nrp', 'id']),
+    fetchAllPaginatedRows<any>(
       'member_deposits',
       'id, member_id, deposit_type_id, balance, created_at',
-      ['id, member_id, balance']
+      ['id, member_id, balance', 'id, member_id']
     ),
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>(
       'deposit_transactions',
-      'id, member_deposit_id, reference_no, notes, description',
-      ['id, member_deposit_id, reference_no, description', 'id, member_deposit_id']
+      'id, member_deposit_id, reference_no, amount, transaction_type, notes, description, created_at',
+      [
+        'id, member_deposit_id, reference_no, amount, description, created_at',
+        'id, member_deposit_id, reference_no, description',
+        'id, member_deposit_id, reference_no',
+        'id, member_deposit_id',
+      ]
     ),
-    safeFetchAllPaged<any>('lebaran_disbursement_cycles', 'id, cycle_name', ['id']),
-    safeFetchAllPaged<any>('sales', 'id, sale_number, total_amount', ['id']),
-    safeFetchAllPaged<any>(
+    fetchAllPaginatedRows<any>('lebaran_disbursement_cycles', 'id, cycle_name', ['id']),
+    fetchAllPaginatedRows<any>('sales', 'id, sale_number, total_amount', [
+      'id, sale_number',
+      'id',
+    ]),
+    fetchAllPaginatedRows<any>(
       'store_credit_payments',
       'id, sale_id, receipt_number, amount',
-      ['id, sale_id']
+      ['id, sale_id', 'id']
     ),
   ]);
 
@@ -645,6 +799,7 @@ export async function scanAllOrphanRecords(): Promise<OrphanScanResult> {
     loans,
     loanSchedules,
     loanRepayments,
+    loanInstallments,
     members,
     memberDeposits,
     depositTransactions,
