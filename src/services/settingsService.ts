@@ -1,4 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
+import { DEFAULT_MAX_LOAN_AGE_YEARS } from '../utils/loanEligibility';
+
+export { DEFAULT_MAX_LOAN_AGE_YEARS };
 
 export interface KoperasiProfile {
   id?: number;
@@ -9,6 +12,7 @@ export interface KoperasiProfile {
   footer_notes: string;
   logo_url?: string | null;
   min_remaining_thp?: number;
+  max_loan_age_years?: number;
   min_thp_rat_notes?: string;
   updated_at?: string;
 }
@@ -18,7 +22,20 @@ export const DEFAULT_RAT_NOTES = 'Keputusan RAT Batas Minimum Sisa THP Rp 1.500.
 
 export interface LoanSettings {
   minRemainingThp: number;
+  maxLoanAgeYears?: number;
   ratNotes?: string;
+}
+
+function normalizeMaxLoanAge(
+  raw: unknown,
+  fallback: number = DEFAULT_MAX_LOAN_AGE_YEARS
+): number {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const num = Number(raw);
+  if (!isNaN(num) && num >= 18 && num <= 100) {
+    return Math.round(num);
+  }
+  return fallback;
 }
 
 export const DEFAULT_KOPERASI_PROFILE: KoperasiProfile = {
@@ -30,6 +47,7 @@ export const DEFAULT_KOPERASI_PROFILE: KoperasiProfile = {
   footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan',
   logo_url: null,
   min_remaining_thp: DEFAULT_MIN_REMAINING_THP,
+  max_loan_age_years: DEFAULT_MAX_LOAN_AGE_YEARS,
   min_thp_rat_notes: DEFAULT_RAT_NOTES
 };
 
@@ -70,6 +88,7 @@ export function getStoredLocalProfile(): KoperasiProfile | null {
           ...parsed,
           logo_url: parsed.logo_url ?? null,
           min_remaining_thp: !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP,
+          max_loan_age_years: normalizeMaxLoanAge(parsed.max_loan_age_years),
           min_thp_rat_notes: parsed.min_thp_rat_notes ?? DEFAULT_RAT_NOTES
         };
       }
@@ -142,6 +161,7 @@ export async function getKoperasiProfile(forceRefresh: boolean = false): Promise
         footer_notes: data.footer_notes !== undefined && data.footer_notes !== null ? data.footer_notes : DEFAULT_KOPERASI_PROFILE.footer_notes,
         logo_url: data.logo_url !== undefined ? data.logo_url : DEFAULT_KOPERASI_PROFILE.logo_url,
         min_remaining_thp: !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP,
+        max_loan_age_years: normalizeMaxLoanAge(data.max_loan_age_years),
         min_thp_rat_notes: data.min_thp_rat_notes !== undefined && data.min_thp_rat_notes !== null ? data.min_thp_rat_notes : DEFAULT_RAT_NOTES,
         updated_at: data.updated_at
       };
@@ -186,6 +206,9 @@ export async function updateKoperasiProfile(
     min_remaining_thp: payload.min_remaining_thp !== undefined
       ? (Number(payload.min_remaining_thp) > 0 ? Number(payload.min_remaining_thp) : DEFAULT_MIN_REMAINING_THP)
       : (cachedProfile?.min_remaining_thp ?? DEFAULT_MIN_REMAINING_THP),
+    max_loan_age_years: payload.max_loan_age_years !== undefined
+      ? normalizeMaxLoanAge(payload.max_loan_age_years)
+      : normalizeMaxLoanAge(cachedProfile?.max_loan_age_years),
     min_thp_rat_notes: payload.min_thp_rat_notes !== undefined
       ? payload.min_thp_rat_notes.trim()
       : (cachedProfile?.min_thp_rat_notes ?? DEFAULT_RAT_NOTES),
@@ -241,6 +264,10 @@ export async function updateKoperasiProfile(
       footer_notes: data.footer_notes !== undefined ? data.footer_notes : normalizedData.footer_notes,
       logo_url: data.logo_url !== undefined ? data.logo_url : normalizedData.logo_url,
       min_remaining_thp: !isNaN(rawUpdatedMin) && rawUpdatedMin > 0 ? rawUpdatedMin : normalizedData.min_remaining_thp,
+      max_loan_age_years: normalizeMaxLoanAge(
+        data.max_loan_age_years,
+        normalizedData.max_loan_age_years ?? DEFAULT_MAX_LOAN_AGE_YEARS
+      ),
       min_thp_rat_notes: data.min_thp_rat_notes !== undefined && data.min_thp_rat_notes !== null ? data.min_thp_rat_notes : normalizedData.min_thp_rat_notes,
       updated_at: data.updated_at
     };
@@ -266,22 +293,24 @@ export async function updateKoperasiProfile(
 }
 
 /**
- * Retrieves the loan configuration settings (minimum remaining THP threshold & RAT notes)
+ * Retrieves the loan configuration settings (minimum remaining THP threshold, max loan age & RAT notes)
  */
 export async function getLoanSettings(forceRefresh: boolean = false): Promise<LoanSettings> {
   const profile = await getKoperasiProfile(forceRefresh);
   const rawMin = Number(profile.min_remaining_thp);
   const minRemainingThp = !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP;
+  const maxLoanAgeYears = normalizeMaxLoanAge(profile.max_loan_age_years);
   const ratNotes = profile.min_thp_rat_notes || DEFAULT_RAT_NOTES;
 
   return {
     minRemainingThp,
+    maxLoanAgeYears,
     ratNotes
   };
 }
 
 /**
- * Updates the loan configuration settings (minimum remaining THP threshold & RAT notes)
+ * Updates the loan configuration settings (minimum remaining THP threshold, max loan age & RAT notes)
  */
 export async function updateLoanSettings(
   payload: LoanSettings
@@ -289,6 +318,10 @@ export async function updateLoanSettings(
   const currentProfile = await getKoperasiProfile(false);
   const rawMin = Number(payload.minRemainingThp);
   const minRemainingThp = !isNaN(rawMin) && rawMin > 0 ? rawMin : DEFAULT_MIN_REMAINING_THP;
+  const maxLoanAgeYears = normalizeMaxLoanAge(
+    payload.maxLoanAgeYears,
+    normalizeMaxLoanAge(currentProfile.max_loan_age_years)
+  );
   const ratNotes = payload.ratNotes !== undefined
     ? payload.ratNotes.trim()
     : (currentProfile.min_thp_rat_notes || DEFAULT_RAT_NOTES);
@@ -296,6 +329,7 @@ export async function updateLoanSettings(
   return updateKoperasiProfile({
     ...currentProfile,
     min_remaining_thp: minRemainingThp,
+    max_loan_age_years: maxLoanAgeYears,
     min_thp_rat_notes: ratNotes
   });
 }

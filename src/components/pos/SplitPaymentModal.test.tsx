@@ -533,4 +533,69 @@ describe('SplitPaymentModal - Customer Identity & Member Rendering', () => {
       expect(markup).not.toContain('Akumulasi Bon (Sisa Lama + Nota Baru):');
     });
   });
+
+  describe('Bon Toko Max Age + Tenor Validation', () => {
+    const fiftySevenYearsAgoIso = new Date(
+      Date.now() - 57 * 365.2425 * 24 * 60 * 60 * 1000
+    )
+      .toISOString()
+      .slice(0, 10);
+
+    const seniorMember = {
+      id: 'm-senior',
+      nrp: '57002',
+      nama: 'Bripka Senior',
+      tanggal_lahir: fiftySevenYearsAgoIso,
+    };
+
+    it('allows 57-year-old member choosing 6 months Bon Toko tenor when max age is 58', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: seniorMember,
+          memberId: seniorMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          initialStoreCreditSummary: { unpaidBalance: 0, activePlan: null },
+          initialStoreCreditTenor: 6,
+          maxLoanAgeYears: 58,
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).toContain('Proyeksi Usia Lunas:');
+      expect(markup).toContain('(Batas Maks: 58 Thn)');
+      expect(markup).not.toContain('Pengajuan ditolak:');
+      expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<span[^>]*>check_circle<\/span>\s*<span>Konfirmasi &amp; Cetak Struk<\/span>/);
+    });
+
+    it('blocks 57-year-old member choosing 24 months Bon Toko tenor when max age is 58', () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(SplitPaymentModal, {
+          isOpen: true,
+          onClose: () => {},
+          cart: dummyCart,
+          total: 100000,
+          selectedMember: seniorMember,
+          memberId: seniorMember.id,
+          isNonMember: false,
+          primaryMode: 'store_credit',
+          initialFinancials: { belanjaBalance: 0, remainingCreditLimit: 500000 },
+          initialStoreCreditSummary: { unpaidBalance: 0, activePlan: null },
+          initialStoreCreditTenor: 24,
+          maxLoanAgeYears: 58,
+          onConfirm: () => {},
+        })
+      );
+
+      expect(markup).toContain('Proyeksi Usia Lunas:');
+      expect(markup).toContain('Pengajuan ditolak:');
+      expect(markup).toContain('melebihi batas usia maksimal 58 tahun');
+      expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>\s*<span[^>]*>check_circle<\/span>\s*<span>Konfirmasi &amp; Cetak Struk<\/span>/);
+    });
+  });
 });

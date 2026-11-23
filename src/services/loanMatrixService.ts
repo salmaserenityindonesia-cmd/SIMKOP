@@ -18,7 +18,10 @@ function isMissingMatrixColumnError(error: any): boolean {
     msg.includes('margin_portion') ||
     msg.includes('description') ||
     msg.includes('tanggal_lahir') ||
-    msg.includes('approved_at')
+    msg.includes('approved_at') ||
+    msg.includes('sisa_pinjaman') ||
+    msg.includes('refinanced_loan_id') ||
+    msg.includes('topup_settlement_amount')
   );
 }
 
@@ -409,6 +412,9 @@ export interface LoanMatrixMember {
   tenor?: number;
   monthlyTarget?: number;
   principalAmount?: number;
+  topupSettlementAmount?: number;
+  refinancedLoanId?: string | null;
+  notes?: string | null;
   disbursedAt?: string | null;
   isLoanActive: boolean;
   totalLoans: number;
@@ -627,6 +633,9 @@ export const getLoanMatrix = async (
         planned_installment_amount,
         disbursed_at,
         status,
+        sisa_pinjaman,
+        refinanced_loan_id,
+        topup_settlement_amount,
         notes,
         loan_types ( id, code, name, financing_scheme ),
       `
@@ -829,6 +838,9 @@ export const getLoanMatrix = async (
             disbursed_at,
             created_at,
             status,
+            sisa_pinjaman,
+            refinanced_loan_id,
+            topup_settlement_amount,
             notes,
             loan_types ( id, code, name, financing_scheme ),
             member:anggota ( id, nrp, nama, tanggal_lahir, status, membership_status, suspended_at, suspension_reason )
@@ -870,7 +882,18 @@ export const getLoanMatrix = async (
         const statusLower = String(loan.status || '').trim().toLowerCase();
         if (['rejected', 'draft', 'cancelled'].includes(statusLower)) return;
 
-        if (isActiveLoanStatus(loan.status)) {
+        const isExplicit =
+          includePaidOff ||
+          (Boolean(includeSearchNorm) &&
+            (explicitlyIncludedLoanIds.has(loan.id) ||
+              String(loan.loan_number || '').toLowerCase().includes(includeSearchNorm)));
+
+        const hasZeroRemaining =
+          loan.sisa_pinjaman !== null &&
+          loan.sisa_pinjaman !== undefined &&
+          Number(loan.sisa_pinjaman) <= 0;
+
+        if (isActiveLoanStatus(loan.status) && !hasZeroRemaining) {
           const syntheticSchedules = buildFallbackSchedulesForLoan(loan);
           schedulesByLoan[loan.id] = syntheticSchedules;
           activeLoanIdsSet.add(loan.id);
@@ -883,15 +906,8 @@ export const getLoanMatrix = async (
               repaidByLoanId[loan.id] || 0
             )
           );
-        } else {
-          const isExplicit =
-            includePaidOff ||
-            (Boolean(includeSearchNorm) &&
-              (explicitlyIncludedLoanIds.has(loan.id) ||
-                String(loan.loan_number || '').toLowerCase().includes(includeSearchNorm)));
-          if (isExplicit) {
-            missingCompletedLoans.push(loan);
-          }
+        } else if (isExplicit) {
+          missingCompletedLoans.push(loan);
         }
       });
     } catch {
@@ -966,6 +982,9 @@ export const getLoanMatrix = async (
         tenor: Number(loan.tenor || 0),
         monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
         principalAmount: Number(loan.principal_amount || loan.amount || 0),
+        topupSettlementAmount: Number(loan.topup_settlement_amount || 0),
+        refinancedLoanId: loan.refinanced_loan_id || null,
+        notes: loan.notes || null,
         disbursedAt: loan.disbursed_at || null,
         isLoanActive,
         totalLoans: 1,
@@ -1233,6 +1252,9 @@ export const getLoanMatrix = async (
         tenor: Number(loan.tenor || tenorVal || 0),
         monthlyTarget: Number(loan.monthly_target || loan.planned_installment_amount || 0),
         principalAmount: principalAmt,
+        topupSettlementAmount: Number(loan.topup_settlement_amount || 0),
+        refinancedLoanId: loan.refinanced_loan_id || null,
+        notes: loan.notes || null,
         disbursedAt: loan.disbursed_at || null,
         isLoanActive,
         totalLoans: 1,

@@ -10,6 +10,7 @@ import {
   getLoanSettings,
   updateLoanSettings,
   DEFAULT_MIN_REMAINING_THP,
+  DEFAULT_MAX_LOAN_AGE_YEARS,
   DEFAULT_RAT_NOTES
 } from '../../services/settingsService';
 import { uploadLogoToCloudinary } from '../../services/cloudinaryService';
@@ -121,6 +122,7 @@ export interface PengaturanKoperasiProps {
   initialAddModalOpen?: boolean;
   initialTierCode?: string;
   initialMinRemainingThp?: number;
+  initialMaxLoanAgeYears?: number;
   initialMinThpRatNotes?: string;
   initialConfirmModalOpen?: boolean;
   initialConfirmationInputText?: string;
@@ -136,6 +138,7 @@ export default function PengaturanKoperasi({
   initialAddModalOpen = false,
   initialTierCode,
   initialMinRemainingThp,
+  initialMaxLoanAgeYears,
   initialMinThpRatNotes,
   initialConfirmModalOpen = false,
   initialConfirmationInputText = '',
@@ -157,6 +160,9 @@ export default function PengaturanKoperasi({
   // Loan Eligibility Policy (RAT) State
   const [minRemainingThp, setMinRemainingThp] = useState<number>(
     initialMinRemainingThp ?? DEFAULT_MIN_REMAINING_THP
+  );
+  const [maxLoanAgeYears, setMaxLoanAgeYears] = useState<number>(
+    initialMaxLoanAgeYears ?? DEFAULT_MAX_LOAN_AGE_YEARS
   );
   const [initialMinThp, setInitialMinThp] = useState<number>(
     initialOriginalMinThp ?? initialMinRemainingThp ?? DEFAULT_MIN_REMAINING_THP
@@ -208,8 +214,11 @@ export default function PengaturanKoperasi({
         if (initialOriginalMinThp === undefined && initialMinRemainingThp === undefined) {
           setInitialMinThp(data.minRemainingThp);
         }
+        if (initialMaxLoanAgeYears === undefined && data.maxLoanAgeYears !== undefined) {
+          setMaxLoanAgeYears(data.maxLoanAgeYears);
+        }
         if (initialMinThpRatNotes === undefined) {
-          setMinThpRatNotes(data.ratNotes);
+          setMinThpRatNotes(data.ratNotes ?? DEFAULT_RAT_NOTES);
         }
       }
     } catch (err: any) {
@@ -217,11 +226,12 @@ export default function PengaturanKoperasi({
     }
   };
 
-  const executeSaveLoanSettings = async (val: number, notes: string) => {
+  const executeSaveLoanSettings = async (val: number, maxAge: number, notes: string) => {
     setIsSavingLoanSettings(true);
     try {
       const res = await updateLoanSettings({
         minRemainingThp: val,
+        maxLoanAgeYears: maxAge,
         ratNotes: notes.trim()
       });
 
@@ -229,6 +239,9 @@ export default function PengaturanKoperasi({
         if (res.data.min_remaining_thp) {
           setMinRemainingThp(res.data.min_remaining_thp);
           setInitialMinThp(res.data.min_remaining_thp);
+        }
+        if (res.data.max_loan_age_years !== undefined) {
+          setMaxLoanAgeYears(res.data.max_loan_age_years);
         }
         if (res.data.min_thp_rat_notes !== undefined) {
           setMinThpRatNotes(res.data.min_thp_rat_notes);
@@ -254,8 +267,14 @@ export default function PengaturanKoperasi({
       return;
     }
 
+    const maxAge = Math.round(Number(maxLoanAgeYears));
+    if (isNaN(maxAge) || maxAge < 18 || maxAge > 100) {
+      showToast('Batas usia maksimal harus berada di antara 18 hingga 100 tahun', 'warning');
+      return;
+    }
+
     if (val === initialMinThp) {
-      await executeSaveLoanSettings(val, minThpRatNotes);
+      await executeSaveLoanSettings(val, maxAge, minThpRatNotes);
       return;
     }
 
@@ -268,7 +287,8 @@ export default function PengaturanKoperasi({
       return;
     }
     const val = Number(minRemainingThp);
-    await executeSaveLoanSettings(val, minThpRatNotes);
+    const maxAge = Math.round(Number(maxLoanAgeYears)) || DEFAULT_MAX_LOAN_AGE_YEARS;
+    await executeSaveLoanSettings(val, maxAge, minThpRatNotes);
   };
 
   const handleCancelConfirmModal = () => {
@@ -1053,8 +1073,42 @@ export default function PengaturanKoperasi({
                   </p>
                 </div>
 
-                {/* Catatan Keputusan / Ketetapan RAT */}
+                {/* Batas Usia Maksimal Saat Lunas (Tahun) */}
                 <div>
+                  <label htmlFor="maxLoanAgeYears" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Batas Usia Maksimal Saat Lunas (Tahun) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="maxLoanAgeYears"
+                      name="maxLoanAgeYears"
+                      type="number"
+                      min={18}
+                      max={100}
+                      step={1}
+                      required
+                      value={maxLoanAgeYears || ''}
+                      onChange={(e) => setMaxLoanAgeYears(Number(e.target.value))}
+                      className="w-full pl-3.5 pr-16 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-semibold text-slate-800"
+                      placeholder="58"
+                    />
+                    <span className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-semibold text-slate-400 pointer-events-none">
+                      Tahun
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between text-xs">
+                    <span className="text-slate-500">Preview Batas Usia:</span>
+                    <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      Maks. {maxLoanAgeYears || DEFAULT_MAX_LOAN_AGE_YEARS} Tahun
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Validasi otomatis: Usia anggota saat pengajuan + (Tenor ÷ 12 tahun) tidak boleh melebihi batas usia maksimal ini (berlaku untuk Pinjaman &amp; Bon Toko).
+                  </p>
+                </div>
+
+                {/* Catatan Keputusan / Ketetapan RAT */}
+                <div className="md:col-span-2">
                   <label htmlFor="minThpRatNotes" className="block text-xs font-semibold text-slate-700 mb-1.5">
                     Catatan Keputusan / Nomor SK RAT
                   </label>

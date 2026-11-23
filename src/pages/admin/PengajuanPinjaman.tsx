@@ -7,7 +7,11 @@ import {
   getActiveLoanTypes,
   getLoanSettings,
   isGoodsMarkupLoanType,
-  calculateGoodsMarkupScheduleSplit
+  calculateGoodsMarkupScheduleSplit,
+  ACTIVE_RUNNING_LOAN_STATUSES,
+  ACTIVE_RUNNING_LOAN_STATUSES_ENUM_SAFE,
+  isRunningLoanStatus,
+  computeRealRemainingPrincipal
 } from '../../services/loanService';
 import { LoanType, FinancingScheme } from '../../services/koperasiService';
 import { extractMemberTHP } from '../../services/memberService';
@@ -19,6 +23,7 @@ import {
 import { supabase } from '../../lib/supabaseClient';
 import { Loader2, Plus, Calculator, AlertCircle, CheckCircle } from 'lucide-react';
 import MemberSelectAutosuggest from '../../components/common/MemberSelectAutosuggest';
+import { DEFAULT_MAX_LOAN_AGE_YEARS, validateMaxLoanAge } from '../../utils/loanEligibility';
 
 export const formatCurrency = (val: number) => {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(val);
@@ -103,9 +108,12 @@ export function SimulationPanel({
   const effectiveExistingInstallments = thpData
     ? Math.max(0, thpData.active_installments - replacedMonthlyInstallment)
     : 0;
-  const principalAmount = Number(amount || 0);
-  const netDisbursedToMember = Math.max(0, principalAmount - sameTypeSettlementTotal);
-  const isTopUpValid = sameTypeSettlementTotal === 0 || principalAmount > sameTypeSettlementTotal;
+  const grossDisbursementBase = isGoodsMarkup
+    ? Number(costPrice || 0)
+    : Number(amount || 0);
+  const netDisbursedToMember = Math.max(0, grossDisbursementBase - sameTypeSettlementTotal);
+  const isTopUpValid =
+    sameTypeSettlementTotal === 0 || grossDisbursementBase > sameTypeSettlementTotal;
 
   const eligibility = thpData 
     ? calculateTHPEligibility(currentRemainingThp, newInstallment, minRemainingThp)
@@ -249,29 +257,31 @@ export function SimulationPanel({
                 Mode Perpanjangan / Top-Up ({selectedLoanTypeName || sameTypeActiveLoans[0]?.typeName || 'Sejenis'})
               </div>
               <p className="text-indigo-700 leading-relaxed">
-                Pinjaman aktif sejenis milik anggota akan otomatis dilunasi dari pencairan pinjaman baru ini:
+                <strong>Pemotongan Pelunasan Pinjaman Lama Sejenis</strong> — pinjaman berjalan sejenis milik anggota akan otomatis dilunasi sampai angsuran terakhir dari pencairan pinjaman baru ini:
               </p>
               <div className="space-y-1 pt-1 border-t border-indigo-200/70">
                 <div className="flex justify-between text-slate-700">
-                  <span>Plafon Pinjaman Baru:</span>
-                  <span className="font-semibold">Rp {principalAmount.toLocaleString('id-ID')}</span>
+                  <span>Nilai Pencairan Pinjaman Baru:</span>
+                  <span className="font-semibold">Rp {grossDisbursementBase.toLocaleString('id-ID')}</span>
                 </div>
                 {sameTypeActiveLoans.map((oldLoan) => (
                   <div key={oldLoan.id} className="flex justify-between text-rose-700">
-                    <span>Pelunasan {oldLoan.loanNumber}:</span>
+                    <span>Potongan Pelunasan {oldLoan.loanNumber}:</span>
                     <span className="font-semibold">
                       - Rp {Number(oldLoan.remainingPrincipal).toLocaleString('id-ID')}
                     </span>
                   </div>
                 ))}
                 <div className="flex justify-between text-emerald-800 font-bold pt-1 border-t border-indigo-200">
-                  <span>Dana Bersih Diterima Anggota:</span>
+                  <span>Sisa Uang Diterima Peminjam:</span>
                   <span>Rp {netDisbursedToMember.toLocaleString('id-ID')}</span>
                 </div>
               </div>
-              {!isTopUpValid && principalAmount > 0 && (
+              {!isTopUpValid && grossDisbursementBase > 0 && (
                 <p className="text-rose-600 font-semibold pt-1">
-                  Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp {sameTypeSettlementTotal.toLocaleString('id-ID')}).
+                  {isGoodsMarkup
+                    ? `Harga modal / nilai pencairan baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`
+                    : `Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`}
                 </p>
               )}
             </div>
@@ -426,11 +436,13 @@ export interface PengajuanPinjamanProps {
   initialLoanTypes?: LoanType[];
   initialSelectedLoanTypeId?: string;
   initialMinRemainingThp?: number;
+  initialMaxLoanAgeYears?: number;
   initialItemDescription?: string;
   initialCostPrice?: number | '';
   initialMarkupMode?: 'AMOUNT' | 'PERCENT';
   initialMarkupAmount?: number | '';
   initialMarkupPercent?: number | '';
+  initialActiveLoanBreakdown?: ActiveLoanBreakdownItem[];
 }
 
 export default function PengajuanPinjaman({
@@ -445,11 +457,13 @@ export default function PengajuanPinjaman({
   initialLoanTypes,
   initialSelectedLoanTypeId,
   initialMinRemainingThp,
+  initialMaxLoanAgeYears,
   initialItemDescription,
   initialCostPrice,
   initialMarkupMode,
   initialMarkupAmount,
-  initialMarkupPercent
+  initialMarkupPercent,
+  initialActiveLoanBreakdown
 }: PengajuanPinjamanProps = {}) {
   const [loanTypes, setLoanTypes] = useState<LoanType[]>(initialLoanTypes || []);
   const [selectedLoanTypeId, setSelectedLoanTypeId] = useState<string>(initialSelectedLoanTypeId || '');
@@ -462,6 +476,7 @@ export default function PengajuanPinjaman({
   const [tenorMode, setTenorMode] = useState<'PRESET' | 'CUSTOM'>(initialTenorMode || 'PRESET');
   const [customTenorInput, setCustomTenorInput] = useState<string>(initialCustomTenorInput || '');
   const [minRemainingThp, setMinRemainingThp] = useState<number>(initialMinRemainingThp ?? MIN_REMAINING_THP);
+  const [maxLoanAgeYears, setMaxLoanAgeYears] = useState<number>(initialMaxLoanAgeYears ?? DEFAULT_MAX_LOAN_AGE_YEARS);
 
   const [itemDescription, setItemDescription] = useState<string>(initialItemDescription || '');
   const [costPrice, setCostPrice] = useState<number | ''>(initialCostPrice ?? '');
@@ -557,7 +572,9 @@ export default function PengajuanPinjaman({
     return null;
   });
   
-  const [activeLoanBreakdown, setActiveLoanBreakdown] = useState<ActiveLoanBreakdownItem[]>([]);
+  const [activeLoanBreakdown, setActiveLoanBreakdown] = useState<ActiveLoanBreakdownItem[]>(
+    initialActiveLoanBreakdown || []
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -567,7 +584,7 @@ export default function PengajuanPinjaman({
     if (initialLoanTypes === undefined) {
       loadLoanTypes();
     }
-    if (initialMinRemainingThp === undefined) {
+    if (initialMinRemainingThp === undefined || initialMaxLoanAgeYears === undefined) {
       loadLoanSettings();
     }
   }, []);
@@ -575,8 +592,11 @@ export default function PengajuanPinjaman({
   async function loadLoanSettings() {
     try {
       const settings = await getLoanSettings();
-      if (settings && typeof settings.minRemainingThp === 'number') {
+      if (initialMinRemainingThp === undefined && settings && typeof settings.minRemainingThp === 'number') {
         setMinRemainingThp(settings.minRemainingThp);
+      }
+      if (initialMaxLoanAgeYears === undefined && settings && typeof settings.maxLoanAgeYears === 'number') {
+        setMaxLoanAgeYears(settings.maxLoanAgeYears);
       }
     } catch (err) {
       console.error('Gagal memuat pengaturan pinjaman:', err);
@@ -662,10 +682,8 @@ export default function PengajuanPinjaman({
       const currentMonth = now.getMonth() + 1;
       // Refresh ketentuan Simpanan Lebaran personal sebelum menghitung potongan rutin THP
       // Sekaligus ambil rincian pinjaman aktif beserta nama jenis pinjamannya
-      const [rateConfig, personalLebaranRates, activeLoansRes] = await Promise.all([
-        loadSavingsRateConfig().catch(() => null),
-        getMemberLebaranRates(undefined, true).catch(() => []),
-        supabase
+      const fetchRunningMemberLoans = async (statuses: string[]) =>
+        await supabase
           .from('loans')
           .select(`
             id,
@@ -692,30 +710,34 @@ export default function PengajuanPinjaman({
             )
           `)
           .eq('member_id', memberId)
-          .in('status', ['active', 'approved'])
-          .order('created_at', { ascending: true }),
+          .in('status', statuses)
+          .order('created_at', { ascending: true });
+
+      const [rateConfig, personalLebaranRates, initialActiveLoansRes] = await Promise.all([
+        loadSavingsRateConfig().catch(() => null),
+        getMemberLebaranRates(undefined, true).catch(() => []),
+        fetchRunningMemberLoans(ACTIVE_RUNNING_LOAN_STATUSES),
       ]);
+
+      let activeLoansRes = initialActiveLoansRes;
+      if (
+        activeLoansRes?.error &&
+        (String(activeLoansRes.error.code || '') === '22P02' ||
+          String(activeLoansRes.error.message || '').toLowerCase().includes('invalid input value for enum'))
+      ) {
+        activeLoansRes = await fetchRunningMemberLoans(ACTIVE_RUNNING_LOAN_STATUSES_ENUM_SAFE);
+      }
 
       if (activeLoansRes.error) {
         console.error('Gagal memuat rincian pinjaman aktif:', activeLoansRes.error);
       }
 
       const breakdown: ActiveLoanBreakdownItem[] = (activeLoansRes.data || [])
+        .filter((loan: any) => !loan?.status || isRunningLoanStatus(loan.status))
         .map((loan: any) => {
           const principal = Number(loan.principal_amount ?? loan.amount ?? 0);
           const months = Number(loan.agreed_tenor_months ?? loan.tenor ?? 1);
-          const schedules = Array.isArray(loan.loan_schedules) ? loan.loan_schedules : [];
-
-          const totalPaidFromSchedules = schedules.reduce(
-            (sum: number, s: any) => sum + Number(s.paid_amount || 0),
-            0
-          );
-
-          // Sisa pokok riil = Pokok Awal - Total yang sudah dibayar di jadwal angsuran
-          const actualRemainingPrincipal =
-            schedules.length > 0
-              ? Math.max(0, Math.round(principal - totalPaidFromSchedules))
-              : Math.max(0, Math.round(Number(loan.sisa_pinjaman ?? principal)));
+          const actualRemainingPrincipal = computeRealRemainingPrincipal(loan);
 
           const monthlyInstallment = Math.round(
             Number(loan.planned_installment_amount ?? loan.monthly_target ?? (months > 0 ? principal / months : 0))
@@ -795,12 +817,14 @@ export default function PengajuanPinjaman({
       ? calculateGoodsMarkupScheduleSplit(numericCostPrice, computedMarkupAmount, effectiveTenor)[0]
       : null;
 
-  const sameTypeActiveLoans =
-    selectedLoanTypeId && !isGoodsMarkup
-      ? activeLoanBreakdown.filter(
-          (item) => item.loanTypeId && String(item.loanTypeId) === String(selectedLoanTypeId)
-        )
-      : [];
+  const sameTypeActiveLoans = selectedLoanTypeId
+    ? activeLoanBreakdown.filter(
+        (item) =>
+          item.loanTypeId &&
+          String(item.loanTypeId) === String(selectedLoanTypeId) &&
+          Number(item.remainingPrincipal || 0) > 0
+      )
+    : [];
   const sameTypeSettlementTotal = sameTypeActiveLoans.reduce(
     (sum, item) => sum + Number(item.remainingPrincipal || 0),
     0
@@ -809,8 +833,9 @@ export default function PengajuanPinjaman({
     (sum, item) => sum + Number(item.monthlyInstallment || 0),
     0
   );
+  const grossDisbursementBase = isGoodsMarkup ? numericCostPrice : Number(amount || 0);
   const isTopUpValid =
-    sameTypeSettlementTotal === 0 || Number(effectiveAmount || 0) > sameTypeSettlementTotal;
+    sameTypeSettlementTotal === 0 || grossDisbursementBase > sameTypeSettlementTotal;
 
   const baseThpRemainingForEligibility = thpData
     ? (thpData.angsuran_lain_lain !== undefined
@@ -825,6 +850,13 @@ export default function PengajuanPinjaman({
 
   const isTHPEligible = () => eligibility.isEligible;
 
+  const selectedMemberObj = anggotaList.find((a) => String(a.id) === String(selectedAnggota));
+  const ageEligibility = validateMaxLoanAge(
+    selectedMemberObj?.tanggal_lahir,
+    effectiveTenor,
+    maxLoanAgeYears
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isGoodsFormValid) {
@@ -835,8 +867,19 @@ export default function PengajuanPinjaman({
       setError(`Tenor pinjaman harus berada di antara 1 hingga ${maxTenor} bulan.`);
       return;
     }
+    if (!ageEligibility.eligible) {
+      setError(
+        ageEligibility.errorMessage ||
+          `Pengajuan ditolak: Proyeksi usia anggota saat lunas melebihi batas maksimal ${maxLoanAgeYears} tahun.`
+      );
+      return;
+    }
     if (!isTopUpValid) {
-      setError(`Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`);
+      setError(
+        isGoodsMarkup
+          ? `Harga modal / nilai pencairan baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`
+          : `Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama (Rp ${sameTypeSettlementTotal.toLocaleString('id-ID')}).`
+      );
       return;
     }
     if (thpData !== null && !isTHPEligible()) {
@@ -857,7 +900,7 @@ export default function PengajuanPinjaman({
       const settlementSummary = sameTypeActiveLoans
         .map((l) => `${l.loanNumber} (Rp ${Number(l.remainingPrincipal).toLocaleString('id-ID')})`)
         .join(', ');
-      const netDisbursed = Math.max(0, Number(effectiveAmount || 0) - sameTypeSettlementTotal);
+      const netDisbursed = Math.max(0, grossDisbursementBase - sameTypeSettlementTotal);
       const basePurpose = isGoodsMarkup
         ? (purpose.trim() || `Pembiayaan Barang: ${itemDescription.trim()}`)
         : purpose;
@@ -1222,13 +1265,45 @@ export default function PengajuanPinjaman({
                       )}
                     </div>
                   )}
+
+                  {selectedAnggota && effectiveTenor > 0 && (
+                    ageEligibility.hasBirthDate && ageEligibility.projectedEndAgeYears !== null ? (
+                      <div
+                        className={`mt-2 p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                          ageEligibility.eligible
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                            : 'bg-rose-50 border-rose-200 text-rose-700'
+                        }`}
+                      >
+                        {ageEligibility.eligible ? (
+                          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        )}
+                        <div className="space-y-0.5">
+                          <div className="font-semibold">
+                            {ageEligibility.formattedSummary} (Batas Maks: {maxLoanAgeYears} Thn)
+                          </div>
+                          {!ageEligibility.eligible && ageEligibility.errorMessage && (
+                            <p className="text-rose-700 font-medium leading-relaxed">
+                              {ageEligibility.errorMessage}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-1.5 text-[11px] text-slate-500">
+                        Tanggal lahir anggota belum diisi (validasi usia dilewati).
+                      </p>
+                    )
+                  )}
                 </div>
               </div>
 
               <div className="pt-4 border-t border-gray-100 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isGoodsFormValid || !isTenorValid || !isTopUpValid || (thpData !== null && !isTHPEligible())}
+                  disabled={submitting || !selectedAnggota || !selectedLoanTypeId || !isGoodsFormValid || !isTenorValid || !isTopUpValid || !ageEligibility.eligible || (thpData !== null && !isTHPEligible())}
                   className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50 transition-colors"
                 >
                   {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}

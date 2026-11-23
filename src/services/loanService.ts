@@ -36,6 +36,7 @@ export interface Loan {
   loan_type_id?: string;
   refinanced_loan_id?: string | null;
   topup_settlement_amount?: number;
+  topup_old_loan_numbers?: string[];
   notes: string;
   amount: number;
   principal_amount?: number;
@@ -47,7 +48,7 @@ export interface Loan {
   tenor: number;
   monthly_target: number;
   sisa_pinjaman?: number;
-  status: 'draft' | 'approved' | 'active' | 'paid_off' | 'defaulted' | 'completed' | 'rejected';
+  status: 'draft' | 'approved' | 'active' | 'berjalan' | 'disbursed' | 'paid_off' | 'defaulted' | 'completed' | 'rejected';
   disbursed_at: string | null;
   created_at: string;
   updated_at?: string;
@@ -83,6 +84,30 @@ export interface GoodsMarkupScheduleItem {
   principal_portion: number;
   margin_portion: number;
   target_amount: number;
+}
+
+export const ACTIVE_RUNNING_LOAN_STATUSES = ['berjalan', 'active', 'approved', 'disbursed'];
+export const ACTIVE_RUNNING_LOAN_STATUSES_ENUM_SAFE = ['active', 'approved'];
+
+export function isRunningLoanStatus(status?: string | null): boolean {
+  return ACTIVE_RUNNING_LOAN_STATUSES.includes(String(status || '').trim().toLowerCase());
+}
+
+function isInvalidEnumStatusError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return code === '22P02' || msg.includes('invalid input value for enum');
+}
+
+async function runEnumSafeLoanStatusQuery<T>(
+  runner: (statuses: string[]) => Promise<T>
+): Promise<T> {
+  const primaryRes = await runner(ACTIVE_RUNNING_LOAN_STATUSES);
+  if ((primaryRes as any)?.error && isInvalidEnumStatusError((primaryRes as any).error)) {
+    return await runner(ACTIVE_RUNNING_LOAN_STATUSES_ENUM_SAFE);
+  }
+  return primaryRes;
 }
 
 export function isGoodsMarkupLoanType(loanType?: Partial<LoanType> | null): boolean {
@@ -643,20 +668,47 @@ export async function syncInitialLoanBalances(
 }
 
 /**
- * Menghitung sisa pokok riil sebuah kontrak pinjaman langsung dari:
- * principal_amount - SUM(loan_schedules.paid_amount), dengan fallback ke sisa_pinjaman
- * jika jadwal angsuran belum tersedia.
+ * Menghitung sisa kewajiban riil sebuah kontrak pinjaman langsung dari:
+ * total_tagihan - SUM(paid_amount) di loan_schedules / loan_installments,
+ * dengan fallback ke sisa_pinjaman jika jadwal angsuran belum tersedia.
  */
 export function computeRealRemainingPrincipal(loan: any): number {
   const principal = Number(loan?.principal_amount ?? loan?.amount ?? 0);
   const schedules = Array.isArray(loan?.loan_schedules) ? loan.loan_schedules : [];
 
   if (schedules.length > 0) {
+    const totalTarget = schedules.reduce(
+      (sum: number, s: any) => sum + Number(s?.target_amount || 0),
+      0
+    );
+    const totalObligation = Math.max(principal, totalTarget);
     const totalPaidFromSchedules = schedules.reduce(
       (sum: number, s: any) => sum + Number(s?.paid_amount || 0),
       0
     );
-    return Math.max(0, Math.round(principal - totalPaidFromSchedules));
+    return Math.max(0, Math.round(totalObligation - totalPaidFromSchedules));
+  }
+
+  const installments = Array.isArray(loan?.loan_installments) ? loan.loan_installments : [];
+  if (installments.length > 0) {
+    const totalInstTarget = installments.reduce(
+      (sum: number, i: any) => sum + Number(i?.target_amount ?? i?.amount ?? 0),
+      0
+    );
+    const totalObligation = Math.max(principal, totalInstTarget);
+    const totalPaidFromInstallments = installments.reduce(
+      (sum: number, i: any) =>
+        sum +
+        Number(
+          i?.paid_amount ??
+            i?.amount_paid ??
+            (String(i?.status || '').toLowerCase() === 'paid'
+              ? (i?.target_amount ?? i?.amount ?? 0)
+              : 0)
+        ),
+      0
+    );
+    return Math.max(0, Math.round(totalObligation - totalPaidFromInstallments));
   }
 
   return Math.max(0, Math.round(Number(loan?.sisa_pinjaman ?? principal)));
@@ -664,7 +716,7 @@ export function computeRealRemainingPrincipal(loan: any): number {
 
 /**
  * Menyelaraskan nilai topup_settlement_amount pada pengajuan yang masih pending
- * agar selalu mencerminkan sisa pokok riil dari loan_schedules kontrak lama,
+ * agar selalu mencerminkan sisa kewajiban riil dari loan_schedules kontrak lama,
  * bukan kolom sisa_pinjaman yang mungkin belum sinkron.
  */
 async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]> {
@@ -692,11 +744,13 @@ async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]
     const activeLoansById = new Map<string, any>();
 
     if (memberIds.length > 0) {
-      const activeRes: any = await supabase
-        .from('loans')
-        .select('id, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
-        .in('member_id', memberIds)
-        .in('status', ['active', 'approved']);
+      const activeRes: any = await runEnumSafeLoanStatusQuery(async (statuses) =>
+        await supabase
+          .from('loans')
+          .select('id, loan_number, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
+          .in('member_id', memberIds)
+          .in('status', statuses)
+      );
 
       for (const row of activeRes?.data || []) {
         if (row?.id) {
@@ -709,11 +763,12 @@ async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]
     if (missingRefIds.length > 0) {
       const refRes: any = await supabase
         .from('loans')
-        .select('id, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
+        .select('id, loan_number, member_id, loan_type_id, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
         .in('id', missingRefIds);
 
       for (const row of refRes?.data || []) {
-        if (row?.id && row.status !== 'paid_off') {
+        const statusLower = String(row?.status || '').trim().toLowerCase();
+        if (row?.id && !['paid_off', 'completed', 'lunas', 'paid', 'rejected'].includes(statusLower)) {
           activeLoansById.set(String(row.id), row);
         }
       }
@@ -735,7 +790,7 @@ async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]
             String(oldLoan.id) !== String(app.id) &&
             String(oldLoan.member_id) === String(app.member_id) &&
             String(oldLoan.loan_type_id) === String(app.loan_type_id) &&
-            (oldLoan.status === 'active' || oldLoan.status === 'approved') &&
+            (!oldLoan.status || isRunningLoanStatus(oldLoan.status)) &&
             computeRealRemainingPrincipal(oldLoan) > 0
           ) {
             matchedOldLoans.set(String(oldLoan.id), oldLoan);
@@ -745,9 +800,10 @@ async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]
 
       if (app.refinanced_loan_id) {
         const refLoan = activeLoansById.get(String(app.refinanced_loan_id));
+        const refStatusLower = String(refLoan?.status || '').trim().toLowerCase();
         if (
           refLoan &&
-          refLoan.status !== 'paid_off' &&
+          !['paid_off', 'completed', 'lunas', 'paid', 'rejected'].includes(refStatusLower) &&
           !matchedOldLoans.has(String(refLoan.id)) &&
           computeRealRemainingPrincipal(refLoan) > 0
         ) {
@@ -763,10 +819,14 @@ async function enrichPendingTopupSettlements(applications: any[]): Promise<any[]
         (sum, oldLoan) => sum + computeRealRemainingPrincipal(oldLoan),
         0
       );
+      const oldLoanNumbers = Array.from(matchedOldLoans.values())
+        .map((l) => l.loan_number)
+        .filter((num): num is string => Boolean(num && String(num).trim()));
 
       return {
         ...app,
         topup_settlement_amount: realSettlement,
+        ...(oldLoanNumbers.length > 0 ? { topup_old_loan_numbers: oldLoanNumbers } : {}),
       };
     });
   } catch (err) {
@@ -975,16 +1035,23 @@ export const loanService = {
       : (memberData?.take_home_pay ?? memberData?.master_thp ?? memberData?.salary ?? 0);
     const masterThp = cleanNumber(rawThp);
 
-    // 2. Get active loans
-    const { data: activeLoans, error: loansError } = await supabase
-      .from('loans')
-      .select('monthly_target')
-      .eq('member_id', memberId)
-      .in('status', ['approved', 'active']);
+    // 2. Get active/running loans
+    const loansRes: any = await runEnumSafeLoanStatusQuery(async (statuses) =>
+      await supabase
+        .from('loans')
+        .select('monthly_target, planned_installment_amount, status')
+        .eq('member_id', memberId)
+        .in('status', statuses)
+    );
+    const { data: activeLoans, error: loansError } = loansRes || {};
 
     if (loansError) throw new Error(loansError.message);
 
-    const activeInstallments = (activeLoans || []).reduce((sum, loan) => sum + Number(loan.monthly_target || 0), 0);
+    const activeInstallments = (activeLoans || []).reduce(
+      (sum: number, loan: any) =>
+        sum + Number(loan.monthly_target ?? loan.planned_installment_amount ?? 0),
+      0
+    );
 
     // 3. Get active savings rate tiers & member deposit commitments
     let savingsDeduction = 0;
@@ -1133,10 +1200,14 @@ export const loanService = {
       : effectiveAmount / tenor;
     const settlementAmount = Math.max(0, Number(topUpOptions?.topupSettlementAmount || 0));
     const replacedInstallment = Math.max(0, Number(topUpOptions?.replacedMonthlyInstallment || 0));
+    const grossDisbursementBase = isGoodsMarkup ? costPrice : effectiveAmount;
 
-    if (settlementAmount > 0 && effectiveAmount <= settlementAmount) {
+    if (settlementAmount > 0 && grossDisbursementBase <= settlementAmount) {
+      const baseLabel = isGoodsMarkup
+        ? 'Harga modal / nilai pencairan baru'
+        : 'Plafon pinjaman baru';
       throw new Error(
-        `Plafon pinjaman baru (Rp ${effectiveAmount.toLocaleString('id-ID')}) harus lebih besar dari sisa pinjaman lama yang dilunasi (Rp ${settlementAmount.toLocaleString('id-ID')}).`
+        `${baseLabel} (Rp ${grossDisbursementBase.toLocaleString('id-ID')}) harus lebih besar dari sisa pinjaman lama yang dilunasi (Rp ${settlementAmount.toLocaleString('id-ID')}).`
       );
     }
 
@@ -1403,27 +1474,36 @@ export const loanService = {
       }
     }
 
-    // 4b. Pelunasan otomatis kontrak pinjaman lama sejenis jika ini adalah pengajuan Top-Up (hanya untuk pinjaman tunai / refinanced explicit)
+    // 4b. Pelunasan otomatis penuh kontrak pinjaman lama sejenis (termasuk status 'berjalan' & skema pembiayaan)
     let totalSettlementAmt = 0;
+    const settledOldLoanNumbers: string[] = [];
+    const settledOldLoanIds: string[] = [];
     const memberIdForTopup = loanRecord.member_id || existingLoan?.member_id;
     const loanTypeIdForTopup = loanRecord.loan_type_id || existingLoan?.loan_type_id;
     const refinancedLoanId = loanRecord.refinanced_loan_id || existingLoan?.refinanced_loan_id || null;
 
-    if ((!isGoodsMarkup || Boolean(refinancedLoanId)) && memberIdForTopup && (loanTypeIdForTopup || refinancedLoanId)) {
+    if (memberIdForTopup && (loanTypeIdForTopup || refinancedLoanId)) {
       try {
         const oldLoansMap = new Map<string, any>();
 
-        if (loanTypeIdForTopup && !isGoodsMarkup) {
-          const sameTypeRes: any = await supabase
-            .from('loans')
-            .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
-            .eq('member_id', memberIdForTopup)
-            .eq('loan_type_id', loanTypeIdForTopup)
-            .in('status', ['active', 'approved'])
-            .neq('id', targetLoanId);
+        if (loanTypeIdForTopup) {
+          const sameTypeRes: any = await runEnumSafeLoanStatusQuery(async (statuses) =>
+            await supabase
+              .from('loans')
+              .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, notes, loan_schedules ( id, target_amount, paid_amount, status )')
+              .eq('member_id', memberIdForTopup)
+              .eq('loan_type_id', loanTypeIdForTopup)
+              .in('status', statuses)
+              .neq('id', targetLoanId)
+          );
 
           for (const row of sameTypeRes?.data || []) {
-            if (row?.id && computeRealRemainingPrincipal(row) > 0) {
+            if (
+              row?.id &&
+              String(row.id) !== String(targetLoanId) &&
+              (!row.status || isRunningLoanStatus(row.status)) &&
+              computeRealRemainingPrincipal(row) > 0
+            ) {
               oldLoansMap.set(String(row.id), row);
             }
           }
@@ -1432,26 +1512,48 @@ export const loanService = {
         if (refinancedLoanId && !oldLoansMap.has(String(refinancedLoanId))) {
           const refRes: any = await supabase
             .from('loans')
-            .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, loan_schedules ( id, target_amount, paid_amount, status )')
+            .select('id, loan_number, principal_amount, amount, sisa_pinjaman, status, notes, loan_schedules ( id, target_amount, paid_amount, status )')
             .eq('id', refinancedLoanId)
             .maybeSingle();
           const refRow = refRes?.data;
-          if (refRow?.id && refRow.status !== 'paid_off' && computeRealRemainingPrincipal(refRow) > 0) {
+          const refStatusLower = String(refRow?.status || '').trim().toLowerCase();
+          if (
+            refRow?.id &&
+            !['paid_off', 'completed', 'lunas', 'paid', 'rejected'].includes(refStatusLower) &&
+            computeRealRemainingPrincipal(refRow) > 0
+          ) {
             oldLoansMap.set(String(refRow.id), refRow);
           }
         }
 
+        const newLoanNumber = String(
+          loanRecord.loan_number || existingLoan?.loan_number || targetLoanId
+        );
+
         for (const oldLoan of oldLoansMap.values()) {
           const settlementAmt = computeRealRemainingPrincipal(oldLoan);
           totalSettlementAmt += settlementAmt;
+          settledOldLoanIds.push(String(oldLoan.id));
+          settledOldLoanNumbers.push(String(oldLoan.loan_number || oldLoan.id));
 
-          const { data: unpaidOldSchedules } = await supabase
+          const oldSchedQuery: any = supabase
             .from('loan_schedules')
-            .select('id, target_amount, paid_amount, status')
-            .eq('loan_id', oldLoan.id)
-            .neq('status', 'paid');
+            .select('id, period_number, target_amount, paid_amount, status')
+            .eq('loan_id', oldLoan.id);
+          const oldSchedRes =
+            typeof oldSchedQuery?.then === 'function'
+              ? await oldSchedQuery
+              : typeof oldSchedQuery?.neq === 'function'
+                ? await oldSchedQuery.neq('status', 'paid')
+                : { data: [] };
 
-          for (const sch of unpaidOldSchedules || []) {
+          const schedulesToSettle = (oldSchedRes?.data || []).filter(
+            (sch: any) =>
+              String(sch?.status || '').trim().toLowerCase() !== 'paid' ||
+              Number(sch?.paid_amount || 0) < Number(sch?.target_amount || 0)
+          );
+
+          for (const sch of schedulesToSettle) {
             await supabase
               .from('loan_schedules')
               .update({
@@ -1459,6 +1561,30 @@ export const loanService = {
                 status: 'paid',
               })
               .eq('id', sch.id);
+          }
+
+          // Sinkronkan tabel loan_installments secara non-blocking jika digunakan
+          try {
+            const instTable: any = supabase.from('loan_installments');
+            if (instTable && typeof instTable.select === 'function') {
+              const instRes: any = await instTable
+                .select('id, target_amount, amount, paid_amount, status')
+                .eq('loan_id', oldLoan.id);
+              for (const inst of instRes?.data || []) {
+                const instStatus = String(inst?.status || '').trim().toLowerCase();
+                const instTarget = Number(inst?.target_amount ?? inst?.amount ?? 0);
+                const instPaid = Number(inst?.paid_amount ?? inst?.amount_paid ?? 0);
+                if (instStatus !== 'paid' || (instTarget > 0 && instPaid < instTarget)) {
+                  const instUpdatePayload: Record<string, any> = { status: 'paid' };
+                  if (inst?.paid_amount !== undefined && instTarget > 0) {
+                    instUpdatePayload.paid_amount = instTarget;
+                  }
+                  await instTable.update(instUpdatePayload).eq('id', inst.id);
+                }
+              }
+            }
+          } catch {
+            // Non-blocking jika tabel loan_installments tidak digunakan atau tidak tersedia
           }
 
           if (settlementAmt > 0) {
@@ -1469,30 +1595,82 @@ export const loanService = {
               payment_method: 'TOPUP_COMPENSATION',
               payment_date: new Date().toISOString(),
               receipt_number: `KW-TOPUP-${Date.now()}`,
-              notes: `Pelunasan otomatis via top-up pinjaman baru ${loanRecord.loan_number || targetLoanId}`,
+              notes: `Pelunasan otomatis s/d angsuran terakhir melalui pinjaman baru ${newLoanNumber}`,
             });
           }
 
-          await supabase
+          const oldCompNote = `[LUNAS KOMPENSASI] Dilunasi penuh s/d angsuran terakhir sebesar Rp ${formatRupiahPlain(settlementAmt)} dari pencairan pinjaman baru ${newLoanNumber}`;
+          const existingOldNotes = String(oldLoan.notes || '').trim();
+          const updatedOldNotes = existingOldNotes.includes('[LUNAS KOMPENSASI]')
+            ? existingOldNotes
+            : existingOldNotes
+              ? `${existingOldNotes} | ${oldCompNote}`
+              : oldCompNote;
+
+          const oldLoanUpdateRes: any = await supabase
             .from('loans')
             .update({
               status: 'paid_off',
               sisa_pinjaman: 0,
+              notes: updatedOldNotes,
               updated_at: new Date().toISOString(),
             })
             .eq('id', oldLoan.id);
+
+          if (oldLoanUpdateRes?.error) {
+            const fallbackOldUpdate: Record<string, any> = {
+              status: isInvalidEnumStatusError(oldLoanUpdateRes.error) ? 'completed' : 'paid_off',
+              updated_at: new Date().toISOString(),
+            };
+            if (!isMissingColumnError(oldLoanUpdateRes.error)) {
+              fallbackOldUpdate.sisa_pinjaman = 0;
+              fallbackOldUpdate.notes = updatedOldNotes;
+            }
+            await supabase.from('loans').update(fallbackOldUpdate).eq('id', oldLoan.id);
+          }
         }
 
-        // Perbarui topup_settlement_amount pada kontrak baru agar sinkron dengan sisa pokok riil
+        // Perbarui topup_settlement_amount & catatan kompensasi pada kontrak baru
         if (oldLoansMap.size > 0 && totalSettlementAmt > 0) {
-          await supabase
+          const grossDisbursementBase = isGoodsMarkup ? costPrice : finalPrincipal;
+          const netCashToBorrower = Math.max(0, grossDisbursementBase - totalSettlementAmt);
+          const newCompNote = `[KOMPENSASI PELUNASAN SEJENIS] Pencairan Rp ${formatRupiahPlain(grossDisbursementBase)} dipotong pelunasan ${settledOldLoanNumbers.join(', ')} sebesar Rp ${formatRupiahPlain(totalSettlementAmt)} • Sisa uang diterima peminjam: Rp ${formatRupiahPlain(netCashToBorrower)}`;
+          const existingNewNotes = String(loanRecord.notes ?? existingLoan?.notes ?? '').trim();
+          const updatedNewNotes = existingNewNotes.includes('[KOMPENSASI PELUNASAN SEJENIS]')
+            ? existingNewNotes
+            : existingNewNotes
+              ? `${existingNewNotes} | ${newCompNote}`
+              : newCompNote;
+
+          const newLoanCompensationPayload: Record<string, any> = {
+            topup_settlement_amount: totalSettlementAmt,
+            notes: updatedNewNotes,
+            updated_at: new Date().toISOString(),
+          };
+          if (!refinancedLoanId && settledOldLoanIds[0]) {
+            newLoanCompensationPayload.refinanced_loan_id = settledOldLoanIds[0];
+          }
+
+          const newUpdRes: any = await supabase
             .from('loans')
-            .update({
-              topup_settlement_amount: totalSettlementAmt,
-              updated_at: new Date().toISOString(),
-            })
+            .update(newLoanCompensationPayload)
             .eq('id', targetLoanId);
+
+          if (newUpdRes?.error && isMissingColumnError(newUpdRes.error)) {
+            await supabase
+              .from('loans')
+              .update({
+                notes: updatedNewNotes,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', targetLoanId);
+          }
+
           loanRecord.topup_settlement_amount = totalSettlementAmt;
+          loanRecord.notes = updatedNewNotes;
+          if (!loanRecord.refinanced_loan_id && settledOldLoanIds[0]) {
+            loanRecord.refinanced_loan_id = settledOldLoanIds[0];
+          }
         }
       } catch (topupErr) {
         console.warn('Gagal memproses pelunasan otomatis pinjaman top-up:', topupErr);
@@ -1500,15 +1678,13 @@ export const loanService = {
     }
 
     // 4c. Catat pengeluaran kas riil ke public.cash_flow secara idempoten
-    // Untuk Pembiayaan Barang: kas keluar dicatat sebesar Harga Beli/Modal ke Supplier (cost_price)
-    const effectiveSettlement = isGoodsMarkup
-      ? 0
-      : totalSettlementAmt > 0
+    // Untuk Pembiayaan Barang: dasar pencairan adalah Harga Beli/Modal ke Supplier (cost_price)
+    const effectiveSettlement =
+      totalSettlementAmt > 0
         ? totalSettlementAmt
         : Math.max(0, Number(loanRecord.topup_settlement_amount ?? existingLoan?.topup_settlement_amount ?? 0));
-    const disbursementOutflowAmount = isGoodsMarkup
-      ? costPrice
-      : Math.max(0, finalPrincipal - effectiveSettlement);
+    const grossDisbursementBase = isGoodsMarkup ? costPrice : finalPrincipal;
+    const disbursementOutflowAmount = Math.max(0, grossDisbursementBase - effectiveSettlement);
 
     if (disbursementOutflowAmount > 0) {
       let cashFlowInsertError: Error | null = null;
@@ -1582,7 +1758,7 @@ export const loanService = {
             ).trim();
 
             const cfDescription = isGoodsMarkup
-              ? `Pembiayaan Barang (${itemDesc}) — ${memberSegment} | Modal Supplier: Rp ${formatRupiahPlain(costPrice)} (Harga Jual Akad: Rp ${formatRupiahPlain(finalPrincipal)})`
+              ? `Pembiayaan Barang (${itemDesc}) — ${memberSegment} | Modal Supplier: Rp ${formatRupiahPlain(costPrice)} (Harga Jual Akad: Rp ${formatRupiahPlain(finalPrincipal)})${effectiveSettlement > 0 ? ` • Potong Top-Up: Rp ${formatRupiahPlain(effectiveSettlement)}` : ''}`
               : `Pencairan Pinjaman${loanNumberSeg} — ${memberSegment} (Tenor ${tenor} Bln${effectiveSettlement > 0 ? `, Potong Top-Up: Rp ${formatRupiahPlain(effectiveSettlement)}` : ''})`;
 
             const cfCategory = isGoodsMarkup ? 'pembiayaan_barang' : 'pencairan_pinjaman';

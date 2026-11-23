@@ -1007,7 +1007,7 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('Mode Perpanjangan / Top-Up (Bon Barang)');
       expect(html).toContain('LOAN-1794788414918');
       expect(html).toContain('625.000');
-      expect(html).toContain('Dana Bersih Diterima Anggota');
+      expect(html).toContain('Sisa Uang Diterima Peminjam');
       expect(html).toContain('1.375.000');
       // Sisa THP Akhir: 5.000.000 - 0 (other types) - 200.000 (savings) - 500.000 (new installment) = 4.300.000
       expect(html).toContain('4.300.000');
@@ -1032,6 +1032,141 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       );
 
       expect(html).toContain('Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama');
+    });
+
+    it('computes net cash payout using costPrice for GOODS_MARKUP same-type top-up and warns when costPrice <= settlement', () => {
+      const oldGoodsLoan = {
+        id: 'loan-old-brg',
+        loanNumber: 'LOAN-OLD-BRG-01',
+        loanTypeId: 'lt-barang',
+        typeName: 'Pembiayaan Barang',
+        tenor: 10,
+        monthlyInstallment: 250000,
+        remainingPrincipal: 2000000,
+      };
+
+      const validHtml = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={{
+            master_thp: 6000000,
+            active_installments: 250000,
+            savings_deduction: 200000,
+            remaining_thp: 5550000,
+          }}
+          activeLoanBreakdown={[oldGoodsLoan]}
+          sameTypeActiveLoans={[oldGoodsLoan]}
+          selectedLoanTypeName="Pembiayaan Barang"
+          newInstallment={575000}
+          amount={5750000}
+          tenor={10}
+          isGoodsMarkup={true}
+          itemDescription="Motor Listrik"
+          costPrice={5000000}
+          markupAmount={750000}
+        />
+      );
+
+      expect(validHtml).toContain('Nilai Pencairan Pinjaman Baru:');
+      expect(validHtml).toContain('5.000.000');
+      expect(validHtml).toContain('Potongan Pelunasan LOAN-OLD-BRG-01:');
+      expect(validHtml).toContain('2.000.000');
+      expect(validHtml).toContain('Sisa Uang Diterima Peminjam:');
+      expect(validHtml).toContain('3.000.000');
+
+      const invalidHtml = renderToStaticMarkup(
+        <SimulationPanel
+          thpData={{
+            master_thp: 6000000,
+            active_installments: 250000,
+            savings_deduction: 200000,
+            remaining_thp: 5550000,
+          }}
+          activeLoanBreakdown={[oldGoodsLoan]}
+          sameTypeActiveLoans={[oldGoodsLoan]}
+          selectedLoanTypeName="Pembiayaan Barang"
+          newInstallment={230000}
+          amount={2300000}
+          tenor={10}
+          isGoodsMarkup={true}
+          itemDescription="Kulkas"
+          costPrice={2000000}
+          markupAmount={300000}
+        />
+      );
+
+      expect(invalidHtml).toContain('Harga modal / nilai pencairan baru harus lebih besar dari sisa pinjaman lama');
+    });
+
+    it('renders full page simulation for anggota tes 1 with running Pinjaman Reguler (Rp 2.000.000 remaining) and locks submit if plafon <= 2.000.000', () => {
+      const loanTypes: LoanType[] = [
+        {
+          id: 'lt-reg',
+          code: 'REGULER',
+          name: 'Pinjaman Reguler',
+          max_duration_months: 12,
+          is_active: true,
+        },
+      ];
+      const existingBreakdown = [
+        {
+          id: 'loan-old-tes1',
+          loanNumber: 'LOAN-1795333396946',
+          loanTypeId: 'lt-reg',
+          typeName: 'Pinjaman Reguler',
+          tenor: 11,
+          monthlyInstallment: 200000,
+          remainingPrincipal: 2000000,
+        },
+      ];
+
+      const validPageHtml = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-tes-1"
+          initialAnggotaList={[{ id: 'm-tes-1', nrp: '100001', nama: 'anggota tes 1' }]}
+          initialLoanTypes={loanTypes}
+          initialSelectedLoanTypeId="lt-reg"
+          initialPurpose="Top-Up Reguler"
+          initialAmount={5000000}
+          initialTenor={10}
+          initialActiveLoanBreakdown={existingBreakdown}
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 200000,
+            angsuran_lain_lain: 0,
+            savings_deduction: 200000,
+            remaining_thp: 4600000,
+          }}
+        />
+      );
+
+      expect(validPageHtml).toContain('LOAN-1795333396946');
+      expect(validPageHtml).toContain('[Dilunasi Top-Up]');
+      expect(validPageHtml).toContain('Potongan Pelunasan LOAN-1795333396946:');
+      expect(validPageHtml).toContain('3.000.000');
+      expect(validPageHtml).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+
+      const lockedPageHtml = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-tes-1"
+          initialAnggotaList={[{ id: 'm-tes-1', nrp: '100001', nama: 'anggota tes 1' }]}
+          initialLoanTypes={loanTypes}
+          initialSelectedLoanTypeId="lt-reg"
+          initialPurpose="Top-Up Reguler"
+          initialAmount={2000000}
+          initialTenor={10}
+          initialActiveLoanBreakdown={existingBreakdown}
+          initialThpData={{
+            master_thp: 5000000,
+            active_installments: 200000,
+            angsuran_lain_lain: 0,
+            savings_deduction: 200000,
+            remaining_thp: 4600000,
+          }}
+        />
+      );
+
+      expect(lockedPageHtml).toContain('Plafon pinjaman baru harus lebih besar dari sisa pinjaman lama');
+      expect(lockedPageHtml).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
     });
   });
 
@@ -1102,6 +1237,90 @@ describe('PengajuanPinjaman Page & SimulationPanel Integration', () => {
       expect(html).toContain('460.000');
       expect(html).toContain('Memenuhi Syarat');
       expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+  });
+
+  describe('Max Loan Age Eligibility Validation', () => {
+    const fiftySevenYearsAgoIso = new Date(
+      Date.now() - 57 * 365.2425 * 24 * 60 * 60 * 1000
+    )
+      .toISOString()
+      .slice(0, 10);
+
+    const ageTestLoanTypes: LoanType[] = [
+      {
+        id: 'lt-reguler',
+        code: 'REGULER',
+        name: 'Pinjaman Reguler',
+        max_duration_months: 36,
+        is_active: true,
+        financing_scheme: 'CASH_ZERO_INTEREST',
+      },
+    ];
+
+    it('allows 57-year-old member with 6 months tenor when max age is 58', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-57"
+          initialAnggotaList={[
+            {
+              id: 'm-57',
+              nrp: '57001',
+              nama: 'Aiptu Senior',
+              tanggal_lahir: fiftySevenYearsAgoIso,
+            },
+          ]}
+          initialLoanTypes={ageTestLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Kebutuhan Keluarga"
+          initialAmount={3000000}
+          initialTenor={6}
+          initialMaxLoanAgeYears={58}
+          initialThpData={{
+            master_thp: 6000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 5800000,
+          }}
+        />
+      );
+
+      expect(html).toContain('Batas Maks: 58 Thn');
+      expect(html).toContain('Tenor 6 Bln (0,5 Thn)');
+      expect(html).not.toContain('Pengajuan ditolak:');
+      expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
+    });
+
+    it('blocks 57-year-old member with 24 months tenor when max age is 58', () => {
+      const html = renderToStaticMarkup(
+        <PengajuanPinjaman
+          initialSelectedAnggota="m-57"
+          initialAnggotaList={[
+            {
+              id: 'm-57',
+              nrp: '57001',
+              nama: 'Aiptu Senior',
+              tanggal_lahir: fiftySevenYearsAgoIso,
+            },
+          ]}
+          initialLoanTypes={ageTestLoanTypes}
+          initialSelectedLoanTypeId="lt-reguler"
+          initialPurpose="Kebutuhan Keluarga"
+          initialAmount={6000000}
+          initialTenor={24}
+          initialMaxLoanAgeYears={58}
+          initialThpData={{
+            master_thp: 6000000,
+            active_installments: 0,
+            savings_deduction: 200000,
+            remaining_thp: 5800000,
+          }}
+        />
+      );
+
+      expect(html).toContain('Pengajuan ditolak:');
+      expect(html).toContain('melebihi batas usia maksimal 58 tahun');
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*>\s*<svg[^>]*>.*?<\/svg>\s*Ajukan Pinjaman/s);
     });
   });
 });

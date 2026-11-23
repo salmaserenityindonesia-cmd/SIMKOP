@@ -307,6 +307,55 @@ export default function LoanDetailModal({
                 </div>
               )}
 
+              {/* Ringkasan Kompensasi Pelunasan Pinjaman Lama Sejenis jika berlaku */}
+              {Number(pinjaman.topup_settlement_amount || 0) > 0 && (() => {
+                const settlementAmt = Number(pinjaman.topup_settlement_amount || 0);
+                const grossBase = isGoodsMarkupLoan(pinjaman)
+                  ? Number(
+                      pinjaman.cost_price ??
+                        Math.max(0, principalAmount - Number(pinjaman.markup_amount || 0))
+                    )
+                  : principalAmount;
+                const netCash = Math.max(0, grossBase - settlementAmt);
+                return (
+                  <div className="bg-indigo-50/70 rounded-xl border border-indigo-200 p-4 space-y-2 text-xs sm:text-sm">
+                    <div className="font-bold text-indigo-900">
+                      Rincian Kompensasi Pelunasan Pinjaman Lama Sejenis
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                      <div>
+                        <p className="text-indigo-700 text-xs">Nilai Pencairan</p>
+                        <p className="font-semibold text-indigo-950">
+                          Rp {grossBase.toLocaleString('id-ID')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-rose-700 text-xs">Potongan Pelunasan Pinjaman Lama</p>
+                        <p className="font-semibold text-rose-800">
+                          - Rp {settlementAmt.toLocaleString('id-ID')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-emerald-700 text-xs">Sisa Uang Diterima Peminjam</p>
+                        <p className="font-bold text-emerald-900">
+                          Rp {netCash.toLocaleString('id-ID')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Catatan / Keterangan Kontrak */}
+              {pinjaman.notes && String(pinjaman.notes).trim().length > 0 && (
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs sm:text-sm">
+                  <p className="text-xs font-semibold text-slate-600 mb-1">
+                    Catatan / Keterangan Kontrak
+                  </p>
+                  <p className="text-slate-800 leading-relaxed">{pinjaman.notes}</p>
+                </div>
+              )}
+
               {/* Jadwal Angsuran Table */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="px-5 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">

@@ -1802,4 +1802,51 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).not.toContain('data-testid="trace-target-indicator"');
     });
   });
+
+  describe('Top-Up Compensation Badge Rendering', () => {
+    it('renders Kompensasi Top-Up badge when topupSettlementAmount > 0', () => {
+      const topupSummary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 0,
+        totalCollectedYTD: 0,
+        projectedNextMonth: 500000,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            id: 'loan-new-topup',
+            loanId: 'loan-new-topup',
+            loanNumber: 'LOAN-1795422216507',
+            status: 'active',
+            memberId: 'mem-tes-1',
+            nrp: '100001',
+            nama: 'anggota tes 1',
+            loanTypeName: 'Pinjaman Reguler',
+            agreedTenorMonths: 10,
+            tenor: 10,
+            principalAmount: 5000000,
+            topupSettlementAmount: 2000000,
+            notes: '[KOMPENSASI PELUNASAN SEJENIS] Pencairan Rp 5.000.000',
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 0,
+            months: {
+              ...Array.from({ length: 12 }, (_, idx) => ({
+                month: idx + 1,
+                year: 2026,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, c) => ({ ...acc, [c.month]: c }), {}),
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={topupSummary} initialYear={2026} />
+      );
+      expect(html).toContain('Kompensasi Top-Up (-Rp 2.000.000)');
+      expect(html).toContain('LOAN-1795422216507');
+    });
+  });
 });

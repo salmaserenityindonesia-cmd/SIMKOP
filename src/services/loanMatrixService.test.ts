@@ -4175,6 +4175,90 @@ describe('loanMatrixService - Sinkronisasi Realisasi Angsuran antara getLoanMatr
     expect(row.paidInstallmentsCount).toBe(1);
     expect(row.months[12].paidAmount).toBe(1100000);
   });
+
+  it('excludes paid_off / zero-remaining old loan from default getLoanMatrix while keeping new top-up loan with topupSettlementAmount', async () => {
+    const oldSettledLoan = {
+      id: 'loan-old-settled',
+      loan_number: 'LOAN-1795333396946',
+      member_id: 'mem-tes-1',
+      principal_amount: 2200000,
+      amount: 2200000,
+      tenor: 11,
+      agreed_tenor_months: 11,
+      monthly_target: 200000,
+      sisa_pinjaman: 0,
+      status: 'paid_off',
+      notes: '[LUNAS KOMPENSASI]',
+      member: { id: 'mem-tes-1', nrp: '100001', nama: 'anggota tes 1', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const newTopupLoan = {
+      id: 'loan-new-topup',
+      loan_number: 'LOAN-1795422216507',
+      member_id: 'mem-tes-1',
+      principal_amount: 5000000,
+      amount: 5000000,
+      tenor: 10,
+      agreed_tenor_months: 10,
+      monthly_target: 500000,
+      sisa_pinjaman: 5000000,
+      topup_settlement_amount: 2000000,
+      refinanced_loan_id: 'loan-old-settled',
+      status: 'active',
+      notes: '[KOMPENSASI PELUNASAN SEJENIS]',
+      member: { id: 'mem-tes-1', nrp: '100001', nama: 'anggota tes 1', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const schedules = [
+      { id: 'sc-old-1', loan_id: 'loan-old-settled', period_number: 1, due_date: '2026-12-15', target_amount: 200000, paid_amount: 200000, status: 'paid', loan: oldSettledLoan },
+      { id: 'sc-new-1', loan_id: 'loan-new-topup', period_number: 1, due_date: '2026-12-23', target_amount: 500000, paid_amount: 0, status: 'unpaid', loan: newTopupLoan },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: 'loan-new-topup' }], error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-old-settled' }, { loan_id: 'loan-new-topup' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    expect(matrix.members).toHaveLength(1);
+    expect(matrix.members[0].loanNumber).toBe('LOAN-1795422216507');
+    expect(matrix.members[0].topupSettlementAmount).toBe(2000000);
+    expect(matrix.members[0].notes).toBe('[KOMPENSASI PELUNASAN SEJENIS]');
+  });
 });
 
 

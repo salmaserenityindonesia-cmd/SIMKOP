@@ -597,7 +597,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         rowStatusLower === 'paid';
       const matchStatus = 
         statusFilter === 'ALL' ? true :
-        statusFilter === 'ACTIVE' ? m.isLoanActive :
+        statusFilter === 'ACTIVE' ? (m.isLoanActive && !isRowCompleted && rowStatusLower !== 'rejected') :
         statusFilter === 'PAID' ? isRowCompleted :
         statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
         statusFilter === 'FROZEN' ? (
@@ -1302,6 +1302,14 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                               title={rowLoanNumber}
                             >
                               {rowLoanNumber}
+                            </span>
+                          )}
+                          {Number(row.topupSettlementAmount || 0) > 0 && (
+                            <span
+                              title={row.notes || undefined}
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200/80"
+                            >
+                              Kompensasi Top-Up (-Rp {Number(row.topupSettlementAmount).toLocaleString('id-ID')})
                             </span>
                           )}
                         </div>

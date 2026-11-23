@@ -300,6 +300,7 @@ describe('settingsService', () => {
       const settings = await getLoanSettings(true);
       expect(settings.minRemainingThp).toBe(DEFAULT_MIN_REMAINING_THP);
       expect(settings.minRemainingThp).toBe(1500000);
+      expect(settings.maxLoanAgeYears).toBe(58);
       expect(settings.ratNotes).toBe(DEFAULT_RAT_NOTES);
     });
 
@@ -312,6 +313,7 @@ describe('settingsService', () => {
                 id: 1,
                 nama_koperasi: 'KOPERASI PRIMKOPPOL',
                 min_remaining_thp: 2000000,
+                max_loan_age_years: 60,
                 min_thp_rat_notes: 'Keputusan RAT 2026 Batas Rp 2.000.000'
               },
               error: null
@@ -322,6 +324,7 @@ describe('settingsService', () => {
 
       const settings = await getLoanSettings(true);
       expect(settings.minRemainingThp).toBe(2000000);
+      expect(settings.maxLoanAgeYears).toBe(60);
       expect(settings.ratNotes).toBe('Keputusan RAT 2026 Batas Rp 2.000.000');
     });
 
@@ -333,6 +336,7 @@ describe('settingsService', () => {
               data: {
                 id: 1,
                 min_remaining_thp: 0,
+                max_loan_age_years: 10,
                 min_thp_rat_notes: null
               },
               error: null
@@ -343,6 +347,7 @@ describe('settingsService', () => {
 
       const settings = await getLoanSettings(true);
       expect(settings.minRemainingThp).toBe(1500000);
+      expect(settings.maxLoanAgeYears).toBe(58);
       expect(settings.ratNotes).toBe(DEFAULT_RAT_NOTES);
     });
 
@@ -378,6 +383,7 @@ describe('settingsService', () => {
         terminal_name: 'POS Terminal #01',
         footer_notes: 'Barang yang sudah dibeli tidak dapat ditukar/dikembalikan',
         min_remaining_thp: 1800000,
+        max_loan_age_years: 60,
         min_thp_rat_notes: 'Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000',
         updated_at: '2026-11-01T00:00:00Z'
       };
@@ -397,17 +403,20 @@ describe('settingsService', () => {
 
       const res = await updateLoanSettings({
         minRemainingThp: 1800000,
+        maxLoanAgeYears: 60,
         ratNotes: 'Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000'
       });
 
       expect(res.success).toBe(true);
       expect(res.isLocalFallback).toBe(false);
       expect(res.data?.min_remaining_thp).toBe(1800000);
+      expect(res.data?.max_loan_age_years).toBe(60);
       expect(res.data?.min_thp_rat_notes).toBe('Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000');
 
       // Check subsequent getLoanSettings returns updated cached value
       const cached = await getLoanSettings(false);
       expect(cached.minRemainingThp).toBe(1800000);
+      expect(cached.maxLoanAgeYears).toBe(60);
       expect(cached.ratNotes).toBe('Keputusan RAT Tahun Buku 2025: Batas THP Rp 1.800.000');
     });
 

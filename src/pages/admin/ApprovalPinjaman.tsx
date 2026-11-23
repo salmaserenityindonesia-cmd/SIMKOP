@@ -21,20 +21,30 @@ export function buildApprovalConfirmMessage(
   formatRupiahFn: (n: number) => string = defaultFormatRupiah
 ): string {
   const isApprove = action === 'approved';
+  const settlementAmt = Number(loan?.topup_settlement_amount || 0);
+  const oldLoanNumbers =
+    Array.isArray(loan?.topup_old_loan_numbers) && loan.topup_old_loan_numbers.length > 0
+      ? loan.topup_old_loan_numbers.join(', ')
+      : '';
+
   if (isApprove && isGoodsMarkupLoan(loan)) {
     const totalAkad = Number(loan?.amount || loan?.principal_amount || 0);
     const markupAmt = Number(loan?.markup_amount || 0);
     const costPrice = Number(loan?.cost_price || Math.max(0, totalAkad - markupAmt));
     const itemDesc = String(loan?.item_description || loan?.notes || 'Barang').trim();
-    return `Apakah Anda yakin ingin MENYETUJUI pembiayaan barang ini? Barang: ${itemDesc} | Harga Modal Supplier: ${formatRupiahFn(costPrice)} | Margin Markup: ${formatRupiahFn(markupAmt)} | Harga Jual Akad: ${formatRupiahFn(totalAkad)}. Kas keluar koperasi akan dicatat sebesar Harga Modal Supplier (${formatRupiahFn(costPrice)}).`;
+    const netDisbursedAmt = Math.max(0, costPrice - settlementAmt);
+    const goodsTopupDetail =
+      settlementAmt > 0
+        ? ` Potong pelunasan pinjaman lama${oldLoanNumbers ? ` (${oldLoanNumbers})` : ''} sebesar ${formatRupiahFn(settlementAmt)} • Sisa uang diterima peminjam / kas keluar bersih: ${formatRupiahFn(netDisbursedAmt)}.`
+        : ` Kas keluar koperasi akan dicatat sebesar Harga Modal Supplier (${formatRupiahFn(costPrice)}).`;
+    return `Apakah Anda yakin ingin MENYETUJUI pembiayaan barang ini? Barang: ${itemDesc} | Harga Modal Supplier: ${formatRupiahFn(costPrice)} | Margin Markup: ${formatRupiahFn(markupAmt)} | Harga Jual Akad: ${formatRupiahFn(totalAkad)}.${goodsTopupDetail}`;
   }
 
-  const settlementAmt = Number(loan?.topup_settlement_amount || 0);
   const principalAmt = Number(loan?.amount || loan?.principal_amount || 0);
   const netDisbursedAmt = Math.max(0, principalAmt - settlementAmt);
   const topupConfirmDetail =
     isApprove && settlementAmt > 0
-      ? ` Pinjaman lama akan otomatis dilunasi sebesar ${formatRupiahFn(settlementAmt)} (Cair Bersih ke Anggota: ${formatRupiahFn(netDisbursedAmt)}).`
+      ? ` Nilai Pencairan: ${formatRupiahFn(principalAmt)} | Potong Pelunasan${oldLoanNumbers ? ` ${oldLoanNumbers}` : ' pinjaman lama'}: ${formatRupiahFn(settlementAmt)} | Sisa Uang Diterima Peminjam / Cair Bersih: ${formatRupiahFn(netDisbursedAmt)}.`
       : '';
 
   return `Apakah Anda yakin ingin ${isApprove ? 'MENYETUJUI' : 'MENOLAK'} pinjaman ini?${topupConfirmDetail}`;
@@ -645,12 +655,23 @@ export default function ApprovalPinjaman({
                             {formatRupiah(Number(p.amount || p.principal_amount || 0))}
                           </div>
                         )}
-                        {Number(p.topup_settlement_amount || 0) > 0 && (
-                          <div className="mt-1 inline-block rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-medium text-indigo-800 text-right">
-                            Top-Up • Potong Lama: {formatRupiah(Number(p.topup_settlement_amount))} • Cair Bersih:{' '}
-                            {formatRupiah(Math.max(0, Number(p.amount || p.principal_amount || 0) - Number(p.topup_settlement_amount)))}
-                          </div>
-                        )}
+                        {Number(p.topup_settlement_amount || 0) > 0 && (() => {
+                          const settlementVal = Number(p.topup_settlement_amount || 0);
+                          const grossBase = isGoodsMarkupLoan(p)
+                            ? Number(p.cost_price || 0)
+                            : Number(p.amount || p.principal_amount || 0);
+                          const netCash = Math.max(0, grossBase - settlementVal);
+                          const oldNums =
+                            Array.isArray(p.topup_old_loan_numbers) && p.topup_old_loan_numbers.length > 0
+                              ? p.topup_old_loan_numbers.join(', ')
+                              : 'Lama';
+                          return (
+                            <div className="mt-1 inline-block rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[11px] font-medium text-indigo-800 text-right">
+                              Top-Up • Potong Pelunasan {oldNums}: {formatRupiah(settlementVal)} • Sisa Diterima:{' '}
+                              {formatRupiah(netCash)}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700 text-center">
                         {p.tenor || p.agreed_tenor_months || 0} Bulan

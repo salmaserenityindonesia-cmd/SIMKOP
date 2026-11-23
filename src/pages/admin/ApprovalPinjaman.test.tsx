@@ -316,6 +316,41 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(html).toContain('625.000');
       expect(html).toContain('1.375.000');
     });
+
+    it('builds detailed confirmation messages with same-type compensation for cash and GOODS_MARKUP loans', () => {
+      const cashTopupMsg = buildApprovalConfirmMessage(
+        {
+          id: 'loan-reg-topup',
+          amount: 5000000,
+          principal_amount: 5000000,
+          topup_settlement_amount: 2000000,
+          topup_old_loan_numbers: ['LOAN-1795333396946'],
+        },
+        'approved'
+      );
+      expect(cashTopupMsg).toContain('LOAN-1795333396946');
+      expect(cashTopupMsg).toContain('5.000.000');
+      expect(cashTopupMsg).toContain('2.000.000');
+      expect(cashTopupMsg).toContain('3.000.000');
+
+      const goodsTopupMsg = buildApprovalConfirmMessage(
+        {
+          id: 'loan-brg-topup',
+          item_description: 'Sepeda Listrik',
+          cost_price: 5000000,
+          markup_amount: 500000,
+          amount: 5500000,
+          principal_amount: 5500000,
+          topup_settlement_amount: 2000000,
+          topup_old_loan_numbers: ['LOAN-OLD-BRG'],
+          loan_types: { financing_scheme: 'GOODS_MARKUP' },
+        },
+        'approved'
+      );
+      expect(goodsTopupMsg).toContain('LOAN-OLD-BRG');
+      expect(goodsTopupMsg).toContain('2.000.000');
+      expect(goodsTopupMsg).toContain('3.000.000');
+    });
   });
 
   describe('Filter Toolbar & Pagination Controls', () => {

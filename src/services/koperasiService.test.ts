@@ -4,6 +4,7 @@ import {
   fetchAllAnggotaPaged,
   getAnggota,
   getDepositTypes,
+  getCommitmentStats,
   catatRestockFaktur,
   MemberImportInput,
 } from './koperasiService';
@@ -856,6 +857,402 @@ describe('koperasiService - Chunked Import & Paged Fetching', () => {
       expect(result.totalNilai).toBe(50000);
       expect(mockPurchInsert).toHaveBeenCalled();
       expect(mockItemsInsert).toHaveBeenCalled();
+    });
+  });
+
+  describe('getCommitmentStats', () => {
+    it('menghitung anggota aktif unik (>1.000 anggota) tanpa terpotong 1.000 baris, mengabaikan duplikat & non-wajib, serta memfilter cicilan jatuh tempo periode target', async () => {
+      const activeMembers = Array.from({ length: 1200 }, (_, i) => ({
+        id: `m-active-${i + 1}`,
+        status: 'aktif',
+        membership_status: 'ACTIVE',
+      }));
+      const inactiveMembers = Array.from({ length: 50 }, (_, i) => ({
+        id: `m-inactive-${i + 1}`,
+        status: i % 2 === 0 ? 'nonaktif' : 'aktif',
+        membership_status: i % 2 === 0 ? 'RESIGNED' : 'SUSPENDED',
+      }));
+      const allMembers = [...activeMembers, ...inactiveMembers];
+
+      const mockDepositTypes = [
+        { id: 'dt-sp', code: 'SP', name: 'Simpanan Pokok' },
+        { id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' },
+        { id: 'dt-sb', code: 'SB', name: 'Simpanan Belanja' },
+      ];
+
+      // 1200 wajib accounts untuk anggota aktif + 50 untuk nonaktif
+      const wajibMemberDeposits = allMembers.map((m) => ({
+        id: `md-sw-${m.id}`,
+        member_id: m.id,
+        deposit_type_id: 'dt-sw',
+      }));
+
+      // 1050 anggota aktif sudah bayar SW 11/2026 (plus beberapa duplikat, transaksi non-wajib, dan anggota nonaktif)
+      const depositTxs = [
+        ...activeMembers.slice(0, 1050).map((m) => ({
+          member_deposit_id: `md-sw-${m.id}`,
+          amount: 200000,
+        })),
+        // Duplikat untuk anggota aktif pertama (tidak boleh dihitung 2x)
+        { member_deposit_id: 'md-sw-m-active-1', amount: 50000 },
+        // Transaksi milik anggota nonaktif (tidak boleh dihitung)
+        { member_deposit_id: 'md-sw-m-inactive-1', amount: 200000 },
+        // Transaksi non-wajib (Simpanan Belanja - id rekening tidak ada di wajibDepositToMember)
+        { member_deposit_id: 'md-sb-m-active-1200', amount: 100000 },
+      ];
+
+      const activeLoans = [
+        { id: 'loan-1', member_id: 'm-active-1', status: 'active' },
+        { id: 'loan-2', member_id: 'm-active-2', status: 'approved' },
+        { id: 'loan-3', member_id: 'm-active-3', status: 'berjalan' },
+        // Pinjaman anggota nonaktif tidak boleh dihitung
+        { id: 'loan-inactive', member_id: 'm-inactive-1', status: 'active' },
+      ];
+
+      const novSchedules = [
+        { id: 'sch-1', loan_id: 'loan-1', due_date: '2026-11-10', target_amount: 500000, paid_amount: 500000, status: 'paid' },
+        { id: 'sch-2', loan_id: 'loan-2', due_date: '2026-11-15', target_amount: 500000, paid_amount: 500000, status: 'unpaid' },
+        { id: 'sch-3', loan_id: 'loan-3', due_date: '2026-11-20', target_amount: 500000, paid_amount: 0, status: 'unpaid' },
+        // Jadwal milik pinjaman anggota nonaktif (harus diabaikan)
+        { id: 'sch-4', loan_id: 'loan-inactive', due_date: '2026-11-25', target_amount: 500000, paid_amount: 0, status: 'unpaid' },
+      ];
+
+      let txFilterMonth: number | undefined;
+      let txFilterYear: number | undefined;
+      let schedGte: string | undefined;
+      let schedLte: string | undefined;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                range: vi.fn().mockImplementation((from: number, to: number) =>
+                  Promise.resolve({ data: allMembers.slice(from, to + 1), error: null })
+                ),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({ data: mockDepositTypes, error: null }),
+          };
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  range: vi.fn().mockImplementation((from: number, to: number) =>
+                    Promise.resolve({ data: wajibMemberDeposits.slice(from, to + 1), error: null })
+                  ),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockImplementation((col: string, val: any) => {
+                if (col === 'for_month') txFilterMonth = val;
+                return {
+                  eq: vi.fn().mockImplementation((col2: string, val2: any) => {
+                    if (col2 === 'for_year') txFilterYear = val2;
+                    return {
+                      eq: vi.fn().mockReturnValue({
+                        gt: vi.fn().mockReturnValue({
+                          order: vi.fn().mockReturnValue({
+                            range: vi.fn().mockImplementation((from: number, to: number) =>
+                              Promise.resolve({ data: depositTxs.slice(from, to + 1), error: null })
+                            ),
+                          }),
+                        }),
+                      }),
+                    };
+                  }),
+                };
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  range: vi.fn().mockImplementation((from: number, to: number) =>
+                    Promise.resolve({ data: activeLoans.slice(from, to + 1), error: null })
+                  ),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockImplementation((_col: string, val: string) => {
+                schedGte = val;
+                return {
+                  lte: vi.fn().mockImplementation((_col2: string, val2: string) => {
+                    schedLte = val2;
+                    return {
+                      order: vi.fn().mockReturnValue({
+                        range: vi.fn().mockImplementation((from: number, to: number) =>
+                          Promise.resolve({ data: novSchedules.slice(from, to + 1), error: null })
+                        ),
+                      }),
+                    };
+                  }),
+                };
+              }),
+            }),
+          };
+        }
+
+        return {};
+      });
+
+      const stats = await getCommitmentStats(11, 2026);
+
+      expect(txFilterMonth).toBe(11);
+      expect(txFilterYear).toBe(2026);
+      expect(schedGte).toBe('2026-11-01');
+      expect(schedLte).toBe('2026-11-30');
+
+      expect(stats.deposit.lunas).toBe(1050);
+      expect(stats.deposit.belum_lunas).toBe(150);
+      expect(stats.deposit.lunas + stats.deposit.belum_lunas).toBe(1200);
+
+      // sch-1 (paid) & sch-2 (paidAmt == targetAmt) => 2 lunas; sch-3 => 1 belum_lunas; sch-4 ignored
+      expect(stats.loan.lunas).toBe(2);
+      expect(stats.loan.belum_lunas).toBe(1);
+      expect(stats.loan.active_loans).toBe(3);
+    });
+
+    it('melakukan retry status pinjaman yang aman enum (active, approved) jika Postgres menolak status berjalan (22P02)', async () => {
+      const loanInCalls: string[][] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                range: vi.fn().mockResolvedValue({
+                  data: [{ id: 'm-1', status: 'aktif', membership_status: 'ACTIVE' }],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' }],
+              error: null,
+            }),
+          };
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  range: vi.fn().mockResolvedValue({
+                    data: [{ id: 'md-1', member_id: 'm-1' }],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockReturnValue({
+                      order: vi.fn().mockReturnValue({
+                        range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockImplementation((_col: string, statuses: string[]) => {
+                loanInCalls.push(statuses);
+                return {
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockImplementation(() => {
+                      if (statuses.includes('berjalan')) {
+                        return Promise.resolve({
+                          data: null,
+                          error: { code: '22P02', message: 'invalid input value for enum loan_status: "berjalan"' },
+                        });
+                      }
+                      return Promise.resolve({
+                        data: [{ id: 'loan-enum-1', member_id: 'm-1', status: 'active' }],
+                        error: null,
+                      });
+                    }),
+                  }),
+                };
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({
+                      data: [
+                        { id: 'sch-enum-1', loan_id: 'loan-enum-1', due_date: '2026-11-15', target_amount: 300000, paid_amount: 0, status: 'unpaid' },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        return {};
+      });
+
+      const stats = await getCommitmentStats(11, 2026);
+
+      expect(loanInCalls).toEqual([
+        ['active', 'approved', 'berjalan', 'disbursed'],
+        ['active', 'approved'],
+      ]);
+      expect(stats.deposit).toEqual({ lunas: 0, belum_lunas: 1 });
+      expect(stats.loan).toEqual({ lunas: 0, belum_lunas: 1, active_loans: 1 });
+    });
+
+    it('mengembalikan active_loans > 0 ketika ada kontrak pinjaman berjalan yang jadwal cicilan pertamanya baru dimulai bulan berikutnya', async () => {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                range: vi.fn().mockResolvedValue({
+                  data: [
+                    { id: 'm-1', status: 'aktif', membership_status: 'ACTIVE' },
+                    { id: 'm-2', status: 'aktif', membership_status: 'ACTIVE' },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_types') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'dt-sw', code: 'SW', name: 'Simpanan Wajib' }],
+              error: null,
+            }),
+          };
+        }
+
+        if (table === 'member_deposits') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'deposit_transactions') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    gt: vi.fn().mockReturnValue({
+                      order: vi.fn().mockReturnValue({
+                        range: vi.fn().mockResolvedValue({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  range: vi.fn().mockResolvedValue({
+                    data: [
+                      { id: 'loan-next-1', member_id: 'm-1', status: 'berjalan' },
+                      { id: 'loan-next-2', member_id: 'm-2', status: 'active' },
+                    ],
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    range: vi.fn().mockResolvedValue({
+                      // Tidak ada jadwal yang jatuh tempo pada 11/2026 (cicilan perdana baru 12/2026)
+                      data: [],
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+
+        return {};
+      });
+
+      const stats = await getCommitmentStats(11, 2026);
+
+      expect(stats.loan).toEqual({ lunas: 0, belum_lunas: 0, active_loans: 2 });
     });
   });
 });

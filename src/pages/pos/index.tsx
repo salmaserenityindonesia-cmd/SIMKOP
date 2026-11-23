@@ -20,7 +20,11 @@ import { getActiveShift, CashierShift } from '../../services/cashierShiftService
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
-import { getKoperasiProfile, KoperasiProfile } from '../../services/settingsService';
+import {
+  DEFAULT_MAX_LOAN_AGE_YEARS,
+  getKoperasiProfile,
+  KoperasiProfile,
+} from '../../services/settingsService';
 
 export interface CartItem {
   id: string;
@@ -152,7 +156,7 @@ export default function POSPage() {
 
     supabase
       .from('anggota')
-      .select('id, nomor_referensi, nrp, nama, take_home_pay, status, membership_status')
+      .select('id, nomor_referensi, nrp, nama, tanggal_lahir, take_home_pay, status, membership_status')
       .eq('status', 'aktif')
       .then(({ data }) => {
         const activeMembers = (data || []).filter((m: any) => {
@@ -584,6 +588,7 @@ export default function POSPage() {
         initialMethod={!selectedMember ? 'Tunai' : initialPaymentMethod}
         primaryMode={resolvedPrimaryMode}
         initialFinancials={!selectedMember ? null : memberFinancials}
+        maxLoanAgeYears={koperasiProfile?.max_loan_age_years ?? DEFAULT_MAX_LOAN_AGE_YEARS}
         onConfirm={handleCheckoutConfirm}
       />
       

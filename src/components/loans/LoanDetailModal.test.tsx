@@ -108,4 +108,48 @@ describe('LoanDetailModal Component', () => {
     expect(paidHtml).toContain('Lunas');
     expect(paidHtml).not.toContain('>Pending<');
   });
+
+  it('renders top-up compensation breakdown and contract notes on both old and new loans', () => {
+    const newLoanHtml = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-new-tes1"
+        onClose={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-new-tes1',
+          loan_number: 'LOAN-1795422216507',
+          status: 'active',
+          principal_amount: 5000000,
+          tenor: 10,
+          topup_settlement_amount: 2000000,
+          notes: '[KOMPENSASI PELUNASAN SEJENIS] Pencairan Rp 5.000.000 dipotong pelunasan LOAN-1795333396946 sebesar Rp 2.000.000 • Sisa uang diterima peminjam: Rp 3.000.000',
+        }}
+      />
+    );
+    expect(newLoanHtml).toContain('Rincian Kompensasi Pelunasan Pinjaman Lama Sejenis');
+    expect(newLoanHtml).toContain('5.000.000');
+    expect(newLoanHtml).toContain('2.000.000');
+    expect(newLoanHtml).toContain('3.000.000');
+    expect(newLoanHtml).toContain('Catatan / Keterangan Kontrak');
+    expect(newLoanHtml).toContain('[KOMPENSASI PELUNASAN SEJENIS]');
+
+    const oldLoanHtml = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-old-tes1"
+        onClose={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-old-tes1',
+          loan_number: 'LOAN-1795333396946',
+          status: 'paid_off',
+          principal_amount: 2200000,
+          tenor: 11,
+          notes: '[LUNAS KOMPENSASI] Dilunasi penuh s/d angsuran terakhir sebesar Rp 2.000.000 dari pencairan pinjaman baru LOAN-1795422216507',
+        }}
+      />
+    );
+    expect(oldLoanHtml).toContain('Lunas');
+    expect(oldLoanHtml).toContain('[LUNAS KOMPENSASI]');
+    expect(oldLoanHtml).toContain('LOAN-1795422216507');
+  });
 });

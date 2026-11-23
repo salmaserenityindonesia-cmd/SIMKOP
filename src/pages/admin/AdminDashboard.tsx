@@ -224,6 +224,16 @@ export default function AdminDashboard() {
                   <div className="text-label-sm text-on-surface-variant">Belum Lunas</div>
                 </div>
               </div>
+              {(commitmentStats?.loan.lunas || 0) === 0 &&
+                (commitmentStats?.loan.belum_lunas || 0) === 0 &&
+                (commitmentStats?.loan.active_loans || 0) > 0 && (
+                  <p className="mt-3 text-label-sm text-on-surface-variant flex items-center gap-1.5 bg-surface-container-low/70 rounded-lg px-3 py-2">
+                    <span className="material-symbols-outlined text-[16px] text-primary shrink-0">info</span>
+                    <span>
+                      Tidak ada tagihan jatuh tempo bulan ini ({commitmentStats?.loan.active_loans} kontrak berjalan mulai tagihan bulan berikutnya)
+                    </span>
+                  </p>
+                )}
             </div>
           </div>
         </section>

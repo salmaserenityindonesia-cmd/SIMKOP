@@ -5,6 +5,7 @@ function shouldFallback(e: any): boolean {
 }
 
 import { supabase } from '../lib/supabaseClient';
+import { fetchAllPaginated } from '../utils/supabasePagination';
 
 // ==========================================
 // Domain Re-exports (Backward-Compatibility Facade)
@@ -654,35 +655,240 @@ export interface CommitmentStats {
   loan: {
     lunas: number;
     belum_lunas: number;
+    active_loans: number;
   };
+}
+
+const ACTIVE_COMMITMENT_LOAN_STATUSES = ['active', 'approved', 'berjalan', 'disbursed'];
+const ENUM_SAFE_COMMITMENT_LOAN_STATUSES = ['active', 'approved'];
+
+function isInvalidLoanStatusEnumError(error: any): boolean {
+  if (!error) return false;
+  const code = String(error.code || '');
+  const msg = String(error.message || '').toLowerCase();
+  return code === '22P02' || msg.includes('invalid input value for enum');
+}
+
+function isWajibDepositType(dt: { code?: string | null; name?: string | null }): boolean {
+  const code = String(dt.code || '').trim().toUpperCase();
+  const name = String(dt.name || '').trim().toLowerCase();
+  return code === 'SW' || code === 'WAJIB' || name.includes('wajib');
+}
+
+function isLoanSchedulePaid(schedule: any): boolean {
+  const statusLower = String(schedule?.status || '').trim().toLowerCase();
+  const isStatusPaid =
+    ['paid', 'lunas', 'completed', 'settled', 'finished'].includes(statusLower) ||
+    Boolean(schedule?.is_paid);
+  const targetAmt = Number(
+    schedule?.total_amount ?? schedule?.target_amount ?? schedule?.installment_amount ?? schedule?.amount ?? 0
+  );
+  const paidAmt = Number(schedule?.paid_amount ?? schedule?.amount_paid ?? 0);
+  return (
+    isStatusPaid ||
+    (targetAmt > 0 && (paidAmt >= targetAmt || Math.abs(targetAmt - paidAmt) <= 5))
+  );
+}
+
+async function fetchActiveMemberIdsForCommitments(): Promise<Set<string>> {
+  const members = await fetchAllPaginated<{
+    id: string;
+    status?: string | null;
+    membership_status?: string | null;
+  }>((from, to) =>
+    supabase
+      .from('anggota')
+      .select('id, status, membership_status')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+
+  const activeMemberIds = new Set<string>();
+  for (const m of members) {
+    const status = String(m.status || '').trim().toLowerCase();
+    const membershipStatus = String(m.membership_status || 'ACTIVE').trim().toUpperCase();
+    if (status === 'aktif' && membershipStatus === 'ACTIVE' && m.id) {
+      activeMemberIds.add(m.id);
+    }
+  }
+  return activeMemberIds;
+}
+
+async function fetchActiveLoansForCommitments(): Promise<Array<{ id: string; member_id: string }>> {
+  const queryLoans = (statuses: string[]) =>
+    fetchAllPaginated<{ id: string; member_id: string }>((from, to) =>
+      supabase
+        .from('loans')
+        .select('id, member_id, status')
+        .in('status', statuses)
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+
+  try {
+    return await queryLoans(ACTIVE_COMMITMENT_LOAN_STATUSES);
+  } catch (err) {
+    if (isInvalidLoanStatusEnumError(err)) {
+      return await queryLoans(ENUM_SAFE_COMMITMENT_LOAN_STATUSES);
+    }
+    throw err;
+  }
 }
 
 export async function getCommitmentStats(month: number, year: number): Promise<CommitmentStats> {
   const stats: CommitmentStats = {
     deposit: { lunas: 0, belum_lunas: 0 },
-    loan: { lunas: 0, belum_lunas: 0 }
+    loan: { lunas: 0, belum_lunas: 0, active_loans: 0 }
   };
 
-  const { data: deposits, error: depError } = await supabase
-    .from('monthly_deposit_commitments')
-    .select('status')
-    .eq('for_month', month)
-    .eq('for_year', year);
-
-  if (!depError && deposits) {
-    stats.deposit.lunas = deposits.filter((d: any) => d.status === 'lunas').length;
-    stats.deposit.belum_lunas = deposits.filter((d: any) => d.status === 'belum_lunas').length;
+  let activeMemberIds: Set<string>;
+  try {
+    activeMemberIds = await fetchActiveMemberIdsForCommitments();
+  } catch (err) {
+    console.warn('Error fetching active members for commitment stats:', err);
+    return stats;
   }
 
-  const { data: loans, error: loanError } = await supabase
-    .from('monthly_loan_commitments')
-    .select('status')
-    .eq('for_month', month)
-    .eq('for_year', year);
+  if (activeMemberIds.size === 0) {
+    return stats;
+  }
 
-  if (!loanError && loans) {
-    stats.loan.lunas = loans.filter((l: any) => l.status === 'lunas').length;
-    stats.loan.belum_lunas = loans.filter((l: any) => l.status === 'belum_lunas').length;
+  // 1. Simpanan Wajib: hitung anggota aktif unik yang sudah menyetor pada periode (month, year)
+  try {
+    const { data: depositTypes, error: dtError } = await supabase
+      .from('deposit_types')
+      .select('id, code, name');
+
+    if (dtError) throw dtError;
+
+    const wajibTypeIds = (depositTypes || [])
+      .filter(isWajibDepositType)
+      .map((dt: any) => dt.id)
+      .filter(Boolean);
+
+    if (wajibTypeIds.length === 0) {
+      stats.deposit.lunas = 0;
+      stats.deposit.belum_lunas = activeMemberIds.size;
+    } else {
+      const memberDeposits = await fetchAllPaginated<{ id: string; member_id: string }>(
+        (from, to) =>
+          supabase
+            .from('member_deposits')
+            .select('id, member_id')
+            .in('deposit_type_id', wajibTypeIds)
+            .order('id', { ascending: true })
+            .range(from, to)
+      );
+
+      const wajibDepositToMember = new Map<string, string>();
+      for (const md of memberDeposits) {
+        if (md.id && md.member_id && activeMemberIds.has(md.member_id)) {
+          wajibDepositToMember.set(md.id, md.member_id);
+        }
+      }
+
+      const wajibTxRows = await fetchAllPaginated<{ member_deposit_id: string; amount: number }>(
+        (from, to) =>
+          supabase
+            .from('deposit_transactions')
+            .select('member_deposit_id, amount')
+            .eq('for_month', month)
+            .eq('for_year', year)
+            .eq('transaction_type', 'deposit')
+            .gt('amount', 0)
+            .order('id', { ascending: true })
+            .range(from, to)
+      );
+
+      const paidWajibMemberIds = new Set<string>();
+      for (const tx of wajibTxRows) {
+        const memberId = wajibDepositToMember.get(tx.member_deposit_id);
+        if (memberId && activeMemberIds.has(memberId)) {
+          paidWajibMemberIds.add(memberId);
+        }
+      }
+
+      stats.deposit.lunas = paidWajibMemberIds.size;
+      stats.deposit.belum_lunas = Math.max(0, activeMemberIds.size - paidWajibMemberIds.size);
+    }
+  } catch (err) {
+    console.warn('Error fetching Simpanan Wajib commitment stats:', err);
+  }
+
+  // 2. Cicilan Pinjaman: hitung jadwal angsuran bulan berjalan untuk pinjaman aktif milik anggota aktif
+  try {
+    const activeLoans = await fetchActiveLoansForCommitments();
+    const activeLoanIds = new Set<string>(
+      activeLoans
+        .filter((l) => l.id && activeMemberIds.has(l.member_id))
+        .map((l) => l.id)
+    );
+    stats.loan.active_loans = activeLoanIds.size;
+
+    if (activeLoanIds.size > 0) {
+      const monthStr = String(month).padStart(2, '0');
+      const lastDay = new Date(year, month, 0).getDate();
+      const startDate = `${year}-${monthStr}-01`;
+      const endDate = `${year}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
+
+      try {
+        const schedules = await fetchAllPaginated<{
+          id: string;
+          loan_id: string;
+          due_date?: string;
+          target_amount?: number;
+          paid_amount?: number;
+          status?: string;
+        }>((from, to) =>
+          supabase
+            .from('loan_schedules')
+            .select('id, loan_id, due_date, target_amount, paid_amount, status')
+            .gte('due_date', startDate)
+            .lte('due_date', endDate)
+            .order('id', { ascending: true })
+            .range(from, to)
+        );
+
+        for (const schedule of schedules) {
+          if (!activeLoanIds.has(schedule.loan_id)) continue;
+          if (isLoanSchedulePaid(schedule)) {
+            stats.loan.lunas += 1;
+          } else {
+            stats.loan.belum_lunas += 1;
+          }
+        }
+      } catch (schedErr) {
+        if (!shouldFallback(schedErr)) throw schedErr;
+
+        const fallbackRows = await fetchAllPaginated<{
+          loan_id?: string;
+          member_id?: string;
+          status?: string;
+        }>((from, to) =>
+          supabase
+            .from('monthly_loan_commitments')
+            .select('loan_id, member_id, status')
+            .eq('for_month', month)
+            .eq('for_year', year)
+            .order('loan_id', { ascending: true })
+            .range(from, to)
+        );
+
+        for (const row of fallbackRows) {
+          const matchesLoan = row.loan_id
+            ? activeLoanIds.has(row.loan_id)
+            : !row.member_id || activeMemberIds.has(row.member_id);
+          if (!matchesLoan) continue;
+          if (row.status === 'lunas') {
+            stats.loan.lunas += 1;
+          } else {
+            stats.loan.belum_lunas += 1;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching loan commitment stats:', err);
   }
 
   return stats;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { UserCheck, User } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
+import { DEFAULT_MAX_LOAN_AGE_YEARS, validateMaxLoanAge } from '../../utils/loanEligibility';
 import MemberCreditBadge from './MemberCreditBadge';
 import {
   getMemberUnpaidStoreCreditSummary,
@@ -21,6 +22,7 @@ export interface MemberInfo {
   name?: string;
   nrp?: string;
   member_number?: string;
+  tanggal_lahir?: string | null;
 }
 
 export function resolvePrimaryPaymentMode(
@@ -243,6 +245,7 @@ export interface SplitPaymentModalProps {
     activePlan?: StoreCreditInstallmentPlan | null;
   } | null;
   initialStoreCreditTenor?: number;
+  maxLoanAgeYears?: number;
   onConfirm: (payload: {
     paidCash: number;
     paidDeposit: number;
@@ -265,6 +268,7 @@ export default function SplitPaymentModal({
   initialFinancials = null,
   initialStoreCreditSummary = null,
   initialStoreCreditTenor,
+  maxLoanAgeYears = DEFAULT_MAX_LOAN_AGE_YEARS,
   onConfirm
 }: SplitPaymentModalProps) {
   const effectiveMemberId = selectedMember?.id || memberId || null;
@@ -435,6 +439,9 @@ export default function SplitPaymentModal({
   const totalPaid = cashAmount + depositAmount + creditAmount;
   const remaining = Math.max(0, total - totalPaid);
   const change = Math.max(0, totalPaid - total);
+  const bonAgeEligibility = !isNonMember && creditAmount > 0
+    ? validateMaxLoanAge(selectedMember?.tanggal_lahir, storeCreditTenor, maxLoanAgeYears)
+    : null;
 
   // Validations
   let error = '';
@@ -450,6 +457,10 @@ export default function SplitPaymentModal({
     }
   } else if (!effectiveMemberId && (depositAmount > 0 || creditAmount > 0)) {
     error = 'Pilih anggota terlebih dahulu untuk menggunakan Simpanan / Bon.';
+  }
+
+  if (!error && bonAgeEligibility && !bonAgeEligibility.eligible) {
+    error = bonAgeEligibility.errorMessage || `Tenor Bon Toko melebihi batas usia maksimal ${maxLoanAgeYears} tahun.`;
   }
 
   const syncAmounts = (next: SplitAmounts) => {
@@ -809,6 +820,25 @@ export default function SplitPaymentModal({
                           {formatCurrency(sim.monthlyInstallment)} / bln
                         </span>
                       </div>
+                      {bonAgeEligibility && bonAgeEligibility.hasBirthDate && bonAgeEligibility.projectedEndAgeYears !== null && (
+                        <>
+                          <div
+                            className={`flex justify-between items-center px-2.5 py-1.5 rounded-lg border text-xs ${
+                              bonAgeEligibility.eligible
+                                ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                                : 'bg-rose-50 text-rose-800 border-rose-300 font-semibold'
+                            }`}
+                          >
+                            <span>Proyeksi Usia Lunas:</span>
+                            <span className="font-mono font-bold">
+                              {bonAgeEligibility.projectedEndAgeYears.toFixed(1).replace('.', ',')} Thn (Batas Maks: {maxLoanAgeYears} Thn)
+                            </span>
+                          </div>
+                          <p className={`text-[11px] ${bonAgeEligibility.eligible ? 'text-amber-800' : 'text-rose-700 font-medium'}`}>
+                            {bonAgeEligibility.formattedSummary}
+                          </p>
+                        </>
+                      )}
                       {activeStoreCreditPlan && (
                         <p className="text-[11px] text-amber-800 italic mt-1">
                           * Menggantikan rencana tenor bon toko sebelumnya ({activeStoreCreditPlan.tenor_months} Bln).
