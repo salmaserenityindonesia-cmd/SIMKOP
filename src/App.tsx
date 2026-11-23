@@ -27,6 +27,7 @@ import BukuBesarBelanja from './pages/admin/BukuBesarBelanja';
 import BukuBesarBonToko from './pages/admin/BukuBesarBonToko';
 import BatchUpdater from './pages/admin/BatchUpdater';
 import LaporanKeuangan from './pages/admin/laporan-keuangan';
+import AuditDataOrphan from './pages/admin/AuditDataOrphan';
 import LaporanRetail from './pages/admin/laporan-retail';
 import LaporanMutasiBarang from './pages/admin/LaporanMutasiBarang';
 import LaporanPenarikanSimpanan from './pages/admin/LaporanPenarikanSimpanan';
@@ -280,6 +281,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <LaporanKeuangan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/audit-orphan" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <AuditDataOrphan />
             </ProtectedRoute>
           } 
         />

@@ -4519,4 +4519,21 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
       }
     }
   });
+
+  it('renders Verifikasi Data Orphan shortcut on Arus Kas tab with optional warning badge', () => {
+    const htmlDefault = renderToStaticMarkup(<LaporanKeuangan initialOrphanCount={0} />);
+    expect(htmlDefault).toContain('/admin/audit-orphan');
+    expect(htmlDefault).toContain('Verifikasi Data Orphan');
+    expect(htmlDefault).not.toContain('data-testid="cashflow-audit-orphan-badge"');
+
+    const htmlWithOrphans = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/laporan-keuangan']}>
+        <LaporanKeuangan initialOrphanCount={2} />
+      </MemoryRouter>
+    );
+    expect(htmlWithOrphans).toContain('/admin/audit-orphan');
+    expect(htmlWithOrphans).toContain('Verifikasi Data Orphan');
+    expect(htmlWithOrphans).toContain('data-testid="cashflow-audit-orphan-badge"');
+    expect(htmlWithOrphans).toContain('>2<');
+  });
 });

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useInRouterContext, useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ExternalLink, Filter, Receipt, RotateCcw, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ExternalLink, Filter, Receipt, RotateCcw, Search, ShieldAlert, X } from 'lucide-react';
 import AdminLayout from '../../../components/layout/AdminLayout';
 import CashFlowReferenceModal from '../../../components/finance/CashFlowReferenceModal';
 import ShuReferenceDetailModal, {
@@ -43,6 +43,10 @@ import {
   getFiscalYearClosing,
   type FiscalYearClosingRecord,
 } from '../../../services/yearEndClosingService';
+import {
+  scanAllOrphanRecords,
+  ORPHAN_AUDIT_UPDATED_EVENT,
+} from '../../../services/orphanAuditService';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -1577,6 +1581,7 @@ export interface LaporanKeuanganProps {
   initialEndDate?: string;
   initialClosedFiscalYear?: FiscalYearClosingRecord | null;
   initialDateSortOrder?: 'asc' | 'desc';
+  initialOrphanCount?: number;
 }
 
 interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
@@ -1604,6 +1609,7 @@ function LaporanKeuanganContent({
   initialEndDate,
   initialClosedFiscalYear = null,
   initialDateSortOrder = 'asc',
+  initialOrphanCount,
   urlTab = null,
   urlRef = '',
   urlReceipt = '',
@@ -1679,6 +1685,7 @@ function LaporanKeuanganContent({
   const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
   const [confirmText, setConfirmText] = useState(initialConfirmText);
   const [isResetting, setIsResetting] = useState(false);
+  const [orphanCount, setOrphanCount] = useState<number>(initialOrphanCount ?? 0);
 
   const urlDeepLinkKey = `${urlTab ?? ''}|${urlRef}|${urlReceipt}|${urlDate}`;
   const appliedUrlKeyRef = useRef<string>(urlDeepLinkKey);
@@ -1770,6 +1777,31 @@ function LaporanKeuanganContent({
   }, [startDate, endDate, unit, filteredFiscalYear]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    if (initialOrphanCount !== undefined) return;
+    let cancelled = false;
+    const loadOrphanStatus = () => {
+      scanAllOrphanRecords()
+        .then((res) => {
+          if (!cancelled) {
+            setOrphanCount(res.summary.totalCount);
+          }
+        })
+        .catch(() => {});
+    };
+    loadOrphanStatus();
+    const handleUpdated = () => loadOrphanStatus();
+    if (typeof window !== 'undefined') {
+      window.addEventListener(ORPHAN_AUDIT_UPDATED_EVENT, handleUpdated);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener(ORPHAN_AUDIT_UPDATED_EVENT, handleUpdated);
+      }
+    };
+  }, [initialOrphanCount]);
 
   useEffect(() => {
     setCashFlowPage(1);
@@ -2598,6 +2630,53 @@ function LaporanKeuanganContent({
                 </div>
                 {hasActiveUrlRef && (
                   <ResetRefFilterButton onReset={handleResetReferenceFilter} />
+                )}
+                {inRouter ? (
+                  <Link
+                    to="/admin/audit-orphan"
+                    data-testid="cashflow-audit-orphan-link"
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${
+                      orphanCount > 0
+                        ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <ShieldAlert
+                      className={`w-3.5 h-3.5 ${orphanCount > 0 ? 'text-rose-600' : 'text-slate-500'}`}
+                    />
+                    <span>Verifikasi Data Orphan</span>
+                    {orphanCount > 0 && (
+                      <span
+                        data-testid="cashflow-audit-orphan-badge"
+                        className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-600 text-white"
+                      >
+                        {orphanCount}
+                      </span>
+                    )}
+                  </Link>
+                ) : (
+                  <a
+                    href="/admin/audit-orphan"
+                    data-testid="cashflow-audit-orphan-link"
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${
+                      orphanCount > 0
+                        ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <ShieldAlert
+                      className={`w-3.5 h-3.5 ${orphanCount > 0 ? 'text-rose-600' : 'text-slate-500'}`}
+                    />
+                    <span>Verifikasi Data Orphan</span>
+                    {orphanCount > 0 && (
+                      <span
+                        data-testid="cashflow-audit-orphan-badge"
+                        className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-600 text-white"
+                      >
+                        {orphanCount}
+                      </span>
+                    )}
+                  </a>
                 )}
               </div>
             </div>

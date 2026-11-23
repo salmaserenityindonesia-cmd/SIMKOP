@@ -33,7 +33,12 @@ import {
   Banknote,
   ChevronDown,
   Landmark,
+  ShieldAlert,
 } from 'lucide-react';
+import {
+  scanAllOrphanRecords,
+  ORPHAN_AUDIT_UPDATED_EVENT,
+} from '../../services/orphanAuditService';
 
 export interface NavigationItem {
   label: string;
@@ -171,6 +176,7 @@ export const navigationGroups: NavigationGroup[] = [
     icon: BarChart3,
     items: [
       { label: 'Laporan Keuangan Terpadu', icon: FileSpreadsheet, href: '/admin/laporan-keuangan', adminOnly: true },
+      { label: 'Verifikasi Data Orphan', icon: ShieldAlert, href: '/admin/audit-orphan', adminOnly: true },
       { label: 'Tutup Buku & SHU RAT', icon: Landmark, href: '/admin/tutup-buku', adminOnly: true },
     ],
   },
@@ -198,9 +204,15 @@ interface SidebarProps {
   userRole?: string;
   isCollapsed?: boolean;
   onItemClick?: () => void;
+  orphanCount?: number;
 }
 
-export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: SidebarProps) {
+export default function Sidebar({
+  userRole,
+  isCollapsed = false,
+  onItemClick,
+  orphanCount,
+}: SidebarProps) {
   const location = useLocation();
   const navRef = useRef<HTMLElement | null>(null);
   const closeTimeoutRef = useRef<number | null>(null);
@@ -212,6 +224,33 @@ export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: 
 
   const [popoverGroupId, setPopoverGroupId] = useState<string | null>(null);
   const [popoverTop, setPopoverTop] = useState<number>(80);
+  const [fetchedOrphanCount, setFetchedOrphanCount] = useState<number>(0);
+  const effectiveOrphanCount = orphanCount ?? fetchedOrphanCount;
+
+  useEffect(() => {
+    if (userRole !== 'admin' || orphanCount !== undefined) return;
+    let cancelled = false;
+    const loadOrphanCount = () => {
+      scanAllOrphanRecords()
+        .then((res) => {
+          if (!cancelled) {
+            setFetchedOrphanCount(res.summary.totalCount);
+          }
+        })
+        .catch(() => {});
+    };
+    loadOrphanCount();
+    const handleAuditUpdated = () => loadOrphanCount();
+    if (typeof window !== 'undefined') {
+      window.addEventListener(ORPHAN_AUDIT_UPDATED_EVENT, handleAuditUpdated);
+    }
+    return () => {
+      cancelled = true;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener(ORPHAN_AUDIT_UPDATED_EVENT, handleAuditUpdated);
+      }
+    };
+  }, [userRole, orphanCount]);
 
   // Auto-expand the parent group whenever the active route changes
   useEffect(() => {
@@ -343,6 +382,12 @@ export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: 
               {isGroupActive && (
                 <span className="absolute left-0 top-2.5 bottom-2.5 w-1 rounded-r-full bg-emerald-500" />
               )}
+              {group.id === 'laporan' && effectiveOrphanCount > 0 && (
+                <span
+                  data-testid="sidebar-orphan-group-dot"
+                  className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-[#0F1E36]"
+                />
+              )}
               <GroupIcon className="w-5 h-5 shrink-0" />
             </button>
           );
@@ -379,7 +424,15 @@ export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: 
                     }
                   >
                     <ItemIcon className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{item.label}</span>
+                    <span className="truncate flex-1">{item.label}</span>
+                    {item.href === '/admin/audit-orphan' && effectiveOrphanCount > 0 && (
+                      <span
+                        data-testid="sidebar-orphan-badge"
+                        className="ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white shrink-0"
+                      >
+                        {effectiveOrphanCount}
+                      </span>
+                    )}
                   </NavLink>
                 );
               })}
@@ -440,6 +493,14 @@ export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: 
                 <span className="truncate">{group.groupName}</span>
               </span>
               <span className="flex items-center gap-1.5 shrink-0">
+                {group.id === 'laporan' && effectiveOrphanCount > 0 && !isOpen && (
+                  <span
+                    data-testid="sidebar-orphan-group-badge"
+                    className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white"
+                  >
+                    {effectiveOrphanCount}
+                  </span>
+                )}
                 {isGroupActive && !isOpen && (
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 )}
@@ -478,7 +539,15 @@ export default function Sidebar({ userRole, isCollapsed = false, onItemClick }: 
                               isActive ? 'text-emerald-400' : 'text-slate-400'
                             }`}
                           />
-                          <span className="truncate">{item.label}</span>
+                          <span className="truncate flex-1">{item.label}</span>
+                          {item.href === '/admin/audit-orphan' && effectiveOrphanCount > 0 && (
+                            <span
+                              data-testid="sidebar-orphan-badge"
+                              className="ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white shrink-0"
+                            >
+                              {effectiveOrphanCount}
+                            </span>
+                          )}
                         </>
                       )}
                     </NavLink>
