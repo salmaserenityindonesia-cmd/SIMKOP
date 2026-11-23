@@ -1350,6 +1350,20 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('Surya Pratama');
       expect(html).not.toContain('Anggota Lain Tidak Cocok');
     });
+
+    it('pre-fills search input, displays URL filter banner, filters, and highlights matching member when navigated with ?search=<NRP>', () => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/admin/loan-matrix?search=87010011']}>
+          <LoanMatrix initialData={deepLinkSummary} initialYear={2026} />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('value="87010011"');
+      expect(html).toContain('data-testid="loan-matrix-url-filter-banner"');
+      expect(html).toContain('Surya Pratama');
+      expect(html).toContain('bg-indigo-50/40');
+      expect(html).not.toContain('Anggota Lain Tidak Cocok');
+    });
   });
 
   describe('computeBulkPreviewSummary & getSmartDefaultBulkTargetMonth', () => {
@@ -1623,6 +1637,169 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       expect(html).toContain('bg-emerald-100 text-emerald-700">100%</div>');
       expect(html).not.toContain('>0 / 3 Bln<');
       expect(html).not.toContain('>0 / 11 Bln<');
+    });
+  });
+
+  describe('Two-Way Trace-Back Audit Panel, Year Sync & Target Cell Highlight', () => {
+    const traceSummaryData: LoanMatrixSummary = {
+      year: 2026,
+      complianceYTD: 100,
+      totalCollectedYTD: 1100000,
+      projectedNextMonth: 0,
+      unpaidMembersCount: 0,
+      members: [
+        {
+          id: 'loan-tes-2',
+          loanId: 'loan-tes-2',
+          loanNumber: 'LOAN-1795334228834',
+          status: 'active',
+          memberId: 'mem-tes-2',
+          nrp: '99999998',
+          nama: 'Anggota Tes 2',
+          loanTypeName: 'Pembiayaan Barang',
+          agreedTenorMonths: 3,
+          tenor: 3,
+          principalAmount: 3300000,
+          totalPaidAllTime: 1100000,
+          paidInstallmentsCount: 1,
+          totalInstallmentsCount: 3,
+          remainingPrincipalAllTime: 2200000,
+          repaymentProgressPct: 33,
+          isLoanActive: true,
+          totalLoans: 1,
+          complianceYTD: 100,
+          hasDueSchedulesYTD: true,
+          months: {
+            ...Array.from({ length: 12 }, (_, idx) => ({
+              month: idx + 1,
+              year: 2026,
+              status: 'NONE' as const,
+              targetAmount: 0,
+              paidAmount: 0,
+            })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+            12: {
+              month: 12,
+              year: 2026,
+              status: 'PAID',
+              targetAmount: 1100000,
+              paidAmount: 1100000,
+              cumulativePaidAmount: 1100000,
+              remainingBalance: 2200000,
+              loanId: 'loan-tes-2',
+              loanNumber: 'LOAN-1795334228834',
+              periodNumber: 1,
+              tenor: 3,
+              dueDate: '2026-12-23',
+            },
+          },
+        },
+        {
+          id: 'loan-other-1',
+          loanId: 'loan-other-1',
+          loanNumber: 'LOAN-OTHER-001',
+          status: 'active',
+          memberId: 'mem-other-1',
+          nrp: '11112222',
+          nama: 'Anggota Lain',
+          loanTypeName: 'Pinjaman Reguler',
+          agreedTenorMonths: 12,
+          tenor: 12,
+          principalAmount: 12000000,
+          isLoanActive: true,
+          totalLoans: 1,
+          complianceYTD: 100,
+          months: Array.from({ length: 12 }, (_, idx) => ({
+            month: idx + 1,
+            year: 2026,
+            status: 'PAID' as const,
+            targetAmount: 1000000,
+            paidAmount: 1000000,
+            loanId: 'loan-other-1',
+            loanNumber: 'LOAN-OTHER-001',
+            periodNumber: idx + 1,
+            tenor: 12,
+          })).reduce((acc, cell) => ({ ...acc, [cell.month]: cell }), {}),
+        },
+      ],
+    };
+
+    it('renders structured Trace-Back table panel, syncs fiscal year, and highlights target Dec cell for CF-AFC2CE08', () => {
+      const traceUrl =
+        '/admin/loan-matrix?search=LOAN-1795334228834&traceRef=CF-AFC2CE08&loanNo=LOAN-1795334228834&nrp=99999998&traceMonth=12&traceYear=2026&installmentNo=1&traceAmount=1100000&traceDate=2026-11-23T02%3A00%3A00Z&traceDesc=Angsuran%20Pembiayaan%20Barang%20(beli%20sepeda%20listrik)%20Bln%20ke-1%20%E2%80%94%20Pokok%3A%20Rp%201.000.000%20%7C%20Margin%3A%20Rp%20100.000&traceLoanType=Pembiayaan%20Barang%20(beli%20sepeda%20listrik)&traceMemberName=Anggota%20Tes%202';
+
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={[traceUrl]}>
+          <LoanMatrix initialData={traceSummaryData} />
+        </MemoryRouter>
+      );
+
+      // Structured trace-back panel rendered instead of plain banner
+      expect(html).toContain('data-testid="loan-traceback-filter-panel"');
+      expect(html).not.toContain('data-testid="loan-matrix-url-filter-banner"');
+      expect(html).toContain('Kode Trace-Back:');
+      expect(html).toContain('CF-AFC2CE08');
+      expect(html).toContain('Periode: Des-26 (Bln ke-1)');
+      expect(html).toContain('Anggota Tes 2');
+      expect(html).toContain('99999998');
+      expect(html).toContain('data-testid="btn-reset-loan-traceback-filter"');
+      expect(html).toContain('Reset Filter Trace-Back');
+
+      // Trace-back breakdown table columns, row content, and total footer
+      expect(html).toContain('Jenis Pinjaman');
+      expect(html).toContain('Periode / Angsuran');
+      expect(html).toContain('No. Kontrak &amp; Ref');
+      expect(html).toContain('2026-11-23');
+      expect(html).toContain('Pembiayaan Barang (beli sepeda listrik)');
+      expect(html).toContain('Desember 2026 (Angsuran Ke-1)');
+      expect(html).toContain('LOAN-1795334228834 • CF-AFC2CE08');
+      expect(html).toContain('Pokok: Rp 1.000.000 | Margin: Rp 100.000');
+      expect(html).toContain('TOTAL MUTASI TRACE-BACK (1 KOMPONEN)');
+      expect(html).toContain('Rp 1.100.000');
+
+      // Year synchronized to 2026
+      expect(html).toContain('Sah per Jan-26');
+      expect(html).toMatch(/<option [^>]*value="2026"[^>]*selected=""/);
+
+      // Filters out unmatched rows
+      expect(html).not.toContain('Anggota Lain');
+
+      // Target Dec cell highlighted with indigo ring & focus indicator dot
+      expect(html).toContain('data-trace-target-cell="true"');
+      expect(html).toContain('ring-2 ring-indigo-600 ring-offset-2 bg-emerald-50 shadow-md scale-[1.03]');
+      expect(html).toContain('data-testid="trace-target-indicator"');
+      const targetCellMatches = html.match(/data-trace-target-cell="true"/g);
+      expect(targetCellMatches).toHaveLength(1);
+    });
+
+    it('resolves target month cell via installmentNo fallback when traceMonth is omitted', () => {
+      const traceUrlWithoutMonth =
+        '/admin/loan-matrix?search=LOAN-1795334228834&traceRef=CF-AFC2CE08&loanNo=LOAN-1795334228834&nrp=99999998&traceYear=2026&installmentNo=1&traceAmount=1100000';
+
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={[traceUrlWithoutMonth]}>
+          <LoanMatrix initialData={traceSummaryData} />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('data-testid="loan-traceback-filter-panel"');
+      expect(html).toContain('Periode: Des-26 (Bln ke-1)');
+      expect(html).toContain('Desember 2026 (Angsuran Ke-1)');
+      expect(html).toContain('data-trace-target-cell="true"');
+      expect(html).toContain('ring-2 ring-indigo-600 ring-offset-2');
+      expect(html).toContain('data-testid="trace-target-indicator"');
+    });
+
+    it('keeps plain loan-matrix-url-filter-banner intact when navigated only with ?search= without traceRef', () => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter initialEntries={['/admin/loan-matrix?search=LOAN-1795334228834']}>
+          <LoanMatrix initialData={traceSummaryData} initialYear={2026} />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('data-testid="loan-matrix-url-filter-banner"');
+      expect(html).not.toContain('data-testid="loan-traceback-filter-panel"');
+      expect(html).not.toContain('data-trace-target-cell="true"');
+      expect(html).not.toContain('data-testid="trace-target-indicator"');
     });
   });
 });

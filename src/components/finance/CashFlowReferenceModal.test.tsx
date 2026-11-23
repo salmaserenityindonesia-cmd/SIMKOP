@@ -1008,4 +1008,235 @@ describe('CashFlowReferenceModal Component', () => {
       'href="/admin/compliance-matrix?search=00060019&amp;type=WAJIB&amp;period=Nov-26"'
     );
   });
+
+  it('renders loan_installment (CF-9F0EE1EF) detail card with pokok/margin split and two-way audit link to /admin/loan-matrix both outside and inside MemoryRouter', () => {
+    const loanInstallmentBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_installment',
+      journal: {
+        id: '9f0ee1ef-1111-2222-3333-444455556666',
+        refCode: 'CF-9F0EE1EF',
+        category: 'angsuran_pinjaman',
+        direction: 'in',
+        amount: 200000,
+        description:
+          'Angsuran Pembiayaan Barang (beli hp) Bln ke-1 — 99999999 - anggota tes 1 | Pokok: Rp 181.818 | Margin: Rp 18.182',
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+        createdAt: '2026-11-22T10:00:00.000Z',
+      },
+      loanInstallment: {
+        loanId: 'loan-hp-1',
+        scheduleId: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+        loanNumber: 'LOAN-1795333396946',
+        loanTypeName: 'Pembiayaan Barang',
+        itemDescription: 'beli hp',
+        isGoodsFinancing: true,
+        periodNumber: 1,
+        tenor: 11,
+        amount: 200000,
+        principalPortion: 181818,
+        marginPortion: 18182,
+        paymentMethod: 'potong_gaji',
+        createdAt: '2026-11-22T10:00:00.000Z',
+        description:
+          'Angsuran Pembiayaan Barang (beli hp) Bln ke-1 — 99999999 - anggota tes 1 | Pokok: Rp 181.818 | Margin: Rp 18.182',
+        member: {
+          nrp: '99999999',
+          nama: 'anggota tes 1',
+          tanggal_lahir: '1990-01-15',
+        },
+      },
+    };
+
+    const item: CashFlowReferenceModalItem = {
+      ...baseOpeningItem,
+      id: '9f0ee1ef-1111-2222-3333-444455556666',
+      referensi: 'CF-9F0EE1EF',
+      kategori: 'angsuran_pinjaman',
+      deskripsi:
+        'Angsuran Pembiayaan Barang (beli hp) Bln ke-1 — 99999999 - anggota tes 1 | Pokok: Rp 181.818 | Margin: Rp 18.182',
+      kas_masuk: 200000,
+      kas_keluar: 0,
+      direction: 'in',
+      reference_id: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+    };
+
+    const staticHtml = renderToStaticMarkup(
+      <CashFlowReferenceModal
+        cashFlowItem={item}
+        onClose={() => {}}
+        initialBreakdown={loanInstallmentBreakdown}
+      />
+    );
+
+    expect(staticHtml).toContain('Kategori: Angsuran Pinjaman');
+    expect(staticHtml).toContain('data-testid="loan-installment-card"');
+    expect(staticHtml).toContain('Bukti Angsuran Pinjaman Anggota');
+    expect(staticHtml).toContain('Angsuran Pembiayaan Barang');
+    expect(staticHtml).toContain('Bln ke-1');
+    expect(staticHtml).toContain('LOAN-1795333396946');
+    expect(staticHtml).toContain('anggota tes 1');
+    expect(staticHtml).toContain('99999999');
+    expect(staticHtml).toContain('Pembiayaan Barang (beli hp)');
+    expect(staticHtml).toContain('Bulan ke-1 dari 11 Bln');
+    expect(staticHtml).toContain('Pokok: Rp 181.818 • Margin: Rp 18.182');
+    expect(staticHtml).toContain('200.000');
+    expect(staticHtml).toContain('data-testid="loan-installment-audit-bar"');
+    expect(staticHtml).toContain('Audit Dua Arah:');
+    expect(staticHtml).toContain('Telusuri di Buku Besar Pinjaman');
+    expect(staticHtml).toContain('data-testid="btn-trace-loan-ledger"');
+    expect(staticHtml).toContain('href="/admin/loan-matrix?search=LOAN-1795333396946&amp;traceRef=CF-9F0EE1EF&amp;loanNo=LOAN-1795333396946&amp;nrp=99999999&amp;traceYear=2026&amp;installmentNo=1&amp;traceAmount=200000');
+
+    const routerHtml = renderToStaticMarkup(
+      <MemoryRouter>
+        <CashFlowReferenceModal
+          cashFlowItem={item}
+          onClose={() => {}}
+          initialBreakdown={loanInstallmentBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(routerHtml).toContain('data-testid="loan-installment-audit-bar"');
+    expect(routerHtml).toContain('data-testid="btn-trace-loan-ledger"');
+    expect(routerHtml).toContain('href="/admin/loan-matrix?search=LOAN-1795333396946&amp;traceRef=CF-9F0EE1EF&amp;loanNo=LOAN-1795333396946&amp;nrp=99999999&amp;traceYear=2026&amp;installmentNo=1&amp;traceAmount=200000');
+  });
+
+  it('renders loan_installment (CF-AFC2CE08) with full traceMonth=12, traceYear=2026, installmentNo=1 coordinates derived from dueDate', () => {
+    const cfAfcBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_installment',
+      journal: {
+        id: 'afc2ce08-1111-2222-3333-444455556666',
+        refCode: 'CF-AFC2CE08',
+        category: 'angsuran_pinjaman',
+        direction: 'in',
+        amount: 1100000,
+        description:
+          'Angsuran Pembiayaan Barang (beli sepeda listrik) Bln ke-1 — 99999998 - Anggota Tes 2 | Pokok: Rp 1.000.000 | Margin: Rp 100.000',
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: 'sched-dec-2026-1',
+        createdAt: '2026-11-23T02:00:00.000Z',
+      },
+      loanInstallment: {
+        loanId: 'loan-tes-2',
+        scheduleId: 'sched-dec-2026-1',
+        loanNumber: 'LOAN-1795334228834',
+        loanTypeName: 'Pembiayaan Barang',
+        itemDescription: 'beli sepeda listrik',
+        isGoodsFinancing: true,
+        periodNumber: 1,
+        tenor: 3,
+        dueDate: '2026-12-23',
+        amount: 1100000,
+        principalPortion: 1000000,
+        marginPortion: 100000,
+        paymentMethod: 'potong_gaji',
+        createdAt: '2026-11-23T02:00:00.000Z',
+        description:
+          'Angsuran Pembiayaan Barang (beli sepeda listrik) Bln ke-1 — Pokok: Rp 1.000.000 | Margin: Rp 100.000',
+        member: {
+          nrp: '99999998',
+          nama: 'Anggota Tes 2',
+          tanggal_lahir: '1991-05-10',
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CashFlowReferenceModal
+          cashFlowItem={{
+            ...baseOpeningItem,
+            id: 'afc2ce08-1111-2222-3333-444455556666',
+            referensi: 'CF-AFC2CE08',
+            kategori: 'angsuran_pinjaman',
+            deskripsi: cfAfcBreakdown.journal.description,
+            kas_masuk: 1100000,
+            kas_keluar: 0,
+            direction: 'in',
+            reference_id: 'sched-dec-2026-1',
+          }}
+          onClose={() => {}}
+          initialBreakdown={cfAfcBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    const hrefMatch = html.match(/href="([^"]*\/admin\/loan-matrix[^"]*)"/);
+    expect(hrefMatch).not.toBeNull();
+    const decodedHref = hrefMatch![1].replace(/&amp;/g, '&');
+    const url = new URL(decodedHref, 'http://localhost');
+    expect(url.pathname).toBe('/admin/loan-matrix');
+    expect(url.searchParams.get('search')).toBe('LOAN-1795334228834');
+    expect(url.searchParams.get('traceRef')).toBe('CF-AFC2CE08');
+    expect(url.searchParams.get('loanNo')).toBe('LOAN-1795334228834');
+    expect(url.searchParams.get('nrp')).toBe('99999998');
+    expect(url.searchParams.get('traceMonth')).toBe('12');
+    expect(url.searchParams.get('traceYear')).toBe('2026');
+    expect(url.searchParams.get('installmentNo')).toBe('1');
+    expect(url.searchParams.get('traceAmount')).toBe('1100000');
+    expect(url.searchParams.get('traceDate')).toBe('2026-11-23T02:00:00.000Z');
+    expect(url.searchParams.get('traceDesc')).toContain('Angsuran Pembiayaan Barang (beli sepeda listrik) Bln ke-1');
+  });
+
+  it('renders loan_disbursement detail card with two-way audit link to /admin/loan-matrix using NRP fallback when loanNumber is absent', () => {
+    const disbursementBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_disbursement',
+      journal: {
+        id: 'cf-disb-ui-1',
+        refCode: 'CF-DISB0001',
+        category: 'Pembiayaan Barang',
+        direction: 'out',
+        amount: 2000000,
+        description: 'Pencairan Pembiayaan Barang (beli hp) — 99999999 - anggota tes 1',
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: 'loan-hp-1',
+        createdAt: '2026-11-20T08:00:00.000Z',
+      },
+      loanDisbursement: {
+        loanId: 'loan-hp-1',
+        loanNumber: null,
+        loanTypeName: 'Pembiayaan Barang',
+        amount: 2000000,
+        tenor: 11,
+        status: 'active',
+        disbursedAt: '2026-11-20T08:00:00.000Z',
+        itemDescription: 'beli hp',
+        costPrice: 2000000,
+        markupAmount: 200000,
+        description: 'Pencairan Pembiayaan Barang (beli hp) — 99999999 - anggota tes 1',
+        member: {
+          nrp: '99999999',
+          nama: 'anggota tes 1',
+          tanggal_lahir: '1990-01-15',
+        },
+      },
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <CashFlowReferenceModal
+          cashFlowItem={{
+            ...baseOpeningItem,
+            id: 'cf-disb-ui-1',
+            referensi: 'CF-DISB0001',
+            kategori: 'Pembiayaan Barang',
+            kas_masuk: 0,
+            kas_keluar: 2000000,
+            direction: 'out',
+          }}
+          onClose={() => {}}
+          initialBreakdown={disbursementBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-testid="loan-disbursement-card"');
+    expect(html).toContain('Bukti Pencairan Pinjaman Anggota');
+    expect(html).toContain('anggota tes 1 (99999999)');
+    expect(html).toContain('beli hp');
+    expect(html).toContain('data-testid="loan-disbursement-audit-bar"');
+    expect(html).toContain('Telusuri di Buku Besar Pinjaman');
+    expect(html).toContain('href="/admin/loan-matrix?search=99999999&amp;traceRef=CF-DISB0001&amp;nrp=99999999&amp;traceYear=2026&amp;traceAmount=2000000');
+  });
 });

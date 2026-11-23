@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import {
   getCashFlowReferenceBreakdown,
+  isLoanDisbursementCategory,
+  isLoanInstallmentCategory,
   isMemberDepositBatchCategory,
   type CashFlowReferenceBreakdown,
 } from '../../services/cashFlowAuditService';
@@ -58,6 +60,7 @@ export interface CashFlowReferenceModalProps {
 }
 
 const SAVINGS_LEDGER_ROUTE = '/admin/compliance-matrix';
+const LOAN_LEDGER_ROUTE = '/admin/loan-matrix';
 
 const formatRp = (n: number): string =>
   'Rp ' + Math.round(n).toLocaleString('id-ID');
@@ -66,6 +69,24 @@ const LONG_MONTH_NAMES_ID = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
 ];
+
+const extractYearMonthFromDate = (
+  raw?: string | null
+): { year: number; month: number } | null => {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+  const ymd = trimmed.match(/^(\d{4})-(\d{2})(?:-\d{2})?/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) {
+      return { year, month };
+    }
+  }
+  const parsed = new Date(trimmed);
+  if (isNaN(parsed.getTime())) return null;
+  return { year: parsed.getFullYear(), month: parsed.getMonth() + 1 };
+};
 
 const formatDateLongId = (raw?: string | null): string => {
   const trimmed = String(raw || '').trim();
@@ -118,6 +139,13 @@ const formatHeaderCategoryLabel = (category?: string | null): string => {
   }
   if (isCancellationReversalCategory(category)) {
     return 'Koreksi / Pembatalan';
+  }
+  if (isLoanInstallmentCategory(category)) {
+    return 'Angsuran Pinjaman';
+  }
+  if (isLoanDisbursementCategory(category)) {
+    const lower = String(category || '').toLowerCase();
+    return lower.includes('pembiayaan') ? 'Pembiayaan Barang' : 'Pencairan Pinjaman';
   }
   const clean = String(category || '').trim();
   return clean ? sanitizePosTerminology(clean) : '-';
@@ -1937,50 +1965,420 @@ export default function CashFlowReferenceModal({
             </div>
           )}
 
+          {/* ── KONTEN E2a: ANGSURAN PINJAMAN / PEMBIAYAAN BARANG ── */}
+          {!loading && !error && breakdown?.kind === 'loan_installment' && (() => {
+            const inst = breakdown.loanInstallment;
+            const rawLoanNumber = String(inst.loanNumber || '').trim();
+            const loanNumber = rawLoanNumber && rawLoanNumber !== '-' ? rawLoanNumber : '';
+            const rawNrp = String(inst.member?.nrp || '').trim();
+            const memberNrp = rawNrp && rawNrp !== '-' ? rawNrp : '';
+            const filterToken = loanNumber || memberNrp;
+            const displayRefCode = String(
+              cashFlowItem.referensi || breakdown.journal.refCode || ''
+            ).trim();
+            const traceBadgeLabel = filterToken || displayRefCode;
+            const dueYm = extractYearMonthFromDate(inst.dueDate);
+            const fallbackYm = extractYearMonthFromDate(
+              inst.createdAt ||
+                breakdown.journal.createdAt ||
+                cashFlowItem.created_at ||
+                cashFlowItem.tanggal
+            );
+            const targetMonth = dueYm?.month ?? null;
+            const targetYear = dueYm?.year ?? fallbackYm?.year ?? null;
+
+            const traceParams = new URLSearchParams();
+            if (filterToken) traceParams.set('search', filterToken);
+            if (displayRefCode) traceParams.set('traceRef', displayRefCode);
+            if (loanNumber) traceParams.set('loanNo', loanNumber);
+            if (memberNrp) traceParams.set('nrp', memberNrp);
+            if (targetMonth) traceParams.set('traceMonth', String(targetMonth));
+            if (targetYear) traceParams.set('traceYear', String(targetYear));
+            if (inst.periodNumber !== null && inst.periodNumber !== undefined) {
+              traceParams.set('installmentNo', String(inst.periodNumber));
+            }
+            traceParams.set(
+              'traceAmount',
+              String(Math.abs(Math.round(Number(inst.amount || nominal || 0))))
+            );
+            const traceDate = String(
+              inst.createdAt ||
+                breakdown.journal.createdAt ||
+                cashFlowItem.created_at ||
+                cashFlowItem.tanggal ||
+                ''
+            ).trim();
+            if (traceDate) traceParams.set('traceDate', traceDate);
+            const traceDesc = String(
+              inst.description ||
+                breakdown.journal.description ||
+                cashFlowItem.deskripsi ||
+                ''
+            ).trim();
+            if (traceDesc) traceParams.set('traceDesc', traceDesc);
+            const traceLoanType = inst.itemDescription
+              ? `${inst.loanTypeName} (${inst.itemDescription})`
+              : inst.loanTypeName;
+            if (traceLoanType) traceParams.set('traceLoanType', traceLoanType);
+            const traceMemberName = String(inst.member?.nama || '').trim();
+            if (traceMemberName && traceMemberName !== '-') {
+              traceParams.set('traceMemberName', traceMemberName);
+            }
+
+            const traceQuery = traceParams.toString();
+            const traceBackUrl = traceQuery
+              ? `${LOAN_LEDGER_ROUTE}?${traceQuery}`
+              : LOAN_LEDGER_ROUTE;
+
+            const hasPortionSplit =
+              inst.principalPortion !== null || inst.marginPortion !== null;
+
+            return (
+              <div className="space-y-4">
+                <div
+                  data-testid="loan-installment-card"
+                  className="bg-white rounded-xl border border-emerald-200 p-5 shadow-xs space-y-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Receipt className="w-4 h-4 text-emerald-600" />
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Bukti Angsuran Pinjaman Anggota
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        {inst.isGoodsFinancing
+                          ? 'Angsuran Pembiayaan Barang'
+                          : 'Angsuran Pinjaman'}
+                      </span>
+                      {inst.periodNumber !== null && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                          Bln ke-{inst.periodNumber}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-base font-bold text-emerald-700 tabular-nums">
+                      {formatRp(inst.amount)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <p className="text-slate-500">No. Kontrak Pinjaman</p>
+                      {loanNumber ? (
+                        <p className="mt-0.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
+                            {loanNumber}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="font-mono font-semibold text-slate-700 mt-0.5">-</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Nama Anggota &amp; NRP</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {inst.member ? (
+                          <>
+                            {inst.member.nama}{' '}
+                            <span className="font-mono text-slate-600">
+                              ({inst.member.nrp})
+                            </span>
+                          </>
+                        ) : (
+                          '-'
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Tanggal Lahir</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatTanggalLahirWithAge(inst.member?.tanggal_lahir)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Jenis Pinjaman / Barang</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {inst.loanTypeName}
+                        {inst.itemDescription ? ` (${inst.itemDescription})` : ''}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Periode Angsuran</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {inst.periodNumber !== null
+                          ? inst.tenor
+                            ? `Bulan ke-${inst.periodNumber} dari ${inst.tenor} Bln`
+                            : `Bulan ke-${inst.periodNumber}`
+                          : '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Rincian Pokok &amp; Margin</p>
+                      <p className="font-semibold text-slate-800 mt-0.5 tabular-nums">
+                        {hasPortionSplit
+                          ? `Pokok: ${formatRp(inst.principalPortion ?? 0)} • Margin: ${formatRp(
+                              inst.marginPortion ?? 0
+                            )}`
+                          : '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Waktu Pencatatan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatDateTimeId(inst.createdAt)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Nominal Angsuran</p>
+                      <p className="font-bold text-emerald-700 tabular-nums mt-0.5">
+                        {formatRp(inst.amount)}
+                      </p>
+                    </div>
+                    {inst.paymentMethod && (
+                      <div>
+                        <p className="text-slate-500">Metode Pembayaran</p>
+                        <p className="font-semibold text-slate-800 mt-0.5">
+                          {formatPaymentMethodLabel(inst.paymentMethod)}
+                        </p>
+                      </div>
+                    )}
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <p className="text-slate-500">Catatan / Keterangan Lengkap</p>
+                      <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
+                        {inst.description || breakdown.journal.description}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman */}
+                <div
+                  data-testid="loan-installment-audit-bar"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
+                >
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                    Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                      {traceBadgeLabel}
+                    </code>
+                  </div>
+                  {inRouter ? (
+                    <Link
+                      to={traceBackUrl}
+                      onClick={onClose}
+                      data-testid="btn-trace-loan-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Pinjaman</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  ) : (
+                    <a
+                      href={traceBackUrl}
+                      data-testid="btn-trace-loan-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Pinjaman</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── KONTEN E2: PENCAIRAN PINJAMAN ── */}
-          {!loading && !error && breakdown?.kind === 'loan_disbursement' && (
-            <div className="bg-white rounded-xl border border-purple-200 p-5 shadow-xs space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Wallet className="w-4 h-4 text-purple-600" />
-                  <h4 className="text-sm font-bold text-slate-900">
-                    Bukti Pencairan Pinjaman Anggota
-                  </h4>
+          {!loading && !error && breakdown?.kind === 'loan_disbursement' && (() => {
+            const ld = breakdown.loanDisbursement;
+            const rawLoanNumber = String(ld.loanNumber || '').trim();
+            const loanNumber = rawLoanNumber && rawLoanNumber !== '-' ? rawLoanNumber : '';
+            const rawNrp = String(ld.member?.nrp || '').trim();
+            const memberNrp = rawNrp && rawNrp !== '-' ? rawNrp : '';
+            const filterToken = loanNumber || memberNrp;
+            const displayRefCode = String(
+              cashFlowItem.referensi || breakdown.journal.refCode || ''
+            ).trim();
+            const traceBadgeLabel = filterToken || displayRefCode;
+            const disbursedYm = extractYearMonthFromDate(
+              ld.disbursedAt ||
+                breakdown.journal.createdAt ||
+                cashFlowItem.created_at ||
+                cashFlowItem.tanggal
+            );
+            const traceParams = new URLSearchParams();
+            if (filterToken) traceParams.set('search', filterToken);
+            if (displayRefCode) traceParams.set('traceRef', displayRefCode);
+            if (loanNumber) traceParams.set('loanNo', loanNumber);
+            if (memberNrp) traceParams.set('nrp', memberNrp);
+            if (disbursedYm?.year) traceParams.set('traceYear', String(disbursedYm.year));
+            traceParams.set(
+              'traceAmount',
+              String(Math.abs(Math.round(Number(ld.amount || nominal || 0))))
+            );
+            const traceDate = String(
+              ld.disbursedAt ||
+                breakdown.journal.createdAt ||
+                cashFlowItem.created_at ||
+                cashFlowItem.tanggal ||
+                ''
+            ).trim();
+            if (traceDate) traceParams.set('traceDate', traceDate);
+            const traceDesc = String(
+              ld.description ||
+                breakdown.journal.description ||
+                cashFlowItem.deskripsi ||
+                ''
+            ).trim();
+            if (traceDesc) traceParams.set('traceDesc', traceDesc);
+            const baseLoanTypeName = String(
+              ld.loanTypeName ||
+                (ld.itemDescription ? 'Pembiayaan Barang' : 'Pencairan Pinjaman')
+            ).trim();
+            const traceLoanType = ld.itemDescription
+              ? `${baseLoanTypeName} (${ld.itemDescription})`
+              : baseLoanTypeName;
+            if (traceLoanType) traceParams.set('traceLoanType', traceLoanType);
+            const traceMemberName = String(ld.member?.nama || '').trim();
+            if (traceMemberName && traceMemberName !== '-') {
+              traceParams.set('traceMemberName', traceMemberName);
+            }
+            traceParams.set('traceKind', 'disbursement');
+
+            const traceQuery = traceParams.toString();
+            const traceBackUrl = traceQuery
+              ? `${LOAN_LEDGER_ROUTE}?${traceQuery}`
+              : LOAN_LEDGER_ROUTE;
+
+            return (
+              <div className="space-y-4">
+                <div
+                  data-testid="loan-disbursement-card"
+                  className="bg-white rounded-xl border border-purple-200 p-5 shadow-xs space-y-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Wallet className="w-4 h-4 text-purple-600" />
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Bukti Pencairan Pinjaman Anggota
+                      </h4>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                        {ld.loanTypeName ||
+                          (ld.itemDescription ? 'Pembiayaan Barang' : 'Pencairan Pinjaman')}
+                      </span>
+                    </div>
+                    <span className="text-base font-bold text-purple-700 tabular-nums">
+                      {formatRp(ld.amount)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    {loanNumber && (
+                      <div>
+                        <p className="text-slate-500">No. Kontrak Pinjaman</p>
+                        <p className="mt-0.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200 font-mono font-bold">
+                            {loanNumber}
+                          </span>
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-slate-500">Anggota Peminjam</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ld.member
+                          ? `${ld.member.nama} (${ld.member.nrp})`
+                          : '-'}
+                      </p>
+                    </div>
+                    {ld.member?.tanggal_lahir && (
+                      <div>
+                        <p className="text-slate-500">Tanggal Lahir</p>
+                        <p className="font-semibold text-slate-800 mt-0.5">
+                          {formatTanggalLahirWithAge(ld.member.tanggal_lahir)}
+                        </p>
+                      </div>
+                    )}
+                    {ld.itemDescription && (
+                      <div>
+                        <p className="text-slate-500">Objek Pembiayaan / Barang</p>
+                        <p className="font-semibold text-slate-800 mt-0.5">
+                          {ld.itemDescription}
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-slate-500">Tenor / Status</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {ld.tenor} bulan • {ld.status}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Tanggal Pencairan</p>
+                      <p className="font-semibold text-slate-800 mt-0.5">
+                        {formatDateTimeId(ld.disbursedAt)}
+                      </p>
+                    </div>
+                    {(ld.costPrice !== undefined || ld.markupAmount !== undefined) && (
+                      <div>
+                        <p className="text-slate-500">Harga Modal &amp; Margin</p>
+                        <p className="font-semibold text-slate-800 mt-0.5 tabular-nums">
+                          Modal: {formatRp(ld.costPrice ?? 0)} • Margin: {formatRp(ld.markupAmount ?? 0)}
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-slate-500">ID Pinjaman</p>
+                      <p className="font-mono text-slate-700 mt-0.5 break-all">
+                        {ld.loanId}
+                      </p>
+                    </div>
+                    {(ld.description || breakdown.journal.description) && (
+                      <div className="sm:col-span-2 lg:col-span-3">
+                        <p className="text-slate-500">Catatan / Keterangan Lengkap</p>
+                        <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-2.5 border border-slate-200/70">
+                          {ld.description || breakdown.journal.description}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <span className="text-sm font-bold text-purple-700 tabular-nums">
-                  {formatRp(breakdown.loanDisbursement.amount)}
-                </span>
+
+                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman */}
+                <div
+                  data-testid="loan-disbursement-audit-bar"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
+                >
+                  <div className="text-xs text-slate-600">
+                    <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                    Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
+                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                      {traceBadgeLabel}
+                    </code>
+                  </div>
+                  {inRouter ? (
+                    <Link
+                      to={traceBackUrl}
+                      onClick={onClose}
+                      data-testid="btn-trace-loan-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Pinjaman</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  ) : (
+                    <a
+                      href={traceBackUrl}
+                      data-testid="btn-trace-loan-ledger"
+                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                    >
+                      <span>Telusuri di Buku Besar Pinjaman</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <p className="text-slate-500">Anggota Peminjam</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.loanDisbursement.member
-                      ? `${breakdown.loanDisbursement.member.nama} (${breakdown.loanDisbursement.member.nrp})`
-                      : '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Tenor / Status</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.loanDisbursement.tenor} bulan • {breakdown.loanDisbursement.status}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Tanggal Pencairan</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {formatDateTimeId(breakdown.loanDisbursement.disbursedAt)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">ID Pinjaman</p>
-                  <p className="font-mono text-slate-700 mt-0.5">
-                    {breakdown.loanDisbursement.loanId}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ── KONTEN E2b: KLIRING ANGGOTA KELUAR ── */}
           {!loading && !error && breakdown?.kind === 'MEMBER_CLEARANCE' && (() => {

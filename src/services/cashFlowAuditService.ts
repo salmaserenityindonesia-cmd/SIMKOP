@@ -189,6 +189,8 @@ export interface CashierShiftBreakdown {
 
 export interface LoanDisbursementBreakdown {
   loanId: string;
+  loanNumber?: string | null;
+  loanTypeName?: string | null;
   amount: number;
   tenor: number;
   status: string;
@@ -196,6 +198,29 @@ export interface LoanDisbursementBreakdown {
   itemDescription?: string | null;
   costPrice?: number;
   markupAmount?: number;
+  description?: string | null;
+  member?: { nrp: string; nama: string; tanggal_lahir?: string | null } | null;
+}
+
+export interface LoanInstallmentBreakdown {
+  loanId: string | null;
+  scheduleId?: string | null;
+  repaymentId?: string | null;
+  loanNumber?: string | null;
+  loanTypeName: string;
+  itemDescription?: string | null;
+  isGoodsFinancing: boolean;
+  periodNumber: number | null;
+  tenor: number | null;
+  dueDate?: string | null;
+  amount: number;
+  principalPortion: number | null;
+  marginPortion: number | null;
+  paymentMethod?: string | null;
+  receiptNumber?: string | null;
+  createdAt: string;
+  description: string;
+  status?: string | null;
   member?: { nrp: string; nama: string; tanggal_lahir?: string | null } | null;
 }
 
@@ -439,6 +464,11 @@ export type CashFlowReferenceBreakdown =
       loanDisbursement: LoanDisbursementBreakdown;
     }
   | {
+      kind: 'loan_installment';
+      journal: JournalMetadata;
+      loanInstallment: LoanInstallmentBreakdown;
+    }
+  | {
       kind: 'MEMBER_CLEARANCE';
       journal: JournalMetadata;
       memberClearance: MemberClearanceBreakdown;
@@ -515,6 +545,38 @@ async function safeFetchSingleById<T = any>(
       return { data: null, error: null };
     }
     const eqQ: any = q.eq('id', id);
+    if (eqQ && typeof eqQ.maybeSingle === 'function') {
+      const res = await eqQ.maybeSingle();
+      return { data: (res?.data as T) ?? null, error: res?.error ?? null };
+    }
+    if (eqQ && typeof eqQ.single === 'function') {
+      const res = await eqQ.single();
+      return { data: (res?.data as T) ?? null, error: res?.error ?? null };
+    }
+    const res = await eqQ;
+    const row = Array.isArray(res?.data) ? res.data[0] : res?.data;
+    return { data: (row as T) ?? null, error: res?.error ?? null };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+async function safeFetchSingleByEq<T = any>(
+  table: string,
+  columns: string,
+  col: string,
+  val: string
+): Promise<{ data: T | null; error: any }> {
+  try {
+    const tableRef: any = supabase?.from?.(table);
+    if (!tableRef || typeof tableRef.select !== 'function') {
+      return { data: null, error: null };
+    }
+    const q: any = tableRef.select(columns);
+    if (!q || typeof q.eq !== 'function') {
+      return { data: null, error: null };
+    }
+    const eqQ: any = q.eq(col, val);
     if (eqQ && typeof eqQ.maybeSingle === 'function') {
       const res = await eqQ.maybeSingle();
       return { data: (res?.data as T) ?? null, error: res?.error ?? null };
@@ -1559,6 +1621,253 @@ export function isMemberDepositBatchCategory(category?: string | null): boolean 
     .toUpperCase()
     .replace(/\s+/g, '_');
   return normalized === 'SETORAN_ANGGOTA';
+}
+
+export function isLoanInstallmentCategory(category?: string | null): boolean {
+  const lower = String(category || '').trim().toLowerCase();
+  if (!lower) return false;
+  const normalized = lower.replace(/[\s-]+/g, '_');
+  if (
+    normalized === 'angsuran_pinjaman' ||
+    normalized === 'angsuran_pembiayaan' ||
+    normalized === 'angsuran_pembiayaan_barang' ||
+    normalized === 'pembayaran_pinjaman' ||
+    normalized === 'pelunasan_pinjaman'
+  ) {
+    return true;
+  }
+  return (
+    lower.includes('angsuran') &&
+    (lower.includes('pinjaman') || lower.includes('pembiayaan'))
+  );
+}
+
+export function isLoanDisbursementCategory(category?: string | null): boolean {
+  const lower = String(category || '').trim().toLowerCase();
+  if (!lower) return false;
+  const normalized = lower.replace(/[\s-]+/g, '_');
+  if (
+    normalized === 'pencairan_pinjaman' ||
+    normalized === 'pencairan_pembiayaan' ||
+    normalized === 'pembiayaan_barang'
+  ) {
+    return true;
+  }
+  return (
+    (lower.includes('pencairan') &&
+      (lower.includes('pinjaman') || lower.includes('pembiayaan'))) ||
+    lower.includes('pembiayaan barang')
+  );
+}
+
+export function isLoanRelatedCategory(category?: string | null): boolean {
+  if (!category) return false;
+  if (
+    isMemberClearanceCategory(category) ||
+    isCancellationReversalCategory(category) ||
+    isSavingsDepositCategory(category) ||
+    isMemberDepositBatchCategory(category) ||
+    isSavingsWithdrawalCategory(category)
+  ) {
+    return false;
+  }
+  if (
+    isLoanInstallmentCategory(category) ||
+    isLoanDisbursementCategory(category)
+  ) {
+    return true;
+  }
+  const lower = String(category).trim().toLowerCase();
+  return lower.includes('pinjaman') || lower.includes('pembiayaan');
+}
+
+interface ParsedLoanCashFlowDescription {
+  loanNumber: string | null;
+  periodNumber: number | null;
+  principalPortion: number | null;
+  marginPortion: number | null;
+  memberNrp: string | null;
+  memberName: string | null;
+  itemHint: string | null;
+  paymentMethodHint: string | null;
+  isGoodsFinancing: boolean;
+}
+
+function parseFormattedRupiahNumber(raw?: string | null): number | null {
+  const digits = String(raw || '').replace(/[^\d]/g, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function parseLoanCashFlowDescription(
+  description?: string | null
+): ParsedLoanCashFlowDescription {
+  const desc = String(description || '');
+  const loanNumberMatch = desc.match(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+)\b/i);
+  const loanNumber = loanNumberMatch?.[1]
+    ? loanNumberMatch[1].toUpperCase()
+    : null;
+
+  const periodMatch = desc.match(/\bBln\s*ke-(\d+)\b/i);
+  const periodNumber = periodMatch?.[1] ? Number(periodMatch[1]) : null;
+
+  const principalMatch = desc.match(/Pokok\s*:\s*Rp\s*([\d.,]+)/i);
+  const principalPortion = principalMatch?.[1]
+    ? parseFormattedRupiahNumber(principalMatch[1])
+    : null;
+
+  const marginMatch = desc.match(/Margin\s*:\s*Rp\s*([\d.,]+)/i);
+  const marginPortion = marginMatch?.[1]
+    ? parseFormattedRupiahNumber(marginMatch[1])
+    : null;
+
+  let memberNrp: string | null = null;
+  let memberName: string | null = null;
+
+  const dashMemberMatch = desc.match(
+    /[—–]\s*(?:\(lama\s*\d+\)\s*)?(\d{5,})\s*-\s*([^|[\n]+?)(?:\s*\((?:Tenor|Potong Gaji|Transfer|Tunai)[^)]*\))?(?:\s*\||$)/i
+  );
+  if (dashMemberMatch?.[1]) {
+    memberNrp = dashMemberMatch[1].trim();
+    const candidateName = String(dashMemberMatch[2] || '').trim();
+    if (candidateName) memberName = candidateName;
+  } else {
+    const parenNrpMatch = desc.match(/\((\d{6,})\)/);
+    if (parenNrpMatch?.[1]) {
+      memberNrp = parenNrpMatch[1];
+    } else {
+      const standaloneNrpMatch = desc.match(
+        /(?<![A-Z0-9-])(\d{8,})(?![A-Z0-9-])/i
+      );
+      if (standaloneNrpMatch?.[1]) {
+        memberNrp = standaloneNrpMatch[1];
+      }
+    }
+  }
+
+  let itemHint: string | null = null;
+  const itemMatch = desc.match(
+    /(?:Angsuran|Pencairan)\s+Pembiayaan\s+Barang\s*\(([^)]+)\)/i
+  );
+  if (itemMatch?.[1]) {
+    const rawItem = itemMatch[1].trim();
+    if (
+      rawItem &&
+      !/^(LOAN-|PJ-|Potong\s+Gaji|Tunai|Transfer)/i.test(rawItem)
+    ) {
+      itemHint = rawItem;
+    }
+  }
+
+  const paymentMethodHint = /potong\s+gaji/i.test(desc)
+    ? 'potong_gaji'
+    : /\btunai\b/i.test(desc)
+    ? 'tunai'
+    : /\btransfer\b/i.test(desc)
+    ? 'transfer'
+    : null;
+
+  const isGoodsFinancing =
+    /pembiayaan\s+barang/i.test(desc) ||
+    (marginPortion !== null && marginPortion > 0);
+
+  return {
+    loanNumber,
+    periodNumber,
+    principalPortion,
+    marginPortion,
+    memberNrp,
+    memberName,
+    itemHint,
+    paymentMethodHint,
+    isGoodsFinancing,
+  };
+}
+
+const LOAN_DETAIL_FULL_COLS =
+  'id, loan_number, member_id, loan_type_id, amount, principal_amount, item_description, cost_price, markup_amount, tenor, agreed_tenor_months, status, disbursed_at, approved_at, created_at';
+const LOAN_DETAIL_BASIC_COLS =
+  'id, loan_number, member_id, loan_type_id, amount, principal_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at';
+
+async function safeFetchLoanById(loanId: string): Promise<any | null> {
+  if (!loanId) return null;
+  let res = await safeFetchSingleById<any>('loans', LOAN_DETAIL_FULL_COLS, loanId);
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>('loans', LOAN_DETAIL_BASIC_COLS, loanId);
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>('loans', '*', loanId);
+  }
+  return res.data ?? null;
+}
+
+async function safeFetchLoanByNumber(loanNumber: string): Promise<any | null> {
+  if (!loanNumber) return null;
+  let res = await safeFetchSingleByEq<any>(
+    'loans',
+    LOAN_DETAIL_FULL_COLS,
+    'loan_number',
+    loanNumber
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleByEq<any>(
+      'loans',
+      LOAN_DETAIL_BASIC_COLS,
+      'loan_number',
+      loanNumber
+    );
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleByEq<any>('loans', '*', 'loan_number', loanNumber);
+  }
+  return res.data ?? null;
+}
+
+async function safeFetchLoansByMemberId(memberId: string): Promise<any[]> {
+  if (!memberId) return [];
+  let res = await safeFetchListByEq<any>(
+    'loans',
+    LOAN_DETAIL_FULL_COLS,
+    'member_id',
+    memberId
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchListByEq<any>(
+      'loans',
+      LOAN_DETAIL_BASIC_COLS,
+      'member_id',
+      memberId
+    );
+  }
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchListByEq<any>('loans', '*', 'member_id', memberId);
+  }
+  return res.data ?? [];
+}
+
+async function safeFetchMemberByNrp(nrp: string): Promise<any | null> {
+  if (!nrp) return null;
+  const res = await safeFetchSingleByEq<any>(
+    'anggota',
+    'id, nrp, nama, tanggal_lahir',
+    'nrp',
+    nrp
+  );
+  return res.data ?? null;
+}
+
+async function safeFetchLoanTypeById(loanTypeId: string): Promise<any | null> {
+  if (!loanTypeId) return null;
+  let res = await safeFetchSingleById<any>(
+    'loan_types',
+    'id, code, name, financing_scheme',
+    loanTypeId
+  );
+  if (res.error && isPostgrestColumnError(res.error)) {
+    res = await safeFetchSingleById<any>('loan_types', 'id, code, name', loanTypeId);
+  }
+  return res.data ?? null;
 }
 
 export function extractReceiptCodeFromCashFlow(
@@ -3406,57 +3715,342 @@ export async function getCashFlowReferenceBreakdown(
     }
   }
 
-  // ── Cabang E2: Pencairan Pinjaman & Pembiayaan Barang ────────────────────────
-  if (
-    (catUpper === 'PENCAIRAN_PINJAMAN' || catUpper === 'PEMBIAYAAN_BARANG') &&
-    cashFlowRow.reference_id
-  ) {
-    let { data: loan, error: loanLookupErr } = await safeFetchSingleById<any>(
-      'loans',
-      'id, member_id, amount, principal_amount, item_description, cost_price, markup_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at',
-      cashFlowRow.reference_id
-    );
+  // ── Cabang E2: Pencairan Pinjaman, Pembiayaan Barang & Angsuran Pinjaman ──
+  if (isLoanRelatedCategory(cashFlowRow.category)) {
+    const parsedDesc = parseLoanCashFlowDescription(cashFlowRow.description);
+    const isDisbursementCat = isLoanDisbursementCategory(cashFlowRow.category);
+    const isInstallment =
+      isLoanInstallmentCategory(cashFlowRow.category) ||
+      (!isDisbursementCat && journal.direction === 'in') ||
+      (journal.direction === 'in' &&
+        /^angsuran\b/i.test(String(cashFlowRow.description || '').trim()));
 
-    if (!loan && loanLookupErr) {
-      const fbLoan = await safeFetchSingleById<any>(
-        'loans',
-        'id, member_id, amount, principal_amount, tenor, agreed_tenor_months, status, disbursed_at, created_at',
-        cashFlowRow.reference_id
-      );
-      loan = fbLoan.data;
-    }
+    const refId = cashFlowRow.reference_id
+      ? String(cashFlowRow.reference_id).trim()
+      : '';
 
-    if (loan) {
-      let member: { nrp: string; nama: string; tanggal_lahir?: string | null } | null = null;
-      if (loan.member_id) {
-        const { data: m } = await safeFetchSingleById<any>(
-          'anggota',
-          'id, nrp, nama, tanggal_lahir',
-          String(loan.member_id)
+    let loan: any | null = null;
+    let schedule: any | null = null;
+    let repayment: any | null = null;
+    let installmentRow: any | null = null;
+    let memberRow: any | null = null;
+
+    if (refId) {
+      loan = await safeFetchLoanById(refId);
+
+      if (!loan && isInstallment) {
+        const schedRes = await safeFetchSingleById<any>(
+          'loan_schedules',
+          'id, loan_id, period_number, due_date, target_amount, paid_amount, status',
+          refId
         );
-        member = formatMemberSummary(m);
+        schedule =
+          schedRes.error && isPostgrestColumnError(schedRes.error)
+            ? (await safeFetchSingleById<any>('loan_schedules', '*', refId)).data
+            : schedRes.data;
+
+        if (schedule?.loan_id) {
+          loan = await safeFetchLoanById(String(schedule.loan_id));
+        }
+
+        if (schedule) {
+          let repayListRes = await safeFetchListByEq<any>(
+            'loan_repayments',
+            'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_method, payment_date, receipt_number, notes, created_at',
+            'schedule_id',
+            refId
+          );
+          if (repayListRes.error && isPostgrestColumnError(repayListRes.error)) {
+            repayListRes = await safeFetchListByEq<any>(
+              'loan_repayments',
+              LOAN_REPAY_FULL_COLS,
+              'schedule_id',
+              refId
+            );
+          }
+          if (repayListRes.data.length > 0) {
+            repayment =
+              repayListRes.data.find(
+                (r: any) => Math.round(Number(r?.amount_paid || 0)) === journal.amount
+              ) || repayListRes.data[0];
+          }
+        }
       }
 
-      const isGoodsDisbursement =
-        catUpper === 'PEMBIAYAAN_BARANG' ||
-        Number(loan.markup_amount ?? 0) > 0 ||
-        Boolean(String(loan.item_description || '').trim());
-      const disbursedAmount = isGoodsDisbursement
-        ? Math.round(Number(loan.cost_price ?? journal.amount ?? 0))
-        : Math.round(Number(loan.principal_amount ?? loan.amount ?? journal.amount));
+      if (!loan && isInstallment) {
+        let repRes = await safeFetchSingleById<any>(
+          'loan_repayments',
+          'id, loan_id, schedule_id, amount_paid, principal_portion, margin_portion, payment_method, payment_date, receipt_number, notes, created_at',
+          refId
+        );
+        if (repRes.error && isPostgrestColumnError(repRes.error)) {
+          repRes = await safeFetchSingleById<any>(
+            'loan_repayments',
+            LOAN_REPAY_FULL_COLS,
+            refId
+          );
+        }
+        repayment = repRes.data ?? null;
+        if (repayment?.loan_id) {
+          loan = await safeFetchLoanById(String(repayment.loan_id));
+        }
+        if (repayment?.schedule_id && !schedule) {
+          const schedRes = await safeFetchSingleById<any>(
+            'loan_schedules',
+            'id, loan_id, period_number, due_date, target_amount, paid_amount, status',
+            String(repayment.schedule_id)
+          );
+          schedule = schedRes.data ?? null;
+        }
+      }
+
+      if (!loan && isInstallment) {
+        const instRes = await safeFetchSingleById<any>(
+          'loan_installments',
+          '*',
+          refId
+        );
+        installmentRow = instRes.data ?? null;
+        if (installmentRow?.loan_id) {
+          loan = await safeFetchLoanById(String(installmentRow.loan_id));
+        }
+      }
+    }
+
+    if (!loan && parsedDesc.loanNumber) {
+      loan = await safeFetchLoanByNumber(parsedDesc.loanNumber);
+    }
+
+    if (!loan && parsedDesc.memberNrp) {
+      memberRow = await safeFetchMemberByNrp(parsedDesc.memberNrp);
+      if (memberRow?.id) {
+        const memberLoans = await safeFetchLoansByMemberId(String(memberRow.id));
+        if (memberLoans.length > 0) {
+          const itemHintLower = (parsedDesc.itemHint || '').toLowerCase();
+          loan =
+            (itemHintLower
+              ? memberLoans.find((l: any) =>
+                  String(l?.item_description || '')
+                    .toLowerCase()
+                    .includes(itemHintLower)
+                )
+              : undefined) ||
+            (parsedDesc.isGoodsFinancing
+              ? memberLoans.find(
+                  (l: any) =>
+                    Number(l?.markup_amount ?? 0) > 0 ||
+                    Boolean(String(l?.item_description || '').trim())
+                )
+              : undefined) ||
+            memberLoans.find((l: any) =>
+              ['active', 'berjalan', 'approved', 'disbursed'].includes(
+                String(l?.status || '').trim().toLowerCase()
+              )
+            ) ||
+            memberLoans[0];
+        }
+      }
+    }
+
+    if (!memberRow && loan?.member_id) {
+      const { data: m } = await safeFetchSingleById<any>(
+        'anggota',
+        'id, nrp, nama, tanggal_lahir',
+        String(loan.member_id)
+      );
+      memberRow = m ?? null;
+    }
+
+    const loanType = loan?.loan_type_id
+      ? await safeFetchLoanTypeById(String(loan.loan_type_id))
+      : null;
+
+    let member = formatMemberSummary(memberRow);
+    if (!member && (parsedDesc.memberNrp || parsedDesc.memberName)) {
+      member = {
+        nrp: parsedDesc.memberNrp || '-',
+        nama: parsedDesc.memberName || '-',
+        tanggal_lahir: null,
+      };
+    }
+
+    const loanNumber = loan?.loan_number
+      ? String(loan.loan_number)
+      : parsedDesc.loanNumber;
+    const itemDescription = loan?.item_description
+      ? String(loan.item_description)
+      : parsedDesc.itemHint;
+    const isGoodsFinancing =
+      catUpper === 'PEMBIAYAAN_BARANG' ||
+      String(loanType?.code || '').toUpperCase() === 'PEMBIAYAAN_BARANG' ||
+      String(loanType?.financing_scheme || '').toUpperCase() === 'GOODS_MARKUP' ||
+      Number(loan?.markup_amount ?? 0) > 0 ||
+      Boolean(String(itemDescription || '').trim()) ||
+      parsedDesc.isGoodsFinancing;
+
+    const loanTypeName = String(
+      loanType?.name ||
+        (isGoodsFinancing ? 'Pembiayaan Barang' : 'Pinjaman Anggota')
+    );
+
+    if (isInstallment) {
+      const periodNumber =
+        schedule?.period_number !== undefined && schedule?.period_number !== null
+          ? Number(schedule.period_number)
+          : installmentRow?.period_number !== undefined &&
+            installmentRow?.period_number !== null
+          ? Number(installmentRow.period_number)
+          : parsedDesc.periodNumber;
+
+      if (
+        !schedule &&
+        !installmentRow?.due_date &&
+        loan?.id &&
+        periodNumber !== null &&
+        Number.isFinite(periodNumber)
+      ) {
+        const schedListRes = await safeFetchListByEq<any>(
+          'loan_schedules',
+          'id, loan_id, period_number, due_date, target_amount, paid_amount, status',
+          'loan_id',
+          String(loan.id)
+        );
+        if (schedListRes.data.length > 0) {
+          schedule =
+            schedListRes.data.find(
+              (s: any) => Number(s?.period_number) === periodNumber
+            ) ?? null;
+        }
+      }
+
+      const tenorRaw = loan?.agreed_tenor_months ?? loan?.tenor;
+      const tenor =
+        tenorRaw !== undefined && tenorRaw !== null && Number(tenorRaw) > 0
+          ? Number(tenorRaw)
+          : null;
+
+      let principalPortion: number | null =
+        repayment?.principal_portion !== undefined &&
+        repayment?.principal_portion !== null
+          ? Math.round(Number(repayment.principal_portion))
+          : installmentRow?.principal_portion !== undefined &&
+            installmentRow?.principal_portion !== null
+          ? Math.round(Number(installmentRow.principal_portion))
+          : parsedDesc.principalPortion;
+
+      let marginPortion: number | null =
+        repayment?.margin_portion !== undefined &&
+        repayment?.margin_portion !== null
+          ? Math.round(Number(repayment.margin_portion))
+          : installmentRow?.margin_portion !== undefined &&
+            installmentRow?.margin_portion !== null
+          ? Math.round(Number(installmentRow.margin_portion))
+          : parsedDesc.marginPortion;
+
+      if (principalPortion === null || marginPortion === null) {
+        const costPrice = Number(loan?.cost_price ?? 0);
+        const markupAmount = Number(loan?.markup_amount ?? 0);
+        if (isGoodsFinancing && costPrice > 0 && markupAmount > 0) {
+          const totalContract = costPrice + markupAmount;
+          const computedMargin = Math.round(
+            (journal.amount * markupAmount) / totalContract
+          );
+          marginPortion = marginPortion ?? computedMargin;
+          principalPortion =
+            principalPortion ?? Math.max(0, journal.amount - computedMargin);
+        } else {
+          principalPortion = principalPortion ?? journal.amount;
+          marginPortion = marginPortion ?? 0;
+        }
+      }
+
+      if (
+        loan ||
+        member ||
+        loanNumber ||
+        periodNumber !== null ||
+        schedule ||
+        repayment ||
+        installmentRow
+      ) {
+        return {
+          kind: 'loan_installment',
+          journal,
+          loanInstallment: {
+            loanId: loan?.id ? String(loan.id) : null,
+            scheduleId: schedule?.id
+              ? String(schedule.id)
+              : repayment?.schedule_id
+              ? String(repayment.schedule_id)
+              : null,
+            repaymentId: repayment?.id
+              ? String(repayment.id)
+              : installmentRow?.id
+              ? String(installmentRow.id)
+              : null,
+            loanNumber: loanNumber ?? null,
+            loanTypeName,
+            itemDescription: itemDescription ?? null,
+            isGoodsFinancing,
+            periodNumber: Number.isFinite(periodNumber as number)
+              ? periodNumber
+              : null,
+            tenor,
+            dueDate: schedule?.due_date ?? installmentRow?.due_date ?? null,
+            amount: journal.amount,
+            principalPortion,
+            marginPortion,
+            paymentMethod:
+              repayment?.payment_method ??
+              installmentRow?.payment_method ??
+              parsedDesc.paymentMethodHint ??
+              null,
+            receiptNumber:
+              repayment?.receipt_number ??
+              installmentRow?.receipt_number ??
+              null,
+            createdAt: String(
+              repayment?.created_at ||
+                installmentRow?.created_at ||
+                journal.createdAt
+            ),
+            description: String(
+              repayment?.notes || journal.description || '-'
+            ),
+            status: loan?.status ? String(loan.status) : null,
+            member,
+          },
+        };
+      }
+    } else if (loan || member || loanNumber) {
+      const disbursedAmount = isGoodsFinancing
+        ? Math.round(Number(loan?.cost_price ?? journal.amount ?? 0))
+        : Math.round(
+            Number(loan?.principal_amount ?? loan?.amount ?? journal.amount)
+          );
 
       return {
         kind: 'loan_disbursement',
         journal,
         loanDisbursement: {
-          loanId: String(loan.id || cashFlowRow.reference_id),
+          loanId: String(loan?.id || refId || journal.id),
+          loanNumber: loanNumber ?? null,
+          loanTypeName,
           amount: disbursedAmount,
-          tenor: Number(loan.agreed_tenor_months ?? loan.tenor ?? 0),
-          status: String(loan.status || 'active'),
-          disbursedAt: loan.disbursed_at ?? loan.created_at ?? null,
-          itemDescription: loan.item_description ?? null,
-          costPrice: loan.cost_price !== undefined ? Math.round(Number(loan.cost_price)) : undefined,
-          markupAmount: loan.markup_amount !== undefined ? Math.round(Number(loan.markup_amount)) : undefined,
+          tenor: Number(loan?.agreed_tenor_months ?? loan?.tenor ?? 0),
+          status: String(loan?.status || 'active'),
+          disbursedAt:
+            loan?.disbursed_at ?? loan?.approved_at ?? loan?.created_at ?? journal.createdAt,
+          itemDescription: itemDescription ?? null,
+          costPrice:
+            loan?.cost_price !== undefined
+              ? Math.round(Number(loan.cost_price))
+              : undefined,
+          markupAmount:
+            loan?.markup_amount !== undefined
+              ? Math.round(Number(loan.markup_amount))
+              : undefined,
+          description: journal.description,
           member,
         },
       };

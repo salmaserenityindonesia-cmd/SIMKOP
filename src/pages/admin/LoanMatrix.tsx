@@ -432,6 +432,18 @@ export const fetchLoanMatrixData = async (
 
 interface LoanMatrixInternalProps extends LoanMatrixProps {
   urlSearchQuery?: string;
+  urlTraceRef?: string;
+  urlLoanNo?: string;
+  urlNrp?: string;
+  urlTraceMonth?: number | null;
+  urlTraceYear?: number | null;
+  urlInstallmentNo?: number | null;
+  urlTraceAmount?: number | null;
+  urlTraceDate?: string;
+  urlTraceDesc?: string;
+  urlTraceLoanType?: string;
+  urlTraceMemberName?: string;
+  urlTraceKind?: string;
   onClearUrlSearch?: () => void;
 }
 
@@ -444,11 +456,33 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   initialSearch,
   onYearChange,
   urlSearchQuery = '',
+  urlTraceRef = '',
+  urlLoanNo = '',
+  urlNrp = '',
+  urlTraceMonth = null,
+  urlTraceYear = null,
+  urlInstallmentNo = null,
+  urlTraceAmount = null,
+  urlTraceDate = '',
+  urlTraceDesc = '',
+  urlTraceLoanType = '',
+  urlTraceMemberName = '',
+  urlTraceKind = '',
   onClearUrlSearch,
 }) => {
   const currentYear = new Date().getFullYear();
-  const [year, setYear] = useState<number>(initialYear ?? currentYear);
-  const [availableYears, setAvailableYears] = useState<number[]>(initialAvailableYears ?? [currentYear]);
+  const [year, setYear] = useState<number>(initialYear ?? urlTraceYear ?? currentYear);
+  const [availableYears, setAvailableYears] = useState<number[]>(() => {
+    if (initialAvailableYears && initialAvailableYears.length > 0) {
+      return urlTraceYear && !initialAvailableYears.includes(urlTraceYear)
+        ? [urlTraceYear, ...initialAvailableYears].sort((a, b) => b - a)
+        : initialAvailableYears;
+    }
+    if (urlTraceYear && urlTraceYear !== currentYear) {
+      return [urlTraceYear, currentYear].sort((a, b) => b - a);
+    }
+    return [currentYear];
+  });
   const [search, setSearch] = useState(initialSearch ?? urlSearchQuery ?? '');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'UNPAID' | 'FROZEN' | 'PAID'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
@@ -500,8 +534,34 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   }, [urlSearchQuery]);
 
   useEffect(() => {
+    if (urlTraceYear && urlTraceYear >= 2000 && urlTraceYear <= 2100) {
+      setYear(urlTraceYear);
+      setAvailableYears((prev) =>
+        prev.includes(urlTraceYear)
+          ? prev
+          : [urlTraceYear, ...prev].sort((a, b) => b - a)
+      );
+    }
+  }, [urlTraceYear]);
+
+  useEffect(() => {
     if (initialData !== undefined) return;
-    loadAvailableYearsData(setAvailableYears, setYear);
+    loadAvailableYearsData(
+      (years) => {
+        if (urlTraceYear && !years.includes(urlTraceYear)) {
+          setAvailableYears([urlTraceYear, ...years].sort((a, b) => b - a));
+        } else {
+          setAvailableYears(years);
+        }
+      },
+      (updater) => {
+        if (urlTraceYear && urlTraceYear >= 2000 && urlTraceYear <= 2100) {
+          setYear(urlTraceYear);
+        } else {
+          setYear(updater);
+        }
+      }
+    );
   }, []);
 
   const skipInitialFetch = React.useRef(initialData !== undefined);
@@ -638,6 +698,165 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   const totalFiltered = filteredMembers.length;
   const totalPages = Math.ceil(totalFiltered / itemsPerPage);
   const paginatedMembers = filteredMembers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  const cellRefs = React.useRef<Record<string, HTMLTableCellElement | null>>({});
+  const lastScrolledKeyRef = React.useRef<string>('');
+
+  const isRowMatchedByTrace = React.useCallback(
+    (row: LoanMatrixMember): boolean => {
+      const rowLoanNumber = (row.loan_number || row.loanNumber || '').trim().toLowerCase();
+      const rowNrp = String(row.anggota?.nrp || row.nrp || '').trim().toLowerCase();
+      const loanTarget = urlLoanNo.trim().toLowerCase();
+      const nrpTarget = urlNrp.trim().toLowerCase();
+      const searchTarget = urlSearchQuery.trim().toLowerCase();
+
+      if (loanTarget) {
+        return rowLoanNumber === loanTarget || rowLoanNumber.includes(loanTarget);
+      }
+      if (nrpTarget) {
+        return rowNrp === nrpTarget;
+      }
+      if (searchTarget) {
+        return rowLoanNumber.includes(searchTarget) || rowNrp.includes(searchTarget);
+      }
+      return false;
+    },
+    [urlLoanNo, urlNrp, urlSearchQuery]
+  );
+
+  const traceMatchedRow = useMemo(() => {
+    const candidates = filteredMembers.length > 0 ? filteredMembers : data?.members || [];
+    const loanTarget = urlLoanNo.trim().toLowerCase();
+    if (loanTarget) {
+      const exact = candidates.find(
+        (r) => (r.loan_number || r.loanNumber || '').trim().toLowerCase() === loanTarget
+      );
+      if (exact) return exact;
+    }
+    return candidates.find((r) => isRowMatchedByTrace(r)) ?? null;
+  }, [filteredMembers, data, urlLoanNo, isRowMatchedByTrace]);
+
+  const resolvedTraceMonth = useMemo<number | null>(() => {
+    if (urlTraceMonth && urlTraceMonth >= 1 && urlTraceMonth <= 12) {
+      return urlTraceMonth;
+    }
+    if (urlInstallmentNo && traceMatchedRow) {
+      const matchedCell = Object.values(traceMatchedRow.months || {}).find(
+        (c) =>
+          Number(c?.periodNumber) === urlInstallmentNo &&
+          Number(c?.month) >= 1 &&
+          Number(c?.month) <= 12
+      );
+      if (matchedCell?.month) {
+        return matchedCell.month;
+      }
+    }
+    return null;
+  }, [urlTraceMonth, urlInstallmentNo, traceMatchedRow]);
+
+  const resolvedTraceYear = urlTraceYear ?? year;
+
+  const resolvedTraceCell = useMemo(() => {
+    if (!traceMatchedRow || !resolvedTraceMonth) return null;
+    return traceMatchedRow.months?.[resolvedTraceMonth] ?? null;
+  }, [traceMatchedRow, resolvedTraceMonth]);
+
+  const resolvedTraceAmount = useMemo(() => {
+    if (urlTraceAmount !== null && Number.isFinite(urlTraceAmount)) {
+      return urlTraceAmount;
+    }
+    return Number(resolvedTraceCell?.paidAmount || resolvedTraceCell?.targetAmount || 0);
+  }, [urlTraceAmount, resolvedTraceCell]);
+
+  const tracePeriodBadgeLabel = useMemo<string | null>(() => {
+    const shortMonth = resolvedTraceMonth ? MONTHS[resolvedTraceMonth - 1] : null;
+    const yy = String(resolvedTraceYear).slice(-2);
+    if (shortMonth && urlInstallmentNo) {
+      return `${shortMonth}-${yy} (Bln ke-${urlInstallmentNo})`;
+    }
+    if (shortMonth) {
+      return `${shortMonth}-${yy}`;
+    }
+    if (urlInstallmentNo) {
+      return `Bln ke-${urlInstallmentNo}`;
+    }
+    if (urlTraceKind === 'disbursement') {
+      return `Pencairan ${resolvedTraceYear}`;
+    }
+    return null;
+  }, [resolvedTraceMonth, resolvedTraceYear, urlInstallmentNo, urlTraceKind]);
+
+  const traceTablePeriodLabel = useMemo<string>(() => {
+    const fullMonth = resolvedTraceMonth ? FULL_MONTH_NAMES[resolvedTraceMonth - 1] : null;
+    if (fullMonth && urlInstallmentNo) {
+      return `${fullMonth} ${resolvedTraceYear} (Angsuran Ke-${urlInstallmentNo})`;
+    }
+    if (fullMonth) {
+      return `${fullMonth} ${resolvedTraceYear}`;
+    }
+    if (urlInstallmentNo) {
+      return `Angsuran Ke-${urlInstallmentNo}`;
+    }
+    if (urlTraceKind === 'disbursement') {
+      return `Pencairan Pinjaman (${resolvedTraceYear})`;
+    }
+    return '-';
+  }, [resolvedTraceMonth, resolvedTraceYear, urlInstallmentNo, urlTraceKind]);
+
+  const traceDateDisplay = useMemo(() => {
+    const trimmed = urlTraceDate.trim();
+    if (!trimmed) return '-';
+    const ymdMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (ymdMatch) return ymdMatch[1];
+    return trimmed;
+  }, [urlTraceDate]);
+
+  const resolvedTraceMemberName =
+    traceMatchedRow?.anggota?.nama || traceMatchedRow?.nama || urlTraceMemberName || '';
+  const resolvedTraceMemberNrp =
+    traceMatchedRow?.anggota?.nrp || traceMatchedRow?.nrp || urlNrp || '';
+  const resolvedTraceLoanNo =
+    urlLoanNo || traceMatchedRow?.loan_number || traceMatchedRow?.loanNumber || '';
+  const resolvedTraceLoanType =
+    urlTraceLoanType ||
+    traceMatchedRow?.loanTypeName ||
+    traceMatchedRow?.loan_types?.name ||
+    'Pinjaman Anggota';
+
+  const handleResetTraceBack = React.useCallback(() => {
+    setSearch('');
+    setStatusFilter('ALL');
+    setCurrentPage(1);
+    lastScrolledKeyRef.current = '';
+    onClearUrlSearch?.();
+  }, [onClearUrlSearch]);
+
+  useEffect(() => {
+    if (!urlTraceRef) {
+      lastScrolledKeyRef.current = '';
+      return;
+    }
+    if (loading || !resolvedTraceMonth || !traceMatchedRow) return;
+
+    const targetRowLoanNumber = traceMatchedRow.loan_number || traceMatchedRow.loanNumber || '';
+    const targetRowKey =
+      traceMatchedRow.id ||
+      traceMatchedRow.loanId ||
+      `${traceMatchedRow.memberId}-${targetRowLoanNumber}`;
+    const targetCellKey = `${targetRowLoanNumber || targetRowKey}_${resolvedTraceMonth}`;
+    const scrollToken = `${urlTraceRef}|${targetCellKey}|${year}`;
+    if (lastScrolledKeyRef.current === scrollToken) return;
+
+    const timer = window.setTimeout(() => {
+      const el = cellRefs.current[targetCellKey];
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        lastScrolledKeyRef.current = scrollToken;
+      }
+    }, 60);
+
+    return () => window.clearTimeout(timer);
+  }, [loading, urlTraceRef, resolvedTraceMonth, traceMatchedRow, year, paginatedMembers]);
 
   const handleExportExcel = async () => {
     if (!data) return;
@@ -857,8 +1076,90 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         </div>
       </div>
 
-      {/* Active URL Query Filter Banner */}
-      {urlSearchQuery && (
+      {/* Active Trace-Back Panel or Plain URL Query Filter Banner */}
+      {urlTraceRef ? (
+        <div
+          data-testid="loan-traceback-filter-panel"
+          className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-4 space-y-3 shadow-xs"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600 text-white font-semibold">
+                Kode Trace-Back: <code className="font-mono font-bold">{urlTraceRef}</code>
+              </span>
+              {tracePeriodBadgeLabel && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-white text-indigo-800 border border-indigo-200 font-mono font-semibold">
+                  Periode: {tracePeriodBadgeLabel}
+                </span>
+              )}
+              {(resolvedTraceMemberName || resolvedTraceMemberNrp) && (
+                <span className="font-semibold text-slate-800">
+                  {resolvedTraceMemberName || '-'} — NRP{' '}
+                  <span className="font-mono">{resolvedTraceMemberNrp || '-'}</span>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              data-testid="btn-reset-loan-traceback-filter"
+              onClick={handleResetTraceBack}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Filter Trace-Back</span>
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl border border-indigo-200/80 overflow-x-auto shadow-2xs">
+            <table className="w-full text-xs text-left border-collapse">
+              <thead className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Tanggal</th>
+                  <th className="px-3 py-2 font-semibold">Jenis Pinjaman</th>
+                  <th className="px-3 py-2 font-semibold">Periode / Angsuran</th>
+                  <th className="px-3 py-2 font-semibold">No. Kontrak &amp; Ref</th>
+                  <th className="px-3 py-2 font-semibold">Keterangan</th>
+                  <th className="px-3 py-2 font-semibold text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                <tr className="hover:bg-slate-50/70">
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                    {traceDateDisplay}
+                  </td>
+                  <td className="px-3 py-2 font-semibold text-slate-900">
+                    {resolvedTraceLoanType}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-700">
+                    {traceTablePeriodLabel}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-indigo-700 whitespace-nowrap">
+                    {resolvedTraceLoanNo
+                      ? `${resolvedTraceLoanNo} • ${urlTraceRef}`
+                      : urlTraceRef}
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">
+                    {urlTraceDesc || '-'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700 whitespace-nowrap">
+                    {formatCurrency(resolvedTraceAmount)}
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot className="bg-emerald-50/70 border-t border-emerald-200 font-bold text-slate-900">
+                <tr>
+                  <td colSpan={5} className="px-3 py-2 text-xs uppercase tracking-wider text-emerald-900">
+                    TOTAL MUTASI TRACE-BACK (1 KOMPONEN)
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-emerald-700 whitespace-nowrap">
+                    {formatCurrency(resolvedTraceAmount)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      ) : urlSearchQuery ? (
         <div
           data-testid="loan-matrix-url-filter-banner"
           className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-indigo-900"
@@ -875,11 +1176,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => {
-              setSearch('');
-              setStatusFilter('ALL');
-              onClearUrlSearch?.();
-            }}
+            onClick={handleResetTraceBack}
             data-testid="reset-loan-matrix-url-filter-btn"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-semibold transition-colors cursor-pointer"
           >
@@ -887,7 +1184,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
             <span>Reset Filter</span>
           </button>
         </div>
-      )}
+      ) : null}
 
       {/* Matrix Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -902,9 +1199,19 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                     Sah per {formattedCutoffDate}
                   </div>
                 </th>
-                {visibleMonths.map(m => (
-                  <th key={m.monthNum} className="px-3 py-3 text-center min-w-[110px] border-l border-slate-200">{m.label}</th>
-                ))}
+                {visibleMonths.map(m => {
+                  const isTraceTargetCol = Boolean(urlTraceRef) && resolvedTraceMonth === m.monthNum;
+                  return (
+                    <th
+                      key={m.monthNum}
+                      className={`px-3 py-3 text-center min-w-[110px] border-l border-slate-200 ${
+                        isTraceTargetCol ? 'bg-indigo-100/80 text-indigo-800' : ''
+                      }`}
+                    >
+                      {m.label}
+                    </th>
+                  );
+                })}
                 <th className="px-4 py-3 text-center border-l border-slate-200">Kepatuhan YTD</th>
                 <th className="px-4 py-3 text-center sticky right-0 bg-slate-50 shadow-[-2px_0_5px_-2px_rgba(0,0,0,0.1)] z-30">Aksi</th>
               </tr>
@@ -932,9 +1239,13 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                   const targetLoanId = row.loanId || row.id || Object.values(row.months).find(m => m.loanId)?.loanId;
                   const tenorDisplay = row.agreedTenorMonths || row.agreed_tenor_months || row.tenor || 0;
                   const rowLoanNumber = row.loan_number || row.loanNumber || '';
-                  const isUrlMatchedRow =
-                    Boolean(urlSearchQuery) &&
-                    rowLoanNumber.toLowerCase().includes(urlSearchQuery.toLowerCase());
+                  const rowNrp = String(row.anggota?.nrp || row.nrp || '');
+                  const urlQ = urlSearchQuery.toLowerCase();
+                  const isUrlMatchedRow = urlTraceRef
+                    ? isRowMatchedByTrace(row)
+                    : Boolean(urlSearchQuery) &&
+                      (rowLoanNumber.toLowerCase().includes(urlQ) ||
+                        rowNrp.toLowerCase().includes(urlQ));
                   const {
                     isLoanCompleted,
                     hasDueSchedulesYTD,
@@ -1052,23 +1363,65 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                       
                       {visibleMonths.map(({ monthNum: m }) => {
                         const cell = row.months[m];
+                        const cellRefKey = `${rowLoanNumber || rowKey}_${m}`;
+                        const isTraceTargetRow = Boolean(urlTraceRef) && isRowMatchedByTrace(row);
+                        const isTraceTargetCell = isTraceTargetRow && resolvedTraceMonth === m;
                         return (
-                          <td key={m} className="px-2 py-2 border-l border-slate-100 text-center">
+                          <td
+                            key={m}
+                            ref={(el) => {
+                              if (el) {
+                                cellRefs.current[cellRefKey] = el;
+                              } else {
+                                delete cellRefs.current[cellRefKey];
+                              }
+                            }}
+                            data-trace-target-cell={isTraceTargetCell ? 'true' : undefined}
+                            className={`px-2 py-2 border-l border-slate-100 text-center${
+                              isTraceTargetCell ? ' bg-indigo-50/40' : ''
+                            }`}
+                          >
                             {(() => {
                               const { effectiveStatus } = evaluateInstallmentStatus(cell);
                               const badge = getCellBadge(cell);
                               if (effectiveStatus === 'NONE' || !cell) {
                                 return (
-                                  <div className="w-full py-1.5 text-center text-slate-300 font-normal select-none">
+                                  <div
+                                    className={`relative w-full py-1.5 text-center text-slate-300 font-normal select-none${
+                                      isTraceTargetCell
+                                        ? ' rounded-lg ring-2 ring-indigo-600 ring-offset-2 bg-indigo-50 shadow-md scale-[1.03] transition-all'
+                                        : ''
+                                    }`}
+                                  >
                                     -
+                                    {isTraceTargetCell && (
+                                      <span
+                                        data-testid="trace-target-indicator"
+                                        className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-600 ring-2 ring-white animate-pulse"
+                                        aria-hidden="true"
+                                      />
+                                    )}
                                   </div>
                                 );
                               }
                               return (
                                 <div className="relative group cursor-help">
-                                  <div className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}`}>
+                                  <div
+                                    className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}${
+                                      isTraceTargetCell
+                                        ? ' ring-2 ring-indigo-600 ring-offset-2 bg-emerald-50 shadow-md scale-[1.03]'
+                                        : ''
+                                    }`}
+                                  >
                                     {badge.text}
                                   </div>
+                                  {isTraceTargetCell && (
+                                    <span
+                                      data-testid="trace-target-indicator"
+                                      className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-600 ring-2 ring-white animate-pulse"
+                                      aria-hidden="true"
+                                    />
+                                  )}
                                   {/* Rich Tooltip */}
                                   <div className="opacity-0 invisible group-hover:opacity-100 group-hover:visible absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-slate-800 text-white text-xs rounded-lg p-3 shadow-xl z-50 transition-all pointer-events-none">
                                     <div className="font-semibold mb-1 border-b border-slate-600 pb-1">
@@ -1517,12 +1870,72 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
 
 const LoanMatrixWithRouter: React.FC<LoanMatrixProps> = (props) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const urlSearchQuery = (searchParams.get('search') || searchParams.get('loan') || '').trim();
+  const urlSearchQuery = (
+    searchParams.get('search') ||
+    searchParams.get('loan') ||
+    searchParams.get('loanNo') ||
+    searchParams.get('nrp') ||
+    ''
+  ).trim();
+  const urlTraceRef = (
+    searchParams.get('traceRef') ||
+    searchParams.get('ref') ||
+    ''
+  ).trim();
+  const urlLoanNo = (searchParams.get('loanNo') || '').trim();
+  const urlNrp = (searchParams.get('nrp') || '').trim();
+
+  const rawTraceMonth = Number(searchParams.get('traceMonth'));
+  const urlTraceMonth =
+    Number.isInteger(rawTraceMonth) && rawTraceMonth >= 1 && rawTraceMonth <= 12
+      ? rawTraceMonth
+      : null;
+
+  const rawTraceYear = Number(searchParams.get('traceYear'));
+  const urlTraceYear =
+    Number.isInteger(rawTraceYear) && rawTraceYear >= 2000 && rawTraceYear <= 2100
+      ? rawTraceYear
+      : null;
+
+  const rawInstallmentNo = Number(searchParams.get('installmentNo'));
+  const urlInstallmentNo =
+    Number.isInteger(rawInstallmentNo) && rawInstallmentNo >= 1
+      ? rawInstallmentNo
+      : null;
+
+  const rawTraceAmountStr = searchParams.get('traceAmount');
+  const rawTraceAmount =
+    rawTraceAmountStr !== null && rawTraceAmountStr.trim() !== ''
+      ? Number(rawTraceAmountStr)
+      : NaN;
+  const urlTraceAmount =
+    Number.isFinite(rawTraceAmount) && rawTraceAmount >= 0 ? rawTraceAmount : null;
+
+  const urlTraceDate = (searchParams.get('traceDate') || '').trim();
+  const urlTraceDesc = (searchParams.get('traceDesc') || '').trim();
+  const urlTraceLoanType = (searchParams.get('traceLoanType') || '').trim();
+  const urlTraceMemberName = (searchParams.get('traceMemberName') || '').trim();
+  const urlTraceKind = (searchParams.get('traceKind') || '').trim();
 
   const handleClearUrlSearch = () => {
     const next = new URLSearchParams(searchParams);
-    next.delete('search');
-    next.delete('loan');
+    [
+      'search',
+      'loan',
+      'traceRef',
+      'ref',
+      'loanNo',
+      'nrp',
+      'traceMonth',
+      'traceYear',
+      'installmentNo',
+      'traceAmount',
+      'traceDate',
+      'traceDesc',
+      'traceLoanType',
+      'traceMemberName',
+      'traceKind',
+    ].forEach((key) => next.delete(key));
     setSearchParams(next, { replace: true });
   };
 
@@ -1530,6 +1943,18 @@ const LoanMatrixWithRouter: React.FC<LoanMatrixProps> = (props) => {
     <LoanMatrixContent
       {...props}
       urlSearchQuery={urlSearchQuery}
+      urlTraceRef={urlTraceRef}
+      urlLoanNo={urlLoanNo}
+      urlNrp={urlNrp}
+      urlTraceMonth={urlTraceMonth}
+      urlTraceYear={urlTraceYear}
+      urlInstallmentNo={urlInstallmentNo}
+      urlTraceAmount={urlTraceAmount}
+      urlTraceDate={urlTraceDate}
+      urlTraceDesc={urlTraceDesc}
+      urlTraceLoanType={urlTraceLoanType}
+      urlTraceMemberName={urlTraceMemberName}
+      urlTraceKind={urlTraceKind}
       onClearUrlSearch={handleClearUrlSearch}
     />
   );

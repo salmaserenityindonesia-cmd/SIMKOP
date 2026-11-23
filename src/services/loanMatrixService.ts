@@ -537,9 +537,41 @@ export const getLoanMatrix = async (
             explicitlyIncludedLoanIds.add(l.id);
           }
         });
-        if (explicitlyIncludedLoanIds.size > 0) {
-          loanIds = Array.from(new Set([...loanIds, ...explicitlyIncludedLoanIds]));
+      }
+
+      if (explicitlyIncludedLoanIds.size === 0) {
+        const anggotaQ: any = supabase.from('anggota')?.select('id, nrp');
+        if (anggotaQ) {
+          let memberRes: any = null;
+          if (typeof anggotaQ.ilike === 'function') {
+            memberRes = await anggotaQ.ilike('nrp', `%${rawSearch}%`);
+          } else if (typeof anggotaQ.eq === 'function') {
+            memberRes = await anggotaQ.eq('nrp', rawSearch);
+          }
+          const matchedMembers = Array.isArray(memberRes?.data) ? memberRes.data : [];
+          const matchedMemberIds = matchedMembers
+            .filter((m: any) => m?.id && String(m?.nrp || '').toLowerCase().includes(includeSearchNorm))
+            .map((m: any) => m.id);
+          if (matchedMemberIds.length > 0) {
+            const memberLoansQ: any = supabase.from('loans')?.select('id, status');
+            let memberLoansRes: any = null;
+            if (memberLoansQ && typeof memberLoansQ.in === 'function') {
+              memberLoansRes = await memberLoansQ.in('member_id', matchedMemberIds);
+            } else if (memberLoansQ && typeof memberLoansQ.eq === 'function' && matchedMemberIds.length === 1) {
+              memberLoansRes = await memberLoansQ.eq('member_id', matchedMemberIds[0]);
+            }
+            const mLoans = Array.isArray(memberLoansRes?.data) ? memberLoansRes.data : [];
+            mLoans.forEach((l: any) => {
+              const st = String(l?.status || '').toLowerCase();
+              if (['rejected', 'draft', 'cancelled'].includes(st)) return;
+              if (l?.id) explicitlyIncludedLoanIds.add(l.id);
+            });
+          }
         }
+      }
+
+      if (explicitlyIncludedLoanIds.size > 0) {
+        loanIds = Array.from(new Set([...loanIds, ...explicitlyIncludedLoanIds]));
       }
     } catch {
       // Non-fatal fallback

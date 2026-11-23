@@ -3990,3 +3990,416 @@ describe('cashFlowAuditService - syncApprovedLoansToCashFlow', () => {
     });
   });
 });
+
+describe('cashFlowAuditService - Loan Installment & Disbursement Breakdown', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resolves angsuran_pinjaman (CF-9F0EE1EF) when reference_id points to loan_schedules.id with loan, member, period, and pokok/margin portions', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  col === 'id' && val === 'loan-hp-1'
+                    ? {
+                        id: 'loan-hp-1',
+                        loan_number: 'LOAN-1795333396946',
+                        member_id: 'mem-tes-1',
+                        loan_type_id: 'lt-brg',
+                        amount: 2200000,
+                        principal_amount: 2200000,
+                        item_description: 'beli hp',
+                        cost_price: 2000000,
+                        markup_amount: 200000,
+                        tenor: 11,
+                        agreed_tenor_months: 11,
+                        status: 'active',
+                        disbursed_at: '2026-11-01T00:00:00.000Z',
+                        created_at: '2026-11-01T00:00:00.000Z',
+                      }
+                    : null,
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  val === '4b1eaebf-a9df-470a-b21d-6f1f3d576977'
+                    ? {
+                        id: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+                        loan_id: 'loan-hp-1',
+                        period_number: 1,
+                        due_date: '2026-12-22',
+                        target_amount: 200000,
+                        paid_amount: 200000,
+                        status: 'paid',
+                      }
+                    : null,
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'rep-1',
+                  loan_id: 'loan-hp-1',
+                  schedule_id: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+                  amount_paid: 200000,
+                  principal_portion: 181818,
+                  margin_portion: 18182,
+                  payment_method: 'potong_gaji',
+                  receipt_number: 'KW-ANG-001',
+                  created_at: '2026-11-22T10:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'mem-tes-1',
+                  nrp: '99999999',
+                  nama: 'anggota tes 1',
+                  tanggal_lahir: '1990-01-15',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'lt-brg',
+                  code: 'PEMBIAYAAN_BARANG',
+                  name: 'Pembiayaan Barang',
+                  financing_scheme: 'GOODS_MARKUP',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: '9f0ee1ef-1111-2222-3333-444455556666',
+      referensi: 'CF-9F0EE1EF',
+      category: 'angsuran_pinjaman',
+      amount: 200000,
+      direction: 'in',
+      description:
+        'Angsuran Pembiayaan Barang (beli hp) Bln ke-1 — 99999999 - anggota tes 1 | Pokok: Rp 181.818 | Margin: Rp 18.182',
+      reference_id: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+      created_at: '2026-11-22T10:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('loan_installment');
+    if (res.kind === 'loan_installment') {
+      expect(res.loanInstallment).toMatchObject({
+        loanId: 'loan-hp-1',
+        scheduleId: '4b1eaebf-a9df-470a-b21d-6f1f3d576977',
+        loanNumber: 'LOAN-1795333396946',
+        loanTypeName: 'Pembiayaan Barang',
+        itemDescription: 'beli hp',
+        isGoodsFinancing: true,
+        periodNumber: 1,
+        tenor: 11,
+        amount: 200000,
+        principalPortion: 181818,
+        marginPortion: 18182,
+        paymentMethod: 'potong_gaji',
+        member: {
+          nrp: '99999999',
+          nama: 'anggota tes 1',
+          tanggal_lahir: '1990-01-15',
+        },
+      });
+    }
+  });
+
+  it('resolves angsuran_pinjaman when reference_id directly matches loans.id or loan_installments.id', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  val === 'loan-direct-1'
+                    ? {
+                        id: 'loan-direct-1',
+                        loan_number: 'LOAN-DIRECT-01',
+                        member_id: 'mem-1',
+                        amount: 1200000,
+                        principal_amount: 1200000,
+                        tenor: 6,
+                        status: 'active',
+                      }
+                    : null,
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'loan_schedules' || table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_installments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  val === 'inst-1'
+                    ? {
+                        id: 'inst-1',
+                        loan_id: 'loan-direct-1',
+                        period_number: 2,
+                        principal_portion: 200000,
+                        margin_portion: 0,
+                      }
+                    : null,
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'mem-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const directRes = await getCashFlowReferenceBreakdown({
+      id: 'cf-loan-direct',
+      category: 'Angsuran Pinjaman',
+      amount: 200000,
+      direction: 'in',
+      description: 'Angsuran Pinjaman (LOAN-DIRECT-01) Bln ke-2 — 88010001 - Budi Santoso',
+      reference_id: 'loan-direct-1',
+      created_at: '2026-11-22T09:00:00.000Z',
+    });
+
+    expect(directRes.kind).toBe('loan_installment');
+    if (directRes.kind === 'loan_installment') {
+      expect(directRes.loanInstallment.loanNumber).toBe('LOAN-DIRECT-01');
+      expect(directRes.loanInstallment.periodNumber).toBe(2);
+      expect(directRes.loanInstallment.member?.nrp).toBe('88010001');
+    }
+
+    const instRes = await getCashFlowReferenceBreakdown({
+      id: 'cf-loan-inst',
+      category: 'angsuran_pinjaman',
+      amount: 200000,
+      direction: 'in',
+      description: 'Angsuran Pinjaman Bln ke-2',
+      reference_id: 'inst-1',
+      created_at: '2026-11-22T09:00:00.000Z',
+    });
+
+    expect(instRes.kind).toBe('loan_installment');
+    if (instRes.kind === 'loan_installment') {
+      expect(instRes.loanInstallment.loanId).toBe('loan-direct-1');
+      expect(instRes.loanInstallment.loanNumber).toBe('LOAN-DIRECT-01');
+      expect(instRes.loanInstallment.periodNumber).toBe(2);
+    }
+  });
+
+  it('falls back to parsing NRP, item description, period, and pokok/margin from description when reference_id is missing or unmatched', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => ({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data:
+                  col === 'nrp' && val === '99999999'
+                    ? {
+                        id: 'mem-tes-1',
+                        nrp: '99999999',
+                        nama: 'anggota tes 1',
+                        tanggal_lahir: '1990-01-15',
+                      }
+                    : null,
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((col: string, val: string) => {
+              if (col === 'member_id' && val === 'mem-tes-1') {
+                return Promise.resolve({
+                  data: [
+                    {
+                      id: 'loan-hp-fb',
+                      loan_number: 'LOAN-1795333396946',
+                      member_id: 'mem-tes-1',
+                      item_description: 'beli hp',
+                      cost_price: 2000000,
+                      markup_amount: 200000,
+                      tenor: 11,
+                      status: 'active',
+                    },
+                  ],
+                  error: null,
+                });
+              }
+              return { maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }) };
+            }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+      };
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: '9f0ee1ef-fallback',
+      referensi: 'CF-9F0EE1EF',
+      category: 'angsuran_pinjaman',
+      amount: 200000,
+      direction: 'in',
+      description:
+        'Angsuran Pembiayaan Barang (beli hp) Bln ke-1 — 99999999 - anggota tes 1 | Pokok: Rp 181.818 | Margin: Rp 18.182',
+      reference_id: 'unmatched-uuid',
+      created_at: '2026-11-22T10:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('loan_installment');
+    if (res.kind === 'loan_installment') {
+      expect(res.loanInstallment.loanNumber).toBe('LOAN-1795333396946');
+      expect(res.loanInstallment.member?.nrp).toBe('99999999');
+      expect(res.loanInstallment.member?.nama).toBe('anggota tes 1');
+      expect(res.loanInstallment.periodNumber).toBe(1);
+      expect(res.loanInstallment.principalPortion).toBe(181818);
+      expect(res.loanInstallment.marginPortion).toBe(18182);
+    }
+  });
+
+  it('loads loan_disbursement with loanNumber and loanTypeName for Pencairan Pinjaman / Pembiayaan Barang', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'loan-disb-1',
+                  loan_number: 'LOAN-1795338673852',
+                  member_id: 'm-1',
+                  loan_type_id: 'lt-brg',
+                  amount: 70000000,
+                  principal_amount: 70000000,
+                  cost_price: 50000000,
+                  markup_amount: 20000000,
+                  item_description: 'Mobil Operasional',
+                  tenor: 24,
+                  status: 'active',
+                  disbursed_at: '2026-11-22T08:00:00.000Z',
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'm-1', nrp: '88010001', nama: 'Budi Santoso', tanggal_lahir: '1983-08-15' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_types') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang', financing_scheme: 'GOODS_MARKUP' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await getCashFlowReferenceBreakdown({
+      id: 'cf-disb-1',
+      category: 'Pembiayaan Barang',
+      amount: 50000000,
+      direction: 'out',
+      reference_id: 'loan-disb-1',
+      created_at: '2026-11-22T08:00:00.000Z',
+    });
+
+    expect(res.kind).toBe('loan_disbursement');
+    if (res.kind === 'loan_disbursement') {
+      expect(res.loanDisbursement.loanNumber).toBe('LOAN-1795338673852');
+      expect(res.loanDisbursement.loanTypeName).toBe('Pembiayaan Barang');
+      expect(res.loanDisbursement.amount).toBe(50000000);
+      expect(res.loanDisbursement.member?.nrp).toBe('88010001');
+    }
+  });
+});
