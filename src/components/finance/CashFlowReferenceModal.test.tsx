@@ -1239,4 +1239,96 @@ describe('CashFlowReferenceModal Component', () => {
     expect(html).toContain('Telusuri di Buku Besar Pinjaman');
     expect(html).toContain('href="/admin/loan-matrix?search=99999999&amp;traceRef=CF-DISB0001&amp;nrp=99999999&amp;traceYear=2026&amp;traceAmount=2000000');
   });
+
+  it('renders contract multi-journal switcher and Lihat Baris di Laporan Keuangan CTA when opened from /admin/loan-matrix or /admin/approval', () => {
+    const disbursementItem: CashFlowReferenceModalItem = {
+      ...baseOpeningItem,
+      id: 'aaaa1111-1111-2222-3333-444455556666',
+      referensi: 'CF-AAAA1111',
+      kategori: 'pencairan_pinjaman',
+      deskripsi: 'Pencairan Pinjaman [LOAN-5555] — 88010001 - Budi',
+      kas_masuk: 0,
+      kas_keluar: 5000000,
+      direction: 'out',
+      created_at: '2026-03-01T08:00:00.000Z',
+    };
+    const installmentItem: CashFlowReferenceModalItem = {
+      ...baseOpeningItem,
+      id: '1a22f0ff-1111-2222-3333-444455556666',
+      referensi: 'CF-1A22F0FF',
+      kategori: 'angsuran_pinjaman',
+      deskripsi: 'Angsuran Pinjaman [LOAN-5555] Bln ke-7 — 88010001 - Budi',
+      kas_masuk: 500000,
+      kas_keluar: 0,
+      direction: 'in',
+      created_at: '2026-09-01T08:00:00.000Z',
+    };
+    const breakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_installment',
+      journal: {
+        id: installmentItem.id,
+        refCode: 'CF-1A22F0FF',
+        category: 'angsuran_pinjaman',
+        direction: 'in',
+        amount: 500000,
+        description: installmentItem.deskripsi,
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: 'sched-7',
+        createdAt: '2026-09-01T08:00:00.000Z',
+      },
+      loanInstallment: {
+        loanId: 'loan-5555',
+        scheduleId: 'sched-7',
+        loanNumber: 'LOAN-5555',
+        loanTypeName: 'Pinjaman Reguler',
+        isGoodsFinancing: false,
+        periodNumber: 7,
+        tenor: 12,
+        dueDate: '2026-09-01',
+        amount: 500000,
+        principalPortion: 500000,
+        marginPortion: 0,
+        createdAt: '2026-09-01T08:00:00.000Z',
+        description: installmentItem.deskripsi,
+        member: { nrp: '88010001', nama: 'Budi' },
+      },
+    };
+
+    const loanMatrixHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/loan-matrix']}>
+        <CashFlowReferenceModal
+          cashFlowItem={installmentItem}
+          relatedCashFlows={[disbursementItem, installmentItem]}
+          contractLabel="LOAN-5555"
+          onClose={() => {}}
+          initialBreakdown={breakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(loanMatrixHtml).toContain('data-testid="contract-journal-switcher"');
+    expect(loanMatrixHtml).toContain('Mutasi Kas Kontrak LOAN-5555 (2 jurnal)');
+    expect(loanMatrixHtml).toContain('data-testid="contract-journal-tab-CF-AAAA1111"');
+    expect(loanMatrixHtml).toContain('data-testid="contract-journal-tab-CF-1A22F0FF"');
+    expect(loanMatrixHtml).toContain('Bln ke-7');
+    expect(loanMatrixHtml).toContain('data-testid="btn-trace-laporan-keuangan"');
+    expect(loanMatrixHtml).toContain('Lihat Baris di Laporan Keuangan');
+    expect(loanMatrixHtml).toContain('href="/admin/laporan-keuangan?search=CF-1A22F0FF&amp;date=2026-09-01"');
+    expect(loanMatrixHtml).not.toContain('data-testid="btn-trace-loan-ledger"');
+
+    const approvalHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/approval']}>
+        <CashFlowReferenceModal
+          cashFlowItem={installmentItem}
+          relatedCashFlows={[disbursementItem, installmentItem]}
+          contractLabel="LOAN-5555"
+          onClose={() => {}}
+          initialBreakdown={breakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(approvalHtml).toContain('data-testid="btn-trace-laporan-keuangan"');
+    expect(approvalHtml).toContain('data-testid="btn-trace-loan-ledger"');
+  });
 });

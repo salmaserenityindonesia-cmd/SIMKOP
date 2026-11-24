@@ -1,21 +1,136 @@
 import React, { useState, useEffect } from 'react';
 import { loanService, isGoodsMarkupLoan } from '../../services/loanService';
-import { X, Loader2, DollarSign } from 'lucide-react';
+import { supabase } from '../../lib/supabaseClient';
+import { X, Loader2, DollarSign, BookOpen } from 'lucide-react';
 import StatusBadge, { StatusType } from '../ui/StatusBadge';
 import { useFeedback } from '../../context/FeedbackContext';
+
+const COMPLETED_CONTRACT_STATUSES = new Set(['completed', 'paid_off', 'lunas', 'paid']);
+const PAID_SCHEDULE_STATUSES = new Set(['paid', 'lunas', 'completed', 'settled', 'finished']);
 
 export function mapLoanModalStatus(status?: string | null): StatusType {
   const s = String(status || '').trim().toLowerCase();
   if (s === 'active' || s === 'approved' || s === 'berjalan' || s === 'disbursed') {
     return 'berjalan';
   }
-  if (s === 'completed' || s === 'paid_off' || s === 'lunas' || s === 'paid') {
+  if (COMPLETED_CONTRACT_STATUSES.has(s)) {
     return 'lunas';
   }
   if (s === 'rejected' || s === 'ditolak') {
     return 'rejected';
   }
   return 'pending';
+}
+
+export function isSchedulePeriodPaid(sched: any): boolean {
+  if (!sched) return false;
+  const rawStatus = String(sched.status || '').trim().toLowerCase();
+  const targetAmt = Number(sched.target_amount ?? sched.targetAmount ?? 0);
+  const paidAmt = Number(sched.paid_amount ?? sched.paidAmount ?? 0);
+  return (
+    PAID_SCHEDULE_STATUSES.has(rawStatus) ||
+    sched.is_paid === true ||
+    (targetAmt > 0 && paidAmt >= targetAmt)
+  );
+}
+
+export function resolveLoanContractStatus(
+  pinjaman: any,
+  schedules: any[] = [],
+  sisaPinjaman?: number
+): StatusType {
+  const rawStatus = String(pinjaman?.status || '').trim().toLowerCase();
+  if (['pending', 'draft', 'rejected', 'ditolak', 'suspended'].includes(rawStatus)) {
+    return mapLoanModalStatus(pinjaman?.status);
+  }
+
+  const list = Array.isArray(schedules) ? schedules : [];
+  const totalTenor = Number(pinjaman?.tenor || pinjaman?.agreed_tenor_months || list.length || 0);
+  const effectiveSisa =
+    sisaPinjaman !== undefined
+      ? sisaPinjaman
+      : pinjaman?.sisa_pinjaman !== null && pinjaman?.sisa_pinjaman !== undefined
+        ? Number(pinjaman.sisa_pinjaman)
+        : 0;
+
+  if (list.length > 0) {
+    const paidPeriodsCount = list.filter(isSchedulePeriodPaid).length;
+    const hasUnpaidSchedules = paidPeriodsCount < list.length;
+
+    if (effectiveSisa <= 0 && !hasUnpaidSchedules && (totalTenor <= 0 || paidPeriodsCount >= totalTenor)) {
+      return 'lunas';
+    }
+    if (effectiveSisa > 0 || hasUnpaidSchedules || (totalTenor > 0 && paidPeriodsCount < totalTenor)) {
+      return 'berjalan';
+    }
+  } else if (
+    pinjaman?.sisa_pinjaman !== null &&
+    pinjaman?.sisa_pinjaman !== undefined &&
+    Number(pinjaman.sisa_pinjaman) > 0 &&
+    COMPLETED_CONTRACT_STATUSES.has(rawStatus)
+  ) {
+    return 'berjalan';
+  }
+
+  return mapLoanModalStatus(pinjaman?.status);
+}
+
+export interface InstallmentPeriodStatusInfo {
+  label: 'Terbayar' | 'Terbayar Sebagian' | 'Menunggak' | 'Belum Jatuh Tempo';
+  className: string;
+  isPaid: boolean;
+}
+
+function getTodayLocalYmd(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function getInstallmentPeriodStatus(
+  item: any,
+  todayYmd: string = getTodayLocalYmd()
+): InstallmentPeriodStatusInfo {
+  const targetAmt = Number(item?.target_amount ?? item?.targetAmount ?? 0);
+  const paidAmt = Number(item?.paid_amount ?? item?.paidAmount ?? 0);
+  const rawStatus = String(item?.status || '').trim().toLowerCase();
+
+  if (
+    PAID_SCHEDULE_STATUSES.has(rawStatus) ||
+    item?.is_paid === true ||
+    (targetAmt > 0 && paidAmt >= targetAmt)
+  ) {
+    return {
+      label: 'Terbayar',
+      className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200',
+      isPaid: true,
+    };
+  }
+
+  if ((paidAmt > 0 && (targetAmt <= 0 || paidAmt < targetAmt)) || rawStatus === 'partial') {
+    return {
+      label: 'Terbayar Sebagian',
+      className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-700 border-amber-200',
+      isPaid: false,
+    };
+  }
+
+  const dueDateStr = item?.due_date ? String(item.due_date).trim().slice(0, 10) : '';
+  if (dueDateStr && /^\d{4}-\d{2}-\d{2}$/.test(dueDateStr) && dueDateStr < todayYmd) {
+    return {
+      label: 'Menunggak',
+      className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border bg-rose-50 text-rose-700 border-rose-200',
+      isPaid: false,
+    };
+  }
+
+  return {
+    label: 'Belum Jatuh Tempo',
+    className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border bg-slate-100 text-slate-600 border-slate-200',
+    isPaid: false,
+  };
 }
 
 // Helper modal for partial payments
@@ -130,6 +245,8 @@ export interface LoanDetailModalProps {
   onSuccess?: () => void;
   initialPinjaman?: any;
   initialSchedules?: any[];
+  onOpenCashFlowJournal?: (loan: any) => void;
+  loadingJournal?: boolean;
 }
 
 export default function LoanDetailModal({
@@ -139,6 +256,8 @@ export default function LoanDetailModal({
   onSuccess,
   initialPinjaman = null,
   initialSchedules = [],
+  onOpenCashFlowJournal,
+  loadingJournal = false,
 }: LoanDetailModalProps) {
   const [pinjaman, setPinjaman] = useState<any>(initialPinjaman);
   const [schedules, setSchedules] = useState<any[]>(initialSchedules);
@@ -165,8 +284,40 @@ export default function LoanDetailModal({
         loanService.getLoanById(targetId),
         loanService.getLoanSchedules(targetId)
       ]);
-      setPinjaman(pinjamanData);
-      setSchedules(schedulesData || []);
+      const safeSchedules = schedulesData || [];
+      let normalizedPinjaman = pinjamanData;
+
+      if (pinjamanData && safeSchedules.length > 0) {
+        const rawStatus = String(pinjamanData.status || '').trim().toLowerCase();
+        const totalPaidAmt = safeSchedules.reduce((sum: number, s: any) => sum + Number(s.paid_amount || 0), 0);
+        const totalTargetAmt = safeSchedules.reduce((sum: number, s: any) => sum + Number(s.target_amount || 0), 0);
+        const principalAmt = Number(pinjamanData.principal_amount || pinjamanData.amount || totalTargetAmt);
+        const computedSisa = Math.max(0, principalAmt - totalPaidAmt);
+
+        if (
+          COMPLETED_CONTRACT_STATUSES.has(rawStatus) &&
+          resolveLoanContractStatus(pinjamanData, safeSchedules, computedSisa) === 'berjalan'
+        ) {
+          normalizedPinjaman = {
+            ...pinjamanData,
+            status: 'active',
+            sisa_pinjaman: computedSisa,
+          };
+          try {
+            const loansTable: any = supabase.from('loans');
+            if (loansTable && typeof loansTable.update === 'function') {
+              await loansTable
+                .update({ status: 'active', sisa_pinjaman: computedSisa })
+                .eq('id', targetId);
+            }
+          } catch {
+            // Non-blocking auto-repair fallback
+          }
+        }
+      }
+
+      setPinjaman(normalizedPinjaman);
+      setSchedules(safeSchedules);
     } catch (err: any) {
       setError(err.message || 'Gagal memuat detail pinjaman');
     } finally {
@@ -191,33 +342,61 @@ export default function LoanDetailModal({
   if (!isOpen) return null;
 
   const schedule = schedules;
-  const lunasCount = schedules.filter(s => s.status === 'paid').length;
+  const lunasCount = schedules.filter(s => getInstallmentPeriodStatus(s).isPaid).length;
   const sisaCicilan = Math.max(0, (pinjaman?.tenor || 0) - lunasCount);
   const totalPaid = schedules.reduce((sum, s) => sum + Number(s.paid_amount || 0), 0);
   const totalTarget = schedules.reduce((sum, s) => sum + Number(s.target_amount || 0), 0);
   const principalAmount = Number(pinjaman?.principal_amount || pinjaman?.amount || totalTarget);
   const sisaPinjaman = Math.max(0, principalAmount - totalPaid);
+  const contractStatus = resolveLoanContractStatus(pinjaman, schedule, sisaPinjaman);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Modal Header */}
-        <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-          <div>
-            <h2 className="text-xl font-bold text-gray-900">Detail Pinjaman</h2>
+        <div className="p-5 border-b border-gray-100 flex justify-between items-center gap-3 bg-gray-50">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-bold text-gray-900">Detail Pinjaman</h2>
+              {pinjaman?.loan_number && (
+                <span className="px-2 py-0.5 rounded-md bg-slate-200/80 text-slate-700 font-mono text-xs font-semibold">
+                  {pinjaman.loan_number}
+                </span>
+              )}
+            </div>
             {pinjaman?.anggota && (
               <p className="text-sm text-gray-500">
                 {pinjaman.anggota?.nama} ({pinjaman.anggota?.no_anggota || pinjaman.anggota?.nrp})
               </p>
             )}
           </div>
-          <button 
-            onClick={onClose} 
-            className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-500 transition-colors"
-            title="Tutup"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {pinjaman &&
+              (contractStatus === 'berjalan' || contractStatus === 'lunas') &&
+              onOpenCashFlowJournal && (
+                <button
+                  type="button"
+                  data-testid="btn-open-loan-journal"
+                  onClick={() => onOpenCashFlowJournal(pinjaman)}
+                  disabled={loadingJournal}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-60"
+                >
+                  {loadingJournal ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <BookOpen className="w-3.5 h-3.5" />
+                  )}
+                  <span>Buka Bukti Jurnal &amp; Buku Pembantu</span>
+                </button>
+              )}
+            <button 
+              onClick={onClose} 
+              className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-500 transition-colors"
+              title="Tutup"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Content */}
@@ -237,7 +416,7 @@ export default function LoanDetailModal({
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Status Pinjaman</p>
-                    <StatusBadge status={mapLoanModalStatus(pinjaman.status)} />
+                    <StatusBadge status={contractStatus} />
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Jenis Pinjaman</p>
@@ -361,7 +540,7 @@ export default function LoanDetailModal({
                 <div className="px-5 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                   <h3 className="text-base font-semibold text-gray-900">Jadwal Angsuran</h3>
                   <span className="text-xs text-gray-500">
-                    {lunasCount} dari {schedule.length} periode lunas
+                    {lunasCount} dari {schedule.length} periode terbayar
                   </span>
                 </div>
                 <div className="overflow-x-auto">
@@ -378,7 +557,9 @@ export default function LoanDetailModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {schedule.map((item) => (
+                      {schedule.map((item) => {
+                        const statusInfo = getInstallmentPeriodStatus(item);
+                        return (
                         <tr key={item.id} className="hover:bg-gray-50/50">
                           <td className="px-4 py-3 text-gray-900 font-medium text-center">
                             {item.period_number}
@@ -401,22 +582,12 @@ export default function LoanDetailModal({
                             Rp {Math.max(0, Math.round(Number(item.target_amount) - Number(item.paid_amount))).toLocaleString('id-ID')}
                           </td>
                           <td className="px-4 py-3">
-                            {item.status === 'paid' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                Lunas
-                              </span>
-                            ) : item.status === 'partial' ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                Parsial
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                Belum Lunas
-                              </span>
-                            )}
+                            <span className={statusInfo.className}>
+                              {statusInfo.label}
+                            </span>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            {item.status !== 'paid' && (
+                            {!statusInfo.isPaid && (
                               <button
                                 onClick={() => setActivePayment({ 
                                   schedule_id: item.id, 
@@ -429,7 +600,8 @@ export default function LoanDetailModal({
                             )}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {schedule.length === 0 && (
                         <tr>
                           <td colSpan={7} className="px-4 py-8 text-center text-gray-500">

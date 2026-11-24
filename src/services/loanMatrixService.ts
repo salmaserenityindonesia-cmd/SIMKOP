@@ -770,12 +770,60 @@ export const getLoanMatrix = async (
   });
 
   const activeLoanIdsSet = new Set<string>();
+  const mismarkedActiveLoanUpdates: Array<{ id: string; sisaPinjaman: number }> = [];
+  const mismarkedActiveLoanIds = new Set<string>();
+
   Object.entries(schedulesByLoan).forEach(([loanId, loanSchedules]) => {
     const loan = loanSchedules[0]?.loan;
     if (!loan) return;
 
     const statusLower = String(loan.status || '').toLowerCase();
-    if (['rejected', 'draft', 'cancelled'].includes(statusLower)) {
+    if (['rejected', 'draft', 'cancelled', 'pending'].includes(statusLower)) {
+      return;
+    }
+
+    const tenor = Number(loan.tenor || loan.agreed_tenor_months || 0);
+    const hasUnpaidOrPartialSchedule = loanSchedules.some(
+      (s: any) =>
+        !resolveSchedulePaymentMetrics(s, s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0)
+          .isInstallmentPaid
+    );
+    const isAllSchedulesPaid =
+      loanSchedules.length > 0 &&
+      !hasUnpaidOrPartialSchedule &&
+      (tenor <= 0 || loanSchedules.length >= tenor);
+
+    const totalPaidFromSchedules = loanSchedules.reduce((sum: number, s: any) => {
+      return (
+        sum +
+        resolveSchedulePaymentMetrics(s, s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0)
+          .effectivePaidAmt
+      );
+    }, 0);
+    const principalAmt = Number(loan.principal_amount || loan.amount || 0);
+    const computedRemaining = Math.max(
+      0,
+      principalAmt - Math.max(totalPaidFromSchedules, repaidByLoanId[loanId] || 0)
+    );
+    const hasPositiveSisaColumn =
+      loan.sisa_pinjaman !== null &&
+      loan.sisa_pinjaman !== undefined &&
+      Number(loan.sisa_pinjaman) > 0;
+    const hasPositiveRemaining =
+      hasPositiveSisaColumn || (hasUnpaidOrPartialSchedule && computedRemaining > 0);
+    const hasZeroRemaining =
+      !hasUnpaidOrPartialSchedule &&
+      loan.sisa_pinjaman !== null &&
+      loan.sisa_pinjaman !== undefined &&
+      Number(loan.sisa_pinjaman) <= 0;
+
+    if (isCompletedLoanStatus(statusLower) && (hasUnpaidOrPartialSchedule || hasPositiveRemaining)) {
+      mismarkedActiveLoanIds.add(loanId);
+      mismarkedActiveLoanUpdates.push({
+        id: loanId,
+        sisaPinjaman: hasPositiveSisaColumn ? Number(loan.sisa_pinjaman) : computedRemaining,
+      });
+      activeLoanIdsSet.add(loanId);
       return;
     }
 
@@ -794,19 +842,6 @@ export const getLoanMatrix = async (
       return;
     }
 
-    const tenor = Number(loan.tenor || loan.agreed_tenor_months || 0);
-    const isAllSchedulesPaid =
-      loanSchedules.length > 0 &&
-      loanSchedules.every((s: any) =>
-        resolveSchedulePaymentMetrics(s, s?.id ? effectiveRepaidByScheduleId[s.id] || 0 : 0).isInstallmentPaid
-      ) &&
-      (tenor <= 0 || loanSchedules.length >= tenor);
-
-    const hasZeroRemaining =
-      loan.sisa_pinjaman !== null &&
-      loan.sisa_pinjaman !== undefined &&
-      Number(loan.sisa_pinjaman) <= 0;
-
     // Jika seluruh jadwal sudah lunas atau sisa pinjaman <= 0, sembunyikan dari matriks berjalan
     if (isAllSchedulesPaid || hasZeroRemaining) {
       return;
@@ -814,6 +849,23 @@ export const getLoanMatrix = async (
 
     activeLoanIdsSet.add(loanId);
   });
+
+  if (mismarkedActiveLoanUpdates.length > 0) {
+    try {
+      const loansTable: any = supabase.from('loans');
+      if (loansTable && typeof loansTable.update === 'function') {
+        await Promise.all(
+          mismarkedActiveLoanUpdates.map((item) =>
+            loansTable
+              .update({ status: 'active', sisa_pinjaman: item.sisaPinjaman })
+              .eq('id', item.id)
+          )
+        );
+      }
+    } catch {
+      // Non-blocking auto-repair fallback
+    }
+  }
 
   // Fallback untuk pinjaman aktif/berjalan (atau pinjaman lunas yang dicari) yang belum memiliki baris di loan_schedules
   const syntheticSchedulesToProcess: any[] = [];
@@ -968,14 +1020,16 @@ export const getLoanMatrix = async (
     loanCumulativePaid[loan.id] += effectivePaidAmt;
 
     const loanType = loan.loan_types || loan.loanType || loan.loan_type;
+    const isMismarkedActive = mismarkedActiveLoanIds.has(loan.id);
+    const effectiveLoanStatus = isMismarkedActive ? 'active' : loan.status;
 
     if (!loansMap[loan.id]) {
-      const isLoanActive = isActiveLoanStatus(loan.status);
+      const isLoanActive = isMismarkedActive || isActiveLoanStatus(effectiveLoanStatus);
       loansMap[loan.id] = {
         id: loan.id,
         loanId: loan.id,
         loanNumber: loan.loan_number || '',
-        status: loan.status,
+        status: effectiveLoanStatus,
         memberId: member.id,
         nrp: member.nrp,
         nama: member.nama,
@@ -1025,15 +1079,15 @@ export const getLoanMatrix = async (
         };
       }
     } else {
-      if (isActiveLoanStatus(loan.status)) {
+      if (isMismarkedActive || isActiveLoanStatus(effectiveLoanStatus)) {
         loansMap[loan.id].isLoanActive = true;
       }
-      if (loan.status) {
-        loansMap[loan.id].status = loan.status;
+      if (effectiveLoanStatus) {
+        loansMap[loan.id].status = effectiveLoanStatus;
       }
     }
 
-    const isLoanCompleted = isCompletedLoanStatus(loan.status);
+    const isLoanCompleted = !isMismarkedActive && isCompletedLoanStatus(effectiveLoanStatus);
     const isMemberSuspended = (member.membership_status || '').toUpperCase() === 'SUSPENDED';
 
     // Populate matrix cell and YTD stats whenever the schedule falls in the requested year

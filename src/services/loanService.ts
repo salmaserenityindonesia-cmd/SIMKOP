@@ -530,11 +530,49 @@ export async function syncInitialLoanBalances(
         : Math.round(principalAmount / tenor);
     const totalTerangsur = Math.max(0, Number(row.total_terangsur) || 0);
     const sisaPinjaman = Math.max(0, principalAmount - totalTerangsur);
-    const loanStatus = sisaPinjaman <= 0 ? 'completed' : 'active';
     const disbursedDateStr =
       row.tgl_awal_pinjaman && /^\d{4}-\d{2}-\d{2}$/.test(row.tgl_awal_pinjaman.trim())
         ? row.tgl_awal_pinjaman.trim()
         : trimmedDate;
+
+    // Hitung alokasi FIFO jadwal angsuran terlebih dahulu agar status kontrak mencerminkan periode terbayar
+    let remainingPaid = totalTerangsur;
+    let paidPeriodsCount = 0;
+    const preparedSchedules: Array<{
+      period_number: number;
+      due_date: string;
+      target_amount: number;
+      paid_amount: number;
+      status: 'paid' | 'partial' | 'unpaid';
+    }> = [];
+
+    for (let period = 1; period <= tenor; period++) {
+      const targetAmount = monthlyInstallment;
+      let paidAmount = 0;
+      let status: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+
+      if (remainingPaid >= targetAmount) {
+        status = 'paid';
+        paidAmount = targetAmount;
+        remainingPaid = Math.max(0, remainingPaid - targetAmount);
+        paidPeriodsCount++;
+      } else if (remainingPaid > 0) {
+        status = 'partial';
+        paidAmount = remainingPaid;
+        remainingPaid = 0;
+      }
+
+      preparedSchedules.push({
+        period_number: period,
+        due_date: buildMonthlyDueDate(disbursedDateStr, period),
+        target_amount: targetAmount,
+        paid_amount: paidAmount,
+        status,
+      });
+    }
+
+    const allPeriodsPaid = paidPeriodsCount >= tenor;
+    const loanStatus = sisaPinjaman <= 0 && allPeriodsPaid ? 'completed' : 'active';
 
     const loanPayload = {
       loan_number: loanNumber,
@@ -575,35 +613,10 @@ export async function syncInitialLoanBalances(
       );
     }
 
-    // Bangun jadwal angsuran penuh sebanyak tenor (mulai tgl_awal_pinjaman + 1 bulan)
-    // dengan alokasi FIFO total_terangsur
-    let remainingPaid = totalTerangsur;
-    const schedulesToInsert = [];
-
-    for (let period = 1; period <= tenor; period++) {
-      const targetAmount = monthlyInstallment;
-      let paidAmount = 0;
-      let status: 'paid' | 'partial' | 'unpaid' = 'unpaid';
-
-      if (remainingPaid >= targetAmount) {
-        status = 'paid';
-        paidAmount = targetAmount;
-        remainingPaid = Math.max(0, remainingPaid - targetAmount);
-      } else if (remainingPaid > 0) {
-        status = 'partial';
-        paidAmount = remainingPaid;
-        remainingPaid = 0;
-      }
-
-      schedulesToInsert.push({
-        loan_id: newLoan.id,
-        period_number: period,
-        due_date: buildMonthlyDueDate(disbursedDateStr, period),
-        target_amount: targetAmount,
-        paid_amount: paidAmount,
-        status,
-      });
-    }
+    const schedulesToInsert = preparedSchedules.map((s) => ({
+      loan_id: newLoan.id,
+      ...s,
+    }));
 
     if (schedulesToInsert.length > 0) {
       const { error: insSchedErr } = await supabase
@@ -865,6 +878,7 @@ export const loanService = {
         disbursed_at,
         created_at,
         status,
+        sisa_pinjaman,
         notes,
         loan_types:loan_type_id (
           id,
@@ -899,6 +913,7 @@ export const loanService = {
         disbursed_at,
         created_at,
         status,
+        sisa_pinjaman,
         notes,
         loan_types:loan_type_id (
           id,

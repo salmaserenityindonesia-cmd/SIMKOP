@@ -1847,6 +1847,89 @@ describe('LoanMatrix Page Component - Dynamic Year Dropdown & Matrix Integration
       );
       expect(html).toContain('Kompensasi Top-Up (-Rp 2.000.000)');
       expect(html).toContain('LOAN-1795422216507');
+      expect(html).toContain('data-testid="contract-journal-btn-LOAN-1795422216507"');
+    });
+  });
+
+  describe('Two-Way Journal Audit Triggers from LoanMatrix', () => {
+    it('renders clickable contract journal button and clickable installment journal buttons for PAID and PARTIAL cells only', () => {
+      const summary: LoanMatrixSummary = {
+        year: 2026,
+        complianceYTD: 75,
+        totalCollectedYTD: 1300000,
+        projectedNextMonth: 875000,
+        unpaidMembersCount: 0,
+        members: [
+          {
+            id: 'loan-sa-1',
+            loanId: 'loan-sa-1',
+            loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+            status: 'active',
+            memberId: 'mem-sa-1',
+            nrp: '84110801',
+            nama: 'Anggota Saldo Awal',
+            loanTypeName: 'Pinjaman Reguler',
+            agreedTenorMonths: 12,
+            tenor: 12,
+            principalAmount: 10500000,
+            isLoanActive: true,
+            totalLoans: 1,
+            complianceYTD: 75,
+            months: {
+              ...Array.from({ length: 12 }, (_, idx) => ({
+                month: idx + 1,
+                year: 2026,
+                status: 'NONE' as const,
+                targetAmount: 0,
+                paidAmount: 0,
+              })).reduce((acc, c) => ({ ...acc, [c.month]: c }), {}),
+              7: {
+                month: 7,
+                year: 2026,
+                status: 'PAID',
+                targetAmount: 875000,
+                paidAmount: 875000,
+                loanId: 'loan-sa-1',
+                loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+                periodNumber: 7,
+                tenor: 12,
+              },
+              8: {
+                month: 8,
+                year: 2026,
+                status: 'PARTIAL',
+                targetAmount: 875000,
+                paidAmount: 425000,
+                loanId: 'loan-sa-1',
+                loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+                periodNumber: 8,
+                tenor: 12,
+              },
+              9: {
+                month: 9,
+                year: 2026,
+                status: 'UNPAID',
+                targetAmount: 875000,
+                paidAmount: 0,
+                loanId: 'loan-sa-1',
+                loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+                periodNumber: 9,
+                tenor: 12,
+              },
+            },
+          },
+        ],
+      };
+
+      const html = renderToStaticMarkup(
+        <LoanMatrix initialData={summary} initialYear={2026} />
+      );
+
+      expect(html).toContain('data-testid="contract-journal-btn-SALDO-AWAL-84110801-GAJISIPA"');
+      expect(html).toContain('data-testid="installment-journal-btn-SALDO-AWAL-84110801-GAJISIPA-7"');
+      expect(html).toContain('data-testid="installment-journal-btn-SALDO-AWAL-84110801-GAJISIPA-8"');
+      expect(html).not.toContain('data-testid="installment-journal-btn-SALDO-AWAL-84110801-GAJISIPA-9"');
+      expect(html).toContain('Klik untuk buka Bukti Jurnal Kas');
     });
   });
 });

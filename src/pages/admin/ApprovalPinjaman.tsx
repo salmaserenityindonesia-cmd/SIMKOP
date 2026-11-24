@@ -1,11 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService, LoanApplicationStatusTab, LoanType, isGoodsMarkupLoan } from '../../services/loanService';
-import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight, RotateCcw, AlertTriangle, X } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight, RotateCcw, AlertTriangle, X, BookOpen } from 'lucide-react';
 import StatusBadge, { StatusType } from '../../components/ui/StatusBadge';
 import { exportToExcel, exportToPDF } from '../../lib/exportUtils';
 import { useFeedback } from '../../context/FeedbackContext';
 import LoanDetailModal from '../../components/loans/LoanDetailModal';
+import CashFlowReferenceModal, {
+  type CashFlowReferenceModalItem,
+} from '../../components/finance/CashFlowReferenceModal';
+import { findAllCashFlowsByLoan } from '../../services/cashFlowAuditService';
 import { supabase } from '../../lib/supabaseClient';
 
 const defaultFormatRupiah = (amount: number) =>
@@ -81,6 +85,45 @@ export default function ApprovalPinjaman({
   const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
   const [resetConfirmText, setResetConfirmText] = useState<string>('');
   const [resettingLoans, setResettingLoans] = useState<boolean>(false);
+  const [journalModalItem, setJournalModalItem] = useState<CashFlowReferenceModalItem | null>(null);
+  const [journalRelatedItems, setJournalRelatedItems] = useState<CashFlowReferenceModalItem[]>([]);
+  const [journalContractLabel, setJournalContractLabel] = useState<string>('');
+  const [loadingJournalLoanId, setLoadingJournalLoanId] = useState<string | null>(null);
+
+  const isApprovedOrCompletedLoan = (loan: any): boolean => {
+    const s = String(loan?.status || '').trim().toLowerCase();
+    return ['active', 'approved', 'berjalan', 'disbursed', 'completed', 'paid_off', 'lunas', 'paid'].includes(s);
+  };
+
+  const handleOpenLoanJournal = async (loan: any) => {
+    const loanId = String(loan?.id || '');
+    const loanNumber = String(loan?.loan_number || '');
+    const memberNrp = String(loan?.anggota?.nrp || '');
+    if ((!loanId && !loanNumber) || loadingJournalLoanId) return;
+
+    setLoadingJournalLoanId(loanId || loanNumber);
+    try {
+      const rows = await findAllCashFlowsByLoan({
+        loanId: loanId || undefined,
+        loanNumber: loanNumber || undefined,
+        memberNrp: memberNrp || undefined,
+      });
+      if (rows.length > 0) {
+        setJournalRelatedItems(rows);
+        setJournalContractLabel(loanNumber);
+        setJournalModalItem(rows[0]);
+      } else {
+        showToast(
+          'Belum ada bukti jurnal kas tercatat untuk kontrak pinjaman ini (kemungkinan saldo migrasi pra-sistem).',
+          'info'
+        );
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memuat bukti jurnal kas pinjaman.', 'error');
+    } finally {
+      setLoadingJournalLoanId(null);
+    }
+  };
 
   useEffect(() => {
     if (initialPinjamanList === undefined) {
@@ -246,10 +289,15 @@ export default function ApprovalPinjaman({
     }
   };
 
-  const getMappedStatus = (status?: string): StatusType => {
+  const getMappedStatus = (status?: string, sisaPinjaman?: number | null): StatusType => {
     const s = (status || 'draft').trim().toLowerCase();
     if (s === 'active' || s === 'approved' || s === 'berjalan' || s === 'disbursed') return 'approved';
-    if (s === 'completed' || s === 'paid_off' || s === 'lunas' || s === 'paid') return 'lunas';
+    if (s === 'completed' || s === 'paid_off' || s === 'lunas' || s === 'paid') {
+      if (sisaPinjaman !== null && sisaPinjaman !== undefined && Number(sisaPinjaman) > 0) {
+        return 'approved';
+      }
+      return 'lunas';
+    }
     if (s === 'rejected' || s === 'ditolak') return 'rejected';
     return 'pending';
   };
@@ -621,7 +669,25 @@ export default function ApprovalPinjaman({
                       <td className="py-3 px-4 text-sm text-gray-900">
                         <div>{p.anggota?.no_anggota || p.anggota?.nrp || '-'}</div>
                         {p.loan_number && (
-                          <div className="text-[11px] font-mono text-slate-400">{p.loan_number}</div>
+                          (activeTab === 'APPROVED' || activeTab === 'ALL') && isApprovedOrCompletedLoan(p) ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenLoanJournal(p)}
+                              disabled={Boolean(loadingJournalLoanId)}
+                              data-testid={`approval-loan-journal-btn-${p.loan_number}`}
+                              title={`Buka Bukti Jurnal & Buku Pembantu Referensi ${p.loan_number}`}
+                              className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-mono font-semibold transition-colors cursor-pointer disabled:opacity-60"
+                            >
+                              {loadingJournalLoanId === String(p.id) ? (
+                                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                              ) : (
+                                <BookOpen className="w-3 h-3 shrink-0" />
+                              )}
+                              <span>{p.loan_number}</span>
+                            </button>
+                          ) : (
+                            <div className="text-[11px] font-mono text-slate-400">{p.loan_number}</div>
+                          )
                         )}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700">
@@ -677,7 +743,7 @@ export default function ApprovalPinjaman({
                         {p.tenor || p.agreed_tenor_months || 0} Bulan
                       </td>
                       <td className="py-3 px-4 text-sm text-center">
-                        <StatusBadge status={getMappedStatus(p.status)} />
+                        <StatusBadge status={getMappedStatus(p.status, p.sisa_pinjaman)} />
                       </td>
                       <td className="py-3 px-4 text-sm text-center">
                         <div className="flex justify-center gap-2">
@@ -780,6 +846,21 @@ export default function ApprovalPinjaman({
         loanId={selectedLoanIdForModal}
         onClose={() => setSelectedLoanIdForModal(null)}
         onSuccess={() => loadData(activeTab)}
+        onOpenCashFlowJournal={
+          activeTab === 'APPROVED' || activeTab === 'ALL' ? handleOpenLoanJournal : undefined
+        }
+        loadingJournal={loadingJournalLoanId !== null && loadingJournalLoanId === String(selectedLoanIdForModal)}
+      />
+
+      <CashFlowReferenceModal
+        cashFlowItem={journalModalItem}
+        relatedCashFlows={journalRelatedItems}
+        contractLabel={journalContractLabel}
+        onClose={() => {
+          setJournalModalItem(null);
+          setJournalRelatedItems([]);
+          setJournalContractLabel('');
+        }}
       />
 
       {isResetModalOpen && (

@@ -15,8 +15,16 @@ import {
   Loader2,
   AlertTriangle,
   RotateCcw,
+  BookOpen,
 } from 'lucide-react';
 import LoanLedgerModal from '../../components/members/LoanLedgerModal';
+import CashFlowReferenceModal, {
+  type CashFlowReferenceModalItem,
+} from '../../components/finance/CashFlowReferenceModal';
+import {
+  findAllCashFlowsByLoan,
+  findCashFlowByLoanInstallment,
+} from '../../services/cashFlowAuditService';
 import {
   getLoanMatrix,
   getLoanMatrixAvailableYears,
@@ -312,14 +320,23 @@ export const getCellBadge = (cell: MonthLoanCell): CellBadgeInfo => {
   }
 };
 
+const hasRowRemainingPrincipal = (row: LoanMatrixMember): boolean => {
+  return (
+    row.remainingPrincipalAllTime !== undefined &&
+    row.remainingPrincipalAllTime !== null &&
+    Number(row.remainingPrincipalAllTime) > 0
+  );
+};
+
 const getRowComplianceInfo = (row: LoanMatrixMember, fallbackYear: number) => {
   const rowStatusLower = String((row as any).status || '').trim().toLowerCase();
   const isLoanCompleted =
-    !row.isLoanActive ||
-    rowStatusLower === 'completed' ||
-    rowStatusLower === 'paid_off' ||
-    rowStatusLower === 'lunas' ||
-    rowStatusLower === 'paid';
+    !hasRowRemainingPrincipal(row) &&
+    (!row.isLoanActive ||
+      rowStatusLower === 'completed' ||
+      rowStatusLower === 'paid_off' ||
+      rowStatusLower === 'lunas' ||
+      rowStatusLower === 'paid');
   const monthCells = Object.values(row.months || {});
   const todayYmd = getTodayLocalYmd();
   const evaluatedCells = monthCells.map(cell => ({
@@ -491,7 +508,82 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
   const [loading, setLoading] = useState(initialData !== undefined ? false : true);
   const [data, setData] = useState<LoanMatrixSummary | null>(initialData ?? null);
   const [selectedLoan, setSelectedLoan] = useState<{loanId: string, nrp: string, nama: string} | null>(initialSelectedLoan ?? null);
+  const [journalModalItem, setJournalModalItem] = useState<CashFlowReferenceModalItem | null>(null);
+  const [journalRelatedItems, setJournalRelatedItems] = useState<CashFlowReferenceModalItem[]>([]);
+  const [journalContractLabel, setJournalContractLabel] = useState<string>('');
+  const [loadingJournalKey, setLoadingJournalKey] = useState<string | null>(null);
   const feedback = useContext(FeedbackContext);
+
+  const handleOpenContractJournal = async (row: LoanMatrixMember) => {
+    const targetLoanId =
+      row.loanId || row.id || Object.values(row.months || {}).find((m) => m?.loanId)?.loanId || '';
+    const loanNumber = row.loan_number || row.loanNumber || '';
+    const memberNrp = String(row.anggota?.nrp || row.nrp || '');
+    const key = `contract-${targetLoanId || loanNumber || memberNrp}`;
+
+    if (loadingJournalKey) return;
+    setLoadingJournalKey(key);
+    try {
+      const rows = await findAllCashFlowsByLoan({
+        loanId: targetLoanId || undefined,
+        loanNumber: loanNumber || undefined,
+        memberNrp: memberNrp || undefined,
+      });
+      if (rows.length > 0) {
+        setJournalRelatedItems(rows);
+        setJournalContractLabel(loanNumber);
+        setJournalModalItem(rows[0]);
+      } else {
+        feedback?.showToast?.(
+          'Belum ada bukti jurnal kas tercatat untuk kontrak pinjaman ini (kemungkinan saldo migrasi pra-sistem).',
+          'info'
+        );
+      }
+    } catch (err: any) {
+      feedback?.showToast?.(
+        err?.message || 'Gagal memuat bukti jurnal kas kontrak pinjaman.',
+        'error'
+      );
+    } finally {
+      setLoadingJournalKey(null);
+    }
+  };
+
+  const handleOpenInstallmentJournal = async (row: LoanMatrixMember, cell: MonthLoanCell) => {
+    const targetLoanId =
+      cell.loanId || row.loanId || row.id || Object.values(row.months || {}).find((m) => m?.loanId)?.loanId || '';
+    const loanNumber = cell.loanNumber || row.loan_number || row.loanNumber || '';
+    const memberNrp = String(row.anggota?.nrp || row.nrp || '');
+    const key = `cell-${targetLoanId || loanNumber}-${cell.month}-${cell.periodNumber ?? ''}`;
+
+    if (loadingJournalKey) return;
+    setLoadingJournalKey(key);
+    try {
+      const found = await findCashFlowByLoanInstallment({
+        loanId: targetLoanId || undefined,
+        loanNumber: loanNumber || undefined,
+        installmentNo: cell.periodNumber ?? null,
+        memberNrp: memberNrp || undefined,
+      });
+      if (found) {
+        setJournalRelatedItems([]);
+        setJournalContractLabel(loanNumber);
+        setJournalModalItem(found);
+      } else {
+        feedback?.showToast?.(
+          'Bukti jurnal kas untuk angsuran periode ini belum ditemukan di Laporan Keuangan (kemungkinan angsuran migrasi/pra-sistem).',
+          'info'
+        );
+      }
+    } catch (err: any) {
+      feedback?.showToast?.(
+        err?.message || 'Gagal memuat bukti jurnal kas angsuran.',
+        'error'
+      );
+    } finally {
+      setLoadingJournalKey(null);
+    }
+  };
 
   // Bulk Actions State: Centang Semua s/d Bulan Tertentu
   const [showCheckAllConfirmModal, setShowCheckAllConfirmModal] = useState(false);
@@ -589,15 +681,17 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         (m.loanTypeName || m.loan_types?.name || '').toLowerCase().includes(search.toLowerCase()) ||
         (m.loanTypeCode || m.loan_types?.code || '').toLowerCase().includes(search.toLowerCase());
       const rowStatusLower = String(m.status || '').trim().toLowerCase();
+      const hasRemaining = hasRowRemainingPrincipal(m);
       const isRowCompleted =
-        !m.isLoanActive ||
-        rowStatusLower === 'completed' ||
-        rowStatusLower === 'paid_off' ||
-        rowStatusLower === 'lunas' ||
-        rowStatusLower === 'paid';
+        !hasRemaining &&
+        (!m.isLoanActive ||
+          rowStatusLower === 'completed' ||
+          rowStatusLower === 'paid_off' ||
+          rowStatusLower === 'lunas' ||
+          rowStatusLower === 'paid');
       const matchStatus = 
         statusFilter === 'ALL' ? true :
-        statusFilter === 'ACTIVE' ? (m.isLoanActive && !isRowCompleted && rowStatusLower !== 'rejected') :
+        statusFilter === 'ACTIVE' ? ((m.isLoanActive || hasRemaining) && !isRowCompleted && rowStatusLower !== 'rejected') :
         statusFilter === 'PAID' ? isRowCompleted :
         statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
         statusFilter === 'FROZEN' ? (
@@ -1292,18 +1386,31 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80">
                             {row.loanTypeName || row.loan_types?.name || 'Pinjaman Reguler'}
                           </span>
-                          {rowLoanNumber && (
-                            <span
-                              className={
-                                isUrlMatchedRow
-                                  ? 'text-[10px] font-mono bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-bold truncate'
-                                  : 'text-[10px] font-mono text-slate-400 truncate'
-                              }
-                              title={rowLoanNumber}
-                            >
-                              {rowLoanNumber}
-                            </span>
-                          )}
+                          {rowLoanNumber && (() => {
+                            const contractLoadingKey = `contract-${targetLoanId || rowLoanNumber || rowNrp}`;
+                            const isLoadingContract = loadingJournalKey === contractLoadingKey;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenContractJournal(row)}
+                                disabled={Boolean(loadingJournalKey)}
+                                data-testid={`contract-journal-btn-${rowLoanNumber}`}
+                                title={`Buka Bukti Jurnal & Buku Pembantu Referensi Kontrak ${rowLoanNumber}`}
+                                className={`inline-flex items-center gap-1 max-w-full text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer disabled:opacity-60 ${
+                                  isUrlMatchedRow
+                                    ? 'bg-indigo-100 text-indigo-800 border-indigo-300 font-bold hover:bg-indigo-200'
+                                    : 'bg-slate-50 text-indigo-700 border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 font-semibold'
+                                }`}
+                              >
+                                {isLoadingContract ? (
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />
+                                ) : (
+                                  <BookOpen className="w-2.5 h-2.5 shrink-0" />
+                                )}
+                                <span className="truncate">{rowLoanNumber}</span>
+                              </button>
+                            );
+                          })()}
                           {Number(row.topupSettlementAmount || 0) > 0 && (
                             <span
                               title={row.notes || undefined}
@@ -1412,17 +1519,43 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                                   </div>
                                 );
                               }
+                              const canOpenInstallmentJournal =
+                                effectiveStatus === 'PAID' ||
+                                effectiveStatus === 'FINISHED' ||
+                                effectiveStatus === 'PARTIAL';
+                              const cellLoadingKey = `cell-${cell.loanId || targetLoanId || rowLoanNumber}-${cell.month}-${cell.periodNumber ?? ''}`;
+                              const isCellLoading = loadingJournalKey === cellLoadingKey;
+
                               return (
-                                <div className="relative group cursor-help">
-                                  <div
-                                    className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}${
-                                      isTraceTargetCell
-                                        ? ' ring-2 ring-indigo-600 ring-offset-2 bg-emerald-50 shadow-md scale-[1.03]'
-                                        : ''
-                                    }`}
-                                  >
-                                    {badge.text}
-                                  </div>
+                                <div className={`relative group ${canOpenInstallmentJournal ? '' : 'cursor-help'}`}>
+                                  {canOpenInstallmentJournal ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenInstallmentJournal(row, cell)}
+                                      disabled={Boolean(loadingJournalKey)}
+                                      data-testid={`installment-journal-btn-${rowLoanNumber || rowKey}-${m}`}
+                                      title={`Buka Bukti Jurnal Kas Angsuran${cell.periodNumber ? ` Bln ke-${cell.periodNumber}` : ''}`}
+                                      className={`w-full inline-flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all cursor-pointer hover:ring-2 hover:ring-indigo-400/70 disabled:opacity-60 ${badge.className}${
+                                        isTraceTargetCell
+                                          ? ' ring-2 ring-indigo-600 ring-offset-2 bg-emerald-50 shadow-md scale-[1.03]'
+                                          : ''
+                                      }`}
+                                    >{badge.text}{isCellLoading ? (
+                                        <Loader2 className="w-3 h-3 animate-spin shrink-0 opacity-70" />
+                                      ) : (
+                                        <BookOpen className="w-3 h-3 opacity-60 shrink-0" />
+                                      )}</button>
+                                  ) : (
+                                    <div
+                                      className={`px-2 py-1.5 rounded-lg text-xs font-mono text-center select-none transition-all ${badge.className}${
+                                        isTraceTargetCell
+                                          ? ' ring-2 ring-indigo-600 ring-offset-2 bg-emerald-50 shadow-md scale-[1.03]'
+                                          : ''
+                                      }`}
+                                    >
+                                      {badge.text}
+                                    </div>
+                                  )}
                                   {isTraceTargetCell && (
                                     <span
                                       data-testid="trace-target-indicator"
@@ -1497,6 +1630,11 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
                                         </div>
                                       );
                                     })()}
+                                    {canOpenInstallmentJournal && (
+                                      <div className="mt-1.5 pt-1 border-t border-slate-600 text-[10px] text-indigo-300 font-medium text-center">
+                                        Klik untuk buka Bukti Jurnal Kas
+                                      </div>
+                                    )}
                                     <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-slate-800"></div>
                                   </div>
                                 </div>
@@ -1604,6 +1742,17 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
           onSuccess={() => fetchLoanMatrixData(year, setLoading, setData, matrixFetchOptions)}
         />
       )}
+
+      <CashFlowReferenceModal
+        cashFlowItem={journalModalItem}
+        relatedCashFlows={journalRelatedItems}
+        contractLabel={journalContractLabel}
+        onClose={() => {
+          setJournalModalItem(null);
+          setJournalRelatedItems([]);
+          setJournalContractLabel('');
+        }}
+      />
 
       {/* Modal Dialog Konfirmasi & Progress Pelunasan Massal s/d Bulan Tertentu */}
       {showCheckAllConfirmModal && (

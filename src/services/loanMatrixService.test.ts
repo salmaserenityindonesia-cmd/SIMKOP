@@ -4262,6 +4262,80 @@ describe('loanMatrixService - Sinkronisasi Realisasi Angsuran antara getLoanMatr
     expect(matrix.members[0].topupSettlementAmount).toBe(2000000);
     expect(matrix.members[0].notes).toBe('[KOMPENSASI PELUNASAN SEJENIS]');
   });
+
+  it('includes mismarked paid_off/completed loan in getLoanMatrix when unpaid schedules or sisa_pinjaman > 0 exist and auto-corrects to active', async () => {
+    const mismarkedActiveLoan = {
+      id: 'loan-yuswan-mismarked',
+      loan_number: 'SALDO-AWAL-83010313',
+      member_id: 'mem-yuswan',
+      principal_amount: 64750000,
+      amount: 64750000,
+      tenor: 74,
+      agreed_tenor_months: 74,
+      monthly_target: 875000,
+      sisa_pinjaman: 55125000,
+      status: 'paid_off',
+      notes: 'Saldo Awal Pinjaman',
+      member: { id: 'mem-yuswan', nrp: '83010313', nama: 'YUSWAN EFENDI', status: 'aktif', membership_status: 'ACTIVE' },
+    };
+
+    const schedules = [
+      { id: 'sc-y-1', loan_id: 'loan-yuswan-mismarked', period_number: 1, due_date: '2026-01-01', target_amount: 875000, paid_amount: 875000, status: 'paid', loan: mismarkedActiveLoan },
+      { id: 'sc-y-2', loan_id: 'loan-yuswan-mismarked', period_number: 12, due_date: '2026-12-01', target_amount: 875000, paid_amount: 0, status: 'unpaid', loan: mismarkedActiveLoan },
+    ];
+
+    const updateEqMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock });
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+          update: updateMock,
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols === 'loan_id') {
+              return {
+                gte: vi.fn().mockReturnValue({
+                  lte: vi.fn().mockResolvedValue({
+                    data: [{ loan_id: 'loan-yuswan-mismarked' }],
+                    error: null,
+                  }),
+                }),
+              };
+            }
+            return {
+              in: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({ data: schedules, error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const matrix = await getLoanMatrix(2026);
+    expect(matrix.members).toHaveLength(1);
+    expect(matrix.members[0].nrp).toBe('83010313');
+    expect(matrix.members[0].nama).toBe('YUSWAN EFENDI');
+    expect(matrix.members[0].isLoanActive).toBe(true);
+    expect(matrix.members[0].status).toBe('active');
+    expect(updateMock).toHaveBeenCalledWith({ status: 'active', sisa_pinjaman: 55125000 });
+    expect(updateEqMock).toHaveBeenCalledWith('id', 'loan-yuswan-mismarked');
+  });
 });
 
 

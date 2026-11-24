@@ -1704,7 +1704,9 @@ export function parseLoanCashFlowDescription(
   description?: string | null
 ): ParsedLoanCashFlowDescription {
   const desc = String(description || '');
-  const loanNumberMatch = desc.match(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+|LN\d{4}-\d{4,})\b/i);
+  const loanNumberMatch = desc.match(
+    /\b(SALDO-AWAL-[A-Z0-9-]+|LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+|LN\d{4}-\d{4,})\b/i
+  );
   const loanNumber = loanNumberMatch?.[1]
     ? loanNumberMatch[1].toUpperCase()
     : null;
@@ -7093,4 +7095,316 @@ export async function syncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansTo
   });
   activeApprovedLoanSyncPromise = runPromise;
   return runPromise;
+}
+
+export interface CashFlowModalRecord {
+  id: string;
+  tanggal: string;
+  referensi: string;
+  deskripsi: string;
+  kategori: string;
+  unit_usaha: string;
+  kas_masuk: number;
+  kas_keluar: number;
+  reference_id?: string | null;
+  direction?: 'in' | 'out';
+  created_at?: string;
+}
+
+export function mapCashFlowRowToModalItem(row: any): CashFlowModalRecord {
+  const id = String(row?.id || '');
+  const dir: 'in' | 'out' =
+    String(row?.direction ?? row?.type ?? '').trim().toLowerCase() === 'out'
+      ? 'out'
+      : 'in';
+  const amount = Math.abs(Number(row?.amount || 0));
+  const rawCreatedAt = String(row?.created_at || '');
+  let tanggal = '-';
+  if (rawCreatedAt) {
+    const d = new Date(rawCreatedAt);
+    tanggal = !isNaN(d.getTime()) ? d.toLocaleDateString('id-ID') : rawCreatedAt;
+  }
+
+  return {
+    id,
+    tanggal,
+    referensi: `CF-${id.slice(0, 8).toUpperCase()}`,
+    deskripsi: String(row?.description || '').trim() || '-',
+    kategori: String(row?.category || 'lainnya'),
+    unit_usaha: 'Umum',
+    kas_masuk: dir === 'in' ? amount : 0,
+    kas_keluar: dir === 'out' ? amount : 0,
+    reference_id: row?.reference_id ?? null,
+    direction: dir,
+    created_at: rawCreatedAt,
+  };
+}
+
+function extractInstallmentPeriodFromText(text?: string | null): number | null {
+  const raw = String(text || '');
+  if (!raw) return null;
+  const blnMatch = raw.match(/\bBln\s*ke-(\d+)\b/i);
+  if (blnMatch?.[1]) {
+    const n = Number(blnMatch[1]);
+    if (Number.isInteger(n) && n >= 1) return n;
+  }
+  const angsuranMatch = raw.match(/\bangsuran\s*(?:ke-?)?(\d+)\b/i);
+  if (angsuranMatch?.[1]) {
+    const n = Number(angsuranMatch[1]);
+    if (Number.isInteger(n) && n >= 1) return n;
+  }
+  return null;
+}
+
+async function fetchCashFlowRowsSafe(): Promise<any[]> {
+  let cfRes = await safeFetchAllPaged<any>(
+    'cash_flow',
+    'id, direction, category, amount, reference_id, description, created_at'
+  );
+  if (cfRes.error && isPostgrestColumnError(cfRes.error)) {
+    cfRes = await safeFetchAllPaged<any>(
+      'cash_flow',
+      'id, direction, category, amount, reference_id, created_at'
+    );
+  }
+  return cfRes.data || [];
+}
+
+async function fetchLoanScheduleAndRepaymentLinks(loanId?: string | null): Promise<{
+  schedules: any[];
+  repayments: any[];
+}> {
+  const cleanLoanId = String(loanId || '').trim();
+  if (!cleanLoanId) {
+    return { schedules: [], repayments: [] };
+  }
+
+  const [schedRes, repayRes] = await Promise.all([
+    safeFetchListByEq<any>('loan_schedules', 'id, period_number', 'loan_id', cleanLoanId),
+    safeFetchListByEq<any>('loan_repayments', 'id, schedule_id', 'loan_id', cleanLoanId),
+  ]);
+
+  return {
+    schedules: schedRes.data || [],
+    repayments: repayRes.data || [],
+  };
+}
+
+function isLoanContractMatchedRow(
+  row: any,
+  loanId: string,
+  loanNumberUpper: string,
+  scheduleIdSet: Set<string>,
+  repaymentIdSet: Set<string>
+): boolean {
+  const refId = String(row?.reference_id || '').trim();
+  if (loanId && refId === loanId) return true;
+  if (refId && (scheduleIdSet.has(refId) || repaymentIdSet.has(refId))) return true;
+
+  const descUpper = String(row?.description || '').toUpperCase();
+  if (loanNumberUpper && descUpper.includes(loanNumberUpper)) {
+    const cat = String(row?.category || '');
+    if (
+      !cat ||
+      isLoanRelatedCategory(cat) ||
+      isLoanInstallmentCategory(cat) ||
+      isLoanDisbursementCategory(cat)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export async function findAllCashFlowsByLoan(params: {
+  loanId?: string | null;
+  loanNumber?: string | null;
+  memberNrp?: string | null;
+}): Promise<CashFlowModalRecord[]> {
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return [];
+    }
+
+    const loanId = String(params.loanId || '').trim();
+    const loanNumberUpper = String(params.loanNumber || '').trim().toUpperCase();
+    if (!loanId && !loanNumberUpper) {
+      return [];
+    }
+
+    const [cfRows, links] = await Promise.all([
+      fetchCashFlowRowsSafe(),
+      fetchLoanScheduleAndRepaymentLinks(loanId),
+    ]);
+
+    const scheduleIdSet = new Set(
+      links.schedules.map((s: any) => String(s?.id || '')).filter(Boolean)
+    );
+    const repaymentIdSet = new Set(
+      links.repayments.map((r: any) => String(r?.id || '')).filter(Boolean)
+    );
+
+    const uniqueMap = new Map<string, any>();
+    for (const row of cfRows) {
+      if (!row?.id) continue;
+      if (
+        isLoanContractMatchedRow(
+          row,
+          loanId,
+          loanNumberUpper,
+          scheduleIdSet,
+          repaymentIdSet
+        )
+      ) {
+        uniqueMap.set(String(row.id), row);
+      }
+    }
+
+    const matchedRows = Array.from(uniqueMap.values());
+    matchedRows.sort((a: any, b: any) => {
+      const timeA = a?.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b?.created_at ? new Date(b.created_at).getTime() : 0;
+      const safeA = Number.isNaN(timeA) ? 0 : timeA;
+      const safeB = Number.isNaN(timeB) ? 0 : timeB;
+      if (safeA !== safeB) return safeA - safeB;
+
+      const isDisbA =
+        isLoanDisbursementCategory(a?.category) ||
+        String(a?.direction ?? a?.type ?? '').toLowerCase() === 'out';
+      const isDisbB =
+        isLoanDisbursementCategory(b?.category) ||
+        String(b?.direction ?? b?.type ?? '').toLowerCase() === 'out';
+      if (isDisbA !== isDisbB) return isDisbA ? -1 : 1;
+
+      const periodA = extractInstallmentPeriodFromText(a?.description) ?? Number.MAX_SAFE_INTEGER;
+      const periodB = extractInstallmentPeriodFromText(b?.description) ?? Number.MAX_SAFE_INTEGER;
+      if (periodA !== periodB) return periodA - periodB;
+
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    return matchedRows.map(mapCashFlowRowToModalItem);
+  } catch (err) {
+    console.warn('Warning findAllCashFlowsByLoan:', err);
+    return [];
+  }
+}
+
+export async function findCashFlowByLoanInstallment(params: {
+  loanId?: string | null;
+  loanNumber?: string | null;
+  installmentNo?: number | null;
+  scheduleId?: string | null;
+  memberNrp?: string | null;
+}): Promise<CashFlowModalRecord | null> {
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return null;
+    }
+
+    const loanId = String(params.loanId || '').trim();
+    const loanNumberUpper = String(params.loanNumber || '').trim().toUpperCase();
+    const scheduleId = String(params.scheduleId || '').trim();
+    const memberNrp = String(params.memberNrp || '').trim();
+    const installmentNo =
+      params.installmentNo !== null && params.installmentNo !== undefined
+        ? Number(params.installmentNo)
+        : null;
+
+    const [cfRows, links] = await Promise.all([
+      fetchCashFlowRowsSafe(),
+      fetchLoanScheduleAndRepaymentLinks(loanId),
+    ]);
+
+    const targetScheduleIdSet = new Set<string>();
+    if (scheduleId) targetScheduleIdSet.add(scheduleId);
+    if (installmentNo !== null && Number.isFinite(installmentNo)) {
+      for (const s of links.schedules) {
+        if (Number(s?.period_number) === installmentNo && s?.id) {
+          targetScheduleIdSet.add(String(s.id));
+        }
+      }
+    }
+
+    const targetRepaymentIdSet = new Set<string>();
+    for (const r of links.repayments) {
+      const rSchedId = String(r?.schedule_id || '').trim();
+      if (r?.id && rSchedId && targetScheduleIdSet.has(rSchedId)) {
+        targetRepaymentIdSet.add(String(r.id));
+      }
+    }
+
+    const installmentCandidates = cfRows.filter((row: any) => {
+      if (!row?.id) return false;
+      const cat = String(row?.category || '');
+      const dir = String(row?.direction ?? row?.type ?? '').trim().toLowerCase();
+      if (isLoanInstallmentCategory(cat)) return true;
+      return dir !== 'out' && !isLoanDisbursementCategory(cat) && isLoanRelatedCategory(cat);
+    });
+
+    // 1. Exact reference_id match against scheduleId or repaymentId for this period
+    if (targetScheduleIdSet.size > 0 || targetRepaymentIdSet.size > 0) {
+      const exactRefMatch = installmentCandidates.find((row: any) => {
+        const refId = String(row?.reference_id || '').trim();
+        return (
+          Boolean(refId) &&
+          (targetScheduleIdSet.has(refId) || targetRepaymentIdSet.has(refId))
+        );
+      });
+      if (exactRefMatch) {
+        return mapCashFlowRowToModalItem(exactRefMatch);
+      }
+    }
+
+    // 2. Match loanNumber + Bln ke-{installmentNo} in description
+    if (loanNumberUpper && installmentNo !== null && Number.isFinite(installmentNo)) {
+      const descLoanAndPeriodMatch = installmentCandidates.find((row: any) => {
+        const desc = String(row?.description || '');
+        if (!desc.toUpperCase().includes(loanNumberUpper)) return false;
+        const parsedPeriod = extractInstallmentPeriodFromText(desc);
+        return parsedPeriod === installmentNo;
+      });
+      if (descLoanAndPeriodMatch) {
+        return mapCashFlowRowToModalItem(descLoanAndPeriodMatch);
+      }
+    }
+
+    // 3. Match reference_id === loanId + period in description
+    if (loanId && installmentNo !== null && Number.isFinite(installmentNo)) {
+      const loanIdAndPeriodMatch = installmentCandidates.find((row: any) => {
+        const refId = String(row?.reference_id || '').trim();
+        if (refId !== loanId) return false;
+        const parsedPeriod = extractInstallmentPeriodFromText(row?.description);
+        return parsedPeriod === installmentNo;
+      });
+      if (loanIdAndPeriodMatch) {
+        return mapCashFlowRowToModalItem(loanIdAndPeriodMatch);
+      }
+    }
+
+    // 4. Fallback when loanNumber absent: memberNrp + Bln ke-{installmentNo} + installment category
+    if (
+      !loanNumberUpper &&
+      memberNrp &&
+      installmentNo !== null &&
+      Number.isFinite(installmentNo)
+    ) {
+      const nrpAndPeriodMatch = installmentCandidates.find((row: any) => {
+        if (!isLoanInstallmentCategory(row?.category)) return false;
+        const desc = String(row?.description || '');
+        if (!desc.includes(memberNrp)) return false;
+        const parsedPeriod = extractInstallmentPeriodFromText(desc);
+        return parsedPeriod === installmentNo;
+      });
+      if (nrpAndPeriodMatch) {
+        return mapCashFlowRowToModalItem(nrpAndPeriodMatch);
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('Warning findCashFlowByLoanInstallment:', err);
+    return null;
+  }
 }

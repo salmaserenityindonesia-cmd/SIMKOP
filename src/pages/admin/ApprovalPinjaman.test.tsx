@@ -517,5 +517,59 @@ describe('ApprovalPinjaman Page Component', () => {
       expect(allHtml).not.toContain('btn-reset-to-pending');
       expect(allHtml).not.toContain('Reset ke Pending');
     });
+
+    it('renders clickable loan number journal trigger on APPROVED and ALL tabs, and keeps it non-interactive on PENDING tab', () => {
+      const approvedHtml = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="APPROVED"
+          initialPinjamanList={[
+            {
+              id: 'loan-app-1',
+              loan_number: 'LOAN-2026-001',
+              status: 'active',
+              amount: 5000000,
+              tenor: 10,
+              anggota: { nama: 'Sertu Budi', nrp: '333444' },
+            },
+          ]}
+        />
+      );
+      expect(approvedHtml).toContain('data-testid="approval-loan-journal-btn-LOAN-2026-001"');
+
+      const allHtml = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="ALL"
+          initialPinjamanList={[
+            {
+              id: 'loan-all-paid',
+              loan_number: 'LOAN-2026-002',
+              status: 'lunas',
+              amount: 3000000,
+              tenor: 6,
+              anggota: { nama: 'Kopda Andi', nrp: '555666' },
+            },
+          ]}
+        />
+      );
+      expect(allHtml).toContain('data-testid="approval-loan-journal-btn-LOAN-2026-002"');
+
+      const pendingHtml = renderToStaticMarkup(
+        <ApprovalPinjaman
+          initialTab="PENDING"
+          initialPinjamanList={[
+            {
+              id: 'loan-pend-1',
+              loan_number: 'LOAN-2026-003',
+              status: 'pending',
+              amount: 2000000,
+              tenor: 5,
+              anggota: { nama: 'Praka Eko', nrp: '777888' },
+            },
+          ]}
+        />
+      );
+      expect(pendingHtml).not.toContain('data-testid="approval-loan-journal-btn-LOAN-2026-003"');
+      expect(pendingHtml).toContain('LOAN-2026-003');
+    });
   });
 });

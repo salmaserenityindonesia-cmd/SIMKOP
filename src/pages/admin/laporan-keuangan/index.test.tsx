@@ -4536,4 +4536,50 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(htmlWithOrphans).toContain('data-testid="cashflow-audit-orphan-badge"');
     expect(htmlWithOrphans).toContain('>2<');
   });
+
+  it('populates cashFlowSearchQuery from ?search= query parameter when navigated from CashFlowReferenceModal', () => {
+    const cashFlowData = {
+      inflowTotal: 875000,
+      outflowTotal: 0,
+      netCashflow: 875000,
+      transactions: [
+        {
+          id: '1a22f0ff-1111-2222-3333-444455556666',
+          tanggal: '1/7/2026',
+          referensi: 'CF-1A22F0FF',
+          deskripsi: 'Angsuran Pinjaman [SALDO-AWAL-84110801-GAJISIPA] Bln ke-7',
+          kategori: 'angsuran_pinjaman',
+          unit_usaha: 'Umum',
+          kas_masuk: 875000,
+          kas_keluar: 0,
+          saldo_berjalan: 875000,
+          created_at: '2026-07-01T08:00:00.000Z',
+        },
+        {
+          id: '99999999-0000-0000-0000-000000000003',
+          tanggal: '19/11/2026',
+          referensi: 'CF-99999999',
+          deskripsi: 'Penjualan Tunai (INV-8888) — Pelanggan Umum',
+          kategori: 'penjualan_tunai',
+          unit_usaha: 'Retail Toko',
+          kas_masuk: 150000,
+          kas_keluar: 0,
+          saldo_berjalan: 1025000,
+          created_at: '2026-11-19T11:00:00.000Z',
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/laporan-keuangan?search=CF-1A22F0FF&date=2026-07-01']}>
+        <LaporanKeuangan initialCashFlowData={cashFlowData} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-testid="cashflow-search-input"');
+    expect(html).toContain('value="CF-1A22F0FF"');
+    expect(html).toContain('CF-1A22F0FF');
+    expect(html).toContain('SALDO-AWAL-84110801-GAJISIPA');
+    expect(html).not.toContain('CF-99999999');
+  });
 });

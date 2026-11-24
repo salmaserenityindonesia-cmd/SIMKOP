@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Link, useInRouterContext } from 'react-router-dom';
+import { Link, useInRouterContext, useLocation } from 'react-router-dom';
 import {
   BookOpen,
   X,
@@ -57,10 +57,71 @@ export interface CashFlowReferenceModalProps {
   onClose: () => void;
   /** Optional preloaded breakdown for deterministic SSR unit testing */
   initialBreakdown?: CashFlowReferenceBreakdown | null;
+  /** Optional list of related cash flow rows for a single loan contract */
+  relatedCashFlows?: CashFlowReferenceModalItem[];
+  /** Optional contract number/label displayed on the multi-journal switcher */
+  contractLabel?: string;
+}
+
+interface CashFlowReferenceModalInternalProps extends CashFlowReferenceModalProps {
+  currentPathname?: string;
 }
 
 const SAVINGS_LEDGER_ROUTE = '/admin/compliance-matrix';
 const LOAN_LEDGER_ROUTE = '/admin/loan-matrix';
+const FINANCE_REPORT_ROUTE = '/admin/laporan-keuangan';
+
+const extractIsoDateParam = (
+  rawCreatedAt?: string | null,
+  rawTanggal?: string | null
+): string => {
+  const candidates = [rawCreatedAt, rawTanggal];
+  for (const cand of candidates) {
+    const trimmed = String(cand || '').trim();
+    if (!trimmed) continue;
+    const ymd = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
+    const dmy = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (dmy) {
+      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    const parsed = new Date(trimmed);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+  return '';
+};
+
+const getContractJournalChipLabel = (item: CashFlowReferenceModalItem): string => {
+  const isOut = item.direction === 'out' || item.kas_keluar > 0;
+  if (isOut || isLoanDisbursementCategory(item.kategori)) {
+    return String(item.kategori || '').toLowerCase().includes('pembiayaan')
+      ? 'Pembiayaan'
+      : 'Pencairan';
+  }
+  const blnMatch = String(item.deskripsi || '').match(/\bBln\s*ke-(\d+)\b/i);
+  if (blnMatch?.[1]) {
+    return `Bln ke-${blnMatch[1]}`;
+  }
+  return 'Angsuran';
+};
+
+const buildFinanceReportUrl = (
+  refCode: string,
+  createdAt?: string | null,
+  tanggal?: string | null
+): string => {
+  const params = new URLSearchParams();
+  if (refCode) params.set('search', refCode);
+  const txDate = extractIsoDateParam(createdAt, tanggal);
+  if (txDate) params.set('date', txDate);
+  const qs = params.toString();
+  return qs ? `${FINANCE_REPORT_ROUTE}?${qs}` : FINANCE_REPORT_ROUTE;
+};
 
 const formatRp = (n: number): string =>
   'Rp ' + Math.round(n).toLocaleString('id-ID');
@@ -171,12 +232,17 @@ const getDepositTypeBadgeClass = (code?: string | null): string => {
   return 'bg-slate-100 text-slate-700 border-slate-200';
 };
 
-export default function CashFlowReferenceModal({
+function CashFlowReferenceModalContent({
   cashFlowItem,
   onClose,
   initialBreakdown = null,
-}: CashFlowReferenceModalProps) {
+  relatedCashFlows,
+  contractLabel,
+  currentPathname = '',
+}: CashFlowReferenceModalInternalProps) {
   const inRouter = useInRouterContext();
+  const [activeCashFlowItem, setActiveCashFlowItem] =
+    useState<CashFlowReferenceModalItem | null>(cashFlowItem);
   const [breakdown, setBreakdown] = useState<CashFlowReferenceBreakdown | null>(
     initialBreakdown
   );
@@ -188,27 +254,33 @@ export default function CashFlowReferenceModal({
   const [copied, setCopied] = useState<boolean>(false);
   const [copiedReceipt, setCopiedReceipt] = useState<boolean>(false);
 
+  useEffect(() => {
+    setActiveCashFlowItem(cashFlowItem);
+  }, [cashFlowItem]);
+
+  const activeItem = activeCashFlowItem;
+
   const loadBreakdown = useCallback(async () => {
-    if (!cashFlowItem) return;
+    if (!activeItem) return;
     setLoading(true);
     setError(null);
     try {
       const amount =
-        cashFlowItem.kas_masuk > 0
-          ? cashFlowItem.kas_masuk
-          : cashFlowItem.kas_keluar;
+        activeItem.kas_masuk > 0
+          ? activeItem.kas_masuk
+          : activeItem.kas_keluar;
       const direction: 'in' | 'out' =
-        cashFlowItem.direction ?? (cashFlowItem.kas_keluar > 0 ? 'out' : 'in');
+        activeItem.direction ?? (activeItem.kas_keluar > 0 ? 'out' : 'in');
       const data = await getCashFlowReferenceBreakdown({
-        id: cashFlowItem.id,
-        category: cashFlowItem.kategori,
+        id: activeItem.id,
+        category: activeItem.kategori,
         amount,
         direction,
-        description: cashFlowItem.deskripsi,
-        reference_id: cashFlowItem.reference_id ?? null,
-        referensi: cashFlowItem.referensi,
-        unit_usaha: cashFlowItem.unit_usaha,
-        created_at: cashFlowItem.created_at || cashFlowItem.tanggal,
+        description: activeItem.deskripsi,
+        reference_id: activeItem.reference_id ?? null,
+        referensi: activeItem.referensi,
+        unit_usaha: activeItem.unit_usaha,
+        created_at: activeItem.created_at || activeItem.tanggal,
       });
       setBreakdown(data);
     } catch (err: any) {
@@ -218,7 +290,7 @@ export default function CashFlowReferenceModal({
     } finally {
       setLoading(false);
     }
-  }, [cashFlowItem]);
+  }, [activeItem]);
 
   useEffect(() => {
     setSearchQuery('');
@@ -226,13 +298,13 @@ export default function CashFlowReferenceModal({
     setCopied(false);
     setCopiedReceipt(false);
 
-    if (!cashFlowItem) {
+    if (!activeItem) {
       setBreakdown(null);
       setError(null);
       return;
     }
 
-    if (initialBreakdown) {
+    if (initialBreakdown && activeItem.id === cashFlowItem?.id) {
       setBreakdown(initialBreakdown);
       setLoading(false);
       setError(null);
@@ -240,10 +312,10 @@ export default function CashFlowReferenceModal({
     }
 
     loadBreakdown();
-  }, [cashFlowItem, initialBreakdown, loadBreakdown]);
+  }, [activeItem, cashFlowItem, initialBreakdown, loadBreakdown]);
 
   useEffect(() => {
-    if (!cashFlowItem) return;
+    if (!activeItem) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -251,7 +323,7 @@ export default function CashFlowReferenceModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cashFlowItem, onClose]);
+  }, [activeItem, onClose]);
 
   const filteredMemberRows = useMemo(() => {
     if (!breakdown || breakdown.kind !== 'opening_savings') return [];
@@ -280,12 +352,14 @@ export default function CashFlowReferenceModal({
     );
   }, [breakdown, searchQuery]);
 
-  if (!cashFlowItem) return null;
+  if (!activeItem) return null;
 
   const nominal =
-    cashFlowItem.kas_masuk > 0 ? cashFlowItem.kas_masuk : cashFlowItem.kas_keluar;
+    activeItem.kas_masuk > 0 ? activeItem.kas_masuk : activeItem.kas_keluar;
   const isOutflow =
-    cashFlowItem.direction === 'out' || cashFlowItem.kas_keluar > 0;
+    activeItem.direction === 'out' || activeItem.kas_keluar > 0;
+  const isOnFinanceReport = currentPathname.startsWith(FINANCE_REPORT_ROUTE);
+  const isOnLoanMatrix = currentPathname.startsWith(LOAN_LEDGER_ROUTE);
 
   const isBulkLebaran = breakdown?.kind === 'bulk_lebaran_withdrawal';
   const totalMembers = isBulkLebaran
@@ -309,7 +383,7 @@ export default function CashFlowReferenceModal({
   const handleCopyRef = async () => {
     try {
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(cashFlowItem.referensi);
+        await navigator.clipboard.writeText(activeItem.referensi);
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -358,13 +432,13 @@ export default function CashFlowReferenceModal({
                   Bukti Jurnal &amp; Buku Pembantu Referensi
                 </h3>
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-indigo-500/30 border border-indigo-400/40 font-mono text-xs font-bold text-indigo-100 tracking-wide">
-                  {cashFlowItem.referensi}
+                  {activeItem.referensi}
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                <span>Tanggal: {cashFlowItem.tanggal}</span>
+                <span>Tanggal: {activeItem.tanggal}</span>
                 <span className="text-slate-500">•</span>
-                <span>Kategori: {formatHeaderCategoryLabel(cashFlowItem.kategori)}</span>
+                <span>Kategori: {formatHeaderCategoryLabel(activeItem.kategori)}</span>
                 <span className="text-slate-500">•</span>
                 <span className={isOutflow ? 'text-rose-300 font-semibold' : 'text-emerald-300 font-semibold'}>
                   {isOutflow ? 'Kas Keluar' : 'Kas Masuk'}: {formatRp(nominal)}
@@ -382,6 +456,61 @@ export default function CashFlowReferenceModal({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* ── SWITCHER MUTASI KONTRAK (MULTI-JURNAL) ── */}
+        {relatedCashFlows && relatedCashFlows.length > 1 && (
+          <div
+            data-testid="contract-journal-switcher"
+            className="px-6 py-2.5 bg-indigo-50/80 border-b border-indigo-200/80 flex flex-col gap-2"
+          >
+            <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-indigo-900">
+              <span className="flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                <span>
+                  Mutasi Kas Kontrak {contractLabel ? `${contractLabel} ` : ''}({relatedCashFlows.length} jurnal)
+                </span>
+              </span>
+              <span className="text-indigo-700 font-normal hidden sm:inline">
+                Pilih mutasi untuk melihat bukti jurnal masing-masing
+              </span>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+              {relatedCashFlows.map((cf) => {
+                const isSelected = cf.id === activeItem.id;
+                const cfOut = cf.direction === 'out' || cf.kas_keluar > 0;
+                const cfAmount = cf.kas_masuk > 0 ? cf.kas_masuk : cf.kas_keluar;
+                const chipLabel = getContractJournalChipLabel(cf);
+                return (
+                  <button
+                    key={cf.id}
+                    type="button"
+                    data-testid={`contract-journal-tab-${cf.referensi}`}
+                    onClick={() => setActiveCashFlowItem(cf)}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs border transition-all shrink-0 cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs font-semibold'
+                        : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/70'
+                    }`}
+                  >
+                    <span className="font-mono font-bold">{cf.referensi}</span>
+                    <span
+                      className={`px-1.5 py-0.2 rounded text-[10px] font-semibold ${
+                        isSelected
+                          ? 'bg-indigo-500/50 text-white'
+                          : cfOut
+                            ? 'bg-purple-50 text-purple-700'
+                            : 'bg-emerald-50 text-emerald-700'
+                      }`}
+                    >
+                      {chipLabel}
+                    </span>
+                    <span className="tabular-nums opacity-90">{formatRp(cfAmount)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── BODY ── */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 bg-slate-50/70">
@@ -1974,15 +2103,15 @@ export default function CashFlowReferenceModal({
             const memberNrp = rawNrp && rawNrp !== '-' ? rawNrp : '';
             const filterToken = loanNumber || memberNrp;
             const displayRefCode = String(
-              cashFlowItem.referensi || breakdown.journal.refCode || ''
+              activeItem.referensi || breakdown.journal.refCode || ''
             ).trim();
             const traceBadgeLabel = filterToken || displayRefCode;
             const dueYm = extractYearMonthFromDate(inst.dueDate);
             const fallbackYm = extractYearMonthFromDate(
               inst.createdAt ||
                 breakdown.journal.createdAt ||
-                cashFlowItem.created_at ||
-                cashFlowItem.tanggal
+                activeItem.created_at ||
+                activeItem.tanggal
             );
             const targetMonth = dueYm?.month ?? null;
             const targetYear = dueYm?.year ?? fallbackYm?.year ?? null;
@@ -2004,15 +2133,15 @@ export default function CashFlowReferenceModal({
             const traceDate = String(
               inst.createdAt ||
                 breakdown.journal.createdAt ||
-                cashFlowItem.created_at ||
-                cashFlowItem.tanggal ||
+                activeItem.created_at ||
+                activeItem.tanggal ||
                 ''
             ).trim();
             if (traceDate) traceParams.set('traceDate', traceDate);
             const traceDesc = String(
               inst.description ||
                 breakdown.journal.description ||
-                cashFlowItem.deskripsi ||
+                activeItem.deskripsi ||
                 ''
             ).trim();
             if (traceDesc) traceParams.set('traceDesc', traceDesc);
@@ -2151,39 +2280,74 @@ export default function CashFlowReferenceModal({
                   </div>
                 </div>
 
-                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman */}
-                <div
-                  data-testid="loan-installment-audit-bar"
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
-                >
-                  <div className="text-xs text-slate-600">
-                    <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
-                    Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
-                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
-                      {traceBadgeLabel}
-                    </code>
-                  </div>
-                  {inRouter ? (
-                    <Link
-                      to={traceBackUrl}
-                      onClick={onClose}
-                      data-testid="btn-trace-loan-ledger"
-                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman & Laporan Keuangan */}
+                {(() => {
+                  const financeReportUrl = buildFinanceReportUrl(
+                    displayRefCode,
+                    activeItem.created_at || breakdown.journal.createdAt,
+                    activeItem.tanggal
+                  );
+                  return (
+                    <div
+                      data-testid="loan-installment-audit-bar"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
                     >
-                      <span>Telusuri di Buku Besar Pinjaman</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Link>
-                  ) : (
-                    <a
-                      href={traceBackUrl}
-                      data-testid="btn-trace-loan-ledger"
-                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
-                    >
-                      <span>Telusuri di Buku Besar Pinjaman</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
-                  )}
-                </div>
+                      <div className="text-xs text-slate-600">
+                        <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                        Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                          {traceBadgeLabel}
+                        </code>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {!isOnFinanceReport && (
+                          inRouter ? (
+                            <Link
+                              to={financeReportUrl}
+                              onClick={onClose}
+                              data-testid="btn-trace-laporan-keuangan"
+                              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Lihat Baris di Laporan Keuangan</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </Link>
+                          ) : (
+                            <a
+                              href={financeReportUrl}
+                              data-testid="btn-trace-laporan-keuangan"
+                              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Lihat Baris di Laporan Keuangan</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </a>
+                          )
+                        )}
+                        {!isOnLoanMatrix && (
+                          inRouter ? (
+                            <Link
+                              to={traceBackUrl}
+                              onClick={onClose}
+                              data-testid="btn-trace-loan-ledger"
+                              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Telusuri di Buku Besar Pinjaman</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </Link>
+                          ) : (
+                            <a
+                              href={traceBackUrl}
+                              data-testid="btn-trace-loan-ledger"
+                              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Telusuri di Buku Besar Pinjaman</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </a>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -2197,14 +2361,14 @@ export default function CashFlowReferenceModal({
             const memberNrp = rawNrp && rawNrp !== '-' ? rawNrp : '';
             const filterToken = loanNumber || memberNrp;
             const displayRefCode = String(
-              cashFlowItem.referensi || breakdown.journal.refCode || ''
+              activeItem.referensi || breakdown.journal.refCode || ''
             ).trim();
             const traceBadgeLabel = filterToken || displayRefCode;
             const disbursedYm = extractYearMonthFromDate(
               ld.disbursedAt ||
                 breakdown.journal.createdAt ||
-                cashFlowItem.created_at ||
-                cashFlowItem.tanggal
+                activeItem.created_at ||
+                activeItem.tanggal
             );
             const traceParams = new URLSearchParams();
             if (filterToken) traceParams.set('search', filterToken);
@@ -2219,15 +2383,15 @@ export default function CashFlowReferenceModal({
             const traceDate = String(
               ld.disbursedAt ||
                 breakdown.journal.createdAt ||
-                cashFlowItem.created_at ||
-                cashFlowItem.tanggal ||
+                activeItem.created_at ||
+                activeItem.tanggal ||
                 ''
             ).trim();
             if (traceDate) traceParams.set('traceDate', traceDate);
             const traceDesc = String(
               ld.description ||
                 breakdown.journal.description ||
-                cashFlowItem.deskripsi ||
+                activeItem.deskripsi ||
                 ''
             ).trim();
             if (traceDesc) traceParams.set('traceDesc', traceDesc);
@@ -2343,39 +2507,74 @@ export default function CashFlowReferenceModal({
                   </div>
                 </div>
 
-                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman */}
-                <div
-                  data-testid="loan-disbursement-audit-bar"
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
-                >
-                  <div className="text-xs text-slate-600">
-                    <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
-                    Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
-                    <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
-                      {traceBadgeLabel}
-                    </code>
-                  </div>
-                  {inRouter ? (
-                    <Link
-                      to={traceBackUrl}
-                      onClick={onClose}
-                      data-testid="btn-trace-loan-ledger"
-                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                {/* Bilah Audit Dua Arah ke Buku Besar Pinjaman & Laporan Keuangan */}
+                {(() => {
+                  const financeReportUrl = buildFinanceReportUrl(
+                    displayRefCode,
+                    activeItem.created_at || breakdown.journal.createdAt,
+                    activeItem.tanggal
+                  );
+                  return (
+                    <div
+                      data-testid="loan-disbursement-audit-bar"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
                     >
-                      <span>Telusuri di Buku Besar Pinjaman</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Link>
-                  ) : (
-                    <a
-                      href={traceBackUrl}
-                      data-testid="btn-trace-loan-ledger"
-                      className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
-                    >
-                      <span>Telusuri di Buku Besar Pinjaman</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
-                  )}
-                </div>
+                      <div className="text-xs text-slate-600">
+                        <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                        Lacak pembukuan pinjaman anggota ini dengan filter otomatis{' '}
+                        <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                          {traceBadgeLabel}
+                        </code>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {!isOnFinanceReport && (
+                          inRouter ? (
+                            <Link
+                              to={financeReportUrl}
+                              onClick={onClose}
+                              data-testid="btn-trace-laporan-keuangan"
+                              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Lihat Baris di Laporan Keuangan</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </Link>
+                          ) : (
+                            <a
+                              href={financeReportUrl}
+                              data-testid="btn-trace-laporan-keuangan"
+                              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Lihat Baris di Laporan Keuangan</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </a>
+                          )
+                        )}
+                        {!isOnLoanMatrix && (
+                          inRouter ? (
+                            <Link
+                              to={traceBackUrl}
+                              onClick={onClose}
+                              data-testid="btn-trace-loan-ledger"
+                              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Telusuri di Buku Besar Pinjaman</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </Link>
+                          ) : (
+                            <a
+                              href={traceBackUrl}
+                              data-testid="btn-trace-loan-ledger"
+                              className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer shrink-0"
+                            >
+                              <span>Telusuri di Buku Besar Pinjaman</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </a>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -2681,58 +2880,106 @@ export default function CashFlowReferenceModal({
 
           {/* ── KONTEN E3: METADATA JURNAL UMUM ── */}
           {!loading && !error && breakdown?.kind === 'journal_only' && (
-            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-                <FileText className="w-4 h-4 text-indigo-600" />
-                <h4 className="text-sm font-bold text-slate-900">
-                  Metadata Lengkap Jurnal Arus Kas
-                </h4>
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-4">
+                <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  <h4 className="text-sm font-bold text-slate-900">
+                    Metadata Lengkap Jurnal Arus Kas
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <p className="text-slate-500">Kode Referensi</p>
+                    <p className="font-mono font-bold text-indigo-700 mt-0.5">
+                      {breakdown.journal.refCode}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">UUID Baris Jurnal (cash_flow.id)</p>
+                    <p className="font-mono text-slate-800 mt-0.5 break-all">
+                      {breakdown.journal.id}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Waktu Pencatatan</p>
+                    <p className="font-semibold text-slate-800 mt-0.5">
+                      {formatDateTimeId(breakdown.journal.createdAt)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Unit Usaha &amp; Kategori</p>
+                    <p className="font-semibold text-slate-800 mt-0.5">
+                      {breakdown.journal.unitUsaha} • {breakdown.journal.category}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Arah &amp; Nominal</p>
+                    <p className="font-bold text-slate-900 mt-0.5 tabular-nums">
+                      {breakdown.journal.direction === 'out' ? 'Kas Keluar' : 'Kas Masuk'} —{' '}
+                      {formatRp(breakdown.journal.amount)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Reference ID Sumber</p>
+                    <p className="font-mono text-slate-700 mt-0.5 break-all">
+                      {breakdown.journal.referenceId || '-'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-slate-500">Uraian Deskripsi Lengkap</p>
+                    <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-3 border border-slate-200/70">
+                      {sanitizePosTerminology(breakdown.journal.description)}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <p className="text-slate-500">Kode Referensi</p>
-                  <p className="font-mono font-bold text-indigo-700 mt-0.5">
-                    {breakdown.journal.refCode}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">UUID Baris Jurnal (cash_flow.id)</p>
-                  <p className="font-mono text-slate-800 mt-0.5 break-all">
-                    {breakdown.journal.id}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Waktu Pencatatan</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {formatDateTimeId(breakdown.journal.createdAt)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Unit Usaha &amp; Kategori</p>
-                  <p className="font-semibold text-slate-800 mt-0.5">
-                    {breakdown.journal.unitUsaha} • {breakdown.journal.category}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Arah &amp; Nominal</p>
-                  <p className="font-bold text-slate-900 mt-0.5 tabular-nums">
-                    {breakdown.journal.direction === 'out' ? 'Kas Keluar' : 'Kas Masuk'} —{' '}
-                    {formatRp(breakdown.journal.amount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Reference ID Sumber</p>
-                  <p className="font-mono text-slate-700 mt-0.5 break-all">
-                    {breakdown.journal.referenceId || '-'}
-                  </p>
-                </div>
-                <div className="sm:col-span-2">
-                  <p className="text-slate-500">Uraian Deskripsi Lengkap</p>
-                  <p className="font-medium text-slate-800 mt-0.5 bg-slate-50 rounded-lg p-3 border border-slate-200/70">
-                    {sanitizePosTerminology(breakdown.journal.description)}
-                  </p>
-                </div>
-              </div>
+
+              {!isOnFinanceReport && Boolean(currentPathname) && (() => {
+                const displayRef = String(
+                  activeItem.referensi || breakdown.journal.refCode || ''
+                ).trim();
+                const financeReportUrl = buildFinanceReportUrl(
+                  displayRef,
+                  activeItem.created_at || breakdown.journal.createdAt,
+                  activeItem.tanggal
+                );
+                return (
+                  <div
+                    data-testid="journal-only-audit-bar"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl bg-indigo-50/60 border border-indigo-200/80"
+                  >
+                    <div className="text-xs text-slate-600">
+                      <span className="font-bold text-slate-800">Audit Dua Arah:</span>{' '}
+                      Temukan baris jurnal{' '}
+                      <code className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono text-[11px] text-indigo-700 font-semibold">
+                        {displayRef}
+                      </code>{' '}
+                      di Laporan Keuangan
+                    </div>
+                    {inRouter ? (
+                      <Link
+                        to={financeReportUrl}
+                        onClick={onClose}
+                        data-testid="btn-trace-laporan-keuangan"
+                        className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                      >
+                        <span>Lihat Baris di Laporan Keuangan</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    ) : (
+                      <a
+                        href={financeReportUrl}
+                        data-testid="btn-trace-laporan-keuangan"
+                        className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-2xs transition-colors cursor-pointer shrink-0"
+                      >
+                        <span>Lihat Baris di Laporan Keuangan</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -2768,4 +3015,24 @@ export default function CashFlowReferenceModal({
       </div>
     </div>
   );
+}
+
+function CashFlowReferenceModalWithRouter(props: CashFlowReferenceModalProps) {
+  const location = useLocation();
+  return (
+    <CashFlowReferenceModalContent
+      {...props}
+      currentPathname={location.pathname}
+    />
+  );
+}
+
+export default function CashFlowReferenceModal(
+  props: CashFlowReferenceModalProps
+) {
+  const inRouter = useInRouterContext();
+  if (inRouter) {
+    return <CashFlowReferenceModalWithRouter {...props} />;
+  }
+  return <CashFlowReferenceModalContent {...props} />;
 }

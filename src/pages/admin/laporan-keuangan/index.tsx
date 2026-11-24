@@ -3471,7 +3471,8 @@ function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
   const rawTab = (searchParams.get('tab') || '').trim().toLowerCase();
   const urlTab: 'cashflow' | 'shu' | null =
     rawTab === 'shu' || rawTab === 'cashflow' ? rawTab : null;
-  const urlRef = (searchParams.get('ref') || '').trim();
+  const urlSearch = (searchParams.get('search') || '').trim();
+  const urlRef = (searchParams.get('ref') || urlSearch).trim();
   const urlReceipt = (searchParams.get('receipt') || '').trim();
   const rawDate = (searchParams.get('date') || '').trim();
   const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '';
@@ -3480,6 +3481,7 @@ function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     next.delete('ref');
+    next.delete('search');
     next.delete('receipt');
     next.delete('date');
     setSearchParams(next, { replace: true });

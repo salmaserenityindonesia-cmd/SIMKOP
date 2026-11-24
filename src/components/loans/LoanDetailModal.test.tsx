@@ -1,7 +1,11 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import LoanDetailModal, { mapLoanModalStatus } from './LoanDetailModal';
+import LoanDetailModal, {
+  mapLoanModalStatus,
+  resolveLoanContractStatus,
+  getInstallmentPeriodStatus,
+} from './LoanDetailModal';
 import { loanService } from '../../services/loanService';
 import StatusBadge from '../ui/StatusBadge';
 
@@ -151,5 +155,115 @@ describe('LoanDetailModal Component', () => {
     expect(oldLoanHtml).toContain('Lunas');
     expect(oldLoanHtml).toContain('[LUNAS KOMPENSASI]');
     expect(oldLoanHtml).toContain('LOAN-1795422216507');
+  });
+
+  it('displays Status Pinjaman: Berjalan (not Lunas) when contract has unpaid schedules or remaining balance despite raw paid_off/completed status', () => {
+    const schedules = [
+      { id: 's-1', period_number: 1, due_date: '2026-01-01', target_amount: 875000, paid_amount: 875000, status: 'paid' },
+      { id: 's-2', period_number: 2, due_date: '2026-12-01', target_amount: 875000, paid_amount: 0, status: 'unpaid' },
+    ];
+    const loan = {
+      id: 'loan-yuswan',
+      loan_number: 'LOAN-YUSWAN-001',
+      status: 'paid_off',
+      principal_amount: 64750000,
+      tenor: 74,
+      sisa_pinjaman: 55125000,
+      anggota: { nama: 'YUSWAN EFENDI', nrp: '83010313' },
+    };
+
+    expect(resolveLoanContractStatus(loan, schedules, 55125000)).toBe('berjalan');
+
+    const html = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-yuswan"
+        onClose={vi.fn()}
+        initialPinjaman={loan}
+        initialSchedules={schedules}
+      />
+    );
+    expect(html).toContain('Status Pinjaman');
+    expect(html).toContain('Berjalan');
+    expect(html).toContain('1 dari 2 periode terbayar');
+  });
+
+  it('renders accurate installment period statuses (Terbayar, Terbayar Sebagian, Menunggak, Belum Jatuh Tempo) in Jadwal Angsuran', () => {
+    expect(
+      getInstallmentPeriodStatus({ target_amount: 875000, paid_amount: 875000, status: 'paid', due_date: '2026-01-01' }, '2026-11-24').label
+    ).toBe('Terbayar');
+    expect(
+      getInstallmentPeriodStatus({ target_amount: 875000, paid_amount: 300000, status: 'partial', due_date: '2026-02-01' }, '2026-11-24').label
+    ).toBe('Terbayar Sebagian');
+    expect(
+      getInstallmentPeriodStatus({ target_amount: 875000, paid_amount: 0, status: 'unpaid', due_date: '2026-10-01' }, '2026-11-24').label
+    ).toBe('Menunggak');
+    expect(
+      getInstallmentPeriodStatus({ target_amount: 875000, paid_amount: 0, status: 'unpaid', due_date: '2099-12-01' }, '2026-11-24').label
+    ).toBe('Belum Jatuh Tempo');
+
+    const html = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-sched-terms"
+        onClose={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-sched-terms',
+          status: 'active',
+          principal_amount: 3500000,
+          tenor: 4,
+        }}
+        initialSchedules={[
+          { id: 'st-1', period_number: 1, due_date: '2026-01-01', target_amount: 875000, paid_amount: 875000, status: 'paid' },
+          { id: 'st-2', period_number: 2, due_date: '2026-02-01', target_amount: 875000, paid_amount: 400000, status: 'partial' },
+          { id: 'st-3', period_number: 3, due_date: '2026-03-01', target_amount: 875000, paid_amount: 0, status: 'unpaid' },
+          { id: 'st-4', period_number: 4, due_date: '2099-12-01', target_amount: 875000, paid_amount: 0, status: 'unpaid' },
+        ]}
+      />
+    );
+    expect(html).toContain('Terbayar');
+    expect(html).toContain('Terbayar Sebagian');
+    expect(html).toContain('Menunggak');
+    expect(html).toContain('Belum Jatuh Tempo');
+    expect(html).not.toContain('Belum Lunas');
+  });
+
+  it('renders Buka Bukti Jurnal & Buku Pembantu button when onOpenCashFlowJournal is provided for active or paid-off loans', () => {
+    const htmlActive = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-journal-1"
+        onClose={vi.fn()}
+        onOpenCashFlowJournal={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-journal-1',
+          loan_number: 'LOAN-2026-900',
+          status: 'active',
+          principal_amount: 4000000,
+          tenor: 4,
+        }}
+        initialSchedules={[]}
+      />
+    );
+    expect(htmlActive).toContain('data-testid="btn-open-loan-journal"');
+    expect(htmlActive).toContain('Buka Bukti Jurnal &amp; Buku Pembantu');
+
+    const htmlPending = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-journal-pending"
+        onClose={vi.fn()}
+        onOpenCashFlowJournal={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-journal-pending',
+          loan_number: 'LOAN-2026-901',
+          status: 'pending',
+          principal_amount: 4000000,
+          tenor: 4,
+        }}
+        initialSchedules={[]}
+      />
+    );
+    expect(htmlPending).not.toContain('data-testid="btn-open-loan-journal"');
   });
 });

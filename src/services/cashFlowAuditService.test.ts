@@ -11,6 +11,8 @@ import {
   extractPaymentMethodFromDepositDescription,
   getCashFlowReferenceBreakdown,
   enrichWithdrawalCashFlowDescriptions,
+  findAllCashFlowsByLoan,
+  findCashFlowByLoanInstallment,
   getTraceBackDepositRows,
   syncApprovedLoansToCashFlow,
   syncMatrixDepositsToCashFlow,
@@ -4401,5 +4403,159 @@ describe('cashFlowAuditService - Loan Installment & Disbursement Breakdown', () 
       expect(res.loanDisbursement.amount).toBe(50000000);
       expect(res.loanDisbursement.member?.nrp).toBe('88010001');
     }
+  });
+
+  it('findCashFlowByLoanInstallment resolves SALDO-AWAL-84110801-GAJISIPA installmentNo=7 to CF-1A22F0FF', async () => {
+    const cfRows = [
+      {
+        id: 'cf-disb-001',
+        direction: 'out',
+        category: 'pencairan_pinjaman',
+        amount: 10000000,
+        reference_id: 'loan-other',
+        description: 'Pencairan Pinjaman [LOAN-OTHER] — 11111111 - Lain',
+        created_at: '2026-01-02T08:00:00.000Z',
+      },
+      {
+        id: '1a22f0ff-1111-2222-3333-444455556666',
+        direction: 'in',
+        category: 'angsuran_pinjaman',
+        amount: 875000,
+        reference_id: 'sched-7-id',
+        description: 'Angsuran Pinjaman [SALDO-AWAL-84110801-GAJISIPA] Bln ke-7 — 84110801 - Anggota Gaji',
+        created_at: '2026-07-01T08:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'sched-7-id', period_number: 7 }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const found = await findCashFlowByLoanInstallment({
+      loanId: 'loan-saldo-awal-1',
+      loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+      installmentNo: 7,
+      memberNrp: '84110801',
+    });
+
+    expect(found).not.toBeNull();
+    expect(found?.referensi).toBe('CF-1A22F0FF');
+    expect(found?.kas_masuk).toBe(875000);
+
+    // Also resolves by loanNumber + Bln ke-7 even when loanId & scheduleId are absent
+    const foundByDesc = await findCashFlowByLoanInstallment({
+      loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+      installmentNo: 7,
+    });
+    expect(foundByDesc?.referensi).toBe('CF-1A22F0FF');
+  });
+
+  it('findAllCashFlowsByLoan returns disbursement and installments sorted chronologically for a loan contract', async () => {
+    const cfRows = [
+      {
+        id: 'bbbb2222-0000-0000-0000-000000000002',
+        direction: 'in',
+        category: 'angsuran_pinjaman',
+        amount: 550000,
+        reference_id: 'sched-1',
+        description: 'Angsuran Pinjaman [LOAN-1001] Bln ke-1 — 88010001 - Budi',
+        created_at: '2026-04-01T08:00:00.000Z',
+      },
+      {
+        id: 'aaaa1111-0000-0000-0000-000000000001',
+        direction: 'out',
+        category: 'pencairan_pinjaman',
+        amount: 5000000,
+        reference_id: 'loan-1001',
+        description: 'Pencairan Pinjaman [LOAN-1001] — 88010001 - Budi (Tenor 10 Bln)',
+        created_at: '2026-03-01T08:00:00.000Z',
+      },
+      {
+        id: 'cccc3333-0000-0000-0000-000000000003',
+        direction: 'in',
+        category: 'angsuran_pinjaman',
+        amount: 550000,
+        reference_id: 'repay-2',
+        description: 'Angsuran Pinjaman [LOAN-1001] Bln ke-2 — 88010001 - Budi',
+        created_at: '2026-05-01T08:00:00.000Z',
+      },
+      {
+        id: 'dddd4444-0000-0000-0000-000000000004',
+        direction: 'in',
+        category: 'angsuran_pinjaman',
+        amount: 900000,
+        reference_id: 'sched-other',
+        description: 'Angsuran Pinjaman [LOAN-9999] Bln ke-1 — 99999999 - Lain',
+        created_at: '2026-04-01T08:00:00.000Z',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        return {
+          select: vi.fn().mockReturnValue({
+            range: vi.fn().mockResolvedValue({ data: cfRows, error: null }),
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'sched-1', period_number: 1 }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'repay-2', schedule_id: 'sched-2' }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const results = await findAllCashFlowsByLoan({
+      loanId: 'loan-1001',
+      loanNumber: 'LOAN-1001',
+    });
+
+    expect(results.map((r) => r.referensi)).toEqual([
+      'CF-AAAA1111',
+      'CF-BBBB2222',
+      'CF-CCCC3333',
+    ]);
+    expect(results[0].kas_keluar).toBe(5000000);
+    expect(results[1].kas_masuk).toBe(550000);
   });
 });
