@@ -177,6 +177,78 @@ export function calculateGoodsMarkupScheduleSplit(
 }
 
 /**
+ * Menyelaraskan ulang porsi pokok dan margin seluruh jadwal angsuran pembiayaan barang
+ * secara proporsional terhadap total harga jual akad dan total margin kontrak,
+ * dengan periode aktif terakhir menyerap selisih pembulatan agar jumlah margin tepat 100%.
+ */
+export function rebalanceGoodsMarkupSchedulePortions<T extends {
+  period_number?: number;
+  target_amount?: number;
+  paid_amount?: number;
+  principal_portion?: number;
+  margin_portion?: number;
+}>(
+  schedules: T[],
+  totalAkad: number,
+  totalMargin: number
+): Array<T & { principal_portion: number; margin_portion: number }> {
+  const safeAkad = Math.max(0, Math.round(Number(totalAkad) || 0));
+  const safeMargin = Math.max(0, Math.round(Number(totalMargin) || 0));
+  const sorted = [...schedules].sort(
+    (a, b) => Number(a.period_number || 0) - Number(b.period_number || 0)
+  );
+
+  if (safeAkad <= 0 || safeMargin <= 0) {
+    return sorted.map((s) => ({
+      ...s,
+      principal_portion: Math.round(Number(s.principal_portion ?? s.target_amount ?? 0)),
+      margin_portion: Math.round(Number(s.margin_portion ?? 0)),
+    }));
+  }
+
+  const effectiveAmounts = sorted.map((s) =>
+    Math.max(0, Math.round(Number(s.target_amount || 0)), Math.round(Number(s.paid_amount || 0)))
+  );
+
+  let lastActiveIdx = -1;
+  for (let i = effectiveAmounts.length - 1; i >= 0; i--) {
+    if (effectiveAmounts[i] > 0) {
+      lastActiveIdx = i;
+      break;
+    }
+  }
+
+  let accMargin = 0;
+  return sorted.map((s, idx) => {
+    const effectiveAmt = effectiveAmounts[idx];
+    if (effectiveAmt <= 0 || lastActiveIdx < 0) {
+      return {
+        ...s,
+        principal_portion: 0,
+        margin_portion: 0,
+      };
+    }
+
+    let marginPortion: number;
+    if (idx < lastActiveIdx) {
+      marginPortion = Math.min(
+        effectiveAmt,
+        Math.round((effectiveAmt / safeAkad) * safeMargin)
+      );
+      accMargin += marginPortion;
+    } else {
+      marginPortion = Math.min(effectiveAmt, Math.max(0, safeMargin - accMargin));
+    }
+
+    return {
+      ...s,
+      principal_portion: Math.max(0, effectiveAmt - marginPortion),
+      margin_portion: marginPortion,
+    };
+  });
+}
+
+/**
  * Menghitung pemisahan porsi pokok vs porsi margin keuntungan pada pembayaran angsuran.
  * Untuk pinjaman tunai 0% bunga, porsi margin selalu 0.
  */
@@ -196,6 +268,30 @@ export function calculateRepaymentPortions(params: {
 
   const target = Math.max(0, Math.round(Number(params.targetAmount) || 0));
   const schedMargin = Math.max(0, Math.round(Number(params.scheduleMarginPortion || 0)));
+  const loanMarkup = Math.max(0, Math.round(Number(params.loanMarkupAmount || 0)));
+  const loanTotal = Math.max(
+    0,
+    Math.round(Number(params.loanTotalAmount || 0)) ||
+      Math.round(Number(params.loanCostPrice || 0)) + loanMarkup
+  );
+
+  // Pada pembayaran lebih (overpayment), hitung margin secara proporsional agar tidak terpotong batas jadwal awal
+  if (target > 0 && paid > target + 5) {
+    if (loanMarkup > 0 && loanTotal > 0) {
+      const marginPortion = Math.min(paid, Math.round((paid * loanMarkup) / loanTotal));
+      return {
+        principalPortion: Math.max(0, paid - marginPortion),
+        marginPortion,
+      };
+    }
+    if (schedMargin > 0) {
+      const marginPortion = Math.min(paid, Math.round((paid * schedMargin) / target));
+      return {
+        principalPortion: Math.max(0, paid - marginPortion),
+        marginPortion,
+      };
+    }
+  }
 
   if (schedMargin > 0 && target > 0) {
     const isExactOrFull = paid >= target || Math.abs(target - paid) <= 5;
@@ -207,13 +303,6 @@ export function calculateRepaymentPortions(params: {
       marginPortion,
     };
   }
-
-  const loanMarkup = Math.max(0, Math.round(Number(params.loanMarkupAmount || 0)));
-  const loanTotal = Math.max(
-    0,
-    Math.round(Number(params.loanTotalAmount || 0)) ||
-      Math.round(Number(params.loanCostPrice || 0)) + loanMarkup
-  );
 
   if (loanMarkup > 0 && loanTotal > 0) {
     const marginPortion = Math.min(paid, Math.round((paid * loanMarkup) / loanTotal));
@@ -1993,6 +2082,8 @@ export const loanService = {
     const newStatus: 'paid' | 'partial' | 'unpaid' = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
 
     const scheduleMarginPortion = Number((schedule as any).margin_portion || 0);
+    const overpayment = Math.max(0, newPaidTotal - target);
+
     const portions = calculateRepaymentPortions({
       amountPaid: paymentAmountClean,
       targetAmount: target,
@@ -2041,7 +2132,6 @@ export const loanService = {
     if (repayErr) throw new Error(repayErr.message || 'Gagal mencatat mutasi pembayaran');
 
     // 4b. Jika terjadi pembayaran lebih (overpayment), kurangkan ke sisa jadwal berikutnya dari belakang ke depan
-    const overpayment = Math.max(0, newPaidTotal - target);
     if (overpayment > 0) {
       const currentPeriod = Number((schedule as any).period_number || 0);
       let { data: futureSchedules, error: futureErr } = await supabase
@@ -2118,10 +2208,19 @@ export const loanService = {
     }
 
     // 5. Perbarui nilai akumulasi pinjaman induk (loans)
-    const { data: allSchedules, error: allSchedulesErr } = await supabase
+    let { data: allSchedules, error: allSchedulesErr } = await supabase
       .from('loan_schedules')
-      .select('id, target_amount, paid_amount, status')
+      .select('id, period_number, target_amount, paid_amount, status, principal_portion, margin_portion')
       .eq('loan_id', loanId);
+
+    if (allSchedulesErr && isMissingColumnError(allSchedulesErr)) {
+      const fbAllSched = await supabase
+        .from('loan_schedules')
+        .select('id, target_amount, paid_amount, status')
+        .eq('loan_id', loanId);
+      allSchedules = fbAllSched.data as any;
+      allSchedulesErr = fbAllSched.error;
+    }
 
     if (!allSchedulesErr && allSchedules) {
       let { data: loanData, error: loanFetchErr } = await supabase
@@ -2140,6 +2239,39 @@ export const loanService = {
       }
 
       const principalAmount = Math.round(Number(loanData?.principal_amount || loanData?.amount || 0));
+      const markupAmount = Math.round(Number(loanData?.markup_amount || 0));
+
+      // Sinkronkan total margin semua periode agar tetap 100% genap sama dengan markup_amount saat overpayment
+      const hasSchedulePortionCols = allSchedules.some(
+        (s: any) =>
+          s?.period_number !== undefined &&
+          (s?.margin_portion !== undefined || s?.principal_portion !== undefined)
+      );
+      if (overpayment > 0 && principalAmount > 0 && markupAmount > 0 && hasSchedulePortionCols) {
+        const normalizedForRebalance = allSchedules.map((s: any) =>
+          s.id === scheduleId ? { ...s, paid_amount: newPaidTotal } : s
+        );
+        const rebalanced = rebalanceGoodsMarkupSchedulePortions(
+          normalizedForRebalance,
+          principalAmount,
+          markupAmount
+        );
+        for (const item of rebalanced) {
+          const orig = allSchedules.find((s: any) => s.id === item.id) as any;
+          if (!orig) continue;
+          const prevMargin = Math.round(Number(orig.margin_portion ?? -1));
+          const prevPrincipal = Math.round(Number(orig.principal_portion ?? -1));
+          if (prevMargin !== item.margin_portion || prevPrincipal !== item.principal_portion) {
+            await supabase
+              .from('loan_schedules')
+              .update({
+                principal_portion: item.principal_portion,
+                margin_portion: item.margin_portion,
+              })
+              .eq('id', orig.id);
+          }
+        }
+      }
       const totalPaidAll = allSchedules.reduce((sum, s) => {
         const val = s.id === scheduleId ? newPaidTotal : Math.round(Number(s.paid_amount || 0));
         return sum + val;
@@ -2551,19 +2683,29 @@ export const loanService = {
         return { schedules, repaired: false };
       }
 
-      const { data: repayments, error: repayErr } = await repayTable
-        .select('schedule_id, amount_paid')
+      let { data: repayments, error: repayErr } = await repayTable
+        .select('id, schedule_id, amount_paid, principal_portion, margin_portion')
         .eq('loan_id', loanId);
+
+      if (repayErr && isMissingColumnError(repayErr)) {
+        const fbRepay = await repayTable
+          .select('schedule_id, amount_paid')
+          .eq('loan_id', loanId);
+        repayments = fbRepay.data;
+        repayErr = fbRepay.error;
+      }
 
       if (repayErr || !Array.isArray(repayments) || repayments.length === 0) {
         return { schedules, repaired: false };
       }
 
       const repaidBySchedule = new Map<string, number>();
+      const repayCountBySchedule = new Map<string, number>();
       for (const r of repayments) {
         if (!r?.schedule_id) continue;
         const key = String(r.schedule_id);
         repaidBySchedule.set(key, (repaidBySchedule.get(key) || 0) + Math.round(Number(r.amount_paid || 0)));
+        repayCountBySchedule.set(key, (repayCountBySchedule.get(key) || 0) + 1);
       }
 
       const working = schedules
@@ -2647,12 +2789,76 @@ export const loanService = {
         }
       }
 
+      // Sinkronkan porsi pokok & margin proporsional pada kontrak pembiayaan barang (termasuk data existing seperti LN2611-0002)
+      const totalAkad = Math.round(Number(loanData?.principal_amount || loanData?.amount || 0));
+      const totalMargin = Math.round(Number(loanData?.markup_amount || 0));
+      if (isGoodsMarkupLoan(loanData) && totalAkad > 0 && totalMargin > 0) {
+        const rebalanced = rebalanceGoodsMarkupSchedulePortions(working, totalAkad, totalMargin);
+        const rebalancedById = new Map<string, any>();
+
+        for (const item of rebalanced) {
+          const orig = working.find(
+            (w) => (item.id && w.id === item.id) || w.period_number === item.period_number
+          );
+          if (!orig) continue;
+          if (orig.id) rebalancedById.set(String(orig.id), item);
+
+          const prevMargin = Math.round(Number(orig.margin_portion ?? -1));
+          const prevPrincipal = Math.round(Number(orig.principal_portion ?? -1));
+          if (prevMargin !== item.margin_portion || prevPrincipal !== item.principal_portion) {
+            orig.principal_portion = item.principal_portion;
+            orig.margin_portion = item.margin_portion;
+            repaired = true;
+
+            if (orig.id) {
+              await supabase
+                .from('loan_schedules')
+                .update({
+                  principal_portion: item.principal_portion,
+                  margin_portion: item.margin_portion,
+                })
+                .eq('id', orig.id);
+            }
+          }
+        }
+
+        for (const rep of repayments) {
+          if (!rep?.id) continue;
+          const amt = Math.round(Number(rep.amount_paid || 0));
+          if (amt <= 0) continue;
+
+          const linkedSched = rep.schedule_id ? rebalancedById.get(String(rep.schedule_id)) : null;
+          const singleRepayForSched =
+            rep.schedule_id &&
+            repayCountBySchedule.get(String(rep.schedule_id)) === 1 &&
+            linkedSched &&
+            Math.round(Number(linkedSched.paid_amount || 0)) === amt;
+
+          const expectedMargin = singleRepayForSched
+            ? linkedSched.margin_portion
+            : Math.min(amt, Math.round((amt / totalAkad) * totalMargin));
+          const expectedPrincipal = Math.max(0, amt - expectedMargin);
+
+          const prevRepMargin = Math.round(Number(rep.margin_portion ?? -1));
+          const prevRepPrincipal = Math.round(Number(rep.principal_portion ?? -1));
+          if (prevRepMargin !== expectedMargin || prevRepPrincipal !== expectedPrincipal) {
+            repaired = true;
+            await supabase
+              .from('loan_repayments')
+              .update({
+                principal_portion: expectedPrincipal,
+                margin_portion: expectedMargin,
+              })
+              .eq('id', rep.id);
+          }
+        }
+      }
+
       if (!repaired) {
         return { schedules, repaired: false };
       }
 
       const totalPaidAll = working.reduce((sum, s) => sum + Math.round(Number(s.paid_amount || 0)), 0);
-      const totalAkad = Math.round(Number(loanData?.principal_amount || loanData?.amount || 0));
       const sisaPinjaman = Math.max(0, totalAkad - totalPaidAll);
       const isAllPaid =
         sisaPinjaman <= 0 ||

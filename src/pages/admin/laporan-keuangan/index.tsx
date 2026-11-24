@@ -1274,31 +1274,32 @@ export async function getShuEstimation(
         return Number(r?.amount_paid || 0) > 0;
       });
 
-      const missingMarginRows = validRepayments.filter(
-        (r: any) => Number(r?.margin_portion || 0) <= 0
-      );
-
       const scheduleLookup = new Map<string, any>();
       const loanLookup = new Map<string, any>();
 
-      if (missingMarginRows.length > 0) {
-        const schedIds = Array.from(
-          new Set(missingMarginRows.map((r: any) => r.schedule_id).filter(Boolean).map(String))
-        );
-        if (schedIds.length > 0) {
-          try {
-            const schedQ: any = supabase
-              .from('loan_schedules')
-              ?.select?.('id, target_amount, principal_portion, margin_portion');
+      const allSchedIds = Array.from(
+        new Set(validRepayments.map((r: any) => r.schedule_id).filter(Boolean).map(String))
+      );
+      if (allSchedIds.length > 0) {
+        try {
+          const runSchedQuery = async (cols: string) => {
+            const schedQ: any = supabase.from('loan_schedules')?.select?.(cols);
             if (schedQ && typeof schedQ.in === 'function') {
-              const sRes = await schedQ.in('id', schedIds);
-              for (const s of sRes?.data || []) {
-                if (s?.id) scheduleLookup.set(String(s.id), s);
-              }
+              return await schedQ.in('id', allSchedIds);
             }
-          } catch {
-            // Non-blocking fallback
+            return { data: [], error: null };
+          };
+          let sRes = await runSchedQuery(
+            'id, target_amount, paid_amount, status, principal_portion, margin_portion'
+          );
+          if (sRes?.error && isMissingColumnErr(sRes.error)) {
+            sRes = await runSchedQuery('id, target_amount, paid_amount, status');
           }
+          for (const s of sRes?.data || []) {
+            if (s?.id) scheduleLookup.set(String(s.id), s);
+          }
+        } catch {
+          // Non-blocking fallback
         }
       }
 
@@ -1356,23 +1357,36 @@ export async function getShuEstimation(
       }
 
       for (const r of validRepayments) {
+        const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
+        if (sched) {
+          const schedStatus = String(sched.status || '').trim().toLowerCase();
+          if (Number(sched.paid_amount || 0) <= 0 || schedStatus === 'unpaid') {
+            continue;
+          }
+        }
+
         const explicitMargin = Math.round(Number(r?.margin_portion || 0));
         let marginPortion = 0;
         let principalPortion = 0;
 
-        const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
         const loan = r?.loan_id ? loanLookup.get(String(r.loan_id)) : null;
+        const paidAmt = Math.round(Number(r?.amount_paid || 0));
+        const totalAkad = Math.round(Number(loan?.principal_amount ?? loan?.amount ?? 0));
+        const totalMargin = Math.round(Number(loan?.markup_amount || 0));
 
-        if (explicitMargin > 0) {
+        if (totalAkad > 0 && totalMargin > 0) {
+          marginPortion = Math.min(paidAmt, Math.round((paidAmt / totalAkad) * totalMargin));
+          principalPortion = Math.max(0, paidAmt - marginPortion);
+        } else if (explicitMargin > 0) {
           marginPortion = explicitMargin;
           principalPortion =
             r?.principal_portion !== undefined && r?.principal_portion !== null
               ? Math.round(Number(r.principal_portion))
-              : Math.max(0, Math.round(Number(r?.amount_paid || 0)) - marginPortion);
+              : Math.max(0, paidAmt - marginPortion);
         } else {
           const portions = calculateRepaymentPortions({
-            amountPaid: Number(r?.amount_paid || 0),
-            targetAmount: Number(sched?.target_amount || r?.amount_paid || 0),
+            amountPaid: paidAmt,
+            targetAmount: Number(sched?.target_amount || paidAmt || 0),
             schedulePrincipalPortion: sched?.principal_portion,
             scheduleMarginPortion: sched?.margin_portion,
             loanCostPrice: loan?.cost_price,

@@ -6,7 +6,8 @@ import {
   getActiveLoanTypes,
   computeRealRemainingPrincipal,
   calculateGoodsMarkupScheduleSplit,
-  calculateRepaymentPortions
+  calculateRepaymentPortions,
+  rebalanceGoodsMarkupSchedulePortions
 } from './loanService';
 import { supabase } from '../lib/supabaseClient';
 
@@ -2667,6 +2668,136 @@ describe('loanService', () => {
       expect(insertedLoanNumbers).toEqual([firstCandidate, retryCandidate]);
       expect(created.loan_number).toBe(retryCandidate);
       expect(created.loan_number).toHaveLength(11);
+    });
+  });
+
+  describe('Proportional Goods Markup Margin & Rebalancing (LN2611-0002)', () => {
+    it('calculateRepaymentPortions calculates proportional margin on overpayment instead of capping at schedule margin', () => {
+      const result = calculateRepaymentPortions({
+        amountPaid: 1000000,
+        targetAmount: 673334,
+        schedulePrincipalPortion: 666667,
+        scheduleMarginPortion: 6667,
+        loanCostPrice: 2000000,
+        loanMarkupAmount: 20000,
+        loanTotalAmount: 2020000,
+      });
+
+      expect(result).toEqual({
+        principalPortion: 990099,
+        marginPortion: 9901,
+      });
+    });
+
+    it('rebalanceGoodsMarkupSchedulePortions keeps total margin exact at 100% across overpaid and adjusted schedules', () => {
+      const afterFirstOverpay = rebalanceGoodsMarkupSchedulePortions(
+        [
+          { period_number: 1, target_amount: 673334, paid_amount: 1000000 },
+          { period_number: 2, target_amount: 673334, paid_amount: 0 },
+          { period_number: 3, target_amount: 346666, paid_amount: 0 },
+        ],
+        2020000,
+        20000
+      );
+
+      expect(afterFirstOverpay.map((s) => ({ p: s.principal_portion, m: s.margin_portion }))).toEqual([
+        { p: 990099, m: 9901 },
+        { p: 666667, m: 6667 },
+        { p: 343234, m: 3432 },
+      ]);
+      expect(afterFirstOverpay.reduce((sum, s) => sum + s.margin_portion, 0)).toBe(20000);
+
+      const afterAllPaid = rebalanceGoodsMarkupSchedulePortions(
+        [
+          { period_number: 1, target_amount: 673334, paid_amount: 1000000 },
+          { period_number: 2, target_amount: 673334, paid_amount: 900000 },
+          { period_number: 3, target_amount: 120000, paid_amount: 120000 },
+        ],
+        2020000,
+        20000
+      );
+
+      expect(afterAllPaid.map((s) => ({ p: s.principal_portion, m: s.margin_portion }))).toEqual([
+        { p: 990099, m: 9901 },
+        { p: 891089, m: 8911 },
+        { p: 118812, m: 1188 },
+      ]);
+      expect(afterAllPaid.reduce((sum, s) => sum + s.margin_portion, 0)).toBe(20000);
+    });
+
+    it('reconcileOverpaidSchedules repairs stale schedule and repayment margin_portion for LN2611-0002', async () => {
+      const updatedSchedules: any[] = [];
+      const updatedRepayments: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loan_repayments') {
+          return {
+            select: () => ({
+              eq: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'rep-1', schedule_id: 'sch-1', amount_paid: 1000000, principal_portion: 993333, margin_portion: 6667 },
+                  { id: 'rep-2', schedule_id: 'sch-2', amount_paid: 900000, principal_portion: 893333, margin_portion: 6667 },
+                  { id: 'rep-3', schedule_id: 'sch-3', amount_paid: 120000, principal_portion: 118812, margin_portion: 1188 },
+                ],
+                error: null,
+              }),
+            }),
+            update: (payload: any) => ({
+              eq: (_col: string, id: string) => {
+                updatedRepayments.push({ id, payload });
+                return Promise.resolve({ error: null });
+              },
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            update: (payload: any) => ({
+              eq: (_col: string, id: string) => {
+                updatedSchedules.push({ id, payload });
+                return Promise.resolve({ error: null });
+              },
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            update: () => ({
+              eq: vi.fn().mockResolvedValue({ error: null }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const res = await loanService.reconcileOverpaidSchedules(
+        'loan-ln2611-0002',
+        {
+          id: 'loan-ln2611-0002',
+          loan_number: 'LN2611-0002',
+          principal_amount: 2020000,
+          amount: 2020000,
+          cost_price: 2000000,
+          markup_amount: 20000,
+        },
+        [
+          { id: 'sch-1', period_number: 1, target_amount: 673334, paid_amount: 1000000, principal_portion: 666667, margin_portion: 6667, status: 'paid' },
+          { id: 'sch-2', period_number: 2, target_amount: 673334, paid_amount: 900000, principal_portion: 666667, margin_portion: 6667, status: 'paid' },
+          { id: 'sch-3', period_number: 3, target_amount: 120000, paid_amount: 120000, principal_portion: 118812, margin_portion: 1188, status: 'paid' },
+        ]
+      );
+
+      expect(res.repaired).toBe(true);
+      expect(res.schedules.map((s) => s.margin_portion)).toEqual([9901, 8911, 1188]);
+      expect(res.schedules.reduce((sum, s) => sum + s.margin_portion, 0)).toBe(20000);
+      expect(updatedSchedules).toEqual([
+        { id: 'sch-1', payload: { principal_portion: 990099, margin_portion: 9901 } },
+        { id: 'sch-2', payload: { principal_portion: 891089, margin_portion: 8911 } },
+      ]);
+      expect(updatedRepayments).toEqual([
+        { id: 'rep-1', payload: { principal_portion: 990099, margin_portion: 9901 } },
+        { id: 'rep-2', payload: { principal_portion: 891089, margin_portion: 8911 } },
+      ]);
     });
   });
 });

@@ -4599,4 +4599,153 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(html).toContain('SALDO-AWAL-84110801-GAJISIPA');
     expect(html).not.toContain('CF-99999999');
   });
+
+  it('getShuEstimation excludes repayments tied to unpaid schedules and computes proportional realized margin for LN2611-0002', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const mockScheduleRows = [
+        { id: 'sch-1', target_amount: 673334, paid_amount: 1000000, status: 'paid', principal_portion: 666667, margin_portion: 6667 },
+        { id: 'sch-2', target_amount: 673334, paid_amount: 0, status: 'unpaid', principal_portion: 666667, margin_portion: 6667 },
+        { id: 'sch-3', target_amount: 346666, paid_amount: 0, status: 'unpaid', principal_portion: 343234, margin_portion: 3432 },
+      ];
+      const mockRepaymentRows = [
+        {
+          id: 'rep-1',
+          loan_id: 'loan-ln2611-0002',
+          schedule_id: 'sch-1',
+          amount_paid: 1000000,
+          principal_portion: 993333,
+          margin_portion: 6667, // stale capped margin
+          payment_date: '2026-11-24T07:19:53.000Z',
+          payment_method: 'CASH',
+          receipt_number: 'KW2611-1578',
+        },
+        {
+          id: 'rep-unpaid-2',
+          loan_id: 'loan-ln2611-0002',
+          schedule_id: 'sch-2',
+          amount_paid: 673334,
+          principal_portion: 666667,
+          margin_portion: 6667,
+          payment_date: '2026-11-24T07:20:00.000Z',
+          payment_method: 'CASH',
+          receipt_number: 'KW2611-1579',
+        },
+        {
+          id: 'rep-unpaid-3',
+          loan_id: 'loan-ln2611-0002',
+          schedule_id: 'sch-3',
+          amount_paid: 346666,
+          principal_portion: 343234,
+          margin_portion: 3432,
+          payment_date: '2026-11-24T07:21:00.000Z',
+          payment_method: 'CASH',
+          receipt_number: 'KW2611-1580',
+        },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockResolvedValue({ data: mockRepaymentRows, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({ data: mockScheduleRows, error: null }),
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'loan-ln2611-0002',
+                    loan_number: 'LN2611-0002',
+                    member_id: 'mem-1',
+                    amount: 2020000,
+                    principal_amount: 2020000,
+                    cost_price: 2000000,
+                    markup_amount: 20000,
+                    item_description: 'Kulkas mini',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [{ id: 'mem-1', nrp: '88010001', nama: 'Budi Santoso' }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.goodsFinancingMargin).toBe(9901);
+      expect(shu.estimatedShu).toBe(9901);
+      expect(shu.shuReferenceRows).toHaveLength(1);
+      expect(shu.shuReferenceRows![0]).toMatchObject({
+        referenceNumber: 'KW2611-1578',
+        omzet: 9901,
+        hpp: 0,
+        grossProfit: 9901,
+        marginPercent: 100,
+        repaymentAmount: 1000000,
+        principalPortion: 990099,
+      });
+
+      // Now simulate all 3 schedules paid (1.000.000 + 900.000 + 120.000) -> 9.901 + 8.911 + 1.188 = 20.000
+      mockScheduleRows[1] = { id: 'sch-2', target_amount: 673334, paid_amount: 900000, status: 'paid', principal_portion: 891089, margin_portion: 8911 };
+      mockScheduleRows[2] = { id: 'sch-3', target_amount: 120000, paid_amount: 120000, status: 'paid', principal_portion: 118812, margin_portion: 1188 };
+      mockRepaymentRows[1].amount_paid = 900000;
+      mockRepaymentRows[2].amount_paid = 120000;
+
+      const shuAllPaid = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shuAllPaid.goodsFinancingMargin).toBe(20000);
+      expect(shuAllPaid.shuReferenceRows).toHaveLength(3);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
 });

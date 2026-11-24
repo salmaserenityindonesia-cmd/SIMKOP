@@ -322,6 +322,8 @@ describe('LoanDetailModal Component', () => {
 
     expect(html).toContain('Rp 1.020.000');
     expect(html).toContain('Rp 1.000.000');
+    expect(html).toContain('Pokok Rp 990.099 + Margin Rp 9.901');
+    expect(html).toContain('Pokok Rp 666.667 + Margin Rp 6.667');
     expect(html).toContain('Rp 346.666');
     expect(html).toContain('Pokok Rp 343.234 + Margin Rp 3.432');
   });

@@ -138,36 +138,37 @@ export function computeScheduleDisplayPortions(
   pinjaman?: any
 ): { principalPortion: number; marginPortion: number } {
   const targetAmt = Math.max(0, Math.round(Number(item?.target_amount ?? item?.targetAmount ?? 0)));
+  const paidAmt = Math.max(0, Math.round(Number(item?.paid_amount ?? item?.paidAmount ?? 0)));
+  const effectiveAmt = Math.max(targetAmt, paidAmt);
   const rawPrincipal = Math.max(0, Math.round(Number(item?.principal_portion ?? 0)));
   const rawMargin = Math.max(0, Math.round(Number(item?.margin_portion ?? 0)));
   const rawSum = rawPrincipal + rawMargin;
 
-  if (rawMargin > 0) {
-    if (rawSum > 0 && Math.abs(rawSum - targetAmt) <= 1) {
-      return { principalPortion: rawPrincipal, marginPortion: rawMargin };
-    }
-    if (rawSum > 0 && targetAmt > 0) {
-      const marginPortion = Math.min(targetAmt, Math.round((targetAmt * rawMargin) / rawSum));
-      return {
-        principalPortion: Math.max(0, targetAmt - marginPortion),
-        marginPortion,
-      };
-    }
+  if (rawMargin > 0 && rawSum > 0 && Math.abs(rawSum - effectiveAmt) <= 1) {
+    return { principalPortion: rawPrincipal, marginPortion: rawMargin };
   }
 
   const loanMarkup = Math.max(0, Math.round(Number(pinjaman?.markup_amount || 0)));
-  if (isGoodsMarkupLoan(pinjaman) && loanMarkup > 0 && targetAmt > 0) {
+  if (isGoodsMarkupLoan(pinjaman) && loanMarkup > 0 && effectiveAmt > 0) {
     const totalAkad = Math.round(Number(pinjaman?.principal_amount || pinjaman?.amount || 0));
     if (totalAkad > 0) {
-      const marginPortion = Math.min(targetAmt, Math.round((targetAmt * loanMarkup) / totalAkad));
+      const marginPortion = Math.min(effectiveAmt, Math.round((effectiveAmt * loanMarkup) / totalAkad));
       return {
-        principalPortion: Math.max(0, targetAmt - marginPortion),
+        principalPortion: Math.max(0, effectiveAmt - marginPortion),
         marginPortion,
       };
     }
   }
 
-  return { principalPortion: targetAmt, marginPortion: 0 };
+  if (rawMargin > 0 && rawSum > 0 && effectiveAmt > 0) {
+    const marginPortion = Math.min(effectiveAmt, Math.round((effectiveAmt * rawMargin) / rawSum));
+    return {
+      principalPortion: Math.max(0, effectiveAmt - marginPortion),
+      marginPortion,
+    };
+  }
+
+  return { principalPortion: effectiveAmt, marginPortion: 0 };
 }
 
 // Helper modal for partial payments
