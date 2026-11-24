@@ -1130,7 +1130,7 @@ function ComplianceMatrixContent({
 
   const effectiveTraceCode = (
     activeTraceRef ||
-    (/^(KW-|CF-)/i.test(search.trim()) ? search.trim() : '')
+    (/^(KW-|CF-|(?:KW|KS)\d{4}-\d{4,})/i.test(search.trim()) ? search.trim() : '')
   ).trim();
 
   useEffect(() => {

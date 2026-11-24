@@ -49,14 +49,14 @@ describe('purchaseReturnService', () => {
       expect(isValidUUID(undefined)).toBe(false);
     });
 
-    it('should generate standardized return number format RET/YYYYMM/XXXX', () => {
+    it('should generate standardized return number format RBYYMM-XXXX', () => {
       const returnNumber = generateReturnNumber('2026-10-30');
-      expect(returnNumber).toMatch(/^RET\/202610\/\d{4}$/);
+      expect(returnNumber).toMatch(/^RB2610-\d{4}$/);
     });
 
-    it('should return RET/202611/0002 from generateNextReturnNumber when RET/202611/0001 exists', async () => {
+    it('should return RB2611-0002 from generateNextReturnNumber when RB2611-0001 exists', async () => {
       const ilikeMock = vi.fn().mockResolvedValue({
-        data: [{ return_number: 'RET/202611/0001' }],
+        data: [{ return_number: 'RB2611-0001' }],
         error: null
       });
 
@@ -72,15 +72,15 @@ describe('purchaseReturnService', () => {
       });
 
       const nextNumber = await generateNextReturnNumber('2026-11-14');
-      expect(nextNumber).toBe('RET/202611/0002');
-      expect(ilikeMock).toHaveBeenCalledWith('return_number', 'RET/202611/%');
+      expect(nextNumber).toBe('RB2611-0002');
+      expect(ilikeMock).toHaveBeenCalledWith('return_number', 'RB2611-%');
     });
 
     it('should use highest sequence number when gaps exist in generateNextReturnNumber', async () => {
       const ilikeMock = vi.fn().mockResolvedValue({
         data: [
-          { return_number: 'RET/202611/0001' },
-          { return_number: 'RET/202611/0004' }
+          { return_number: 'RB2611-0001' },
+          { return_number: 'RB2611-0004' }
         ],
         error: null
       });
@@ -92,7 +92,7 @@ describe('purchaseReturnService', () => {
       });
 
       const nextNumber = await generateNextReturnNumber('2026-11-14');
-      expect(nextNumber).toBe('RET/202611/0005');
+      expect(nextNumber).toBe('RB2611-0005');
     });
   });
 
@@ -242,7 +242,7 @@ describe('purchaseReturnService', () => {
       const result = await createPurchaseReturn(payload, 'user-1', 'Admin Budi');
 
       expect(result.id).toBeDefined();
-      expect(result.return_number).toMatch(/^RET\//);
+      expect(result.return_number).toMatch(/^RB2610-\d{4}$/);
       expect(result.return_type).toBe('PIUTANG_PENGGANTIAN');
       expect(result.claim_status).toBe('MENUNGGU_PENGGANTIAN');
       expect(result.total_amount).toBe(210000);
@@ -276,7 +276,7 @@ describe('purchaseReturnService', () => {
   });
 
   describe('createPurchaseReturn - Duplicate Key (23505) Auto-Retry', () => {
-    it('should automatically retry with RET/202611/0002 and succeed when first insert returns 23505', async () => {
+    it('should automatically retry with RB2611-0002 and succeed when first insert returns 23505', async () => {
       const insertedPayloads: any[] = [];
       let insertAttempt = 0;
 
@@ -306,7 +306,7 @@ describe('purchaseReturnService', () => {
       });
 
       const returnSelectIlikeMock = vi.fn().mockResolvedValue({
-        data: [{ return_number: 'RET/202611/0001' }],
+        data: [{ return_number: 'RB2611-0001' }],
         error: null
       });
 
@@ -366,7 +366,7 @@ describe('purchaseReturnService', () => {
 
       const result = await createPurchaseReturn(
         {
-          return_number: 'RET/202611/0001',
+          return_number: 'RB2611-0001',
           return_date: '2026-11-14',
           supplier_name: 'PT Indofood Sukses Makmur',
           return_type: 'PIUTANG_PENGGANTIAN',
@@ -377,9 +377,9 @@ describe('purchaseReturnService', () => {
       );
 
       expect(insertAttempt).toBe(2);
-      expect(insertedPayloads[0].return_number).toBe('RET/202611/0001');
-      expect(insertedPayloads[1].return_number).toBe('RET/202611/0002');
-      expect(result.return_number).toBe('RET/202611/0002');
+      expect(insertedPayloads[0].return_number).toBe('RB2611-0001');
+      expect(insertedPayloads[1].return_number).toBe('RB2611-0002');
+      expect(result.return_number).toBe('RB2611-0002');
       expect(productUpdateMock).toHaveBeenCalledTimes(1);
       expect(productUpdateMock).toHaveBeenCalledWith(
         expect.objectContaining({ stock: 8 })

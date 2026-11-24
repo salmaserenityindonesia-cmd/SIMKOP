@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Calendar,
@@ -17,6 +17,11 @@ import {
 import { formatCurrency } from '../../utils/formatCurrency';
 import { formatTanggalLahirWithAge } from '../../utils/dateUtils';
 import { useFeedback } from '../../context/FeedbackContext';
+import { supabase } from '../../lib/supabaseClient';
+import {
+  generateCompactRegisterSync,
+  generateNextCompactRegister,
+} from '../../utils/receiptGenerator';
 import {
   payStoreCreditSchedule,
   StoreCreditPlanWithSchedules,
@@ -39,13 +44,30 @@ export default function StoreCreditScheduleModal({
   const { showToast } = useFeedback();
 
   const [paymentMethod, setPaymentMethod] = useState<'potong_gaji' | 'tunai' | 'transfer'>('potong_gaji');
-  const generateReceiptNo = () => `KWT-ANGS-${Date.now().toString().slice(-6)}`;
+  const generateReceiptNo = () => generateCompactRegisterSync('KB');
   const [receiptNo, setReceiptNo] = useState<string>(generateReceiptNo);
   const [notes, setNotes] = useState<string>('');
   const [submittingScheduleId, setSubmittingScheduleId] = useState<string | null>(null);
   const [isPayingAll, setIsPayingAll] = useState<boolean>(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [customAmounts, setCustomAmounts] = useState<{ [scheduleId: string]: string }>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    generateNextCompactRegister(supabase, {
+      table: 'store_credit_payments',
+      column: 'receipt_number',
+      prefix: 'KB',
+    })
+      .then((nextCode) => {
+        if (active) setReceiptNo(nextCode);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [isOpen, plan?.id]);
 
   if (!isOpen || !plan) return null;
 
@@ -368,7 +390,7 @@ export default function StoreCreditScheduleModal({
                   type="text"
                   value={receiptNo}
                   onChange={(e) => setReceiptNo(e.target.value)}
-                  placeholder="KWT-ANGS-..."
+                  placeholder="Contoh: KB2611-0001"
                   className="w-full text-xs px-3 py-1.5 bg-slate-800 border border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-white placeholder-slate-400"
                 />
               </div>

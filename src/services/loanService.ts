@@ -19,6 +19,11 @@ import {
   DEFAULT_RAT_NOTES,
   type LoanSettings
 } from './settingsService';
+import {
+  generateNextCompactRegister,
+  incrementCompactRegister,
+  isUniqueConstraintError,
+} from '../utils/receiptGenerator';
 
 export {
   getLoanSettings,
@@ -1234,8 +1239,13 @@ export const loanService = {
       ? (purpose && purpose.trim() ? purpose.trim() : `Pembiayaan Barang: ${itemDescription}`)
       : purpose;
 
-    const insertPayload: Record<string, any> = {
-      loan_number: `LOAN-${Date.now()}`,
+    let loanNumber = await generateNextCompactRegister(supabase, {
+      table: 'loans',
+      column: 'loan_number',
+      prefix: 'LN',
+    });
+
+    const baseInsertPayload: Record<string, any> = {
       member_id: memberId,
       loan_type_id: targetLoanTypeId,
       principal_amount: effectiveAmount,
@@ -1249,41 +1259,65 @@ export const loanService = {
     };
 
     if (isGoodsMarkup) {
-      insertPayload.item_description = itemDescription;
-      insertPayload.cost_price = costPrice;
-      insertPayload.markup_amount = markupAmount;
+      baseInsertPayload.item_description = itemDescription;
+      baseInsertPayload.cost_price = costPrice;
+      baseInsertPayload.markup_amount = markupAmount;
     } else if (goodsOptions) {
-      insertPayload.cost_price = costPrice;
-      insertPayload.markup_amount = 0;
+      baseInsertPayload.cost_price = costPrice;
+      baseInsertPayload.markup_amount = 0;
     }
 
     if (topUpOptions?.refinancedLoanId) {
-      insertPayload.refinanced_loan_id = topUpOptions.refinancedLoanId;
+      baseInsertPayload.refinanced_loan_id = topUpOptions.refinancedLoanId;
     }
     if (settlementAmount > 0) {
-      insertPayload.topup_settlement_amount = settlementAmount;
+      baseInsertPayload.topup_settlement_amount = settlementAmount;
     }
 
-    let { data, error } = await supabase
-      .from('loans')
-      .insert([insertPayload])
-      .select()
-      .single();
+    let data: any = null;
+    let error: any = null;
+    const maxAttempts = 5;
 
-    if (error && isMissingColumnError(error)) {
-      const {
-        item_description: _id,
-        cost_price: _cp,
-        markup_amount: _ma,
-        ...legacyPayload
-      } = insertPayload;
-      const fallbackRes = await supabase
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const insertPayload: Record<string, any> = {
+        loan_number: loanNumber,
+        ...baseInsertPayload,
+      };
+
+      const res = await supabase
         .from('loans')
-        .insert([legacyPayload])
+        .insert([insertPayload])
         .select()
         .single();
-      data = fallbackRes.data;
-      error = fallbackRes.error;
+      data = res.data;
+      error = res.error;
+
+      if (error && isMissingColumnError(error)) {
+        const {
+          item_description: _id,
+          cost_price: _cp,
+          markup_amount: _ma,
+          ...legacyPayload
+        } = insertPayload;
+        const fallbackRes = await supabase
+          .from('loans')
+          .insert([legacyPayload])
+          .select()
+          .single();
+        data = fallbackRes.data;
+        error = fallbackRes.error;
+      }
+
+      if (!error) {
+        break;
+      }
+
+      if (isUniqueConstraintError(error) && attempt < maxAttempts) {
+        loanNumber = incrementCompactRegister(loanNumber, 1);
+        continue;
+      }
+
+      break;
     }
 
     if (error) throw new Error(error.message);
@@ -1529,6 +1563,7 @@ export const loanService = {
         const newLoanNumber = String(
           loanRecord.loan_number || existingLoan?.loan_number || targetLoanId
         );
+        const usedTopupReceipts: string[] = [];
 
         for (const oldLoan of oldLoansMap.values()) {
           const settlementAmt = computeRealRemainingPrincipal(oldLoan);
@@ -1588,13 +1623,21 @@ export const loanService = {
           }
 
           if (settlementAmt > 0) {
+            const topupReceiptNo = await generateNextCompactRegister(supabase, {
+              table: 'loan_repayments',
+              column: 'receipt_number',
+              prefix: 'KW',
+              extraCodes: usedTopupReceipts,
+            });
+            usedTopupReceipts.push(topupReceiptNo);
+
             await supabase.from('loan_repayments').insert({
               loan_id: oldLoan.id,
               schedule_id: null,
               amount_paid: settlementAmt,
               payment_method: 'TOPUP_COMPENSATION',
               payment_date: new Date().toISOString(),
-              receipt_number: `KW-TOPUP-${Date.now()}`,
+              receipt_number: topupReceiptNo,
               notes: `Pelunasan otomatis s/d angsuran terakhir melalui pinjaman baru ${newLoanNumber}`,
             });
           }

@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabaseClient';
 import { formatIndividualWithdrawalCashFlowDescription } from '../utils/withdrawalCashFlowFormat';
+import { generateNextCompactRegister } from '../utils/receiptGenerator';
 
 export interface WithdrawableDeposit {
   member_deposit_id: string;
@@ -225,7 +226,13 @@ async function resolveWithdrawalCashFlowDescription(
 }
 
 export async function withdrawSavings(payload: WithdrawalPayload) {
-  const receiptNumber = payload.reference_no || `KW-WD-${Date.now()}`;
+  const receiptNumber =
+    payload.reference_no?.trim() ||
+    (await generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+    }));
   const notes = payload.notes || payload.description || 'Pencairan simpanan anggota';
   const desc = payload.description || (
     payload.jenisSimpananLabel && payload.namaAnggota

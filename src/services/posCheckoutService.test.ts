@@ -63,7 +63,7 @@ describe('posCheckoutService', () => {
 
     expect(res.success).toBe(true);
     expect(res.saleId).toBe('sale-uuid-atomic-1');
-    expect(res.saleNumber).toMatch(/^INV-\d+$/);
+    expect(res.saleNumber).toMatch(/^POS\d{4}-\d{4}$/);
 
     expect(supabase.rpc).toHaveBeenCalledWith(
       'process_pos_checkout',
@@ -858,7 +858,7 @@ describe('posCheckoutService', () => {
           category: 'penjualan_tunai',
           reference_id: 'sale-fb-desc-1',
           description: expect.stringMatching(
-            /^Penjualan Tunai \(INV-\d+\) — 00010062 - MOCH\. ALIF NURSYARIFUDDIN \(Rp 100\.000\)$/
+            /^Penjualan Tunai \(POS\d{4}-\d{4}\) — 00010062 - MOCH\. ALIF NURSYARIFUDDIN \(Rp 100\.000\)$/
           ),
         })
       );
@@ -884,7 +884,7 @@ describe('posCheckoutService', () => {
           amount: 35000,
           category: 'penjualan_tunai',
           description: expect.stringMatching(
-            /^Penjualan Tunai \(INV-\d+\) — Pelanggan Umum \(Rp 35\.000\)$/
+            /^Penjualan Tunai \(POS\d{4}-\d{4}\) — Pelanggan Umum \(Rp 35\.000\)$/
           ),
         })
       );
@@ -947,6 +947,68 @@ describe('posCheckoutService', () => {
       });
       expect(eqRefMock).toHaveBeenCalledWith('reference_id', 'sale-rpc-desc-1');
       expect(eqCategoryMock).toHaveBeenCalledWith('category', 'penjualan_tunai');
+    });
+
+    it('generates sequential compact POSYYMM-XXXX sale number and retries on unique constraint collision', async () => {
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const existingSale = `POS${yy}${mm}-0001`;
+      const expectedNext = `POS${yy}${mm}-0002`;
+      const expectedRetry = `POS${yy}${mm}-0003`;
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              ilike: vi.fn().mockResolvedValue({
+                data: [{ sale_number: existingSale }],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return {};
+      });
+
+      const attemptedNumbers: string[] = [];
+      (supabase.rpc as any).mockImplementation((funcName: string, params: any) => {
+        if (funcName === 'process_pos_checkout') {
+          attemptedNumbers.push(params.p_sale_number);
+          if (attemptedNumbers.length === 1) {
+            return Promise.resolve({
+              data: null,
+              error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+            });
+          }
+          return Promise.resolve({
+            data: {
+              success: true,
+              sale_id: 'sale-uuid-retry-1',
+              sale_number: params.p_sale_number,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const res = await processCheckout({
+        memberId: null,
+        cashierId: 'cashier-1',
+        cart: [{ id: 'prod-1', name: 'Gula', qty: 1, price: 15000 }],
+        subtotal: 15000,
+        discount: 0,
+        totalAmount: 15000,
+        paidCash: 15000,
+        paidDeposit: 0,
+        paidCredit: 0,
+        paymentScheme: 'cash',
+      });
+
+      expect(res.success).toBe(true);
+      expect(attemptedNumbers).toEqual([expectedNext, expectedRetry]);
+      expect(res.saleNumber).toBe(expectedRetry);
     });
   });
 });

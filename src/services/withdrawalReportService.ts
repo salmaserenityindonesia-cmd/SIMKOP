@@ -146,6 +146,8 @@ export const isBelanja = (
     pm.includes('belanja') ||
     pm === 'potong_simpanan_belanja' ||
     ref.startsWith('INV-') ||
+    ref.startsWith('POS-') ||
+    /^POS\d{4}-\d{4,}/i.test(ref) ||
     d.includes('KASIR POS') ||
     nt.includes('BELANJA TOKO')
   );

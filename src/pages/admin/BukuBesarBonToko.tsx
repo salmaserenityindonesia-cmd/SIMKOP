@@ -1147,7 +1147,7 @@ export default function BukuBesarBonToko() {
                                   </span>
                                   <Eye className="w-3 h-3 text-rose-500 opacity-60 group-hover:opacity-100" />
                                 </button>
-                              ) : group.parentInvoiceNo.startsWith('INV-') ? (
+                              ) : group.parentInvoiceNo.startsWith('INV-') || group.parentInvoiceNo.startsWith('POS-') || /^POS\d{4}-\d{4,}/i.test(group.parentInvoiceNo) ? (
                                 <button
                                   type="button"
                                   onClick={() => handleOpenReceipt(group.parentInvoiceNo)}

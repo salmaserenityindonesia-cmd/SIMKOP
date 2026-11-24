@@ -518,6 +518,7 @@ export async function getMemberShoppingLedger(
       let isPosSale = (
         refNo.toUpperCase().startsWith('INV-') ||
         refNo.toUpperCase().startsWith('POS-') ||
+        /^POS\d{4}-\d{4,}/i.test(refNo) ||
         payMethod === 'potong_simpanan_belanja' ||
         desc.toLowerCase().includes('kasir pos') ||
         desc.toLowerCase().includes('belanja toko') ||

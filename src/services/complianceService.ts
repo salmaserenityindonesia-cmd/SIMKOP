@@ -4,6 +4,7 @@
  */
 import { supabase } from '../lib/supabaseClient';
 import type { ParsedMonthlyDeposit } from '../utils/savingsMatrixImporter';
+import { generateNextCompactRegister } from '../utils/receiptGenerator';
 import {
   SavingsRateTier,
   MemberLebaranRate,
@@ -2098,7 +2099,11 @@ export async function payMemberPrincipalSavings(payload: PayPrincipalSavingsPayl
     }
 
     // 3. Sisipkan transaksi setoran ke public.deposit_transactions
-    const refNo = `KW-POKOK-${Date.now()}`;
+    const refNo = await generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+    });
     const txRow = {
       member_deposit_id: memberDepositId,
       transaction_type: 'deposit',

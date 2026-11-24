@@ -862,7 +862,7 @@ export default function RekeningKoranSimpanan() {
                   type="text"
                   value={referenceNo}
                   onChange={(e) => setReferenceNo(e.target.value)}
-                  placeholder="Otomatis KW-MANDIRI-... jika dikosongkan"
+                  placeholder="Otomatis KS2611-0001 jika dikosongkan"
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
                 />
               </div>

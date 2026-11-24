@@ -1,5 +1,9 @@
 import { supabase } from '../lib/supabaseClient';
 import { calculateRepaymentPortions } from './loanService';
+import {
+  generateNextCompactRegister,
+  incrementCompactRegister,
+} from '../utils/receiptGenerator';
 
 function isMissingMatrixColumnError(error: any): boolean {
   if (!error) return false;
@@ -2302,6 +2306,11 @@ export const bulkCheckAllLoansUpToMonth = async (
   let seqIdx = 0;
   const errors: Array<{ loanId: string; error: string }> = [];
   const errorMessages: string[] = [];
+  let nextBulkReceipt = await generateNextCompactRegister(supabase, {
+    table: 'loan_repayments',
+    column: 'receipt_number',
+    prefix: 'KW',
+  });
 
   for (let i = 0; i < total; i++) {
     const loan = loanList[i];
@@ -2378,13 +2387,16 @@ export const bulkCheckAllLoansUpToMonth = async (
           const entryIso = new Date(baseTime + seqIdx * 10).toISOString();
           seqIdx++;
 
+          const bulkReceiptNo = nextBulkReceipt;
+          nextBulkReceipt = incrementCompactRegister(nextBulkReceipt, 1);
+
           const repayRow: Record<string, any> = {
             loan_id: loan.id,
             schedule_id: sched.id,
             amount_paid: remainingAmount,
             payment_method: 'POTONG_GAJI',
             payment_date: entryIso,
-            receipt_number: `KW-BULK-${loan.loan_number || loan.id}-B${sched.period_number}-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+            receipt_number: bulkReceiptNo,
             notes: `Centang Massal Angsuran s/d Bulan ${targetMonth}/${targetYear}`,
             created_by: currentUserId || null,
             created_at: entryIso,
@@ -2549,6 +2561,11 @@ export async function bulkAutoReconcileLoans(
   let totalSuccess = 0;
   let totalFailed = 0;
   const errors: string[] = [];
+  let nextReconReceipt = await generateNextCompactRegister(supabase, {
+    table: 'loan_repayments',
+    column: 'receipt_number',
+    prefix: 'KW',
+  });
 
   // 2. Iterasi per pinjaman secara sekuensial (aman dari lock & payload overflow)
   for (let i = 0; i < loans.length; i++) {
@@ -2653,13 +2670,16 @@ export async function bulkAutoReconcileLoans(
         }
 
         if (paidForThisPeriod > 0) {
+          const reconReceiptNo = nextReconReceipt;
+          nextReconReceipt = incrementCompactRegister(nextReconReceipt, 1);
+
           repaymentsToInsert.push({
             loan_id: loan.id,
             schedule_id: schedule.id,
             amount_paid: paidForThisPeriod,
             payment_date: new Date().toISOString(),
             payment_method: 'REKONSILIASI_IMPOR',
-            receipt_number: `KW-RECON-${loan.loan_number || loan.id}-B${schedule.period_number}`,
+            receipt_number: reconReceiptNo,
             notes: `Rekonsiliasi Otomatis Saldo Terangsur Bulan ke-${schedule.period_number}`,
             created_at: new Date().toISOString(),
           });

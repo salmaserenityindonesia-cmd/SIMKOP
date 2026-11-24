@@ -432,7 +432,7 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
       selectedMonth: 11,
     });
 
-    expect(receipt.receiptNo).toMatch(/^KW-SETOR-\d{8}-\d{4}$/);
+    expect(receipt.receiptNo).toMatch(/^KS\d{4}-\d{4}$/);
     expect(receipt.paymentMethod).toBe('transfer_bank');
     expect(receipt.paymentMethodLabel).toBe('Transfer Bank');
     expect(receipt.totalPaid).toBe(250000);
@@ -637,7 +637,11 @@ describe('setoranService — Cumulative Arrears & FIFO Settlement', () => {
         const baseBuilder = createQueryBuilder('cash_flow');
         const origInsert = baseBuilder.insert;
         baseBuilder.insert = (payload: any) => {
-          if (payload && typeof payload.reference_id === 'string' && payload.reference_id.startsWith('KW-')) {
+          if (
+            payload &&
+            typeof payload.reference_id === 'string' &&
+            /^(?:KW-|KS\d{4}-)/.test(payload.reference_id)
+          ) {
             return {
               then: (resolve: any, reject: any) =>
                 Promise.resolve({

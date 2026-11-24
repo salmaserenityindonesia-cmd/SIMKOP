@@ -6,6 +6,11 @@ function shouldFallback(e: any): boolean {
 
 import { supabase } from '../lib/supabaseClient';
 import { fetchAllPaginated } from '../utils/supabasePagination';
+import {
+  generateNextCompactRegister,
+  incrementCompactRegister,
+  isUniqueConstraintError,
+} from '../utils/receiptGenerator';
 
 // ==========================================
 // Domain Re-exports (Backward-Compatibility Facade)
@@ -426,32 +431,54 @@ export interface MonthlyLoanCommitment {
  * Mengajukan pinjaman baru (0% bunga)
  */
 export async function ajukanPinjaman(data: Omit<Loan, 'id' | 'created_at' | 'status' | 'loan_number'>) {
-  const loanData = {
-    ...data,
-    loan_number: `LOAN-${Date.now()}`,
-    status: 'draft',
-  };
+  let loanNumber = await generateNextCompactRegister(supabase, {
+    table: 'loans',
+    column: 'loan_number',
+    prefix: 'LN',
+  });
 
-  const { data: result, error } = await supabase
-    .from('loans')
-    .insert([loanData])
-    .select()
-    .single();
+  let result: any = null;
+  let error: any = null;
+  const maxAttempts = 5;
 
-  if (error) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const loanData = {
+      ...data,
+      loan_number: loanNumber,
+      status: 'draft',
+    };
+
+    const res = await supabase
+      .from('loans')
+      .insert([loanData])
+      .select()
+      .single();
+    result = res.data;
+    error = res.error;
+
+    if (!error) {
+      return result as Loan;
+    }
+
+    if (isUniqueConstraintError(error) && attempt < maxAttempts) {
+      loanNumber = incrementCompactRegister(loanNumber, 1);
+      continue;
+    }
+
     if (shouldFallback(error)) {
       console.warn('Table "loans" does not exist yet. Simulating success.');
-      return { 
-        id: `dummy-loan-${Date.now()}`, 
-        ...loanData, 
-        created_at: new Date().toISOString() 
+      return {
+        id: `dummy-loan-${Date.now()}`,
+        ...loanData,
+        created_at: new Date().toISOString(),
       } as Loan;
     }
-    console.error('Error inserting loan:', error.message);
-    throw new Error(`Gagal mengajukan pinjaman: ${error.message}`);
+
+    break;
   }
 
-  return result as Loan;
+  console.error('Error inserting loan:', error?.message);
+  throw new Error(`Gagal mengajukan pinjaman: ${error?.message}`);
 }
 
 /**

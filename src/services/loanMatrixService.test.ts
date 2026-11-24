@@ -2191,7 +2191,7 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
         payment_method: 'POTONG_GAJI',
         created_by: 'admin-uuid-123',
       });
-      expect(insertedRows[0].receipt_number).toContain('KW-BULK-LP-999-B1-');
+      expect(insertedRows[0].receipt_number).toMatch(/^KW\d{4}-\d{4}$/);
     });
 
     it('retries repayment insert with fallback schema when extended columns trigger schema error', async () => {
@@ -2637,7 +2637,10 @@ describe('loanMatrixService - getImportedRepaidBalance & Bulk Actions Engine', (
       // Verify repayment rows inserted
       expect(insertedRepayments.length).toBe(4);
       expect(insertedRepayments[0].payment_method).toBe('REKONSILIASI_IMPOR');
-      expect(insertedRepayments[0].receipt_number).toBe('KW-RECON-LP-101-B1');
+      expect(insertedRepayments[0].receipt_number).toMatch(/^KW\d{4}-0001$/);
+      expect(insertedRepayments[1].receipt_number).toMatch(/^KW\d{4}-0002$/);
+      expect(insertedRepayments[2].receipt_number).toMatch(/^KW\d{4}-0003$/);
+      expect(insertedRepayments[3].receipt_number).toMatch(/^KW\d{4}-0004$/);
     });
 
     it('isolates errors per loan and continues processing other loans', async () => {

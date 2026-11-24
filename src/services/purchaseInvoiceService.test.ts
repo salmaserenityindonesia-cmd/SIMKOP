@@ -181,7 +181,7 @@ describe('purchaseInvoiceService', () => {
   });
 
   describe('generateNextPurchaseInvoiceNumber', () => {
-    it('harus menghasilkan PB/YYYYMMDD/001 jika belum ada faktur pada tanggal tersebut', async () => {
+    it('harus menghasilkan PBYYMM-0001 jika belum ada faktur pada bulan tersebut', async () => {
       const mockIlike = vi.fn().mockResolvedValue({ data: [], error: null });
       const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
       (supabase.from as any).mockReturnValue({ select: mockSelect });
@@ -190,15 +190,15 @@ describe('purchaseInvoiceService', () => {
 
       expect(supabase.from).toHaveBeenCalledWith('purchases');
       expect(mockSelect).toHaveBeenCalledWith('invoice_number');
-      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB/20261122/%');
-      expect(result).toBe('PB/20261122/001');
+      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB2611-%');
+      expect(result).toBe('PB2611-0001');
     });
 
     it('harus mengambil nomor urut maksimum + 1 dan mengabaikan suffix non-numerik', async () => {
       const mockData = [
-        { invoice_number: 'PB/20261122/001' },
-        { invoice_number: 'PB/20261122/003' },
-        { invoice_number: 'PB/20261122/ABC' }
+        { invoice_number: 'PB2611-0001' },
+        { invoice_number: 'PB2611-0003' },
+        { invoice_number: 'PB2611-ABC' }
       ];
       const mockIlike = vi.fn().mockResolvedValue({ data: mockData, error: null });
       const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
@@ -206,40 +206,40 @@ describe('purchaseInvoiceService', () => {
 
       const result = await generateNextPurchaseInvoiceNumber('2026-11-22');
 
-      expect(result).toBe('PB/20261122/004');
+      expect(result).toBe('PB2611-0004');
     });
 
-    it('harus mereset nomor urut ke 001 untuk tanggal yang berbeda', async () => {
+    it('harus mereset nomor urut ke 0001 untuk bulan yang berbeda', async () => {
       const mockIlike = vi.fn().mockResolvedValue({ data: [], error: null });
       const mockSelect = vi.fn().mockReturnValue({ ilike: mockIlike });
       (supabase.from as any).mockReturnValue({ select: mockSelect });
 
-      const result = await generateNextPurchaseInvoiceNumber('2026-11-23');
+      const result = await generateNextPurchaseInvoiceNumber('2026-12-01');
 
-      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB/20261123/%');
-      expect(result).toBe('PB/20261123/001');
+      expect(mockIlike).toHaveBeenCalledWith('invoice_number', 'PB2612-%');
+      expect(result).toBe('PB2612-0001');
     });
 
     it('harus fallback ke mockFakturList saat terjadi error schema cache / offline', async () => {
       setMockFakturList([
         {
           id: 'mock-1',
-          noFaktur: 'PB/20261122/001',
+          noFaktur: 'PB2611-0001',
           tanggal: '2026-11-22',
           totalNilai: 50000,
           items: []
         },
         {
           id: 'mock-2',
-          noFaktur: 'PB/20261122/002',
+          noFaktur: 'PB2611-0002',
           tanggal: '2026-11-22',
           totalNilai: 75000,
           items: []
         },
         {
           id: 'mock-3',
-          noFaktur: 'PB/20261123/005',
-          tanggal: '2026-11-23',
+          noFaktur: 'PB2612-0005',
+          tanggal: '2026-12-01',
           totalNilai: 10000,
           items: []
         }
@@ -254,7 +254,7 @@ describe('purchaseInvoiceService', () => {
 
       const result = await generateNextPurchaseInvoiceNumber('2026-11-22');
 
-      expect(result).toBe('PB/20261122/003');
+      expect(result).toBe('PB2611-0003');
     });
   });
 

@@ -440,7 +440,14 @@ describe('loanService', () => {
         })
       }));
 
-      // 5. insert loan
+      // 5. generateNextCompactRegister (loans)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          ilike: vi.fn().mockResolvedValue({ data: [], error: null })
+        })
+      }));
+
+      // 6. insert loan
       mockSupabase.mockImplementationOnce(() => ({
         insert: () => ({
           select: () => ({
@@ -487,7 +494,14 @@ describe('loanService', () => {
         })
       }));
 
-      // 4. insert loan directly (no fallback loan_types query!)
+      // 4. generateNextCompactRegister (loans)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          ilike: vi.fn().mockResolvedValue({ data: [], error: null })
+        })
+      }));
+
+      // 5. insert loan directly (no fallback loan_types query!)
       let insertedLoanPayload: any = null;
       mockSupabase.mockImplementationOnce(() => ({
         insert: vi.fn().mockImplementation((payload) => {
@@ -2007,7 +2021,13 @@ describe('loanService', () => {
           }),
         }),
       }));
-      // 4. Insert loan
+      // 4. generateNextCompactRegister (loans)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          ilike: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      }));
+      // 5. Insert loan
       let insertedPayload: any = null;
       mockSupabase.mockImplementationOnce(() => ({
         insert: (payload: any[]) => {
@@ -2424,6 +2444,65 @@ describe('loanService', () => {
       await expect(loanService.approveLoan('loan-cash-err-1', '2026-11-22')).rejects.toThrow(
         'Pinjaman disetujui, namun pencatatan Kas Keluar gagal: RLS policy violation on cash_flow'
       );
+    });
+  });
+
+  describe('Compact Register Numbering (LNYYMM-XXXX)', () => {
+    it('applyLoan generates sequential LNYYMM-XXXX loan_number and retries on unique constraint error', async () => {
+      const now = new Date();
+      const yy = String(now.getFullYear()).slice(-2);
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const existingCode = `LN${yy}${mm}-0001`;
+      const firstCandidate = `LN${yy}${mm}-0002`;
+      const retryCandidate = `LN${yy}${mm}-0003`;
+
+      vi.spyOn(loanService, 'getMemberTHP').mockResolvedValueOnce({
+        master_thp: 8000000,
+        active_installments: 0,
+        angsuran_lain_lain: 0,
+        savings_deduction: 200000,
+        remaining_thp: 7800000,
+      });
+
+      const insertedLoanNumbers: string[] = [];
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              ilike: vi.fn().mockResolvedValue({
+                data: [{ loan_number: existingCode }],
+                error: null,
+              }),
+            }),
+            insert: vi.fn((rows: any[]) => {
+              const row = rows[0];
+              insertedLoanNumbers.push(row.loan_number);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue(
+                    insertedLoanNumbers.length === 1
+                      ? { data: null, error: { code: '23505', message: 'duplicate key' } }
+                      : { data: { id: 'loan-compact-1', ...row }, error: null }
+                  ),
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      });
+
+      const created = await loanService.applyLoan(
+        'mem-1',
+        'Kebutuhan Sekolah',
+        3000000,
+        6,
+        'lt-1'
+      );
+
+      expect(insertedLoanNumbers).toEqual([firstCandidate, retryCandidate]);
+      expect(created.loan_number).toBe(retryCandidate);
+      expect(created.loan_number).toHaveLength(11);
     });
   });
 });

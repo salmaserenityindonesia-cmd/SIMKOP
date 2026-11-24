@@ -20,6 +20,10 @@ import {
 import { supabase } from '../../lib/supabaseClient';
 import FeedbackContext from '../../context/FeedbackContext';
 import {
+  formatCompactRegister,
+  generateNextCompactRegister,
+} from '../../utils/receiptGenerator';
+import {
   getRateTiers,
   getApplicableRate,
   buildSavingsRateResolver,
@@ -756,10 +760,21 @@ export default function SavingsLedgerMatrixModal({
     const rate = getEffectiveCellRate(activeTab, year, month);
     setSelectedCellForEvidence({ year, month, label, rate });
     setEvidenceAmount(rate);
-    setEvidenceReferenceNo(`KW-${year}/${String(month).padStart(2, '0')}/${memberNrp || '01'}`);
+    const syncRef = formatCompactRegister('KS', 1);
+    setEvidenceReferenceNo(syncRef);
     setEvidencePaymentMethod('tunai');
     setEvidenceNotes('');
     setEvidenceModalOpen(true);
+
+    generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+    })
+      .then((nextCode) => {
+        setEvidenceReferenceNo((prev) => (prev === syncRef ? nextCode : prev));
+      })
+      .catch(() => {});
   };
 
   const resolveActiveDepositTypeName = (): string => {
@@ -1792,7 +1807,7 @@ export default function SavingsLedgerMatrixModal({
                   data-testid="evidence-ref-input"
                   value={evidenceReferenceNo}
                   onChange={e => setEvidenceReferenceNo(e.target.value)}
-                  placeholder="Contoh: KW-2026/11/01"
+                  placeholder="Contoh: KS2611-0001"
                   required
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-colors"
                 />

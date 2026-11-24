@@ -606,4 +606,84 @@ describe('orphanAuditService', () => {
     expect(summary.cashInImpact).toBe(250000);
     expect(summary.cashOutImpact).toBe(0);
   });
+
+  it('recognizes both legacy and compact register numbers (LN, KW, KS, POS, KB) in descriptions without false-positive NRP or orphan flags', () => {
+    const items = analyzeOrphanRecords({
+      loans: [
+        { id: 'loan-compact-1', loan_number: 'LN2611-0001', member_id: 'mem-1', status: 'active' },
+        { id: 'loan-legacy-1', loan_number: 'LOAN-1795333396946', member_id: 'mem-1', status: 'active' },
+      ],
+      loanSchedules: [],
+      loanRepayments: [],
+      members: [{ id: 'mem-1', nrp: '00050543', nama: 'Bagus Budi' }],
+      memberDeposits: [{ id: 'md-1', member_id: 'mem-1', balance: 500000 }],
+      depositTransactions: [
+        { id: 'dt-1', member_deposit_id: 'md-1', reference_no: 'KS2611-0001', amount: 100000 },
+        { id: 'dt-2', member_deposit_id: 'md-1', reference_no: 'KW-SETOR-20261120-3663', amount: 100000 },
+      ],
+      lebaranCycles: [],
+      sales: [{ id: 'sale-1', sale_number: 'POS2611-0001', total_amount: 50000 }],
+      storeCreditPayments: [{ id: 'scp-1', sale_id: 'sale-1', receipt_number: 'KB2611-0001', amount: 50000 }],
+      cashFlows: [
+        {
+          id: 'cf-loan-compact-ok',
+          direction: 'in',
+          amount: 500000,
+          category: 'angsuran_pinjaman',
+          reference_id: null,
+          description: 'Angsuran Pinjaman (LN2611-0001) Bln ke-1 — 00050543 - Bagus Budi [KW2611-0001]',
+          created_at: '2026-11-24',
+        },
+        {
+          id: 'cf-loan-compact-orphan',
+          direction: 'in',
+          amount: 300000,
+          category: 'angsuran_pinjaman',
+          reference_id: null,
+          description: 'Angsuran Pinjaman (LN2611-9999) Bln ke-1 — 00050543 - Bagus Budi',
+          created_at: '2026-11-24',
+        },
+        {
+          id: 'cf-deposit-compact-ok',
+          direction: 'in',
+          amount: 100000,
+          category: 'SETORAN_ANGGOTA',
+          reference_id: null,
+          description: 'Setoran Anggota Bagus Budi (00050543) - Tunai [KS2611-0001]',
+          created_at: '2026-11-24',
+        },
+        {
+          id: 'cf-deposit-compact-orphan',
+          direction: 'in',
+          amount: 100000,
+          category: 'SETORAN_ANGGOTA',
+          reference_id: null,
+          description: 'Setoran Anggota Bagus Budi (00050543) - Tunai [KS2611-8888]',
+          created_at: '2026-11-24',
+        },
+        {
+          id: 'cf-pos-compact-ok',
+          direction: 'in',
+          amount: 50000,
+          category: 'PENJUALAN_POS',
+          reference_id: 'POS2611-0001',
+          description: 'Penjualan Tunai (POS2611-0001)',
+          created_at: '2026-11-24',
+        },
+        {
+          id: 'cf-bon-compact-ok',
+          direction: 'in',
+          amount: 50000,
+          category: 'PELUNASAN_BON_TOKO',
+          reference_id: 'KB2611-0001',
+          description: 'Pelunasan Bon Toko (KB2611-0001)',
+          created_at: '2026-11-24',
+        },
+      ],
+    });
+
+    expect(items.map((i) => i.id)).toEqual(['cf-loan-compact-orphan', 'cf-deposit-compact-orphan']);
+    expect(items[0].reason).toContain('LN2611-9999');
+    expect(items[1].reason).toContain('KS2611-8888');
+  });
 });

@@ -123,19 +123,20 @@ function isEightDigitDateStamp(token: string): boolean {
 
 function extractContractCodes(description: string): string[] {
   const matches =
-    description.match(/\b((?:LOAN|PJ)-[A-Z0-9-]+|SALDO-AWAL-[^\s—|,)\]"']+)/gi) || [];
+    description.match(/\b((?:LOAN|PJ)-[A-Z0-9-]+|LN\d{4}-\d{4,}|SALDO-AWAL-[^\s—|,)\]"']+)/gi) || [];
   return Array.from(new Set(matches.map((m) => m.toUpperCase())));
 }
 
 function extractReceiptCodes(description: string): string[] {
-  const matches = description.match(/\b(KW-[A-Z0-9-]+)\b/gi) || [];
+  const matches =
+    description.match(/\b(KW-[A-Z0-9/_-]+|(?:KW|KS|KB)\d{4}-\d{4,})\b/gi) || [];
   return Array.from(new Set(matches.map((m) => m.toUpperCase())));
 }
 
 function extractCandidateNrps(description: string): string[] {
   if (!description) return [];
   const cleaned = description.replace(
-    /\b((?:LOAN|PJ)-[A-Z0-9-]+|SALDO-AWAL-[^\s—|,)\]"']+|KW-[A-Z0-9-]+|CF-[A-Z0-9-]+)\b/gi,
+    /\b((?:LOAN|PJ)-[A-Z0-9-]+|SALDO-AWAL-[^\s—|,)\]"']+|KW-[A-Z0-9/_-]+|CF-[A-Z0-9-]+|(?:LN|KW|KS|POS|PB|KB|RB)\d{4}-\d{4,})\b/gi,
     ' '
   );
 

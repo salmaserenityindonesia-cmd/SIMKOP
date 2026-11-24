@@ -15,6 +15,10 @@ import {
   isOpeningOrMigrationDepositDescription,
   SHORT_MONTH_NAMES_ID,
 } from '../utils/depositCashFlowFormat';
+import {
+  generateCompactRegisterSync,
+  generateNextCompactRegister,
+} from '../utils/receiptGenerator';
 
 export const BILLING_CUTOFF_YEAR = 2026;
 export const BILLING_CUTOFF_MONTH = 1; // Default fallback: Januari (awal tahun fiskal)
@@ -229,11 +233,7 @@ export function formatUnpaidMonthsSummary(unpaidMonths: SavingsBillingUnpaidMont
 }
 
 function generateBillingReferenceNo(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const rand4 = String(Math.floor(1000 + Math.random() * 9000));
-  return `TAG-SIMP-${y}${m}${d}-${rand4}`;
+  return generateCompactRegisterSync('KS', now);
 }
 
 function getLocalIsoDate(date: Date = new Date()): string {
@@ -898,7 +898,14 @@ export async function paySavingsBillArrears(
 
   const now = new Date();
   const todayIsoDate = getLocalIsoDate(now);
-  const effectiveRefNo = input.referenceNo?.trim() || generateBillingReferenceNo(now);
+  const effectiveRefNo =
+    input.referenceNo?.trim() ||
+    (await generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+      date: now,
+    }));
 
   const allocations: PaySavingsBillResult['allocations'] = [];
   let totalAllocated = 0;

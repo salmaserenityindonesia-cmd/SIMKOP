@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import { KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../services/settingsService';
+import { generateCompactRegisterSync } from './receiptGenerator';
 
 export interface ReceiptItem {
   id?: string;
@@ -131,7 +132,7 @@ export function generateReceiptPdf(
 
   // Metadata: Transaction Details
   y += 4;
-  const saleNum = data.saleNumber || `INV-${Date.now()}`;
+  const saleNum = data.saleNumber || generateCompactRegisterSync('POS');
   const trxDate = data.date ? new Date(data.date) : new Date();
   const dateStr = trxDate.toLocaleDateString('id-ID', {
     day: '2-digit',

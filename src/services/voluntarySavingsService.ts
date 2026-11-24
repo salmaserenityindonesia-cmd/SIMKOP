@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabaseClient';
 import { DepositType } from './depositManagementService';
 import { insertAuditLog } from './auditService';
 import { formatIndividualWithdrawalCashFlowDescription } from '../utils/withdrawalCashFlowFormat';
+import { generateNextCompactRegister } from '../utils/receiptGenerator';
 
 export interface AdditionalDepositProduct extends DepositType {
   frequency_label: string;
@@ -361,7 +362,14 @@ export async function recordVoluntaryDeposit(
   }
 
   const now = new Date();
-  const referenceNo = (payload.referenceNo || '').trim() || `KW-MANDIRI-${Date.now()}`;
+  const referenceNo =
+    (payload.referenceNo || '').trim() ||
+    (await generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+      date: now,
+    }));
   const description = (payload.notes || '').trim() || `Setoran Mandiri (${payload.paymentMethod || 'Tunai'})`;
 
   const fullInsert: Record<string, any> = {
@@ -524,7 +532,14 @@ export async function recordVoluntaryWithdrawal(
   const memberDepositId = accountIds[0];
   const now = new Date();
   const nowIso = now.toISOString();
-  const finalRef = payload.referenceNo?.trim() || `KW-TARIK-MANDIRI-${Date.now()}`;
+  const finalRef =
+    payload.referenceNo?.trim() ||
+    (await generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+      date: now,
+    }));
   const methodLabel =
     payload.paymentMethod === 'transfer'
       ? `Transfer Bank${payload.bankAccountNumber ? ` (${payload.bankAccountNumber})` : ''}`

@@ -1,6 +1,12 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 import { formatTanggalLahirWithAge } from '../utils/dateUtils';
+import {
+  COMPACT_REGISTER_REGEX,
+  generateNextCompactRegister,
+  incrementCompactRegister,
+  isUniqueConstraintError,
+} from '../utils/receiptGenerator';
 
 export interface StoreCreditSummary {
   totalCreditSales: number;   // Total Belanja Bon Kumulatif
@@ -1019,7 +1025,13 @@ export async function settleStoreCredit(
       return { success: false, error: 'Nominal pelunasan harus lebih dari Rp 0.' };
     }
 
-    const refNo = payload.referenceNo || `BYR-${Date.now().toString().slice(-6)}`;
+    const refNo =
+      payload.referenceNo?.trim() ||
+      (await generateNextCompactRegister(supabase, {
+        table: 'store_credit_payments',
+        column: 'receipt_number',
+        prefix: 'KB',
+      }));
     const paymentMethod = payload.paymentMethod || 'potong_gaji';
     const methodLabel =
       paymentMethod === 'tunai'
@@ -1222,7 +1234,15 @@ export async function settleStoreCredit(
 
     for (let i = 0; i < allocations.length; i++) {
       const alloc = allocations[i];
-      const itemRefNo = allocations.length > 1 ? `${refNo}-${i + 1}` : refNo;
+      const isCompactRef = COMPACT_REGISTER_REGEX.test(refNo);
+      let itemRefNo =
+        allocations.length > 1
+          ? isCompactRef
+            ? i === 0
+              ? refNo
+              : incrementCompactRegister(refNo, i)
+            : `${refNo}-${i + 1}`
+          : refNo;
       const parentInvoiceNo = saleNumberMap.get(alloc.saleId);
       const baseNotes = (payload.notes || 'Pelunasan Bon Toko').trim();
       const hasRefTag = /\bRef:\s*[A-Za-z0-9_-]+/i.test(baseNotes);
@@ -1231,21 +1251,33 @@ export async function settleStoreCredit(
       const formattedNotes = `[${methodLabel}] ${notesWithRef}`.trim();
       const nowIso = new Date().toISOString();
 
-      const insertPayload = {
-        sale_id: alloc.saleId,
-        amount: Number(alloc.amount),
-        payment_date: nowIso.split('T')[0],
-        receipt_number: itemRefNo || null,
-        notes: formattedNotes,
-        created_by: currentUserId || null,
-        created_at: nowIso
-      };
+      let newPayment: any = null;
+      let insertError: any = null;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const insertPayload = {
+          sale_id: alloc.saleId,
+          amount: Number(alloc.amount),
+          payment_date: nowIso.split('T')[0],
+          receipt_number: itemRefNo || null,
+          notes: formattedNotes,
+          created_by: currentUserId || null,
+          created_at: nowIso
+        };
 
-      const { data: newPayment, error: insertError } = await supabase
-        .from('store_credit_payments')
-        .insert(insertPayload)
-        .select()
-        .single();
+        const res = await supabase
+          .from('store_credit_payments')
+          .insert(insertPayload)
+          .select()
+          .single();
+        newPayment = res.data;
+        insertError = res.error;
+        if (!insertError) break;
+        if (isCompactRef && isUniqueConstraintError(insertError) && attempt < 5) {
+          itemRefNo = incrementCompactRegister(itemRefNo, 1);
+          continue;
+        }
+        break;
+      }
 
       if (insertError) {
         throw insertError;
@@ -1945,8 +1977,21 @@ export async function payStoreCreditSchedule(
     const newPaid = currentPaid + payAmount;
     const newStatus: 'paid' | 'partial' = newPaid >= targetAmount ? 'paid' : 'partial';
 
-    const baseReceipt = (payload.receiptNo || `KWT-ANGS-${Date.now()}`).trim();
-    const uniqueReceiptNumber = `${baseReceipt}-P${schedule.period_number}-${Math.floor(100 + Math.random() * 900)}`;
+    const explicitReceipt = (payload.receiptNo || '').trim();
+    const isExplicitCompact = /^KB\d{4}-\d{4,}$/i.test(explicitReceipt);
+    let uniqueReceiptNumber: string;
+    if (explicitReceipt && !isExplicitCompact) {
+      uniqueReceiptNumber = `${explicitReceipt}-P${schedule.period_number}-${Math.floor(100 + Math.random() * 900)}`;
+    } else {
+      const nextCompact = await generateNextCompactRegister(supabase, {
+        table: 'store_credit_payments',
+        column: 'receipt_number',
+        prefix: 'KB',
+      });
+      uniqueReceiptNumber = explicitReceipt && explicitReceipt.toUpperCase() > nextCompact.toUpperCase()
+        ? explicitReceipt.toUpperCase()
+        : nextCompact;
+    }
 
     // 3. Langkah A (Pertama): Simpan pembayaran ke store_credit_payments & cash_flow terlebih dahulu
     // agar jika INSERT gagal (mis. constraint unik), jadwal tidak ikut berubah menjadi paid secara diam-diam.

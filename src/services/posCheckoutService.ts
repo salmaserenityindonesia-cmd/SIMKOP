@@ -7,6 +7,11 @@ import {
 } from './storeCreditLedgerService';
 import { formatPosCashFlowDescription } from '../utils/posCashFlowFormat';
 import {
+  generateNextCompactRegister,
+  incrementCompactRegister,
+  isUniqueConstraintError,
+} from '../utils/receiptGenerator';
+import {
   PosCheckoutItem,
   PosCheckoutRpcPayload,
   PosCheckoutRpcResponse,
@@ -139,8 +144,12 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
 
     const effectivePaidAmount = payload.totalAmount;
 
-    // Generate unique sale number
-    const saleNumber = `INV-${Date.now()}`;
+    // Generate unique compact sale number (POSYYMM-XXXX)
+    let saleNumber = await generateNextCompactRegister(supabase, {
+      table: 'sales',
+      column: 'sale_number',
+      prefix: 'POS',
+    });
 
     // 2. Prepare items and payload for Atomic POS Checkout RPC
     const rpcItems: PosCheckoutItem[] = payload.cart.map(item => ({
@@ -169,20 +178,20 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
       p_items: rpcItems
     };
 
-    // 3. Execute Atomic RPC Transaction
+    // 3. Execute Atomic RPC Transaction (with unique-constraint retry)
     let rpcExecuted = false;
     let rpcResult: PosCheckoutRpcResponse | null = null;
+    const maxAttempts = 5;
 
     if (supabase.rpc && typeof supabase.rpc === 'function') {
       try {
-        const rpcRes = (await supabase.rpc('process_pos_checkout', rpcPayload as any)) as any;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          rpcPayload.p_sale_number = saleNumber;
+          const rpcRes = (await supabase.rpc('process_pos_checkout', rpcPayload as any)) as any;
 
-        if (rpcRes) {
+          if (!rpcRes) break;
           const { data, error } = rpcRes;
           if (error) {
-            // If RPC function is missing (PGRST202) or fails due to legacy sales column/type mismatch
-            // (e.g. 42703: column "status" does not exist, 42804: column "payment_scheme" is of type payment_scheme),
-            // fallback to sequential client-side mutations
             const errorMsg = error.message || '';
             const isMissingFunctionOrColumnMismatch =
               error.code === 'PGRST202' ||
@@ -193,16 +202,27 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
               /column .* is of type .* but expression is of type/i.test(errorMsg);
             if (isMissingFunctionOrColumnMismatch) {
               console.warn('process_pos_checkout RPC unavailable or mismatched schema, falling back to client mutations:', errorMsg);
-            } else {
-              throw new Error(errorMsg || 'Gagal memproses transaksi kasir.');
+              break;
             }
+            if (isUniqueConstraintError(error) && attempt < maxAttempts) {
+              saleNumber = incrementCompactRegister(saleNumber, 1);
+              continue;
+            }
+            throw new Error(errorMsg || 'Gagal memproses transaksi kasir.');
           } else if (data) {
             if (data.success === false) {
+              const dupMessage = isUniqueConstraintError({ message: data.message });
+              if (dupMessage && attempt < maxAttempts) {
+                saleNumber = incrementCompactRegister(saleNumber, 1);
+                continue;
+              }
               throw new Error(data.message || 'Transaksi kasir ditolak oleh sistem.');
             }
             rpcResult = data;
             rpcExecuted = true;
+            break;
           }
+          break;
         }
       } catch (err: any) {
         if (err.message && !err.message.includes('Cannot destructure')) {
@@ -248,25 +268,37 @@ export const processCheckout = async (payload: CheckoutPayload): Promise<Checkou
       }
     } else {
       // 4. Fallback: Sequential client-side mutations (for environments without process_pos_checkout RPC)
-      const { data: saleData, error: saleError } = await supabase
-        .from('sales')
-        .insert({
-          sale_number: saleNumber,
-          member_id: payload.memberId,
-          cashier_id: payload.cashierId,
-          shift_id: effectiveShiftId,
-          subtotal: payload.subtotal,
-          discount: payload.discount,
-          total_amount: payload.totalAmount,
-          paid_amount: effectivePaidAmount,
-          paid_cash: effectivePaidCash,
-          paid_deposit: payload.paidDeposit,
-          paid_credit: payload.paidCredit,
-          payment_scheme: payload.paymentScheme,
-          sale_status: 'completed'
-        })
-        .select('id')
-        .single();
+      let saleData: any = null;
+      let saleError: any = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const res = await supabase
+          .from('sales')
+          .insert({
+            sale_number: saleNumber,
+            member_id: payload.memberId,
+            cashier_id: payload.cashierId,
+            shift_id: effectiveShiftId,
+            subtotal: payload.subtotal,
+            discount: payload.discount,
+            total_amount: payload.totalAmount,
+            paid_amount: effectivePaidAmount,
+            paid_cash: effectivePaidCash,
+            paid_deposit: payload.paidDeposit,
+            paid_credit: payload.paidCredit,
+            payment_scheme: payload.paymentScheme,
+            sale_status: 'completed'
+          })
+          .select('id')
+          .single();
+        saleData = res.data;
+        saleError = res.error;
+        if (!saleError) break;
+        if (isUniqueConstraintError(saleError) && attempt < maxAttempts) {
+          saleNumber = incrementCompactRegister(saleNumber, 1);
+          continue;
+        }
+        break;
+      }
 
       if (saleError) throw saleError;
       const saleId = saleData.id;

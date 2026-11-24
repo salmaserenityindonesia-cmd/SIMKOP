@@ -8,6 +8,7 @@ import WithdrawalReceiptModal from '../../../components/withdrawal/WithdrawalRec
 import BulkLebaranTab from './BulkLebaranTab';
 import LebaranDatesTab from './LebaranDatesTab';
 import { formatTanggalLahirWithAge } from '../../../utils/dateUtils';
+import { generateNextCompactRegister } from '../../../utils/receiptGenerator';
 
 interface Anggota {
   id: string;
@@ -143,7 +144,11 @@ export default function PenarikanSimpanan() {
         currentUserId = userData?.user?.id || null;
       } catch (_) {}
 
-      const receiptNumber = `KW-WD-${Date.now()}`;
+      const receiptNumber = await generateNextCompactRegister(supabase, {
+        table: 'deposit_transactions',
+        column: 'reference_no',
+        prefix: 'KS',
+      });
       const methodText = paymentMethod === 'transfer' 
         ? `Transfer (${selectedAnggota.bank_name || 'Bank'} - ${selectedAnggota.bank_account_number || '-'})` 
         : 'Tunai Kasir';

@@ -17,6 +17,10 @@ import {
   buildMemberDepositTypeSummary,
   formatMemberDepositCashFlowDescription,
 } from '../utils/depositCashFlowFormat';
+import {
+  generateCompactRegisterSync,
+  generateNextCompactRegister,
+} from '../utils/receiptGenerator';
 
 export type SetoranPaymentMethod = 'tunai' | 'transfer_bank';
 
@@ -155,11 +159,7 @@ export function getLocalIsoDate(date: Date = new Date()): string {
 }
 
 export function generateSetoranReceiptNumber(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const rand4 = String(Math.floor(1000 + Math.random() * 9000));
-  return `KW-SETOR-${y}${m}${d}-${rand4}`;
+  return generateCompactRegisterSync('KS', now);
 }
 
 function isRoutineMonthlyDepositTx(tx: any): boolean {
@@ -1046,7 +1046,12 @@ export async function processMemberPayment(
 
   const now = new Date();
   const todayIsoDate = getLocalIsoDate(now);
-  const receiptNo = generateSetoranReceiptNumber(now);
+  const receiptNo = await generateNextCompactRegister(supabase, {
+    table: 'deposit_transactions',
+    column: 'reference_no',
+    prefix: 'KS',
+    date: now,
+  });
   const paymentMethodLabel: 'Tunai' | 'Transfer Bank' =
     paymentMethod === 'transfer_bank' ? 'Transfer Bank' : 'Tunai';
 

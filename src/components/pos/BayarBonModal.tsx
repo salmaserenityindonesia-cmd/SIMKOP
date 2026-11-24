@@ -12,6 +12,11 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatCurrency';
 import { useFeedback } from '../../context/FeedbackContext';
+import { supabase } from '../../lib/supabaseClient';
+import {
+  formatCompactRegister,
+  generateNextCompactRegister,
+} from '../../utils/receiptGenerator';
 import {
   settleStoreCredit,
   getMemberActiveDebt,
@@ -53,7 +58,7 @@ export default function BayarBonModal({
   const [currentDebt, setCurrentDebt] = useState<number>(initialDebtAmount || 0);
   const [amount, setAmount] = useState<string>(initialDebtAmount ? String(initialDebtAmount) : '');
   const [paymentMethod, setPaymentMethod] = useState<'potong_gaji' | 'tunai' | 'transfer'>('potong_gaji');
-  const [referenceNo, setReferenceNo] = useState<string>(`BYR-${Date.now().toString().slice(-6)}`);
+  const [referenceNo, setReferenceNo] = useState<string>(() => formatCompactRegister('KB', 1));
   const [notes, setNotes] = useState<string>(
     initialReceiptNo ? `Pelunasan Bon Struk #${initialReceiptNo}` : 'Pelunasan Bon Toko Kasir'
   );
@@ -73,7 +78,17 @@ export default function BayarBonModal({
       } else {
         loadDebtorMembers();
       }
-      setReferenceNo(`BYR-${Date.now().toString().slice(-6)}`);
+      const syncFallback = formatCompactRegister('KB', 1);
+      setReferenceNo(syncFallback);
+      generateNextCompactRegister(supabase, {
+        table: 'store_credit_payments',
+        column: 'receipt_number',
+        prefix: 'KB',
+      })
+        .then((nextCode) => {
+          setReferenceNo((prev) => (prev === syncFallback ? nextCode : prev));
+        })
+        .catch(() => {});
     }
   }, [isOpen, initialMemberId, initialDebtAmount]);
 

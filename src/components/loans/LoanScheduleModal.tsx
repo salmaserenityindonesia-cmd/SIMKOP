@@ -29,7 +29,11 @@ import {
   MONTH_NAMES,
 } from '../../services/loanMatrixService';
 import { formatCurrency } from '../../utils/formatCurrency';
-import { generateLoanReceiptNumber } from '../../utils/receiptGenerator';
+import { supabase } from '../../lib/supabaseClient';
+import {
+  generateLoanReceiptNumber,
+  generateNextCompactRegister,
+} from '../../utils/receiptGenerator';
 
 export interface LoanScheduleModalProps {
   loanId: string;
@@ -287,7 +291,8 @@ export default function LoanScheduleModal({
       const roundedRemaining = Math.max(0, Math.round(target - paid));
       const defaultNominal = roundedRemaining > 0 ? roundedRemaining : Math.round(target);
       setEvidenceAmount(defaultNominal);
-      setEvidenceReceiptNo(generateLoanReceiptNumber(data?.loanNumber, period.periodNumber));
+      const syncReceipt = generateLoanReceiptNumber(data?.loanNumber, period.periodNumber);
+      setEvidenceReceiptNo(syncReceipt);
       setEvidencePaymentMethod('potong_gaji');
       if (roundedRemaining > 0 && paid > 0) {
         setEvidenceNotes(`Pelunasan selisih/kekurangan pembulatan angsuran bulan ke-${period.periodNumber}`);
@@ -295,6 +300,14 @@ export default function LoanScheduleModal({
         setEvidenceNotes('');
       }
       setEvidenceModalOpen(true);
+
+      generateNextCompactRegister(supabase, {
+        table: 'loan_repayments',
+        column: 'receipt_number',
+        prefix: 'KW',
+      }).then((nextCode) => {
+        setEvidenceReceiptNo((prev) => (prev === syncReceipt ? nextCode : prev));
+      }).catch(() => {});
     }
   };
 
@@ -839,7 +852,7 @@ export default function LoanScheduleModal({
                   type="text"
                   value={evidenceReceiptNo}
                   onChange={e => setEvidenceReceiptNo(e.target.value)}
-                  placeholder="Contoh: KW-PINJ/2026/01"
+                  placeholder="Contoh: KW2611-0001"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
                   data-testid="evidence-receipt-input"
                 />

@@ -11,6 +11,10 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import { useFeedback } from '../../context/FeedbackContext';
 import { supabase } from '../../lib/supabaseClient';
 import {
+  formatCompactRegister,
+  generateNextCompactRegister,
+} from '../../utils/receiptGenerator';
+import {
   AdditionalDepositProduct,
   getMemberActiveLoanSummary,
   MemberActiveLoanSummary,
@@ -52,13 +56,26 @@ export default function VoluntaryWithdrawalModal({
   useEffect(() => {
     if (!isOpen) return;
 
+    const syncFallbackRef = formatCompactRegister('KS', 1);
     setAmount('');
     setPaymentMethod('tunai');
-    setReferenceNo(`KW-TARIK-MANDIRI-${Date.now()}`);
+    setReferenceNo(syncFallbackRef);
     setNotes('');
     setSubmitting(false);
 
     let active = true;
+    generateNextCompactRegister(supabase, {
+      table: 'deposit_transactions',
+      column: 'reference_no',
+      prefix: 'KS',
+    })
+      .then((nextCode) => {
+        if (active) {
+          setReferenceNo((prev) => (prev === syncFallbackRef ? nextCode : prev));
+        }
+      })
+      .catch(() => {});
+
     setLoadingLoanSummary(true);
     getMemberActiveLoanSummary(member.memberId)
       .then((res) => {
@@ -291,7 +308,7 @@ export default function VoluntaryWithdrawalModal({
               type="text"
               value={referenceNo}
               onChange={(e) => setReferenceNo(e.target.value)}
-              placeholder="KW-TARIK-MANDIRI-..."
+              placeholder="Contoh: KS2611-0001"
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-500"
             />
           </div>

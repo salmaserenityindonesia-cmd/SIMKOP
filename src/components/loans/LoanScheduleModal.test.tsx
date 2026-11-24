@@ -512,9 +512,9 @@ describe('LoanScheduleModal Component Tests', () => {
       expect(html).toContain('data-testid="evidence-method-select"');
       expect(html).toContain('<option value="potong_gaji" selected="">Potong Gaji</option>');
 
-      // Verify receipt number generated with anti-collision format
+      // Verify receipt number generated with compact format KWYYMM-XXXX
       expect(html).toContain('data-testid="evidence-receipt-input"');
-      expect(html).toMatch(/value="KW-PINJ\/PJ-2026-001\/B4\/\d{8}-[A-Z0-9]{3}"/);
+      expect(html).toMatch(/value="KW\d{4}-\d{4}"/);
 
       // Verify helper deficit info display
       expect(html).toContain('data-testid="evidence-deficit-info"');
@@ -636,9 +636,9 @@ describe('LoanScheduleModal Component Tests', () => {
         />
       );
 
-      // Verify evidence modal receipt input auto-filled with KW-PINJ prefix and anti-collision suffix
+      // Verify evidence modal receipt input auto-filled with compact KWYYMM-XXXX format
       expect(html).toContain('data-testid="evidence-receipt-input"');
-      expect(html).toMatch(/value="KW-PINJ\/PJ-2026-001\/B5\/\d{8}-[A-Z0-9]{3}"/);
+      expect(html).toMatch(/value="KW\d{4}-\d{4}"/);
     });
   });
 

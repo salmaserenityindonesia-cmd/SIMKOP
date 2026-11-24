@@ -158,12 +158,15 @@ export function resetPurchaseReturnMockState() {
   mockAuditLogs = [];
 }
 
+import {
+  getCompactPeriodPrefix,
+  getNextCompactRegister,
+  resolveValidDate,
+} from '../utils/receiptGenerator';
+
 function getReturnNumberPrefix(dateStr?: string): string {
-  const parsed = dateStr ? new Date(dateStr) : new Date();
-  const targetDate = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-  const year = targetDate.getFullYear();
-  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
-  return `RET/${year}${month}/`;
+  const targetDate = resolveValidDate(dateStr);
+  return getCompactPeriodPrefix('RB', targetDate);
 }
 
 function extractMaxSequence(
@@ -196,10 +199,12 @@ function incrementReturnNumberSuffix(returnNumber: string, fallbackPrefix: strin
 }
 
 export function generateReturnNumber(dateStr?: string): string {
-  const prefix = getReturnNumberPrefix(dateStr);
-  const maxSeq = extractMaxSequence(mockReturns, prefix, 0);
-  const sequence = String(maxSeq + 1).padStart(4, '0');
-  return `${prefix}${sequence}`;
+  const targetDate = resolveValidDate(dateStr);
+  return getNextCompactRegister(
+    'RB',
+    mockReturns.map((r) => r.return_number),
+    targetDate
+  );
 }
 
 export async function generateNextReturnNumber(dateStr?: string): Promise<string> {

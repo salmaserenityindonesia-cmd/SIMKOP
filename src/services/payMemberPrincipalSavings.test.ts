@@ -153,7 +153,7 @@ describe('payMemberPrincipalSavings and getActivePokokTariff', () => {
       expect(insertedRows[0].amount).toBe(10000);
       expect(insertedRows[0].transaction_type).toBe('deposit');
       expect(insertedRows[0].payment_method).toBe('cash');
-      expect(insertedRows[0].reference_no).toMatch(/^KW-POKOK-/);
+      expect(insertedRows[0].reference_no).toMatch(/^KS\d{4}-\d{4}$/);
       expect(insertedRows[0].description).toBe('Pelunasan Simpanan Pokok Baru');
     });
 

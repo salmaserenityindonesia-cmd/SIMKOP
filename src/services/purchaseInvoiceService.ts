@@ -3,6 +3,12 @@
 
 import { supabase } from '../lib/supabaseClient';
 import { CreatePurchaseInvoiceRpcResponse } from '../types/purchase';
+import {
+  formatCompactRegister,
+  getCompactPeriodPrefix,
+  getNextCompactRegister,
+  resolveValidDate,
+} from '../utils/receiptGenerator';
 
 function shouldFallback(e: any): boolean {
   if (!e) return false;
@@ -30,8 +36,8 @@ function normalizeInvoiceDate(invoiceDate?: string): string {
 
 export function formatPurchaseInvoiceNumber(invoiceDate: string, seq: number): string {
   const normalizedDate = normalizeInvoiceDate(invoiceDate);
-  const compactDate = normalizedDate.replace(/-/g, '');
-  return `PB/${compactDate}/${String(Math.max(1, seq)).padStart(3, '0')}`;
+  const targetDate = resolveValidDate(normalizedDate);
+  return formatCompactRegister('PB', seq, targetDate);
 }
 
 function extractMaxSequenceForPrefix(
@@ -287,8 +293,8 @@ export async function getRiwayatStok(produkId: string): Promise<RiwayatStok[]> {
 
 export async function generateNextPurchaseInvoiceNumber(invoiceDate: string): Promise<string> {
   const normalizedDate = normalizeInvoiceDate(invoiceDate);
-  const compactDate = normalizedDate.replace(/-/g, '');
-  const prefix = `PB/${compactDate}/`;
+  const targetDate = resolveValidDate(normalizedDate);
+  const prefix = getCompactPeriodPrefix('PB', targetDate);
 
   try {
     const { data, error } = await supabase
@@ -298,27 +304,27 @@ export async function generateNextPurchaseInvoiceNumber(invoiceDate: string): Pr
 
     if (error) {
       if (shouldFallback(error)) {
-        const maxSeq = extractMaxSequenceForPrefix(
+        return getNextCompactRegister(
+          'PB',
           mockFakturList.map((f) => f.noFaktur),
-          prefix
+          targetDate
         );
-        return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
       }
       throw new Error(`Gagal membuat nomor faktur otomatis: ${error.message}`);
     }
 
-    const maxSeq = extractMaxSequenceForPrefix(
+    return getNextCompactRegister(
+      'PB',
       (data || []).map((row: any) => row?.invoice_number),
-      prefix
+      targetDate
     );
-    return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
   } catch (err: any) {
     if (shouldFallback(err)) {
-      const maxSeq = extractMaxSequenceForPrefix(
+      return getNextCompactRegister(
+        'PB',
         mockFakturList.map((f) => f.noFaktur),
-        prefix
+        targetDate
       );
-      return formatPurchaseInvoiceNumber(normalizedDate, maxSeq + 1);
     }
     throw err;
   }

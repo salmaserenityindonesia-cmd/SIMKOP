@@ -3,6 +3,7 @@ import { useFeedback } from '../../context/FeedbackContext';
 import { generateReceiptPdf, ReceiptItem, ReceiptPaymentInfo } from '../../utils/receiptPdfGenerator';
 import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../services/settingsService';
 import { getPosSettings } from '../../services/posSettingsService';
+import { generateCompactRegisterSync } from '../../utils/receiptGenerator';
 
 interface ReceiptModalProps {
   isOpen: boolean;
@@ -63,7 +64,7 @@ export default function ReceiptModal({
 
   if (!isOpen) return null;
 
-  const currentSaleNumber = saleNumber || `INV-${Date.now()}`;
+  const currentSaleNumber = saleNumber || generateCompactRegisterSync('POS');
   const effectiveDiscountPct = discountPercentage ?? (subtotal > 0 && discount > 0 ? Math.round((discount / subtotal) * 100) : 5);
 
   const handleWA = () => {

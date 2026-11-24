@@ -1704,7 +1704,7 @@ export function parseLoanCashFlowDescription(
   description?: string | null
 ): ParsedLoanCashFlowDescription {
   const desc = String(description || '');
-  const loanNumberMatch = desc.match(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+)\b/i);
+  const loanNumberMatch = desc.match(/\b(LOAN-[A-Z0-9-]+|PJ-[A-Z0-9-]+|LN\d{4}-\d{4,})\b/i);
   const loanNumber = loanNumberMatch?.[1]
     ? loanNumberMatch[1].toUpperCase()
     : null;
@@ -1754,7 +1754,7 @@ export function parseLoanCashFlowDescription(
     const rawItem = itemMatch[1].trim();
     if (
       rawItem &&
-      !/^(LOAN-|PJ-|Potong\s+Gaji|Tunai|Transfer)/i.test(rawItem)
+      !/^(LOAN-|PJ-|LN\d{4}-\d{4,}|Potong\s+Gaji|Tunai|Transfer)/i.test(rawItem)
     ) {
       itemHint = rawItem;
     }
@@ -1875,22 +1875,22 @@ export function extractReceiptCodeFromCashFlow(
   description?: string | null
 ): string | null {
   const refTrimmed = String(referenceId || '').trim();
-  if (/^(KW-[A-Z0-9/_-]+)$/i.test(refTrimmed)) {
+  if (/^(KW-[A-Z0-9/_-]+|(?:KW|KS|KB)\d{4}-\d{4,})$/i.test(refTrimmed)) {
     return refTrimmed.toUpperCase();
   }
 
   const desc = String(description || '');
-  const bracketMatch = desc.match(/\[(KW-[A-Z0-9/_-]+)\]/i);
+  const bracketMatch = desc.match(/\[(KW-[A-Z0-9/_-]+|(?:KW|KS|KB)\d{4}-\d{4,})\]/i);
   if (bracketMatch?.[1]) {
     return bracketMatch[1].toUpperCase();
   }
 
-  const setorMatch = desc.match(/\b(KW-SETOR-[A-Z0-9/_-]+)\b/i);
+  const setorMatch = desc.match(/\b(KW-SETOR-[A-Z0-9/_-]+|KS\d{4}-\d{4,})\b/i);
   if (setorMatch?.[1]) {
     return setorMatch[1].toUpperCase();
   }
 
-  const kwMatch = desc.match(/\b(KW-[A-Z0-9/_-]+)\b/i);
+  const kwMatch = desc.match(/\b(KW-[A-Z0-9/_-]+|(?:KW|KS|KB)\d{4}-\d{4,})\b/i);
   if (kwMatch?.[1]) {
     return kwMatch[1].toUpperCase();
   }
@@ -3546,7 +3546,7 @@ export async function getCashFlowReferenceBreakdown(
           'id, member_deposit_id, transaction_type, amount, for_month, for_year, description, created_at'
         );
       }
-      const receiptMatch = String(cashFlowRow.description || '').match(/\b(KW-[A-Z0-9\/-]+)\b/i);
+      const receiptMatch = String(cashFlowRow.description || '').match(/\b(KW-[A-Z0-9\/-]+|(?:KW|KS)\d{4}-\d{4,})\b/i);
       const targetReceipt = receiptMatch?.[1]?.toUpperCase() || null;
       const cfDateCandidates = getDateCandidates(cashFlowRow.created_at);
 
@@ -6713,7 +6713,7 @@ async function runSyncMatrixDepositsToCashFlow(): Promise<SyncMatrixDepositsToCa
       }
       const catNorm = String(cf?.category || '').trim().toUpperCase().replace(/\s+/g, '_');
       if (catNorm === 'SETORAN_ANGGOTA' && typeof cf?.description === 'string') {
-        const matches = cf.description.match(/\bKW-SETOR-[A-Z0-9\/-]+\b/gi) || [];
+        const matches = cf.description.match(/\b(?:KW-SETOR-[A-Z0-9\/-]+|KS\d{4}-\d{4,})\b/gi) || [];
         for (const code of matches) {
           existingBatchSetoranReceipts.add(code.toUpperCase());
         }
@@ -6947,7 +6947,7 @@ async function runSyncApprovedLoansToCashFlow(): Promise<SyncApprovedLoansToCash
         existingOutRefIds.add(String(cf.reference_id));
       }
       if (typeof cf?.description === 'string') {
-        const matches = cf.description.match(/\bLOAN-[A-Z0-9-]+\b/gi) || [];
+        const matches = cf.description.match(/\b(?:LOAN-[A-Z0-9-]+|LN\d{4}-\d{4,})\b/gi) || [];
         for (const code of matches) {
           existingOutLoanNumbers.add(code.toUpperCase());
         }
