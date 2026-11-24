@@ -357,6 +357,16 @@ describe('PengaturanKoperasi Component - Rate Tiers Configuration UI', () => {
       expect(html).toContain('Nominal Simpanan Pokok Baru (Rp)');
       expect(html).toContain('Contoh: 100000');
     });
+
+    it('renders Simpan Perubahan without a Reset button on Form Identitas Koperasi', () => {
+      const html = renderToStaticMarkup(
+        <PengaturanKoperasi initialLoading={false} initialRateTiers={mockTiers} />
+      );
+
+      expect(html).toContain('Simpan Perubahan');
+      expect(html).not.toMatch(/>Reset<\/button>/);
+      expect(html).toContain('Reset Data Transaksi...');
+    });
   });
 
   describe('Service Integration Contract', () => {

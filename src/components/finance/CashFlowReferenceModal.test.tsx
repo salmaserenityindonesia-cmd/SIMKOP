@@ -1331,4 +1331,119 @@ describe('CashFlowReferenceModal Component', () => {
     expect(approvalHtml).toContain('data-testid="btn-trace-laporan-keuangan"');
     expect(approvalHtml).toContain('data-testid="btn-trace-loan-ledger"');
   });
+
+  it('renders interactive header CF-... badge and No. Kontrak Pinjaman button for loan_installment and loan_disbursement', () => {
+    const installmentItem: CashFlowReferenceModalItem = {
+      id: 'cf-inst-deep',
+      tanggal: '1/7/2026',
+      referensi: 'CF-1A22F0FF',
+      deskripsi: 'Angsuran Pinjaman [SALDO-AWAL-84110801-GAJISIPA] Bln ke-7',
+      kategori: 'angsuran_pinjaman',
+      unit_usaha: 'Simpan Pinjam',
+      kas_masuk: 500000,
+      kas_keluar: 0,
+      direction: 'in',
+      created_at: '2026-07-01T08:00:00.000Z',
+    };
+    const installmentBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_installment',
+      journal: {
+        id: installmentItem.id,
+        refCode: 'CF-1A22F0FF',
+        category: 'angsuran_pinjaman',
+        direction: 'in',
+        amount: 500000,
+        description: installmentItem.deskripsi,
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: 'sched-7',
+        createdAt: '2026-07-01T08:00:00.000Z',
+      },
+      loanInstallment: {
+        loanId: 'loan-saldo-awal',
+        scheduleId: 'sched-7',
+        loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+        loanTypeName: 'Pinjaman Gaji Sipa',
+        isGoodsFinancing: false,
+        periodNumber: 7,
+        tenor: 12,
+        dueDate: '2026-07-01',
+        amount: 500000,
+        principalPortion: 450000,
+        marginPortion: 50000,
+        createdAt: '2026-07-01T08:00:00.000Z',
+        description: installmentItem.deskripsi,
+        member: { nrp: '84110801', nama: 'Iwan Agung Prasetyo' },
+      },
+    };
+
+    const instHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/laporan-keuangan']}>
+        <CashFlowReferenceModal
+          cashFlowItem={installmentItem}
+          onClose={() => {}}
+          initialBreakdown={installmentBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(instHtml).toContain('<button type="button" data-testid="btn-header-ref-filter"');
+    expect(instHtml).toContain('title="Filter baris CF-1A22F0FF di Laporan Keuangan"');
+    expect(instHtml).toContain('<button type="button" data-testid="btn-loan-contract-detail"');
+    expect(instHtml).toContain('title="Buka Detail Kontrak Pinjaman di /admin/approval (Semua Riwayat)"');
+    expect(instHtml).toContain('SALDO-AWAL-84110801-GAJISIPA');
+
+    const disbursementItem: CashFlowReferenceModalItem = {
+      id: 'cf-disb-deep',
+      tanggal: '1/1/2026',
+      referensi: 'CF-DISB9999',
+      deskripsi: 'Pencairan Pinjaman [SALDO-AWAL-84110801-GAJISIPA]',
+      kategori: 'pencairan_pinjaman',
+      unit_usaha: 'Simpan Pinjam',
+      kas_masuk: 0,
+      kas_keluar: 10000000,
+      direction: 'out',
+      created_at: '2026-01-01T08:00:00.000Z',
+    };
+    const disbursementBreakdown: CashFlowReferenceBreakdown = {
+      kind: 'loan_disbursement',
+      journal: {
+        id: disbursementItem.id,
+        refCode: 'CF-DISB9999',
+        category: 'pencairan_pinjaman',
+        direction: 'out',
+        amount: 10000000,
+        description: disbursementItem.deskripsi,
+        unitUsaha: 'Simpan Pinjam',
+        referenceId: 'loan-saldo-awal',
+        createdAt: '2026-01-01T08:00:00.000Z',
+      },
+      loanDisbursement: {
+        loanId: 'loan-saldo-awal',
+        loanNumber: 'SALDO-AWAL-84110801-GAJISIPA',
+        loanTypeName: 'Pinjaman Gaji Sipa',
+        tenor: 12,
+        status: 'active',
+        amount: 10000000,
+        disbursedAt: '2026-01-01T08:00:00.000Z',
+        description: disbursementItem.deskripsi,
+        member: { nrp: '84110801', nama: 'Iwan Agung Prasetyo' },
+      },
+    };
+
+    const disbHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/loan-matrix']}>
+        <CashFlowReferenceModal
+          cashFlowItem={disbursementItem}
+          onClose={() => {}}
+          initialBreakdown={disbursementBreakdown}
+        />
+      </MemoryRouter>
+    );
+
+    expect(disbHtml).toContain('<button type="button" data-testid="btn-header-ref-filter"');
+    expect(disbHtml).toContain('title="Filter baris CF-DISB9999 di Laporan Keuangan"');
+    expect(disbHtml).toContain('<button type="button" data-testid="btn-loan-contract-detail"');
+    expect(disbHtml).toContain('title="Buka Detail Kontrak Pinjaman di /admin/approval (Semua Riwayat)"');
+    expect(disbHtml).toContain('SALDO-AWAL-84110801-GAJISIPA');
+  });
 });

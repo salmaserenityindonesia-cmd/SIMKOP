@@ -1,5 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ApprovalPinjaman, { buildApprovalConfirmMessage } from './ApprovalPinjaman';
 import { loanService } from '../../services/loanService';
@@ -570,6 +571,50 @@ describe('ApprovalPinjaman Page Component', () => {
       );
       expect(pendingHtml).not.toContain('data-testid="approval-loan-journal-btn-LOAN-2026-003"');
       expect(pendingHtml).toContain('LOAN-2026-003');
+    });
+
+    it('activates Semua Riwayat tab and pre-fills loanNo search from URL query params', () => {
+      const html = renderToStaticMarkup(
+        <MemoryRouter
+          initialEntries={[
+            '/admin/approval?tab=history&loanNo=SALDO-AWAL-84110801-GAJISIPA&openDetail=1',
+          ]}
+        >
+          <ApprovalPinjaman
+            initialPinjamanList={[
+              {
+                id: 'loan-saldo-awal-1',
+                loan_number: 'SALDO-AWAL-84110801-GAJISIPA',
+                status: 'active',
+                amount: 12000000,
+                tenor: 12,
+                anggota: {
+                  nama: 'Iwan Agung Prasetyo',
+                  nrp: '84110801',
+                  no_anggota: '84110801',
+                },
+              },
+              {
+                id: 'loan-other-1',
+                loan_number: 'LOAN-OTHER-999',
+                status: 'active',
+                amount: 5000000,
+                tenor: 6,
+                anggota: {
+                  nama: 'Anggota Lain',
+                  nrp: '99999999',
+                  no_anggota: '99999999',
+                },
+              },
+            ]}
+          />
+        </MemoryRouter>
+      );
+
+      expect(html).toContain('value="SALDO-AWAL-84110801-GAJISIPA"');
+      expect(html).toContain('Iwan Agung Prasetyo');
+      expect(html).not.toContain('Anggota Lain');
+      expect(html).toMatch(/data-testid="tab-all"[^>]*border-\[var\(--color-primary\)\]/);
     });
   });
 });

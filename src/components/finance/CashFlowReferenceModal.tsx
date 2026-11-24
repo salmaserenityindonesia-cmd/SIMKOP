@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Link, useInRouterContext, useLocation } from 'react-router-dom';
+import { Link, useInRouterContext, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
   X,
@@ -21,6 +21,7 @@ import {
   ArrowRight,
   Layers,
   RotateCcw,
+  ExternalLink,
 } from 'lucide-react';
 import {
   getCashFlowReferenceBreakdown,
@@ -61,15 +62,27 @@ export interface CashFlowReferenceModalProps {
   relatedCashFlows?: CashFlowReferenceModalItem[];
   /** Optional contract number/label displayed on the multi-journal switcher */
   contractLabel?: string;
+  /** Optional callback when header CF-... badge is clicked while already on Laporan Keuangan */
+  onFilterRefInReport?: (refCode: string) => void;
 }
 
 interface CashFlowReferenceModalInternalProps extends CashFlowReferenceModalProps {
   currentPathname?: string;
+  onNavigate?: (to: string) => void;
 }
 
 const SAVINGS_LEDGER_ROUTE = '/admin/compliance-matrix';
 const LOAN_LEDGER_ROUTE = '/admin/loan-matrix';
 const FINANCE_REPORT_ROUTE = '/admin/laporan-keuangan';
+const LOAN_APPROVAL_ROUTE = '/admin/approval';
+
+const buildLoanApprovalDetailUrl = (loanNumber: string): string => {
+  const params = new URLSearchParams();
+  params.set('tab', 'history');
+  params.set('loanNo', loanNumber);
+  params.set('openDetail', '1');
+  return `${LOAN_APPROVAL_ROUTE}?${params.toString()}`;
+};
 
 const extractIsoDateParam = (
   rawCreatedAt?: string | null,
@@ -238,9 +251,18 @@ function CashFlowReferenceModalContent({
   initialBreakdown = null,
   relatedCashFlows,
   contractLabel,
+  onFilterRefInReport,
   currentPathname = '',
+  onNavigate,
 }: CashFlowReferenceModalInternalProps) {
   const inRouter = useInRouterContext();
+  const navigateTo = (url: string) => {
+    if (onNavigate) {
+      onNavigate(url);
+    } else if (typeof window !== 'undefined') {
+      window.location.assign(url);
+    }
+  };
   const [activeCashFlowItem, setActiveCashFlowItem] =
     useState<CashFlowReferenceModalItem | null>(cashFlowItem);
   const [breakdown, setBreakdown] = useState<CashFlowReferenceBreakdown | null>(
@@ -431,9 +453,29 @@ function CashFlowReferenceModalContent({
                 >
                   Bukti Jurnal &amp; Buku Pembantu Referensi
                 </h3>
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-indigo-500/30 border border-indigo-400/40 font-mono text-xs font-bold text-indigo-100 tracking-wide">
-                  {activeItem.referensi}
-                </span>
+                <button
+                  type="button"
+                  data-testid="btn-header-ref-filter"
+                  title={`Filter baris ${activeItem.referensi} di Laporan Keuangan`}
+                  onClick={() => {
+                    const refCode = String(activeItem.referensi || '').trim();
+                    if (!refCode) return;
+                    onClose();
+                    if (isOnFinanceReport && onFilterRefInReport) {
+                      onFilterRefInReport(refCode);
+                    }
+                    const targetUrl = buildFinanceReportUrl(
+                      refCode,
+                      activeItem.created_at || breakdown?.journal?.createdAt,
+                      activeItem.tanggal
+                    );
+                    navigateTo(targetUrl);
+                  }}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 active:bg-indigo-600 text-white border border-indigo-300/70 font-mono text-sm font-bold tracking-wide shadow-md shadow-indigo-950/40 transition-all hover:-translate-y-0.5 cursor-pointer"
+                >
+                  <span>{activeItem.referensi}</span>
+                  <ExternalLink className="w-4 h-4 text-indigo-100 shrink-0" />
+                </button>
               </div>
               <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span>Tanggal: {activeItem.tanggal}</span>
@@ -2192,12 +2234,22 @@ function CashFlowReferenceModalContent({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
                     <div>
-                      <p className="text-slate-500">No. Kontrak Pinjaman</p>
+                      <p className="mb-1.5 block text-xs font-semibold text-slate-600">No. Kontrak Pinjaman</p>
                       {loanNumber ? (
                         <p className="mt-0.5">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-bold">
-                            {loanNumber}
-                          </span>
+                          <button
+                            type="button"
+                            data-testid="btn-loan-contract-detail"
+                            title="Buka Detail Kontrak Pinjaman di /admin/approval (Semua Riwayat)"
+                            onClick={() => {
+                              onClose();
+                              navigateTo(buildLoanApprovalDetailUrl(loanNumber));
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white border border-emerald-500 font-mono text-sm font-bold tracking-wide shadow-sm shadow-emerald-600/25 transition-all hover:-translate-y-0.5 cursor-pointer"
+                          >
+                            <span>{loanNumber}</span>
+                            <ExternalLink className="w-4 h-4 text-emerald-100 shrink-0" />
+                          </button>
                         </p>
                       ) : (
                         <p className="font-mono font-semibold text-slate-700 mt-0.5">-</p>
@@ -2438,11 +2490,21 @@ function CashFlowReferenceModalContent({
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
                     {loanNumber && (
                       <div>
-                        <p className="text-slate-500">No. Kontrak Pinjaman</p>
+                        <p className="mb-1.5 block text-xs font-semibold text-slate-600">No. Kontrak Pinjaman</p>
                         <p className="mt-0.5">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200 font-mono font-bold">
-                            {loanNumber}
-                          </span>
+                          <button
+                            type="button"
+                            data-testid="btn-loan-contract-detail"
+                            title="Buka Detail Kontrak Pinjaman di /admin/approval (Semua Riwayat)"
+                            onClick={() => {
+                              onClose();
+                              navigateTo(buildLoanApprovalDetailUrl(loanNumber));
+                            }}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white border border-emerald-500 font-mono text-sm font-bold tracking-wide shadow-sm shadow-emerald-600/25 transition-all hover:-translate-y-0.5 cursor-pointer"
+                          >
+                            <span>{loanNumber}</span>
+                            <ExternalLink className="w-4 h-4 text-emerald-100 shrink-0" />
+                          </button>
                         </p>
                       </div>
                     )}
@@ -3019,10 +3081,12 @@ function CashFlowReferenceModalContent({
 
 function CashFlowReferenceModalWithRouter(props: CashFlowReferenceModalProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   return (
     <CashFlowReferenceModalContent
       {...props}
       currentPathname={location.pathname}
+      onNavigate={navigate}
     />
   );
 }

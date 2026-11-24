@@ -21,7 +21,6 @@ import {
   Monitor,
   FileText,
   Save,
-  RotateCcw,
   Sparkles,
   ReceiptText,
   Database,
@@ -150,7 +149,6 @@ export default function PengaturanKoperasi({
   const { showToast } = useFeedback();
 
   const [form, setForm] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
-  const [initialData, setInitialData] = useState<KoperasiProfile>(DEFAULT_KOPERASI_PROFILE);
   const [isLoading, setIsLoading] = useState(initialLoading);
   const [isSaving, setIsSaving] = useState(false);
   const [isLocalOnly, setIsLocalOnly] = useState(false);
@@ -427,7 +425,6 @@ export default function PengaturanKoperasi({
 
       const data = await getKoperasiProfile(true);
       setForm(data);
-      setInitialData(data);
     } catch (err: any) {
       showToast('Gagal memuat profil koperasi', 'error');
     } finally {
@@ -438,11 +435,6 @@ export default function PengaturanKoperasi({
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setForm(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleReset = () => {
-    setForm(initialData);
-    showToast('Form dikembalikan ke data tersimpan', 'info');
   };
 
   const handleTriggerUpload = () => {
@@ -461,7 +453,6 @@ export default function PengaturanKoperasi({
 
       const res = await updateKoperasiProfile(updatedForm);
       if (res.success && res.data) {
-        setInitialData(res.data);
         showToast('Logo koperasi berhasil diunggah dan disimpan!', 'success');
       } else {
         showToast(res.error || 'Gagal menyimpan logo ke database profil', 'error');
@@ -486,7 +477,6 @@ export default function PengaturanKoperasi({
 
       const res = await updateKoperasiProfile(updatedForm);
       if (res.success && res.data) {
-        setInitialData(res.data);
         showToast('Logo koperasi berhasil dihapus', 'info');
       } else {
         showToast(res.error || 'Gagal menghapus logo dari profil', 'error');
@@ -515,7 +505,6 @@ export default function PengaturanKoperasi({
       const res = await updateKoperasiProfile(form);
       if (res.success && res.data) {
         setForm(res.data);
-        setInitialData(res.data);
 
         if (res.isLocalFallback) {
           setIsLocalOnly(true);
@@ -771,15 +760,6 @@ export default function PengaturanKoperasi({
 
                 {/* Submit Actions */}
                 <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={handleReset}
-                    disabled={isSaving}
-                    className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Reset
-                  </button>
                   <button
                     type="submit"
                     disabled={isSaving}

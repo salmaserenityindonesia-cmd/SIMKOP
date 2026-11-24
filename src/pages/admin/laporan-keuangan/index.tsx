@@ -113,6 +113,20 @@ export function formatDateDdMmYyyy(dateStr: string): string {
   return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
+export function resolveJumpPage(
+  rawInput: string,
+  currentPage: number,
+  totalPages: number
+): number {
+  const safeTotal = Math.max(1, totalPages);
+  const safeCurrent = Math.min(Math.max(1, currentPage), safeTotal);
+  const parsed = parseInt(String(rawInput).trim(), 10);
+  if (Number.isNaN(parsed)) {
+    return safeCurrent;
+  }
+  return Math.min(Math.max(1, parsed), safeTotal);
+}
+
 export function computeOpeningBalanceFromRows(
   priorCfRows: any[],
   priorSalesRows: any[] = []
@@ -1589,7 +1603,9 @@ interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
   urlRef?: string;
   urlReceipt?: string;
   urlDate?: string;
+  urlOpenRef?: string;
   onClearUrlParams?: () => void;
+  onClearOpenRef?: () => void;
 }
 
 function LaporanKeuanganContent({
@@ -1614,7 +1630,9 @@ function LaporanKeuanganContent({
   urlRef = '',
   urlReceipt = '',
   urlDate = '',
+  urlOpenRef = '',
   onClearUrlParams,
+  onClearOpenRef,
 }: LaporanKeuanganContentProps = {}) {
   const { showToast } = useFeedback();
   const inRouter = useInRouterContext();
@@ -1653,6 +1671,7 @@ function LaporanKeuanganContent({
       : initialCashFlowSearchQuery
   );
   const [cashFlowPage, setCashFlowPage] = useState<number>(1);
+  const [cashFlowPageInput, setCashFlowPageInput] = useState<string>('1');
   const [cashFlowPageSize, setCashFlowPageSize] = useState<number>(10);
   const [dateSortOrder, setDateSortOrder] = useState<'asc' | 'desc'>(initialDateSortOrder);
   const [selectedCashFlowRef, setSelectedCashFlowRef] = useState<CashFlowTransaction | null>(
@@ -1687,10 +1706,11 @@ function LaporanKeuanganContent({
   const [isResetting, setIsResetting] = useState(false);
   const [orphanCount, setOrphanCount] = useState<number>(initialOrphanCount ?? 0);
 
-  const urlDeepLinkKey = `${urlTab ?? ''}|${urlRef}|${urlReceipt}|${urlDate}`;
+  const urlDeepLinkKey = `${urlTab ?? ''}|${urlRef}|${urlReceipt}|${urlDate}|${urlOpenRef}`;
   const appliedUrlKeyRef = useRef<string>(urlDeepLinkKey);
   const lastAutoPagedKeyRef = useRef<string>('');
   const lastScrolledKeyRef = useRef<string>('');
+  const lastAutoOpenedRefRef = useRef<string>('');
 
   // Sinkronisasi apabila parameter deep-link URL berubah saat halaman tetap mounted
   useEffect(() => {
@@ -1699,7 +1719,7 @@ function LaporanKeuanganContent({
     lastAutoPagedKeyRef.current = '';
     lastScrolledKeyRef.current = '';
 
-    if (!urlTab && !urlRef && !urlReceipt && !urlDate) return;
+    if (!urlTab && !urlRef && !urlReceipt && !urlDate && !urlOpenRef) return;
 
     if (urlTab) {
       setActiveTab(urlTab);
@@ -1827,6 +1847,27 @@ function LaporanKeuanganContent({
           });
       })()
     : rawCashFlowTransactions;
+
+  // Auto-open CashFlowReferenceModal when ?openRef=CF-... is present in URL
+  useEffect(() => {
+    if (!urlOpenRef) {
+      lastAutoOpenedRefRef.current = '';
+      return;
+    }
+    if (loading) return;
+
+    const normalized = urlOpenRef.trim().toLowerCase();
+    if (lastAutoOpenedRefRef.current === normalized) return;
+
+    const matchedTx = cashFlowTransactions.find(
+      (tx) => String(tx.referensi || '').trim().toLowerCase() === normalized
+    );
+    if (matchedTx) {
+      lastAutoOpenedRefRef.current = normalized;
+      setActiveTab('cashflow');
+      setSelectedCashFlowRef(matchedTx);
+    }
+  }, [urlOpenRef, loading, cashFlowTransactions]);
   const availableCategoryOptions = useMemo(
     () => buildCashFlowCategoryOptions(cashFlowTransactions),
     [cashFlowTransactions]
@@ -1864,6 +1905,16 @@ function LaporanKeuanganContent({
   const cashFlowStartIndex = (safeCashFlowPage - 1) * cashFlowPageSize;
   const cashFlowEndIndex = Math.min(cashFlowStartIndex + cashFlowPageSize, totalCashFlowItems);
   const paginatedCashFlow = sortedCashFlowTransactions.slice(cashFlowStartIndex, cashFlowEndIndex);
+
+  useEffect(() => {
+    setCashFlowPageInput(String(safeCashFlowPage));
+  }, [safeCashFlowPage]);
+
+  const commitCashFlowPageJump = () => {
+    const targetPage = resolveJumpPage(cashFlowPageInput, safeCashFlowPage, totalCashFlowPages);
+    setCashFlowPage(targetPage);
+    setCashFlowPageInput(String(targetPage));
+  };
 
   const filteredCashFlowInflow = filteredCashFlowTransactions.reduce(
     (sum, r) => sum + Number(r.kas_masuk || 0),
@@ -2966,24 +3017,70 @@ function LaporanKeuanganContent({
               </div>
 
               <div className="flex items-center gap-1.5">
+                {/* Tombol Halaman Pertama */}
+                <button
+                  type="button"
+                  onClick={() => setCashFlowPage(1)}
+                  disabled={safeCashFlowPage <= 1}
+                  title="Halaman Pertama"
+                  aria-label="Halaman Pertama"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  «
+                </button>
+
+                {/* Tombol Prev */}
                 <button
                   type="button"
                   onClick={() => setCashFlowPage((prev) => Math.max(1, prev - 1))}
                   disabled={safeCashFlowPage <= 1}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   Prev
                 </button>
-                <span className="px-3 py-1.5 text-xs font-semibold text-slate-800">
-                  Halaman {safeCashFlowPage} / {totalCashFlowPages}
-                </span>
+
+                {/* Kotak Input Lompat Halaman */}
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50/70 text-xs text-slate-700">
+                  <span className="font-medium text-slate-500">Halaman</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalCashFlowPages}
+                    value={cashFlowPageInput}
+                    onChange={(e) => setCashFlowPageInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitCashFlowPageJump();
+                      }
+                    }}
+                    onBlur={commitCashFlowPageJump}
+                    aria-label="Nomor halaman tujuan"
+                    className="w-14 px-1.5 py-0.5 text-center font-bold text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="font-semibold text-slate-600">/ {totalCashFlowPages}</span>
+                </div>
+
+                {/* Tombol Next */}
                 <button
                   type="button"
                   onClick={() => setCashFlowPage((prev) => Math.min(totalCashFlowPages, prev + 1))}
                   disabled={safeCashFlowPage >= totalCashFlowPages}
-                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
                 >
                   Next
+                </button>
+
+                {/* Tombol Halaman Terakhir */}
+                <button
+                  type="button"
+                  onClick={() => setCashFlowPage(totalCashFlowPages)}
+                  disabled={safeCashFlowPage >= totalCashFlowPages}
+                  title="Halaman Terakhir"
+                  aria-label="Halaman Terakhir"
+                  className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  »
                 </button>
               </div>
             </div>
@@ -3454,7 +3551,18 @@ function LaporanKeuanganContent({
       {/* ── MODAL DRILL-DOWN BUKTI JURNAL & BUKU PEMBANTU REFERENSI ── */}
       <CashFlowReferenceModal
         cashFlowItem={selectedCashFlowRef}
-        onClose={() => setSelectedCashFlowRef(null)}
+        onClose={() => {
+          setSelectedCashFlowRef(null);
+          onClearOpenRef?.();
+        }}
+        onFilterRefInReport={(refCode) => {
+          setActiveTab('cashflow');
+          setCashFlowSearchQuery(refCode);
+          setSelectedCategories([]);
+          setActiveHighlightRef(refCode);
+          setCashFlowPage(1);
+          onClearOpenRef?.();
+        }}
       />
 
       {/* ── MODAL DRILL-DOWN RINCIAN REFERENSI PEMBENTUK SHU ── */}
@@ -3472,7 +3580,8 @@ function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
   const urlTab: 'cashflow' | 'shu' | null =
     rawTab === 'shu' || rawTab === 'cashflow' ? rawTab : null;
   const urlSearch = (searchParams.get('search') || '').trim();
-  const urlRef = (searchParams.get('ref') || urlSearch).trim();
+  const urlOpenRef = (searchParams.get('openRef') || '').trim();
+  const urlRef = (searchParams.get('ref') || urlSearch || urlOpenRef).trim();
   const urlReceipt = (searchParams.get('receipt') || '').trim();
   const rawDate = (searchParams.get('date') || '').trim();
   const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : '';
@@ -3482,8 +3591,16 @@ function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
     next.delete('tab');
     next.delete('ref');
     next.delete('search');
+    next.delete('openRef');
     next.delete('receipt');
     next.delete('date');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const handleClearOpenRef = useCallback(() => {
+    if (!searchParams.has('openRef')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('openRef');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -3494,7 +3611,9 @@ function LaporanKeuanganWithRouter(props: LaporanKeuanganProps) {
       urlRef={urlRef}
       urlReceipt={urlReceipt}
       urlDate={urlDate}
+      urlOpenRef={urlOpenRef}
       onClearUrlParams={handleClearUrlParams}
+      onClearOpenRef={handleClearOpenRef}
     />
   );
 }

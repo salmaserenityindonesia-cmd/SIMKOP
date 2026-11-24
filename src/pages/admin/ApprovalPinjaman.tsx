@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useInRouterContext, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { loanService, LoanApplicationStatusTab, LoanType, isGoodsMarkupLoan } from '../../services/loanService';
 import { Loader2, CheckCircle, XCircle, Download, FileText, Eye, Search, ChevronLeft, ChevronRight, RotateCcw, AlertTriangle, X, BookOpen } from 'lucide-react';
@@ -60,22 +61,33 @@ interface ApprovalPinjamanProps {
   initialCounts?: { pending: number; approved: number };
 }
 
-export default function ApprovalPinjaman({
+interface ApprovalPinjamanContentProps extends ApprovalPinjamanProps {
+  urlTab?: LoanApplicationStatusTab | null;
+  urlLoanNo?: string;
+  urlOpenDetail?: boolean;
+  onClearOpenDetail?: () => void;
+}
+
+function ApprovalPinjamanContent({
   initialTab = 'PENDING',
   initialPinjamanList,
-  initialCounts
-}: ApprovalPinjamanProps = {}) {
+  initialCounts,
+  urlTab = null,
+  urlLoanNo = '',
+  urlOpenDetail = false,
+  onClearOpenDetail,
+}: ApprovalPinjamanContentProps = {}) {
   const { showToast, showConfirm } = useFeedback();
   const [pinjamanList, setPinjamanList] = useState<any[]>(initialPinjamanList || []);
   const [loading, setLoading] = useState(initialPinjamanList === undefined);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<LoanApplicationStatusTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<LoanApplicationStatusTab>(urlTab ?? initialTab);
   const [counts, setCounts] = useState<{ pending: number; approved: number }>(
     initialCounts || { pending: 0, approved: 0 }
   );
   const [selectedLoanIdForModal, setSelectedLoanIdForModal] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>(urlLoanNo || '');
   const [selectedLoanTypeFilter, setSelectedLoanTypeFilter] = useState<string>('ALL');
   const [startDateFilter, setStartDateFilter] = useState<string>('');
   const [endDateFilter, setEndDateFilter] = useState<string>('');
@@ -124,6 +136,40 @@ export default function ApprovalPinjaman({
       setLoadingJournalLoanId(null);
     }
   };
+
+  const urlDeepLinkKey = `${urlTab ?? ''}|${urlLoanNo}|${urlOpenDetail ? '1' : '0'}`;
+  const appliedUrlKeyRef = useRef<string>(urlDeepLinkKey);
+  const lastAutoOpenedLoanKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    if (urlDeepLinkKey === appliedUrlKeyRef.current) return;
+    appliedUrlKeyRef.current = urlDeepLinkKey;
+    lastAutoOpenedLoanKeyRef.current = '';
+
+    if (urlTab) {
+      setActiveTab(urlTab);
+    }
+    if (urlLoanNo) {
+      setSearchQuery(urlLoanNo);
+    }
+  }, [urlDeepLinkKey, urlTab, urlLoanNo]);
+
+  useEffect(() => {
+    if (!urlOpenDetail || !urlLoanNo || loading) return;
+    if (urlTab && activeTab !== urlTab) return;
+
+    const normalizedTarget = urlLoanNo.trim().toLowerCase();
+    const openKey = `${activeTab}|${normalizedTarget}`;
+    if (lastAutoOpenedLoanKeyRef.current === openKey) return;
+
+    const matchedLoan = pinjamanList.find(
+      (item) => String(item?.loan_number || '').trim().toLowerCase() === normalizedTarget
+    );
+    if (matchedLoan?.id) {
+      lastAutoOpenedLoanKeyRef.current = openKey;
+      setSelectedLoanIdForModal(String(matchedLoan.id));
+    }
+  }, [urlOpenDetail, urlLoanNo, loading, pinjamanList, activeTab, urlTab]);
 
   useEffect(() => {
     if (initialPinjamanList === undefined) {
@@ -476,6 +522,7 @@ export default function ApprovalPinjaman({
             type="button"
             data-testid="tab-pending"
             onClick={() => {
+              onClearOpenDetail?.();
               setActiveTab('PENDING');
               loadData('PENDING');
             }}
@@ -496,6 +543,7 @@ export default function ApprovalPinjaman({
             type="button"
             data-testid="tab-approved"
             onClick={() => {
+              onClearOpenDetail?.();
               setActiveTab('APPROVED');
               loadData('APPROVED');
             }}
@@ -516,6 +564,7 @@ export default function ApprovalPinjaman({
             type="button"
             data-testid="tab-all"
             onClick={() => {
+              onClearOpenDetail?.();
               setActiveTab('ALL');
               loadData('ALL');
             }}
@@ -844,7 +893,10 @@ export default function ApprovalPinjaman({
       <LoanDetailModal
         isOpen={selectedLoanIdForModal !== null}
         loanId={selectedLoanIdForModal}
-        onClose={() => setSelectedLoanIdForModal(null)}
+        onClose={() => {
+          setSelectedLoanIdForModal(null);
+          onClearOpenDetail?.();
+        }}
         onSuccess={() => loadData(activeTab)}
         onOpenCashFlowJournal={
           activeTab === 'APPROVED' || activeTab === 'ALL' ? handleOpenLoanJournal : undefined
@@ -965,4 +1017,45 @@ export default function ApprovalPinjaman({
       )}
     </AdminLayout>
   );
+}
+
+function ApprovalPinjamanWithRouter(props: ApprovalPinjamanProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = (searchParams.get('tab') || '').trim().toLowerCase();
+  const urlTab: LoanApplicationStatusTab | null =
+    rawTab === 'history' || rawTab === 'all'
+      ? 'ALL'
+      : rawTab === 'approved'
+        ? 'APPROVED'
+        : rawTab === 'pending'
+          ? 'PENDING'
+          : null;
+  const urlLoanNo = (searchParams.get('loanNo') || '').trim();
+  const rawOpenDetail = (searchParams.get('openDetail') || '').trim().toLowerCase();
+  const urlOpenDetail = rawOpenDetail === '1' || rawOpenDetail === 'true';
+
+  const handleClearOpenDetail = useCallback(() => {
+    if (!searchParams.has('openDetail')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('openDetail');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  return (
+    <ApprovalPinjamanContent
+      {...props}
+      urlTab={urlTab}
+      urlLoanNo={urlLoanNo}
+      urlOpenDetail={urlOpenDetail}
+      onClearOpenDetail={handleClearOpenDetail}
+    />
+  );
+}
+
+export default function ApprovalPinjaman(props: ApprovalPinjamanProps = {}) {
+  const inRouter = useInRouterContext();
+  if (inRouter) {
+    return <ApprovalPinjamanWithRouter {...props} />;
+  }
+  return <ApprovalPinjamanContent {...props} />;
 }

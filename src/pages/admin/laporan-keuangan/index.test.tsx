@@ -18,6 +18,7 @@ import LaporanKeuangan, {
   getNormalizedCategoryLabel,
   buildStartDateBoundaryIso,
   formatDateDdMmYyyy,
+  resolveJumpPage,
   computeOpeningBalanceFromRows,
   type CashFlowTransaction,
 } from './index';
@@ -136,7 +137,7 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('Konfirmasi Reset');
   });
 
-  it('renders pagination controls (10/25/50/100 rows, Prev/Next) for Mutasi Arus Kas Terperinci', () => {
+  it('renders pagination controls (10/25/50/100 rows, First/Prev, jump input, Next/Last) for Mutasi Arus Kas Terperinci', () => {
     const html = renderToStaticMarkup(<LaporanKeuangan />);
 
     expect(html).toContain('Mutasi Arus Kas Terperinci');
@@ -145,9 +146,25 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(html).toContain('25 / halaman');
     expect(html).toContain('50 / halaman');
     expect(html).toContain('100 / halaman');
+    expect(html).toContain('title="Halaman Pertama"');
     expect(html).toContain('Prev');
+    expect(html).toContain('Halaman');
+    expect(html).toContain('aria-label="Nomor halaman tujuan"');
+    expect(html).toContain('type="number"');
+    expect(html).toContain('value="1"');
+    expect(html).toContain('/ 1');
     expect(html).toContain('Next');
-    expect(html).toContain('Halaman 1 / 1');
+    expect(html).toContain('title="Halaman Terakhir"');
+  });
+
+  it('resolveJumpPage clamps out-of-range numbers and falls back on invalid input', () => {
+    expect(resolveJumpPage('150', 46, 210)).toBe(150);
+    expect(resolveJumpPage(' 25 ', 46, 210)).toBe(25);
+    expect(resolveJumpPage('999', 46, 210)).toBe(210);
+    expect(resolveJumpPage('0', 46, 210)).toBe(1);
+    expect(resolveJumpPage('-5', 46, 210)).toBe(1);
+    expect(resolveJumpPage('', 46, 210)).toBe(46);
+    expect(resolveJumpPage('abc', 46, 210)).toBe(46);
   });
 
   it('renders SALDO_AWAL_SIMPANAN category badge cleanly as "Saldo Awal Simpanan (Cut-Off)" with indigo styling', () => {
