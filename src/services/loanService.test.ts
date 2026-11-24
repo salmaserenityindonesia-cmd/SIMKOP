@@ -830,6 +830,170 @@ describe('loanService', () => {
       expect(loanUpdatePayload.status).toBe('paid_off');
       expect(loanUpdatePayload.sisa_pinjaman).toBe(0);
     });
+
+    it('should record actual paid_amount on overpayment and deduct excess tail-first from subsequent schedules', async () => {
+      const mockSupabase = supabase.from as any;
+
+      const scheduleUpdates: Array<{ id: string; payload: any }> = [];
+      let loanUpdatePayload: any = null;
+
+      // 1. Single schedule (Period 1)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'sch-1',
+                period_number: 1,
+                target_amount: 673334,
+                paid_amount: 0,
+                status: 'unpaid',
+                principal_portion: 666667,
+                margin_portion: 6667,
+              },
+              error: null,
+            }),
+          }),
+        }),
+      }));
+
+      // 2. Update Period 1 with real paid_amount = 1000000
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => ({
+          eq: vi.fn().mockImplementation((_col, id) => {
+            scheduleUpdates.push({ id, payload });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }));
+
+      // 3. Insert into loan_repayments
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockResolvedValue({ error: null }),
+      }));
+
+      // 4. Fetch future unpaid/partial schedules ordered DESC (tail-first)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            gt: () => ({
+              neq: () => ({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'sch-3',
+                      period_number: 3,
+                      target_amount: 673332,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      principal_portion: 666666,
+                      margin_portion: 6666,
+                    },
+                    {
+                      id: 'sch-2',
+                      period_number: 2,
+                      target_amount: 673334,
+                      paid_amount: 0,
+                      status: 'unpaid',
+                      principal_portion: 666667,
+                      margin_portion: 6667,
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        }),
+      }));
+
+      // 5. Update Period 3 target_amount = 346666 with proportional portions
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => ({
+          eq: vi.fn().mockImplementation((_col, id) => {
+            scheduleUpdates.push({ id, payload });
+            return Promise.resolve({ error: null });
+          }),
+        })),
+      }));
+
+      // 6. All schedules for parent balance recalculation
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'sch-1', target_amount: 673334, paid_amount: 1000000, status: 'paid' },
+              { id: 'sch-2', target_amount: 673334, paid_amount: 0, status: 'unpaid' },
+              { id: 'sch-3', target_amount: 346666, paid_amount: 0, status: 'unpaid' },
+            ],
+            error: null,
+          }),
+        }),
+      }));
+
+      // 7. Loan parent info (LN2611-0002)
+      mockSupabase.mockImplementationOnce(() => ({
+        select: () => ({
+          eq: () => ({
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'loan-ln2611',
+                loan_number: 'LN2611-0002',
+                amount: 2020000,
+                principal_amount: 2020000,
+                cost_price: 2000000,
+                markup_amount: 20000,
+                status: 'active',
+                member_id: 'm-1',
+              },
+              error: null,
+            }),
+          }),
+        }),
+      }));
+
+      // 8. Update loan parent sisa_pinjaman = 1020000
+      mockSupabase.mockImplementationOnce(() => ({
+        update: vi.fn().mockImplementation((payload) => {
+          loanUpdatePayload = payload;
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }),
+      }));
+
+      // 9. Cash flow insert
+      mockSupabase.mockImplementationOnce(() => ({
+        insert: vi.fn().mockResolvedValue({ error: null }),
+      }));
+
+      const res = await loanService.paySchedule('loan-ln2611', 'sch-1', 1000000, 'CASH');
+
+      expect(res.success).toBe(true);
+      expect(res.newStatus).toBe('paid');
+      expect(res.newPaidTotal).toBe(1000000);
+      expect(res.sisaPinjaman).toBe(1020000);
+      expect(res.isAllPaid).toBe(false);
+
+      expect(scheduleUpdates).toEqual([
+        {
+          id: 'sch-1',
+          payload: { paid_amount: 1000000, status: 'paid' },
+        },
+        {
+          id: 'sch-3',
+          payload: {
+            target_amount: 346666,
+            status: 'unpaid',
+            principal_portion: 343234,
+            margin_portion: 3432,
+          },
+        },
+      ]);
+
+      expect(loanUpdatePayload.status).toBe('active');
+      expect(loanUpdatePayload.sisa_pinjaman).toBe(1020000);
+    });
   });
 
   describe('fullPayoff', () => {

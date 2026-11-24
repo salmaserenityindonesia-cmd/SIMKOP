@@ -133,6 +133,43 @@ export function getInstallmentPeriodStatus(
   };
 }
 
+export function computeScheduleDisplayPortions(
+  item: any,
+  pinjaman?: any
+): { principalPortion: number; marginPortion: number } {
+  const targetAmt = Math.max(0, Math.round(Number(item?.target_amount ?? item?.targetAmount ?? 0)));
+  const rawPrincipal = Math.max(0, Math.round(Number(item?.principal_portion ?? 0)));
+  const rawMargin = Math.max(0, Math.round(Number(item?.margin_portion ?? 0)));
+  const rawSum = rawPrincipal + rawMargin;
+
+  if (rawMargin > 0) {
+    if (rawSum > 0 && Math.abs(rawSum - targetAmt) <= 1) {
+      return { principalPortion: rawPrincipal, marginPortion: rawMargin };
+    }
+    if (rawSum > 0 && targetAmt > 0) {
+      const marginPortion = Math.min(targetAmt, Math.round((targetAmt * rawMargin) / rawSum));
+      return {
+        principalPortion: Math.max(0, targetAmt - marginPortion),
+        marginPortion,
+      };
+    }
+  }
+
+  const loanMarkup = Math.max(0, Math.round(Number(pinjaman?.markup_amount || 0)));
+  if (isGoodsMarkupLoan(pinjaman) && loanMarkup > 0 && targetAmt > 0) {
+    const totalAkad = Math.round(Number(pinjaman?.principal_amount || pinjaman?.amount || 0));
+    if (totalAkad > 0) {
+      const marginPortion = Math.min(targetAmt, Math.round((targetAmt * loanMarkup) / totalAkad));
+      return {
+        principalPortion: Math.max(0, targetAmt - marginPortion),
+        marginPortion,
+      };
+    }
+  }
+
+  return { principalPortion: targetAmt, marginPortion: 0 };
+}
+
 // Helper modal for partial payments
 function PartialPaymentModal({ 
   isOpen, 
@@ -285,21 +322,47 @@ export default function LoanDetailModal({
         loanService.getLoanSchedules(targetId)
       ]);
       const safeSchedules = schedulesData || [];
+      let finalSchedules = safeSchedules;
       let normalizedPinjaman = pinjamanData;
 
-      if (pinjamanData && safeSchedules.length > 0) {
-        const rawStatus = String(pinjamanData.status || '').trim().toLowerCase();
-        const totalPaidAmt = safeSchedules.reduce((sum: number, s: any) => sum + Number(s.paid_amount || 0), 0);
-        const totalTargetAmt = safeSchedules.reduce((sum: number, s: any) => sum + Number(s.target_amount || 0), 0);
-        const principalAmt = Number(pinjamanData.principal_amount || pinjamanData.amount || totalTargetAmt);
+      if (
+        pinjamanData &&
+        finalSchedules.length > 0 &&
+        typeof loanService.reconcileOverpaidSchedules === 'function'
+      ) {
+        try {
+          const reconciled = await loanService.reconcileOverpaidSchedules(
+            targetId,
+            pinjamanData,
+            finalSchedules
+          );
+          if (reconciled?.repaired) {
+            finalSchedules = reconciled.schedules;
+            if (reconciled.sisaPinjaman !== undefined) {
+              normalizedPinjaman = {
+                ...pinjamanData,
+                sisa_pinjaman: reconciled.sisaPinjaman,
+              };
+            }
+          }
+        } catch {
+          // Non-blocking reconciliation fallback
+        }
+      }
+
+      if (normalizedPinjaman && finalSchedules.length > 0) {
+        const rawStatus = String(normalizedPinjaman.status || '').trim().toLowerCase();
+        const totalPaidAmt = finalSchedules.reduce((sum: number, s: any) => sum + Number(s.paid_amount || 0), 0);
+        const totalTargetAmt = finalSchedules.reduce((sum: number, s: any) => sum + Number(s.target_amount || 0), 0);
+        const principalAmt = Number(normalizedPinjaman.principal_amount || normalizedPinjaman.amount || totalTargetAmt);
         const computedSisa = Math.max(0, principalAmt - totalPaidAmt);
 
         if (
           COMPLETED_CONTRACT_STATUSES.has(rawStatus) &&
-          resolveLoanContractStatus(pinjamanData, safeSchedules, computedSisa) === 'berjalan'
+          resolveLoanContractStatus(normalizedPinjaman, finalSchedules, computedSisa) === 'berjalan'
         ) {
           normalizedPinjaman = {
-            ...pinjamanData,
+            ...normalizedPinjaman,
             status: 'active',
             sisa_pinjaman: computedSisa,
           };
@@ -317,7 +380,7 @@ export default function LoanDetailModal({
       }
 
       setPinjaman(normalizedPinjaman);
-      setSchedules(safeSchedules);
+      setSchedules(finalSchedules);
     } catch (err: any) {
       setError(err.message || 'Gagal memuat detail pinjaman');
     } finally {
@@ -559,6 +622,7 @@ export default function LoanDetailModal({
                     <tbody className="divide-y divide-gray-100">
                       {schedule.map((item) => {
                         const statusInfo = getInstallmentPeriodStatus(item);
+                        const { principalPortion, marginPortion } = computeScheduleDisplayPortions(item, pinjaman);
                         return (
                         <tr key={item.id} className="hover:bg-gray-50/50">
                           <td className="px-4 py-3 text-gray-900 font-medium text-center">
@@ -569,9 +633,9 @@ export default function LoanDetailModal({
                           </td>
                           <td className="px-4 py-3 text-gray-600">
                             <div>Rp {Number(item.target_amount).toLocaleString('id-ID')}</div>
-                            {Number(item.margin_portion || 0) > 0 && (
+                            {marginPortion > 0 && (
                               <div className="text-[11px] text-teal-700">
-                                Pokok Rp {Number(item.principal_portion || 0).toLocaleString('id-ID')} + Margin Rp {Number(item.margin_portion || 0).toLocaleString('id-ID')}
+                                Pokok Rp {principalPortion.toLocaleString('id-ID')} + Margin Rp {marginPortion.toLocaleString('id-ID')}
                               </div>
                             )}
                           </td>

@@ -1982,14 +1982,14 @@ export const loanService = {
 
     if (schErr || !schedule) throw schErr || new Error('Jadwal angsuran tidak ditemukan');
 
-    // 2. Hitung total bayar baru HANYA untuk baris ini
+    // 2. Hitung total bayar baru HANYA untuk baris ini (simpan nilai riil meskipun melebihi target)
     const paymentAmountClean = Math.round(Number(paymentAmount));
     const currentPaid = Math.round(Number(schedule.paid_amount || 0));
     const newPaid = currentPaid + paymentAmountClean;
     const target = Math.round(Number(schedule.target_amount || 0));
     // Beri toleransi pembulatan +/- 5 Rupiah untuk pelunasan akhir
     const isFullyPaid = (newPaid >= target) || (Math.abs(target - newPaid) <= 5);
-    const newPaidTotal = isFullyPaid ? target : newPaid;
+    const newPaidTotal = newPaid >= target ? newPaid : (isFullyPaid ? target : newPaid);
     const newStatus: 'paid' | 'partial' | 'unpaid' = isFullyPaid ? 'paid' : (newPaidTotal > 0 ? 'partial' : 'unpaid');
 
     const scheduleMarginPortion = Number((schedule as any).margin_portion || 0);
@@ -2001,7 +2001,7 @@ export const loanService = {
     });
     const hasMarginSplit = portions.marginPortion > 0 || scheduleMarginPortion > 0;
 
-    // 3. Lakukan UPDATE HANYA pada satu baris jadwal tersebut (ISOLASI KETAT)
+    // 3. Lakukan UPDATE pada baris jadwal terpilih dengan paid_amount riil
     const { error: updateErr } = await supabase
       .from('loan_schedules')
       .update({
@@ -2040,6 +2040,83 @@ export const loanService = {
 
     if (repayErr) throw new Error(repayErr.message || 'Gagal mencatat mutasi pembayaran');
 
+    // 4b. Jika terjadi pembayaran lebih (overpayment), kurangkan ke sisa jadwal berikutnya dari belakang ke depan
+    const overpayment = Math.max(0, newPaidTotal - target);
+    if (overpayment > 0) {
+      const currentPeriod = Number((schedule as any).period_number || 0);
+      let { data: futureSchedules, error: futureErr } = await supabase
+        .from('loan_schedules')
+        .select('id, period_number, target_amount, paid_amount, status, principal_portion, margin_portion')
+        .eq('loan_id', loanId)
+        .gt('period_number', currentPeriod)
+        .neq('status', 'paid')
+        .order('period_number', { ascending: false });
+
+      if (futureErr && isMissingColumnError(futureErr)) {
+        const fbFuture = await supabase
+          .from('loan_schedules')
+          .select('id, period_number, target_amount, paid_amount, status')
+          .eq('loan_id', loanId)
+          .gt('period_number', currentPeriod)
+          .neq('status', 'paid')
+          .order('period_number', { ascending: false });
+        futureSchedules = fbFuture.data as any;
+        futureErr = fbFuture.error;
+      }
+
+      if (!futureErr && Array.isArray(futureSchedules)) {
+        let remainingDeduction = overpayment;
+        for (const fSch of futureSchedules) {
+          if (remainingDeduction <= 0) break;
+          const fTarget = Math.round(Number(fSch.target_amount || 0));
+          const fPaid = Math.round(Number(fSch.paid_amount || 0));
+          const fRemaining = Math.max(0, fTarget - fPaid);
+          if (fRemaining <= 0) continue;
+
+          const deduct = Math.min(remainingDeduction, fRemaining);
+          const updatedTarget = Math.max(0, fTarget - deduct);
+          remainingDeduction -= deduct;
+
+          const fMarginRaw = Number((fSch as any).margin_portion || 0);
+          const hasPortions = (fSch as any).principal_portion !== undefined || fMarginRaw > 0;
+          const updatedMargin =
+            fMarginRaw > 0 && fTarget > 0
+              ? Math.min(updatedTarget, Math.round((updatedTarget * fMarginRaw) / fTarget))
+              : 0;
+          const updatedPrincipal = Math.max(0, updatedTarget - updatedMargin);
+          const futureStatus: 'paid' | 'partial' | 'unpaid' =
+            updatedTarget <= fPaid ? 'paid' : (fPaid > 0 ? 'partial' : 'unpaid');
+
+          const futureUpdatePayload: Record<string, any> = {
+            target_amount: updatedTarget,
+            status: futureStatus,
+          };
+          if (hasPortions) {
+            futureUpdatePayload.principal_portion = updatedPrincipal;
+            futureUpdatePayload.margin_portion = updatedMargin;
+          }
+
+          let { error: futureUpdErr } = await supabase
+            .from('loan_schedules')
+            .update(futureUpdatePayload)
+            .eq('id', fSch.id);
+
+          if (futureUpdErr && hasPortions && isMissingColumnError(futureUpdErr)) {
+            const { principal_portion: _pp, margin_portion: _mp, ...legacyFuturePayload } = futureUpdatePayload;
+            const retryFutureUpd = await supabase
+              .from('loan_schedules')
+              .update(legacyFuturePayload)
+              .eq('id', fSch.id);
+            futureUpdErr = retryFutureUpd.error;
+          }
+
+          if (futureUpdErr) {
+            throw new Error(futureUpdErr.message || 'Gagal memperbarui sisa jadwal angsuran berikutnya');
+          }
+        }
+      }
+    }
+
     // 5. Perbarui nilai akumulasi pinjaman induk (loans)
     const { data: allSchedules, error: allSchedulesErr } = await supabase
       .from('loan_schedules')
@@ -2062,16 +2139,18 @@ export const loanService = {
         loanData = fbLoan.data as any;
       }
 
-      const principalAmount = Number(loanData?.principal_amount || loanData?.amount || 0);
+      const principalAmount = Math.round(Number(loanData?.principal_amount || loanData?.amount || 0));
       const totalPaidAll = allSchedules.reduce((sum, s) => {
-        const val = s.id === scheduleId ? newPaidTotal : Number(s.paid_amount || 0);
+        const val = s.id === scheduleId ? newPaidTotal : Math.round(Number(s.paid_amount || 0));
         return sum + val;
       }, 0);
 
       const sisaPinjaman = Math.max(0, principalAmount - totalPaidAll);
-      const isAllPaid = allSchedules.every(s => 
-        s.id === scheduleId ? newStatus === 'paid' : (s.status === 'paid' || Math.round(Number(s.paid_amount || 0)) >= Math.round(Number(s.target_amount || 0)) || Math.abs(Math.round(Number(s.target_amount || 0)) - Math.round(Number(s.paid_amount || 0))) <= 5)
-      );
+      const isAllPaid =
+        sisaPinjaman <= 0 ||
+        allSchedules.every(s => 
+          s.id === scheduleId ? newStatus === 'paid' : (s.status === 'paid' || Math.round(Number(s.paid_amount || 0)) >= Math.round(Number(s.target_amount || 0)) || Math.abs(Math.round(Number(s.target_amount || 0)) - Math.round(Number(s.paid_amount || 0))) <= 5)
+        );
 
       const newLoanStatus: 'paid_off' | 'active' = isAllPaid ? 'paid_off' : 'active';
 
@@ -2080,7 +2159,8 @@ export const loanService = {
         .from('loans')
         .update({
           status: newLoanStatus,
-          sisa_pinjaman: sisaPinjaman
+          sisa_pinjaman: sisaPinjaman,
+          updated_at: new Date().toISOString(),
         })
         .eq('id', loanId);
 
@@ -2450,6 +2530,147 @@ export const loanService = {
     }
     
     return { success: true };
+  },
+
+  /**
+   * Rekonsiliasi ringan untuk jadwal berstatus paid yang memiliki pembayaran lebih di loan_repayments
+   * namun paid_amount & sisa jadwal berikutnya belum tersinkronisasi (mis. kontrak LN2611-0002).
+   */
+  async reconcileOverpaidSchedules(
+    loanId: string,
+    loanData: any,
+    schedules: any[]
+  ): Promise<{ schedules: any[]; sisaPinjaman?: number; repaired: boolean }> {
+    if (!loanId || !Array.isArray(schedules) || schedules.length === 0) {
+      return { schedules: schedules || [], repaired: false };
+    }
+
+    try {
+      const repayTable: any = supabase.from('loan_repayments');
+      if (!repayTable || typeof repayTable.select !== 'function') {
+        return { schedules, repaired: false };
+      }
+
+      const { data: repayments, error: repayErr } = await repayTable
+        .select('schedule_id, amount_paid')
+        .eq('loan_id', loanId);
+
+      if (repayErr || !Array.isArray(repayments) || repayments.length === 0) {
+        return { schedules, repaired: false };
+      }
+
+      const repaidBySchedule = new Map<string, number>();
+      for (const r of repayments) {
+        if (!r?.schedule_id) continue;
+        const key = String(r.schedule_id);
+        repaidBySchedule.set(key, (repaidBySchedule.get(key) || 0) + Math.round(Number(r.amount_paid || 0)));
+      }
+
+      const working = schedules
+        .map((s) => ({ ...s }))
+        .sort((a, b) => Number(a.period_number || 0) - Number(b.period_number || 0));
+
+      let repaired = false;
+      for (const sch of working) {
+        if (String(sch.status || '').trim().toLowerCase() !== 'paid') continue;
+        const repaidSum = Math.round(repaidBySchedule.get(String(sch.id)) || 0);
+        const recordedPaid = Math.round(Number(sch.paid_amount || 0));
+        if (repaidSum <= recordedPaid) continue;
+
+        const delta = repaidSum - recordedPaid;
+        sch.paid_amount = repaidSum;
+        repaired = true;
+
+        await supabase
+          .from('loan_schedules')
+          .update({ paid_amount: repaidSum })
+          .eq('id', sch.id);
+
+        let remainingDeduction = delta;
+        const futureDescending = working
+          .filter(
+            (f) =>
+              Number(f.period_number || 0) > Number(sch.period_number || 0) &&
+              String(f.status || '').trim().toLowerCase() !== 'paid'
+          )
+          .sort((a, b) => Number(b.period_number || 0) - Number(a.period_number || 0));
+
+        for (const fSch of futureDescending) {
+          if (remainingDeduction <= 0) break;
+          const fTarget = Math.round(Number(fSch.target_amount || 0));
+          const fPaid = Math.round(Number(fSch.paid_amount || 0));
+          const fRemaining = Math.max(0, fTarget - fPaid);
+          if (fRemaining <= 0) continue;
+
+          const deduct = Math.min(remainingDeduction, fRemaining);
+          const updatedTarget = Math.max(0, fTarget - deduct);
+          remainingDeduction -= deduct;
+
+          const fMarginRaw = Number(fSch.margin_portion || 0);
+          const hasPortions = fSch.principal_portion !== undefined || fMarginRaw > 0;
+          const updatedMargin =
+            fMarginRaw > 0 && fTarget > 0
+              ? Math.min(updatedTarget, Math.round((updatedTarget * fMarginRaw) / fTarget))
+              : 0;
+          const updatedPrincipal = Math.max(0, updatedTarget - updatedMargin);
+          const futureStatus: 'paid' | 'partial' | 'unpaid' =
+            updatedTarget <= fPaid ? 'paid' : (fPaid > 0 ? 'partial' : 'unpaid');
+
+          fSch.target_amount = updatedTarget;
+          fSch.status = futureStatus;
+          if (hasPortions) {
+            fSch.principal_portion = updatedPrincipal;
+            fSch.margin_portion = updatedMargin;
+          }
+
+          const updPayload: Record<string, any> = {
+            target_amount: updatedTarget,
+            status: futureStatus,
+          };
+          if (hasPortions) {
+            updPayload.principal_portion = updatedPrincipal;
+            updPayload.margin_portion = updatedMargin;
+          }
+
+          const updRes = await supabase
+            .from('loan_schedules')
+            .update(updPayload)
+            .eq('id', fSch.id);
+
+          if (updRes?.error && hasPortions && isMissingColumnError(updRes.error)) {
+            const { principal_portion: _pp, margin_portion: _mp, ...legacyPayload } = updPayload;
+            await supabase
+              .from('loan_schedules')
+              .update(legacyPayload)
+              .eq('id', fSch.id);
+          }
+        }
+      }
+
+      if (!repaired) {
+        return { schedules, repaired: false };
+      }
+
+      const totalPaidAll = working.reduce((sum, s) => sum + Math.round(Number(s.paid_amount || 0)), 0);
+      const totalAkad = Math.round(Number(loanData?.principal_amount || loanData?.amount || 0));
+      const sisaPinjaman = Math.max(0, totalAkad - totalPaidAll);
+      const isAllPaid =
+        sisaPinjaman <= 0 ||
+        working.every((s) => String(s.status || '').trim().toLowerCase() === 'paid');
+
+      await supabase
+        .from('loans')
+        .update({
+          sisa_pinjaman: sisaPinjaman,
+          status: isAllPaid ? 'paid_off' : 'active',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', loanId);
+
+      return { schedules: working, sisaPinjaman, repaired: true };
+    } catch {
+      return { schedules, repaired: false };
+    }
   },
 
   getLoanSettings,

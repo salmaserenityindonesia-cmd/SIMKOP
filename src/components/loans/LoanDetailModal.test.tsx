@@ -266,4 +266,63 @@ describe('LoanDetailModal Component', () => {
     );
     expect(htmlPending).not.toContain('data-testid="btn-open-loan-journal"');
   });
+
+  it('displays accurate overpayment paid_amount, remaining balance, and proportional Pokok/Margin breakdown for LN2611-0002', () => {
+    const html = renderToStaticMarkup(
+      <LoanDetailModal
+        isOpen={true}
+        loanId="loan-ln2611"
+        onClose={vi.fn()}
+        initialPinjaman={{
+          id: 'loan-ln2611',
+          loan_number: 'LN2611-0002',
+          status: 'active',
+          principal_amount: 2020000,
+          amount: 2020000,
+          cost_price: 2000000,
+          markup_amount: 20000,
+          tenor: 3,
+          sisa_pinjaman: 1020000,
+          item_description: 'Kulkas',
+        }}
+        initialSchedules={[
+          {
+            id: 'sch-1',
+            period_number: 1,
+            due_date: '2026-12-24',
+            target_amount: 673334,
+            principal_portion: 666667,
+            margin_portion: 6667,
+            paid_amount: 1000000,
+            status: 'paid',
+          },
+          {
+            id: 'sch-2',
+            period_number: 2,
+            due_date: '2027-01-24',
+            target_amount: 673334,
+            principal_portion: 666667,
+            margin_portion: 6667,
+            paid_amount: 0,
+            status: 'unpaid',
+          },
+          {
+            id: 'sch-3',
+            period_number: 3,
+            due_date: '2027-02-24',
+            target_amount: 346666,
+            principal_portion: 666666,
+            margin_portion: 6666,
+            paid_amount: 0,
+            status: 'unpaid',
+          },
+        ]}
+      />
+    );
+
+    expect(html).toContain('Rp 1.020.000');
+    expect(html).toContain('Rp 1.000.000');
+    expect(html).toContain('Rp 346.666');
+    expect(html).toContain('Pokok Rp 343.234 + Margin Rp 3.432');
+  });
 });
