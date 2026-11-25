@@ -1713,6 +1713,24 @@ updated: 2026-10-30T20:50:00+07:00
 
 ---
 
+### Phase 97: Otomatisasi Pencatatan Kwitansi Per Periode & Validasi Tanggal/Status Saat Import Excel Saldo Awal Pinjaman serta Sinkronisasi Data Existing
+**Status:** ✅ Complete
+**Objective:** Mencegah terulangnya ketidaksinkronan antara `/admin/laporan-pinjaman-lunas`, `/admin/loan-matrix`, dan `/admin/laporan-keuangan` (tab **Estimasi SHU Berjalan**) dengan memastikan guard tanggal pembayaran `<= today` saat impor Excel Saldo Awal Pinjaman (`syncInitialLoanBalances` di `src/services/loanService.ts`), melakukan backfill idempoten `loan_repayments` (`SALDO_AWAL_MIGRASI`) tanpa *double counting* ke `cash_flow` serta guard tanggal lunas `<= today` pada `src/services/paidOffLoansReportService.ts`, dan menerapkan paginasi penuh (`fetchAllPaginatedSafe`) pada `getShuEstimation` di `src/pages/admin/laporan-keuangan/index.tsx`.
+**Depends on:** Phase 96
+
+**Plans:**
+- [x] Plan 97.1: Wave 1 - Guard Tanggal Pembayaran (`<= today`) & Invarian Status/Kwitansi pada `syncInitialLoanBalances` (`src/services/loanService.ts`)
+- [x] Plan 97.2: Wave 2 - Backfill Idempoten Kwitansi Migrasi (Tanpa `cash_flow`), Pembersihan Gelondongan & Guard `paidOffDate <= today` (`src/services/paidOffLoansReportService.ts`)
+- [x] Plan 97.3: Wave 2 - Paginasi Penuh (`fetchAllPaginatedSafe`) & ID Chunking pada `getShuEstimation` (`src/pages/admin/laporan-keuangan/index.tsx`)
+- [x] Plan 97.4: Wave 3 - Verifikasi Terpadu Vitest, `tsc --noEmit`, dan `npm run build`
+
+**Deliverables:**
+- Pembatasan tanggal `payment_date` & `cash_flow.created_at` maksimal hari ini (`<= today`) pada `src/services/loanService.ts` + regression test di `src/utils/initialLoansParser.test.ts`
+- Backfill idempoten ber-lock untuk `loan_repayments` (`SALDO_AWAL_MIGRASI`), pembersihan baris gelondongan `SALDO_AWAL`, dan pembatasan `paidOffDate <= today` di `src/services/paidOffLoansReportService.ts` + test di `src/pages/admin/LaporanPinjamanLunas.test.tsx`
+- Paginasi penuh `fetchAllPaginatedSafe` dan ID chunking di `src/pages/admin/laporan-keuangan/index.tsx` (`getShuEstimation`) + test di `src/pages/admin/laporan-keuangan/index.test.tsx`
+
+---
+
 ## Wave Execution Plan
 
 | Wave | Phases | Rationale |
@@ -1869,6 +1887,7 @@ updated: 2026-10-30T20:50:00+07:00
 | 93 | Perbaiki Cetak Lembar Settlement Kliring: 1 Halaman Ukuran F4 & Pertahankan Data Anggota Aktif | ✅ | 2/2 | 100% |
 | 94 | Sinkronisasi Otomatis Pelunasan Jadwal Angsuran saat Kliring Pengunduran Diri Anggota | ✅ | 3/3 | 100% |
 | 96 | Konsolidasi & Simulasi Tenor Angsuran Bon Toko + Buku Bantu Angsuran Bon Toko | ✅ | 4/4 | 100% |
+| 97 | Otomatisasi Pencatatan Kwitansi Per Periode, Guard Tanggal/Status Impor Pinjaman & Sinkronisasi Laporan | ✅ | 4/4 | 100% |
 
 ---
 

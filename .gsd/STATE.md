@@ -1,22 +1,17 @@
 ## Current Position
-- **Phase**: 96 (completed)
+- **Phase**: 97 (completed)
 - **Task**: All tasks complete
 - **Status**: Verified
 
 ## Last Session Summary
-Phase 96 executed successfully and verified (`PASS`, 5/5 must-haves). 4 plans, 8 tasks completed.
-- **Migrasi Database (`supabase/migrations/052_create_store_credit_installments.sql`)**:
-  - Tabel terisolasi `public.store_credit_installment_plans` dan `public.store_credit_schedules` lengkap dengan indeks, RLS policy idempoten, serta tanpa relasi ke `public.loans`.
-- **Engine Konsolidasi & Checkout (`src/services/storeCreditLedgerService.ts`, `src/services/posCheckoutService.ts`)**:
-  - `getMemberUnpaidStoreCreditSummary`, `createOrTakeoverStoreCreditPlan` (takeover `superseded` -> `active`, penyesuaian pembulatan periode terakhir), `getActiveStoreCreditPlans`, dan `payStoreCreditSchedule` (sinkron ke `store_credit_payments` melalui `settleStoreCredit`).
-  - Integrasi `processCheckout` membaca saldo belum lunas **sebelum** pencatatan penjualan baru (mencegah *double-counting*) pada jalur RPC maupun fallback.
-- **Kasir POS (`src/components/pos/SplitPaymentModal.tsx`, `src/pages/pos/index.tsx`)**:
-  - Panel sisa bon lama belum lunas, pilihan tenor `1, 2, 3, 6, 12 Bln` + `Custom` (1–60 bln), serta simulasi potong gaji per bulan real-time di bawah input **Catat Bon Toko (Potong Gaji)**.
-- **Buku Bantu Angsuran Bon Toko (`src/components/pos/StoreCreditScheduleModal.tsx`, `src/pages/admin/BukuBesarBonToko.tsx`)**:
-  - Tab **Jadwal Angsuran Bon Toko (Potong Gaji)** dan modal **Buku Bantu Angsuran Bon Toko** terpisah total dari `/admin/loan-matrix`.
-- **Verifikasi Independen (`.gsd/phases/96/VERIFICATION.md`)**:
-  - 5 file unit test Vitest (64/64 tests) lulus 100%, `npx tsc --noEmit` exit code 0, dan `npm run build` exit code 0.
+Phase 97 executed successfully and verified (`PASS`, 13/13 must-haves). 4 plans across 3 waves completed:
+- **Wave 1 (`97-1-PLAN.md`)**: Pembatasan `payment_date` dan `cash_flow.created_at` maksimal tanggal hari ini (`<= todayDate`) pada `syncInitialLoanBalances` di `src/services/loanService.ts`, lengkap dengan unit test regresi di `src/utils/initialLoansParser.test.ts`.
+- **Wave 2 (`97-2-PLAN.md` & `97-3-PLAN.md`)**:
+  - Backfill idempoten ber-lock (`in-flight lock`) untuk `loan_repayments` (`SALDO_AWAL_MIGRASI`, `KW-MIGRASI/{loan_number}/B{period_number}`) tanpa menulis `cash_flow`, pembersihan baris gelondongan `SALDO_AWAL` / `migrasi_awal`, dan guard `paidOffDate <= todayDate` di `src/services/paidOffLoansReportService.ts` + test di `src/pages/admin/LaporanPinjamanLunas.test.tsx`.
+  - Penerapan `fetchAllPaginatedSafe` dan ID chunking di `getShuEstimation` pada `src/pages/admin/laporan-keuangan/index.tsx` + unit test paginasi >1.000 baris di `src/pages/admin/laporan-keuangan/index.test.tsx`.
+- **Wave 3 & Verifikasi Independen (`.gsd/phases/97/VERIFICATION.md`)**:
+  - Seluruh unit test Vitest terdampak lulus, `npx tsc --noEmit` exit code 0, dan `npm run build` exit code 0.
 
 ## Next Steps
-1. Terapkan migrasi `supabase/migrations/052_create_store_credit_installments.sql` ke instance Supabase jika belum dijalankan di environment target.
+1. Uji alur UI di browser pada `/admin/laporan-pinjaman-lunas` dan `/admin/laporan-keuangan` (tab **Estimasi SHU Berjalan**) terhadap data Supabase aktual untuk memastikan konsistensi angka antar laporan.
 2. Lanjutkan ke kebutuhan fitur berikutnya.
