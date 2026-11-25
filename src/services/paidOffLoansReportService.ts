@@ -3,7 +3,10 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
 import { calculateRepaymentPortions } from './loanService';
-import { filterRedundantLegacySaldoAwalRepayments } from './orphanAuditService';
+import {
+  filterRedundantLegacySaldoAwalRepayments,
+  isLegacyLumpSumSaldoAwalRepayment,
+} from './orphanAuditService';
 import type { KoperasiProfile } from './settingsService';
 import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 import { fetchAllPaginatedSafe } from '../utils/supabasePagination';
@@ -134,6 +137,67 @@ function toTimestamp(dateStr?: string | null): number {
   const d = new Date(dateStr);
   const t = d.getTime();
   return isNaN(t) ? 0 : t;
+}
+
+function isValidYmdString(val: unknown): val is string {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;
+  const [y, m, d] = trimmed.split('-').map((p) => Number(p));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    !Number.isNaN(dt.getTime()) &&
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+function normalizeDateYmd(value?: string | null): string {
+  if (!value) return '';
+  const match = String(value).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!match) return '';
+  const ymd = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+  return isValidYmdString(ymd) ? ymd : '';
+}
+
+export function getLocalTodayYmd(referenceDate: Date = new Date()): string {
+  const y = referenceDate.getFullYear();
+  const m = String(referenceDate.getMonth() + 1).padStart(2, '0');
+  const d = String(referenceDate.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function clampIsoOrYmdToToday(
+  rawDate: string | null | undefined,
+  todayYmd: string = getLocalTodayYmd()
+): string | null {
+  if (!rawDate) return null;
+  const trimmed = String(rawDate).trim();
+  if (!trimmed) return null;
+
+  const safeToday = isValidYmdString(todayYmd) ? todayYmd.trim() : getLocalTodayYmd();
+
+  const ymdMatch = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(.*)$/);
+  if (ymdMatch) {
+    const datePart = `${ymdMatch[1]}-${ymdMatch[2].padStart(2, '0')}-${ymdMatch[3].padStart(2, '0')}`;
+    const rest = ymdMatch[4] || '';
+    const isIsoTimestamp = rest.startsWith('T') || /^\s+\d{2}:\d{2}/.test(rest);
+    if (isValidYmdString(datePart) && datePart > safeToday) {
+      return isIsoTimestamp ? `${safeToday}T08:00:00.000Z` : safeToday;
+    }
+    return trimmed;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    const parsedYmd = getLocalTodayYmd(parsed);
+    if (parsedYmd > safeToday) {
+      return trimmed.includes(':') ? `${safeToday}T08:00:00.000Z` : safeToday;
+    }
+  }
+
+  return trimmed;
 }
 
 function isScheduleSettled(sched: any): boolean {
@@ -361,7 +425,373 @@ async function discoverCandidateLoanIdsForFiscalYear(fiscalYear: number): Promis
   return Array.from(new Set([...repayIds, ...schedIds, ...completedIds]));
 }
 
+function isPostgrestColumnError(err: any): boolean {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    code === 'PGRST204' ||
+    code === '42703' ||
+    msg.includes('column') ||
+    msg.includes('schema cache')
+  );
+}
+
+let migrationRepaymentBackfillLock: Promise<void> | null = null;
+
+async function fetchExistingRepaymentsChunkSafe(
+  repayTable: any,
+  loanIdChunk: string[]
+): Promise<{ rows: any[]; failed: boolean }> {
+  const columnVariants = [
+    'id, loan_id, schedule_id, amount_paid, payment_method, receipt_number, notes',
+    'id, loan_id, schedule_id, amount_paid, payment_method, notes',
+    'id, loan_id, schedule_id, amount_paid',
+  ];
+
+  for (let i = 0; i < columnVariants.length; i++) {
+    const cols = columnVariants[i];
+    const { data, error } = await fetchAllPaginatedSafe<any>(() => {
+      let q: any = repayTable.select(cols);
+      if (!q) return null;
+      if (typeof q.in === 'function') {
+        q = q.in('loan_id', loanIdChunk);
+      }
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
+
+    if (!error) {
+      return { rows: Array.isArray(data) ? data : [], failed: false };
+    }
+    if (isPostgrestColumnError(error) && i < columnVariants.length - 1) {
+      continue;
+    }
+    return { rows: [], failed: true };
+  }
+
+  return { rows: [], failed: true };
+}
+
+async function runSyncMissingMigrationRepaymentsForSettledSchedules(): Promise<void> {
+  try {
+    if (!supabase || typeof supabase.from !== 'function') {
+      return;
+    }
+
+    const schedTable: any = supabase.from('loan_schedules');
+    if (!schedTable || typeof schedTable.select !== 'function') {
+      return;
+    }
+
+    const { data: rawPaidSchedules, error: schedErr } = await fetchAllPaginatedSafe<any>(() => {
+      let q: any = schedTable.select(
+        'id, loan_id, period_number, due_date, target_amount, paid_amount, status'
+      );
+      if (!q || typeof q.or !== 'function') {
+        return null;
+      }
+      q = q.or('paid_amount.gt.0,status.eq.paid');
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
+
+    if (schedErr || !Array.isArray(rawPaidSchedules) || rawPaidSchedules.length === 0) {
+      return;
+    }
+
+    const seenSchedIds = new Set<string>();
+    const candidateSchedules: any[] = [];
+    for (const sch of rawPaidSchedules) {
+      if (!sch?.id || !sch?.loan_id) continue;
+      const schId = String(sch.id);
+      if (seenSchedIds.has(schId)) continue;
+      seenSchedIds.add(schId);
+
+      const paidAmt = Number(sch.paid_amount || 0);
+      const statusLower = String(sch.status || '').trim().toLowerCase();
+      if (paidAmt > 0 || statusLower === 'paid') {
+        candidateSchedules.push(sch);
+      }
+    }
+
+    if (candidateSchedules.length === 0) {
+      return;
+    }
+
+    candidateSchedules.sort((a, b) => {
+      const loanCmp = String(a.loan_id).localeCompare(String(b.loan_id));
+      if (loanCmp !== 0) return loanCmp;
+      return Number(a.period_number || 0) - Number(b.period_number || 0);
+    });
+
+    const targetLoanIds = Array.from(
+      new Set(candidateSchedules.map((s) => String(s.loan_id)).filter(Boolean))
+    );
+
+    const loansTable: any = supabase.from('loans');
+    if (!loansTable || typeof loansTable.select !== 'function') {
+      return;
+    }
+    const loanMetaById = new Map<string, any>();
+    let loansMetaFailed = false;
+    for (const idChunk of chunkArray(targetLoanIds, 80)) {
+      const { data: loansMeta, error: loansMetaErr } = await fetchAllPaginatedSafe<any>(() => {
+        let q: any = loansTable.select('id, loan_number, disbursed_at, created_at');
+        if (!q) return null;
+        if (typeof q.in === 'function') {
+          q = q.in('id', idChunk);
+        }
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
+      if (loansMetaErr) {
+        loansMetaFailed = true;
+        break;
+      }
+      if (Array.isArray(loansMeta)) {
+        for (const l of loansMeta) {
+          if (l?.id) loanMetaById.set(String(l.id), l);
+        }
+      }
+    }
+    if (loansMetaFailed) {
+      return;
+    }
+
+    const repayTable: any = supabase.from('loan_repayments');
+    if (!repayTable || typeof repayTable.select !== 'function') {
+      return;
+    }
+    const existingRepsByLoan = new Map<string, any[]>();
+    const seenRepayIds = new Set<string>();
+    for (const idChunk of chunkArray(targetLoanIds, 80)) {
+      const { rows: repsData, failed } = await fetchExistingRepaymentsChunkSafe(
+        repayTable,
+        idChunk
+      );
+      if (failed) {
+        return;
+      }
+      for (const r of repsData) {
+        if (!r) continue;
+        if (r.id) {
+          const rId = String(r.id);
+          if (seenRepayIds.has(rId)) continue;
+          seenRepayIds.add(rId);
+        }
+        const lId = String(r.loan_id || '');
+        if (!lId) continue;
+        const list = existingRepsByLoan.get(lId) || [];
+        list.push(r);
+        existingRepsByLoan.set(lId, list);
+      }
+    }
+
+    const schedulesByLoan = new Map<string, any[]>();
+    for (const sch of candidateSchedules) {
+      const lId = String(sch.loan_id);
+      const list = schedulesByLoan.get(lId) || [];
+      list.push(sch);
+      schedulesByLoan.set(lId, list);
+    }
+
+    const todayYmd = getLocalTodayYmd();
+    type BackfillPayload = {
+      loan_id: string;
+      schedule_id: string;
+      amount_paid: number;
+      payment_date: string;
+      payment_method: string;
+      receipt_number: string;
+      notes: string;
+    };
+    const payloadsToInsert: BackfillPayload[] = [];
+    const plannedReceiptNos = new Set<string>();
+
+    for (const loanId of targetLoanIds) {
+      const loan = loanMetaById.get(loanId);
+      if (!loan) continue;
+
+      const loanNumber = String(
+        loan.loan_number || `LOAN-${loanId.slice(0, 8).toUpperCase()}`
+      ).trim();
+      const loanSchedules = schedulesByLoan.get(loanId) || [];
+      const existingReps = existingRepsByLoan.get(loanId) || [];
+
+      const existingScheduleIds = new Set<string>();
+      const existingReceiptNos = new Set<string>();
+      let nonLegacyUnscheduledTotal = 0;
+
+      for (const rep of existingReps) {
+        if (rep?.schedule_id) {
+          existingScheduleIds.add(String(rep.schedule_id));
+        }
+        if (rep?.receipt_number) {
+          existingReceiptNos.add(String(rep.receipt_number).trim().toUpperCase());
+        }
+        const hasPeriodTagInReceipt = /\/B\d+/i.test(String(rep?.receipt_number || ''));
+        const hasPeriodTagInNotes = /(?:bln|bulan)\s*ke[-\s]*\d+/i.test(String(rep?.notes || ''));
+        if (
+          !rep?.schedule_id &&
+          !hasPeriodTagInReceipt &&
+          !hasPeriodTagInNotes &&
+          !isLegacyLumpSumSaldoAwalRepayment(rep)
+        ) {
+          nonLegacyUnscheduledTotal += Math.round(Number(rep?.amount_paid || 0));
+        }
+      }
+
+      const missingPayloadsForLoan: BackfillPayload[] = [];
+      let totalMissingScheduleAmount = 0;
+
+      for (const sch of loanSchedules) {
+        const schId = String(sch.id);
+        const periodNumber = Number(sch.period_number || 0);
+        const receiptNo = `KW-MIGRASI/${loanNumber}/B${periodNumber}`;
+        const receiptNoUpper = receiptNo.toUpperCase();
+
+        if (
+          existingScheduleIds.has(schId) ||
+          existingReceiptNos.has(receiptNoUpper) ||
+          plannedReceiptNos.has(receiptNoUpper)
+        ) {
+          continue;
+        }
+
+        const amountPaid = Math.round(Number(sch.paid_amount || sch.target_amount || 0));
+        if (amountPaid <= 0) {
+          continue;
+        }
+
+        const rawDateCandidate =
+          normalizeDateYmd(sch.due_date) ||
+          normalizeDateYmd(loan.disbursed_at) ||
+          normalizeDateYmd(loan.created_at) ||
+          todayYmd;
+        const safeYmd = clampIsoOrYmdToToday(rawDateCandidate, todayYmd) || todayYmd;
+
+        missingPayloadsForLoan.push({
+          loan_id: loanId,
+          schedule_id: schId,
+          amount_paid: amountPaid,
+          payment_date: `${safeYmd}T08:00:00.000Z`,
+          payment_method: 'SALDO_AWAL_MIGRASI',
+          receipt_number: receiptNo,
+          notes: `Angsuran Saldo Awal Migrasi (${loanNumber}) Bln ke-${periodNumber}`,
+        });
+        totalMissingScheduleAmount += amountPaid;
+      }
+
+      if (
+        missingPayloadsForLoan.length > 0 &&
+        nonLegacyUnscheduledTotal > 0 &&
+        totalMissingScheduleAmount > 0 &&
+        nonLegacyUnscheduledTotal >= totalMissingScheduleAmount - 5
+      ) {
+        continue;
+      }
+
+      for (const payload of missingPayloadsForLoan) {
+        plannedReceiptNos.add(payload.receipt_number.toUpperCase());
+        payloadsToInsert.push(payload);
+      }
+    }
+
+    // Batch insert ke public.loan_repayments tanpa menulis ke public.cash_flow
+    const insertedByLoan = new Map<string, BackfillPayload[]>();
+    if (payloadsToInsert.length > 0 && typeof repayTable.insert === 'function') {
+      for (const batch of chunkArray(payloadsToInsert, 80)) {
+        try {
+          let insRes = await repayTable.insert(batch);
+          if (insRes?.error && isPostgrestColumnError(insRes.error)) {
+            const fallbackBatch = batch.map(
+              ({ receipt_number: _omitted, ...fallbackPayload }) => fallbackPayload
+            );
+            insRes = await repayTable.insert(fallbackBatch);
+          }
+          if (!insRes?.error) {
+            for (const item of batch) {
+              const list = insertedByLoan.get(item.loan_id) || [];
+              list.push(item);
+              insertedByLoan.set(item.loan_id, list);
+            }
+          }
+        } catch {
+          // Non-blocking per-batch insert
+        }
+      }
+    }
+
+    // Bersihkan baris gelondongan SALDO_AWAL / migrasi_awal untuk kontrak yang memiliki SALDO_AWAL_MIGRASI
+    const redundantIdsToDelete: string[] = [];
+    for (const loanId of targetLoanIds) {
+      const existingReps = existingRepsByLoan.get(loanId) || [];
+      const newlyInsertedReps = insertedByLoan.get(loanId) || [];
+      if (existingReps.length === 0) continue;
+
+      const { redundant } = filterRedundantLegacySaldoAwalRepayments([
+        ...existingReps,
+        ...newlyInsertedReps,
+      ]);
+      for (const rep of redundant) {
+        if (rep?.id) {
+          redundantIdsToDelete.push(String(rep.id));
+        }
+      }
+    }
+
+    const uniqueRedundantIds = Array.from(new Set(redundantIdsToDelete));
+    if (uniqueRedundantIds.length > 0 && typeof repayTable.delete === 'function') {
+      for (const idChunk of chunkArray(uniqueRedundantIds, 80)) {
+        try {
+          const delQ: any = repayTable.delete();
+          if (delQ && typeof delQ.in === 'function') {
+            await delQ.in('id', idChunk);
+          } else {
+            for (let idx = 0; idx < idChunk.length; idx++) {
+              const singleDelQ: any = idx === 0 ? delQ : repayTable.delete();
+              if (singleDelQ && typeof singleDelQ.eq === 'function') {
+                await singleDelQ.eq('id', idChunk[idx]);
+              }
+            }
+          }
+        } catch {
+          // Non-blocking legacy SALDO_AWAL cleanup
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Non-blocking migration repayment backfill error:', err);
+  }
+}
+
+/**
+ * Menyinkronkan kwitansi migrasi per periode (`SALDO_AWAL_MIGRASI`) secara idempoten
+ * dengan in-flight lock untuk jadwal yang sudah terbayar namun belum memiliki baris di `loan_repayments`,
+ * tanpa menyisipkan mutasi ke `cash_flow`.
+ */
+export async function syncMissingMigrationRepaymentsForSettledSchedules(): Promise<void> {
+  if (migrationRepaymentBackfillLock) {
+    return migrationRepaymentBackfillLock;
+  }
+
+  const runPromise = runSyncMissingMigrationRepaymentsForSettledSchedules().finally(() => {
+    if (migrationRepaymentBackfillLock === runPromise) {
+      migrationRepaymentBackfillLock = null;
+    }
+  });
+  migrationRepaymentBackfillLock = runPromise;
+  return runPromise;
+}
+
 export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOffLoansSummary> {
+  await syncMissingMigrationRepaymentsForSettledSchedules();
   const hasFiscalYear = typeof fiscalYear === 'number' && Number.isFinite(fiscalYear);
   let rawLoans: any[] = [];
 
@@ -702,12 +1132,13 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
       };
     });
 
-    // Tentukan tanggal pelunasan terakhir
+    // Tentukan tanggal pelunasan terakhir (dibatasi maksimal hari ini agar tidak tampil tanggal masa depan)
+    const todayYmd = getLocalTodayYmd();
     let paidOffDate: string | null = null;
     if (loanRepayments.length > 0) {
       const sortedRepayDates = loanRepayments
-        .map((r) => r.payment_date)
-        .filter(Boolean)
+        .map((r) => clampIsoOrYmdToToday(r.payment_date, todayYmd))
+        .filter((d): d is string => Boolean(d))
         .sort((a, b) => toTimestamp(b) - toTimestamp(a));
       paidOffDate = sortedRepayDates[0] || null;
     }
@@ -715,11 +1146,15 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
       const settledScheds = loanSchedules.filter((s) => isScheduleSettled(s));
       const targetList = settledScheds.length > 0 ? settledScheds : loanSchedules;
       const lastSched = targetList[targetList.length - 1];
-      paidOffDate = lastSched?.due_date || null;
+      paidOffDate = clampIsoOrYmdToToday(lastSched?.due_date || null, todayYmd);
     }
     if (!paidOffDate) {
-      paidOffDate = loan.updated_at || loan.disbursed_at || loan.created_at || null;
+      paidOffDate = clampIsoOrYmdToToday(
+        loan.updated_at || loan.disbursed_at || loan.created_at || null,
+        todayYmd
+      );
     }
+    paidOffDate = clampIsoOrYmdToToday(paidOffDate, todayYmd);
 
     const tenor = Number(loan.agreed_tenor_months || loan.tenor || loanSchedules.length || 0);
     const monthlyInstallment = Number(
