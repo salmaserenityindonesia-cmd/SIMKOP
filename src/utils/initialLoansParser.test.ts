@@ -206,13 +206,14 @@ describe('syncInitialLoanBalances', () => {
     ).rejects.toThrow(/Tanggal aktif saldo awal pinjaman wajib diisi/);
   });
 
-  it('performs clean overwrite, inserts loans, FIFO loan_schedules from disbursed_at + 1 month, SALDO_AWAL loan_repayments, and clears cut-off setting', async () => {
+  it('performs clean overwrite, inserts loans, FIFO loan_schedules from disbursed_at + 1 month, per-period SALDO_AWAL_MIGRASI loan_repayments & cash_flow, and clears cut-off setting', async () => {
     const deletedRepayLoanIds: string[][] = [];
     const deletedSchedLoanIds: string[][] = [];
     const deletedLoanIds: string[][] = [];
     const insertedLoans: any[] = [];
     const insertedSchedules: any[] = [];
     const insertedRepayments: any[] = [];
+    const insertedCashFlows: any[] = [];
     const upsertedSettings: any[] = [];
     const deletedSettings: Array<{ col: string; val: string }> = [];
     const insertedAuditLogs: any[] = [];
@@ -262,15 +263,23 @@ describe('syncInitialLoanBalances', () => {
       }
       if (table === 'loan_schedules') {
         return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ data: [{ id: 'old-sched-1' }], error: null }),
+          }),
           delete: vi.fn().mockReturnValue({
             in: vi.fn().mockImplementation((_col: string, ids: string[]) => {
               deletedSchedLoanIds.push(ids);
               return Promise.resolve({ error: null });
             }),
           }),
-          insert: vi.fn().mockImplementation((payload: any) => {
+          insert: vi.fn().mockImplementation((payload: any[]) => {
             insertedSchedules.push(payload);
-            return Promise.resolve({ error: null });
+            return {
+              select: vi.fn().mockResolvedValue({
+                data: payload.map((p, idx) => ({ ...p, id: `new-sched-${idx + 1}` })),
+                error: null,
+              }),
+            };
           }),
         };
       }
@@ -284,6 +293,17 @@ describe('syncInitialLoanBalances', () => {
           }),
           insert: vi.fn().mockImplementation((payload: any) => {
             insertedRepayments.push(payload);
+            return Promise.resolve({ error: null });
+          }),
+        };
+      }
+      if (table === 'cash_flow') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({ error: null }),
+          }),
+          insert: vi.fn().mockImplementation((payload: any) => {
+            insertedCashFlows.push(payload);
             return Promise.resolve({ error: null });
           }),
         };
@@ -364,10 +384,39 @@ describe('syncInitialLoanBalances', () => {
     expect(insertedSchedules[0][2]).toMatchObject({ period_number: 3, due_date: '2026-04-10', status: 'unpaid', paid_amount: 0 });
     expect(insertedSchedules[0][3]).toMatchObject({ period_number: 4, due_date: '2026-05-10', status: 'unpaid', paid_amount: 0 });
 
-    expect(insertedRepayments[0]).toMatchObject({
+    expect(insertedRepayments[0]).toHaveLength(2);
+    expect(insertedRepayments[0][0]).toMatchObject({
       loan_id: 'new-loan-1',
-      payment_method: 'SALDO_AWAL',
-      amount_paid: 1500000,
+      schedule_id: 'new-sched-1',
+      payment_method: 'SALDO_AWAL_MIGRASI',
+      amount_paid: 1000000,
+      receipt_number: 'KW-MIGRASI/SALDO-AWAL-12345678-REG/B1',
+      payment_date: '2026-02-10T08:00:00.000Z',
+    });
+    expect(insertedRepayments[0][1]).toMatchObject({
+      loan_id: 'new-loan-1',
+      schedule_id: 'new-sched-2',
+      payment_method: 'SALDO_AWAL_MIGRASI',
+      amount_paid: 500000,
+      receipt_number: 'KW-MIGRASI/SALDO-AWAL-12345678-REG/B2',
+      payment_date: '2026-03-10T08:00:00.000Z',
+    });
+
+    expect(insertedCashFlows[0]).toHaveLength(2);
+    expect(insertedCashFlows[0][0]).toMatchObject({
+      direction: 'in',
+      amount: 1000000,
+      category: 'angsuran_pinjaman',
+      reference_id: 'new-sched-1',
+      created_at: '2026-02-10T08:00:00.000Z',
+    });
+    expect(insertedCashFlows[0][0].description).toContain('KW-MIGRASI/SALDO-AWAL-12345678-REG/B1');
+    expect(insertedCashFlows[0][1]).toMatchObject({
+      direction: 'in',
+      amount: 500000,
+      category: 'angsuran_pinjaman',
+      reference_id: 'new-sched-2',
+      created_at: '2026-03-10T08:00:00.000Z',
     });
 
     expect(upsertedSettings).toHaveLength(0);
@@ -539,6 +588,101 @@ describe('syncInitialLoanBalances', () => {
     ).rejects.toThrow(
       /Nama tidak cocok! Di Excel tertulis 'Orang Lain', sedangkan di sistem untuk NRP 12345678 terdaftar atas nama 'Budi Santoso'\./
     );
+  });
+
+  it('sets status = paid_off only when total_terangsur >= jumlah_pinjaman and all periods are paid, otherwise active with remaining sisa_pinjaman', async () => {
+    const insertedLoans: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'anggota') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [
+              { id: 'm-1', nrp: '75100839', nama: 'HERY SETYO WIBOWO' },
+              { id: 'm-2', nrp: '88010203', nama: 'Budi Santoso' },
+            ],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+          insert: vi.fn().mockImplementation((payload: any) => {
+            insertedLoans.push(payload);
+            return {
+              select: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: `new-loan-${insertedLoans.length}` },
+                  error: null,
+                }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'loan_schedules' || table === 'loan_repayments' || table === 'audit_logs') {
+        return {
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'system_settings') {
+        return {
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ error: null }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    await syncInitialLoanBalances(
+      [
+        {
+          nrp: '75100839',
+          nama: 'HERY SETYO WIBOWO',
+          jenis_pinjaman: 'GAJISIPA',
+          loan_type_id: 'lt-1',
+          loan_type_name: 'Gaji Sipa',
+          jumlah_pinjaman: 69000000,
+          tgl_awal_pinjaman: '2025-12-01',
+          nilai_angsuran: 734043,
+          tenor: 94,
+          total_terangsur: 8808516,
+          sisa_pinjaman: 60191484,
+          isValid: true,
+        },
+        {
+          nrp: '88010203',
+          nama: 'Budi Santoso',
+          jenis_pinjaman: 'GAJISIPA',
+          loan_type_id: 'lt-1',
+          loan_type_name: 'Gaji Sipa',
+          jumlah_pinjaman: 12000000,
+          tgl_awal_pinjaman: '2025-01-01',
+          nilai_angsuran: 1000000,
+          tenor: 12,
+          total_terangsur: 12000000,
+          sisa_pinjaman: 0,
+          isValid: true,
+        },
+      ],
+      '2026-11-24'
+    );
+
+    expect(insertedLoans).toHaveLength(2);
+    expect(insertedLoans[0]).toMatchObject({
+      loan_number: 'SALDO-AWAL-75100839-GAJISIPA',
+      status: 'active',
+      sisa_pinjaman: 60191484,
+    });
+    expect(insertedLoans[1]).toMatchObject({
+      loan_number: 'SALDO-AWAL-88010203-GAJISIPA',
+      status: 'paid_off',
+      sisa_pinjaman: 0,
+    });
   });
 });
 

@@ -3,8 +3,10 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
 import { calculateRepaymentPortions } from './loanService';
+import { filterRedundantLegacySaldoAwalRepayments } from './orphanAuditService';
 import type { KoperasiProfile } from './settingsService';
 import { formatTanggalLahirWithAge } from '../utils/dateUtils';
+import { fetchAllPaginatedSafe } from '../utils/supabasePagination';
 
 export interface LoanTypeOption {
   id: string;
@@ -180,60 +182,82 @@ export async function getLoanTypesForFilter(): Promise<LoanTypeOption[]> {
 
 async function fetchCandidateLoansFromDb(candidateLoanIds?: string[]): Promise<any[]> {
   const idChunks: Array<string[] | null> = candidateLoanIds
-    ? chunkArray(candidateLoanIds, 200)
+    ? chunkArray(candidateLoanIds, 80)
     : [null];
 
   const allLoans: any[] = [];
+  const seenLoanIds = new Set<string>();
+  const pushLoans = (rows: any[]) => {
+    for (const row of rows) {
+      if (row?.id) {
+        if (seenLoanIds.has(row.id)) continue;
+        seenLoanIds.add(row.id);
+      }
+      allLoans.push(row);
+    }
+  };
 
   for (const idChunk of idChunks) {
-    let joinQuery: any = supabase
-      .from('loans')
-      .select(`
-        *,
-        loan_types ( id, code, name, financing_scheme ),
-        member:anggota ( id, nrp, nama, tanggal_lahir )
-      `);
-    if (idChunk) {
-      joinQuery = joinQuery.in('id', idChunk);
-    }
-
-    const { data: joinedLoans, error: joinErr } = await joinQuery;
+    const { data: joinedLoans, error: joinErr } = await fetchAllPaginatedSafe(() => {
+      let q: any = supabase
+        .from('loans')
+        .select(`
+          *,
+          loan_types ( id, code, name, financing_scheme ),
+          member:anggota ( id, nrp, nama, tanggal_lahir )
+        `);
+      if (idChunk) {
+        q = q.in('id', idChunk);
+      }
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
     if (!joinErr && Array.isArray(joinedLoans)) {
-      allLoans.push(...joinedLoans);
+      pushLoans(joinedLoans);
       continue;
     }
 
     console.warn('Fallback query loans tanpa kolom financing_scheme:', joinErr?.message);
-    let fallbackQuery: any = supabase
-      .from('loans')
-      .select(`
-        *,
-        loan_types ( id, code, name ),
-        member:anggota ( id, nrp, nama, tanggal_lahir )
-      `);
-    if (idChunk) {
-      fallbackQuery = fallbackQuery.in('id', idChunk);
-    }
-
-    const { data: fallbackJoinedLoans, error: fallbackJoinErr } = await fallbackQuery;
+    const { data: fallbackJoinedLoans, error: fallbackJoinErr } = await fetchAllPaginatedSafe(() => {
+      let q: any = supabase
+        .from('loans')
+        .select(`
+          *,
+          loan_types ( id, code, name ),
+          member:anggota ( id, nrp, nama, tanggal_lahir )
+        `);
+      if (idChunk) {
+        q = q.in('id', idChunk);
+      }
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
     if (!fallbackJoinErr && Array.isArray(fallbackJoinedLoans)) {
-      allLoans.push(...fallbackJoinedLoans);
+      pushLoans(fallbackJoinedLoans);
       continue;
     }
 
     console.warn('Fallback query loans tanpa relasi bersarang:', fallbackJoinErr?.message);
-    let plainQuery: any = supabase.from('loans').select('*');
-    if (idChunk) {
-      plainQuery = plainQuery.in('id', idChunk);
-    }
-
-    const { data: plainLoans, error: plainErr } = await plainQuery;
+    const { data: plainLoans, error: plainErr } = await fetchAllPaginatedSafe(() => {
+      let q: any = supabase.from('loans').select('*');
+      if (idChunk) {
+        q = q.in('id', idChunk);
+      }
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
     if (plainErr) {
       console.error('Gagal mengambil data loans:', plainErr.message);
       throw plainErr;
     }
     if (Array.isArray(plainLoans)) {
-      allLoans.push(...plainLoans);
+      pushLoans(plainLoans);
     }
   }
 
@@ -248,11 +272,17 @@ async function discoverCandidateLoanIdsForFiscalYear(fiscalYear: number): Promis
 
   const fetchRepaymentIds = async (): Promise<string[]> => {
     try {
-      const { data, error } = await supabase
-        .from('loan_repayments')
-        .select('loan_id')
-        .gte('payment_date', yearStart)
-        .lte('payment_date', yearEnd);
+      const { data, error } = await fetchAllPaginatedSafe(() => {
+        let q: any = supabase
+          .from('loan_repayments')
+          .select('loan_id')
+          .gte('payment_date', yearStart)
+          .lte('payment_date', yearEnd);
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
       if (error || !Array.isArray(data)) return [];
       return data.map((r: any) => r?.loan_id).filter(Boolean);
     } catch {
@@ -262,12 +292,18 @@ async function discoverCandidateLoanIdsForFiscalYear(fiscalYear: number): Promis
 
   const fetchScheduleIds = async (): Promise<string[]> => {
     try {
-      const { data, error } = await supabase
-        .from('loan_schedules')
-        .select('loan_id')
-        .eq('status', 'paid')
-        .gte('due_date', yearStartDate)
-        .lte('due_date', yearEndDate);
+      const { data, error } = await fetchAllPaginatedSafe(() => {
+        let q: any = supabase
+          .from('loan_schedules')
+          .select('loan_id')
+          .eq('status', 'paid')
+          .gte('due_date', yearStartDate)
+          .lte('due_date', yearEndDate);
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
       if (error || !Array.isArray(data)) return [];
       return data.map((s: any) => s?.loan_id).filter(Boolean);
     } catch {
@@ -277,23 +313,35 @@ async function discoverCandidateLoanIdsForFiscalYear(fiscalYear: number): Promis
 
   const fetchCompletedLoanIds = async (): Promise<string[]> => {
     try {
-      const { data, error } = await supabase
-        .from('loans')
-        .select('id')
-        .in('status', ['completed', 'paid_off'])
-        .gte('updated_at', yearStart)
-        .lte('updated_at', yearEnd);
+      const { data, error } = await fetchAllPaginatedSafe(() => {
+        let q: any = supabase
+          .from('loans')
+          .select('id')
+          .in('status', ['completed', 'paid_off'])
+          .gte('updated_at', yearStart)
+          .lte('updated_at', yearEnd);
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
 
       if (!error && Array.isArray(data)) {
         return data.map((l: any) => l?.id).filter(Boolean);
       }
 
-      const { data: fallbackData, error: fallbackErr } = await supabase
-        .from('loans')
-        .select('id')
-        .in('status', ['completed', 'paid_off'])
-        .gte('disbursed_at', yearStartDate)
-        .lte('disbursed_at', yearEndDate);
+      const { data: fallbackData, error: fallbackErr } = await fetchAllPaginatedSafe(() => {
+        let q: any = supabase
+          .from('loans')
+          .select('id')
+          .in('status', ['completed', 'paid_off'])
+          .gte('disbursed_at', yearStartDate)
+          .lte('disbursed_at', yearEndDate);
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
 
       if (!fallbackErr && Array.isArray(fallbackData)) {
         return fallbackData.map((l: any) => l?.id).filter(Boolean);
@@ -393,19 +441,30 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
   const loanIds = Array.from(new Set(candidateLoans.map((l) => l.id).filter(Boolean)));
   const schedulesByLoan = new Map<string, any[]>();
   const repaymentsByLoan = new Map<string, any[]>();
+  const seenScheduleIds = new Set<string>();
+  const seenRepaymentIds = new Set<string>();
 
-  for (const idChunk of chunkArray(loanIds, 200)) {
+  for (const idChunk of chunkArray(loanIds, 80)) {
     try {
-      let schedQ: any = supabase
-        .from('loan_schedules')
-        .select('*')
-        .in('loan_id', idChunk);
-      if (schedQ && typeof schedQ.order === 'function') {
-        schedQ = schedQ.order('period_number', { ascending: true });
-      }
-      const { data: schedData, error: schedErr } = await schedQ;
+      const { data: schedData, error: schedErr } = await fetchAllPaginatedSafe(() => {
+        let schedQ: any = supabase
+          .from('loan_schedules')
+          .select('*')
+          .in('loan_id', idChunk);
+        if (schedQ && typeof schedQ.order === 'function') {
+          schedQ = schedQ.order('period_number', { ascending: true });
+          if (typeof schedQ.range === 'function') {
+            schedQ = schedQ.order('id', { ascending: true });
+          }
+        }
+        return schedQ;
+      });
       if (!schedErr && Array.isArray(schedData)) {
         schedData.forEach((s: any) => {
+          if (s?.id) {
+            if (seenScheduleIds.has(s.id)) return;
+            seenScheduleIds.add(s.id);
+          }
           const list = schedulesByLoan.get(s.loan_id) || [];
           list.push(s);
           schedulesByLoan.set(s.loan_id, list);
@@ -416,16 +475,25 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
     }
 
     try {
-      let repayQ: any = supabase
-        .from('loan_repayments')
-        .select('*')
-        .in('loan_id', idChunk);
-      if (repayQ && typeof repayQ.order === 'function') {
-        repayQ = repayQ.order('payment_date', { ascending: true });
-      }
-      const { data: repayData, error: repayErr } = await repayQ;
+      const { data: repayData, error: repayErr } = await fetchAllPaginatedSafe(() => {
+        let repayQ: any = supabase
+          .from('loan_repayments')
+          .select('*')
+          .in('loan_id', idChunk);
+        if (repayQ && typeof repayQ.order === 'function') {
+          repayQ = repayQ.order('payment_date', { ascending: true });
+          if (typeof repayQ.range === 'function') {
+            repayQ = repayQ.order('id', { ascending: true });
+          }
+        }
+        return repayQ;
+      });
       if (!repayErr && Array.isArray(repayData)) {
         repayData.forEach((r: any) => {
+          if (r?.id) {
+            if (seenRepaymentIds.has(r.id)) return;
+            seenRepaymentIds.add(r.id);
+          }
           const list = repaymentsByLoan.get(r.loan_id) || [];
           list.push(r);
           repaymentsByLoan.set(r.loan_id, list);
@@ -437,17 +505,27 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
   }
 
   const rows: PaidOffLoanReportRow[] = [];
+  const mismarkedLoansToRepair: Array<{ id: string; actualRemaining: number }> = [];
+  const redundantLegacyRepaymentIdsToDelete: string[] = [];
 
   for (const loan of candidateLoans) {
     const loanSchedules = (schedulesByLoan.get(loan.id) || []).slice().sort(
       (a, b) => Number(a.period_number || 0) - Number(b.period_number || 0)
     );
-    const loanRepayments = (repaymentsByLoan.get(loan.id) || []).slice().sort(
+    const rawLoanRepayments = (repaymentsByLoan.get(loan.id) || []).slice().sort(
       (a, b) => toTimestamp(a.payment_date) - toTimestamp(b.payment_date)
     );
+    const { cleaned: loanRepayments, redundant: redundantLegacyReps } =
+      filterRedundantLegacySaldoAwalRepayments(rawLoanRepayments);
+    for (const rep of redundantLegacyReps) {
+      if (rep?.id) {
+        redundantLegacyRepaymentIdsToDelete.push(String(rep.id));
+      }
+    }
 
     const statusLower = String(loan.status || '').toLowerCase();
-    const principalAmount = Number(loan.principal_amount || loan.amount || 0);
+    const totalAkad = Number(loan.principal_amount || loan.amount || 0);
+    const principalAmount = totalAkad;
 
     const totalPaidFromRepayments = loanRepayments.reduce(
       (sum, r) => sum + Number(r.amount_paid || 0),
@@ -458,33 +536,35 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
       0
     );
     const totalPaidComputed = Math.max(totalPaidFromRepayments, totalPaidFromSchedules);
+    const unpaidCount = loanSchedules.filter((s) => !isScheduleSettled(s)).length;
 
     const isExplicitCompleted = statusLower === 'completed' || statusLower === 'paid_off';
-    const isZeroRemaining =
+    const hasZeroOrNegativeSisa =
       loan.sisa_pinjaman !== undefined &&
       loan.sisa_pinjaman !== null &&
-      Number(loan.sisa_pinjaman) <= 0 &&
-      principalAmount > 0;
-    const isAllSchedulesPaid =
-      loanSchedules.length > 0 && loanSchedules.every((s) => isScheduleSettled(s));
-    const isPrincipalFullyPaid =
-      principalAmount > 0 &&
-      loanSchedules.length > 0 &&
-      totalPaidComputed >= principalAmount - 5;
+      Number(loan.sisa_pinjaman) <= 0;
 
-    const isPaidOff =
-      isExplicitCompleted ||
-      isZeroRemaining ||
-      isAllSchedulesPaid ||
-      isPrincipalFullyPaid;
+    // Validasi ketat pelunasan 100%: nominal terbayar >= total akad (-5 toleransi pembulatan) DAN tidak ada jadwal yang belum lunas
+    const isTrulyPaidOff =
+      totalAkad > 0 &&
+      totalPaidComputed >= totalAkad - 5 &&
+      unpaidCount === 0;
 
-    if (!isPaidOff) continue;
+    if (!isTrulyPaidOff) {
+      // Deteksi kontrak yang keliru ditandai lunas atau sisa_pinjaman <= 0 padahal belum lunas 100%
+      if (
+        totalAkad > 0 &&
+        (totalPaidComputed < totalAkad - 5 || unpaidCount > 0) &&
+        (isExplicitCompleted || hasZeroOrNegativeSisa)
+      ) {
+        const actualRemaining = Math.max(0, Math.round(totalAkad - totalPaidComputed));
+        mismarkedLoansToRepair.push({ id: loan.id, actualRemaining });
+      }
+      continue;
+    }
 
     // Sinkronkan status pinjaman yang masih 'active'/'approved' namun sudah 100% lunas
-    if (
-      (statusLower === 'active' || statusLower === 'approved') &&
-      (isAllSchedulesPaid || isPrincipalFullyPaid)
-    ) {
+    if ((statusLower === 'active' || statusLower === 'approved') && isTrulyPaidOff) {
       try {
         await supabase.from('loans').update({ status: 'completed' }).eq('id', loan.id);
       } catch {
@@ -647,12 +727,7 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
         loan.planned_installment_amount ||
         (tenor > 0 ? Math.round(principalAmount / tenor) : 0)
     );
-    const totalPaid =
-      totalPaidComputed > 0
-        ? totalPaidComputed
-        : isExplicitCompleted || isZeroRemaining
-          ? principalAmount
-          : 0;
+    const totalPaid = totalPaidComputed;
 
     const resolvedStatus: 'completed' | 'paid_off' =
       statusLower === 'paid_off' ? 'paid_off' : 'completed';
@@ -690,6 +765,64 @@ export async function getPaidOffLoansReport(fiscalYear?: number): Promise<PaidOf
       schedules: mappedSchedules,
       repayments: mappedRepayments,
     });
+  }
+
+  // Kembalikan kontrak yang keliru ditandai lunas menjadi 'active' dengan sisa_pinjaman aktual
+  if (mismarkedLoansToRepair.length > 0) {
+    const nowIso = new Date().toISOString();
+    try {
+      const loansTable: any = supabase.from('loans');
+      if (loansTable && typeof loansTable.update === 'function') {
+        for (const repairBatch of chunkArray(mismarkedLoansToRepair, 10)) {
+          await Promise.all(
+            repairBatch.map(async (item) => {
+              try {
+                const res: any = await supabase
+                  .from('loans')
+                  .update({
+                    status: 'active',
+                    sisa_pinjaman: item.actualRemaining,
+                    updated_at: nowIso,
+                  })
+                  .eq('id', item.id);
+                if (res?.error && String(res.error.message || '').toLowerCase().includes('sisa_pinjaman')) {
+                  await supabase
+                    .from('loans')
+                    .update({ status: 'active', updated_at: nowIso })
+                    .eq('id', item.id);
+                }
+              } catch {
+                // Non-blocking per-loan repair
+              }
+            })
+          );
+        }
+      }
+    } catch {
+      // Non-blocking auto-repair fallback
+    }
+  }
+
+  // Bersihkan rekaman gelondongan SALDO_AWAL lama yang sudah dipecah menjadi SALDO_AWAL_MIGRASI
+  const uniqueRedundantRepayIds = Array.from(new Set(redundantLegacyRepaymentIdsToDelete));
+  if (uniqueRedundantRepayIds.length > 0) {
+    try {
+      const repayTable: any = supabase.from('loan_repayments');
+      if (repayTable && typeof repayTable.delete === 'function') {
+        for (const idChunk of chunkArray(uniqueRedundantRepayIds, 80)) {
+          try {
+            const delQ: any = repayTable.delete();
+            if (delQ && typeof delQ.in === 'function') {
+              await delQ.in('id', idChunk);
+            }
+          } catch {
+            // Non-blocking legacy SALDO_AWAL cleanup
+          }
+        }
+      }
+    } catch {
+      // Non-blocking legacy SALDO_AWAL cleanup fallback
+    }
   }
 
   // Urutkan berdasarkan tanggal pelunasan terbaru (DESC), lalu nama anggota (ASC)

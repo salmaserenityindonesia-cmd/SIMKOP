@@ -5,12 +5,14 @@ import {
   X,
   ExternalLink,
   CheckCircle2,
+  Clock,
   Package,
   ArrowUpRight,
   ArrowDownLeft,
   Receipt,
 } from 'lucide-react';
 import { calculateRepaymentPortions } from '../../services/loanService';
+import { filterRedundantLegacySaldoAwalRepayments } from '../../services/orphanAuditService';
 import {
   formatReportDate,
   type PaidOffLoanReportRow,
@@ -160,9 +162,11 @@ export function buildLoanSubsidiaryLedger(
     notes: loanRecord.notes || null,
   };
 
-  const validRepayments = (loanRecord.repayments || []).filter(
+  const positiveRepayments = (loanRecord.repayments || []).filter(
     (r) => Number(r.amountPaid || 0) > 0
   );
+  const { cleaned: validRepayments } =
+    filterRedundantLegacySaldoAwalRepayments(positiveRepayments);
   const paidSchedules = (loanRecord.schedules || [])
     .filter(
       (s) =>
@@ -335,35 +339,42 @@ export function buildLoanSubsidiaryLedger(
       });
   } else if (totalContractAmount > 0) {
     const settledAmount = Math.round(
-      Number(loanRecord.totalPaid || totalContractAmount)
+      loanRecord.totalPaid !== undefined && loanRecord.totalPaid !== null
+        ? Number(loanRecord.totalPaid)
+        : totalContractAmount
     );
-    const portions = resolvePortions({
-      amountPaid: settledAmount,
-      targetAmount: totalContractAmount,
-      explicitPrincipal: isGoodsMarkup ? costPrice : settledAmount,
-      explicitMargin: isGoodsMarkup ? markupAmount : 0,
-      costPrice,
-      markupAmount,
-      totalContractAmount,
-      isGoodsMarkup,
-    });
+    if (settledAmount > 0) {
+      const portions = resolvePortions({
+        amountPaid: settledAmount,
+        targetAmount: totalContractAmount,
+        explicitPrincipal: isGoodsMarkup ? costPrice : settledAmount,
+        explicitMargin: isGoodsMarkup ? markupAmount : 0,
+        costPrice,
+        markupAmount,
+        totalContractAmount,
+        isGoodsMarkup,
+      });
 
-    creditEntries.push({
-      id: `settlement-${loanRecord.loanId || loanRecord.id}`,
-      kind: 'repayment',
-      date: loanRecord.paidOffDate,
-      referenceNumber: loanRecord.loanNumber,
-      description: 'Pelunasan Penuh Pinjaman',
-      subDescription: `Akumulasi ${loanRecord.tenor} periode angsuran lunas`,
-      periodNumber: null,
-      paymentMethod: null,
-      principalPortion: portions.principalPortion,
-      marginPortion: portions.marginPortion,
-      debit: 0,
-      credit: settledAmount,
-      runningBalance: 0,
-      notes: null,
-    });
+      creditEntries.push({
+        id: `settlement-${loanRecord.loanId || loanRecord.id}`,
+        kind: 'repayment',
+        date: loanRecord.paidOffDate,
+        referenceNumber: loanRecord.loanNumber,
+        description:
+          settledAmount >= totalContractAmount - 5
+            ? 'Pelunasan Penuh Pinjaman'
+            : 'Akumulasi Angsuran Terbayar',
+        subDescription: `Akumulasi ${loanRecord.paidPeriodsCount || loanRecord.tenor} periode angsuran terbayar`,
+        periodNumber: null,
+        paymentMethod: null,
+        principalPortion: portions.principalPortion,
+        marginPortion: portions.marginPortion,
+        debit: 0,
+        credit: settledAmount,
+        runningBalance: 0,
+        notes: null,
+      });
+    }
   }
 
   let runningBalance = totalContractAmount;
@@ -534,6 +545,12 @@ export default function LoanSubsidiaryLedgerModal({
 
   if (!loanRecord || !summary) return null;
 
+  const totalAkad = summary.totalContractAmount;
+  const totalPaid = summary.totalCredit;
+  const remainingReceivable = Math.max(0, totalAkad - totalPaid);
+  const paidPct = totalAkad > 0 ? Math.min(100, Math.round((totalPaid / totalAkad) * 100)) : 0;
+  const isFullyPaid = totalAkad > 0 && totalPaid >= totalAkad - 5;
+
   const schemeBadgeLabel = summary.isGoodsMarkup
     ? 'Pembiayaan Barang (Markup Margin)'
     : 'Pinjaman Tunai 0%';
@@ -589,10 +606,17 @@ export default function LoanSubsidiaryLedgerModal({
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-md bg-indigo-500/30 border border-indigo-400/40 font-mono text-xs font-bold text-indigo-100 tracking-wide">
                   {loanRecord.loanNumber}
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>✓ Lunas Penuh</span>
-                </span>
+                {isFullyPaid ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>✓ Lunas Penuh</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40">
+                    <Clock className="w-3 h-3" />
+                    <span>Berjalan ({paidPct}% Terbayar)</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-300 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="font-semibold text-white">{loanRecord.memberName}</span>
@@ -673,17 +697,28 @@ export default function LoanSubsidiaryLedgerModal({
                 </p>
               </div>
 
-              <div className="bg-white rounded-xl border border-emerald-200 p-4 shadow-xs relative overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+              <div className={`bg-white rounded-xl border ${isFullyPaid ? 'border-emerald-200' : 'border-amber-200'} p-4 shadow-xs relative overflow-hidden`}>
+                <div className={`absolute top-0 left-0 right-0 h-1 ${isFullyPaid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <p className={`text-[11px] font-bold uppercase tracking-wider ${isFullyPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
                   Total Terbayar
                 </p>
-                <p className="text-lg font-bold text-emerald-800 mt-1 tabular-nums font-mono">
+                <p className={`text-lg font-bold ${isFullyPaid ? 'text-emerald-800' : 'text-amber-900'} mt-1 tabular-nums font-mono`}>
                   {formatRp(summary.totalCredit)}
                 </p>
-                <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                  100% Lunas • {loanRecord.tenor} Bln
-                </p>
+                {isFullyPaid ? (
+                  <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                    100% Lunas • {loanRecord.tenor} Bln
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-amber-700 font-semibold mt-0.5">
+                      Berjalan ({paidPct}% Terbayar) • {loanRecord.tenor} Bln
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-mono mt-0.5">
+                      Sisa Piutang: {formatRp(remainingReceivable)}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           ) : (
@@ -722,17 +757,28 @@ export default function LoanSubsidiaryLedgerModal({
                 </p>
               </div>
 
-              <div className="bg-white rounded-xl border border-emerald-200 p-4 shadow-xs relative overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+              <div className={`bg-white rounded-xl border ${isFullyPaid ? 'border-emerald-200' : 'border-amber-200'} p-4 shadow-xs relative overflow-hidden`}>
+                <div className={`absolute top-0 left-0 right-0 h-1 ${isFullyPaid ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <p className={`text-[11px] font-bold uppercase tracking-wider ${isFullyPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
                   Total Terbayar
                 </p>
-                <p className="text-lg font-bold text-emerald-800 mt-1 tabular-nums font-mono">
+                <p className={`text-lg font-bold ${isFullyPaid ? 'text-emerald-800' : 'text-amber-900'} mt-1 tabular-nums font-mono`}>
                   {formatRp(summary.totalCredit)}
                 </p>
-                <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                  100% Lunas
-                </p>
+                {isFullyPaid ? (
+                  <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                    100% Lunas • {loanRecord.tenor} Bln
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-amber-700 font-semibold mt-0.5">
+                      Berjalan ({paidPct}% Terbayar)
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-mono mt-0.5">
+                      Sisa Piutang: {formatRp(remainingReceivable)}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -893,7 +939,7 @@ export default function LoanSubsidiaryLedgerModal({
                     <td className="px-3 py-2.5 text-right font-mono tabular-nums text-emerald-700 whitespace-nowrap">
                       {formatRp(summary.totalCredit)}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono tabular-nums text-emerald-700 whitespace-nowrap">
+                    <td className={`px-3 py-2.5 text-right font-mono tabular-nums whitespace-nowrap ${isFullyPaid ? 'text-emerald-700' : 'text-amber-700'}`}>
                       {formatRp(summary.endingBalance)}{' '}
                       {summary.endingBalance === 0 ? '(Lunas)' : ''}
                     </td>

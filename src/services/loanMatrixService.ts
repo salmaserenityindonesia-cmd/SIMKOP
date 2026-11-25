@@ -4,6 +4,15 @@ import {
   generateNextCompactRegister,
   incrementCompactRegister,
 } from '../utils/receiptGenerator';
+import { fetchAllPaginatedSafe } from '../utils/supabasePagination';
+
+function chunkMatrixArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
 
 function isMissingMatrixColumnError(error: any): boolean {
   if (!error) return false;
@@ -484,35 +493,47 @@ export const getLoanMatrix = async (
   const includePaidOff = Boolean(options?.includePaidOff);
   const explicitlyIncludedLoanIds = new Set<string>();
 
-  // First, get all schedules for the given year
+  // First, get all schedules for the given year (paginated to avoid 1,000-row PostgREST truncation)
   const startOfYear = `${year}-01-01`;
   const endOfYear = `${year}-12-31`;
 
-  const { data: yearSchedules, error: yearError } = await supabase
-    .from('loan_schedules')
-    .select('loan_id')
-    .gte('due_date', startOfYear)
-    .lte('due_date', endOfYear);
+  const { data: yearSchedules, error: yearError } = await fetchAllPaginatedSafe(() => {
+    let q: any = supabase
+      .from('loan_schedules')
+      .select('loan_id')
+      .gte('due_date', startOfYear)
+      .lte('due_date', endOfYear);
+    if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+      q = q.order('id', { ascending: true });
+    }
+    return q;
+  });
 
   if (yearError) {
     console.error('Error fetching loan matrix schedules:', yearError);
     throw yearError;
   }
 
-  const scheduleLoanIds = (yearSchedules || []).map(s => s.loan_id).filter(Boolean);
+  const scheduleLoanIds = (yearSchedules || []).map((s: any) => s.loan_id).filter(Boolean);
   let loanIds = Array.from(new Set(scheduleLoanIds));
 
-  // Ambil juga pinjaman aktif/disetujui yang relevan jika tabel loans tersedia
+  // Ambil juga pinjaman aktif/disetujui atau yang masih memiliki sisa_pinjaman > 0
   const activeLoanIdsFromDb = new Set<string>();
   try {
     const loanTableCheck: any = supabase.from('loans');
     if (loanTableCheck && typeof loanTableCheck.select === 'function') {
       const activeRes = await executeEnumSafeStatusQuery(async (statuses) => {
-        const q: any = supabase.from('loans')?.select('id');
-        if (q && typeof q.in === 'function') {
-          return await q.in('status', statuses);
-        }
-        return { data: null, error: null };
+        return await fetchAllPaginatedSafe(() => {
+          let q: any = supabase.from('loans')?.select('id');
+          if (q && typeof q.in === 'function') {
+            q = q.in('status', statuses);
+            if (typeof q.range === 'function' && typeof q.order === 'function') {
+              q = q.order('id', { ascending: true });
+            }
+            return q;
+          }
+          return null;
+        });
       });
       const activeLoans = Array.isArray(activeRes?.data) ? activeRes.data : [];
       if (activeLoans.length > 0) {
@@ -520,6 +541,32 @@ export const getLoanMatrix = async (
           if (l?.id) activeLoanIdsFromDb.add(l.id);
         });
         loanIds = Array.from(new Set([...loanIds, ...activeLoanIdsFromDb]));
+      }
+
+      // Sertakan kontrak yang masih memiliki sisa_pinjaman > 0 (kecuali draft/rejected/cancelled/pending)
+      const sisaProbe: any = supabase.from('loans')?.select('id, status');
+      if (sisaProbe && typeof sisaProbe.gt === 'function') {
+        const { data: positiveSisaLoans, error: positiveSisaErr } = await fetchAllPaginatedSafe(() => {
+          let q: any = supabase.from('loans')?.select('id, status').gt('sisa_pinjaman', 0);
+          if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+            q = q.order('id', { ascending: true });
+          }
+          return q;
+        });
+        if (!positiveSisaErr && Array.isArray(positiveSisaLoans)) {
+          const extraIds: string[] = [];
+          positiveSisaLoans.forEach((l: any) => {
+            const st = String(l?.status || '').trim().toLowerCase();
+            if (['rejected', 'draft', 'cancelled', 'pending'].includes(st)) return;
+            if (l?.id) {
+              activeLoanIdsFromDb.add(l.id);
+              extraIds.push(l.id);
+            }
+          });
+          if (extraIds.length > 0) {
+            loanIds = Array.from(new Set([...loanIds, ...extraIds]));
+          }
+        }
       }
     }
   } catch {
@@ -619,7 +666,9 @@ export const getLoanMatrix = async (
     };
   }
 
-  // Fetch ALL schedules for those loans so we can calculate running balance properly
+  // Fetch ALL schedules for those loans (chunked + paginated to prevent 1,000-row truncation)
+  const loanIdChunks = chunkMatrixArray(loanIds, 80);
+
   const runSchedulesQuery = async (withGoodsCols: boolean) => {
     const loanCols = withGoodsCols
       ? `
@@ -677,24 +726,49 @@ export const getLoanMatrix = async (
           suspended_at,
           suspension_reason
         `;
-    return await supabase
-      .from('loan_schedules')
-      .select(`
-      id,
-      period_number,
-      due_date,
-      target_amount,
-      paid_amount,
-      status,
-      loan:loans (
-        ${loanCols}
-        member:anggota (
-          ${memberCols}
-        )
-      )
-    `)
-      .in('loan_id', loanIds)
-      .order('due_date', { ascending: true });
+
+    const allSchedules: any[] = [];
+    const seenSchedIds = new Set<string>();
+
+    for (const idChunk of loanIdChunks) {
+      const { data: chunkData, error: chunkErr } = await fetchAllPaginatedSafe(() => {
+        let q: any = supabase
+          .from('loan_schedules')
+          .select(`
+          id,
+          period_number,
+          due_date,
+          target_amount,
+          paid_amount,
+          status,
+          loan:loans (
+            ${loanCols}
+            member:anggota (
+              ${memberCols}
+            )
+          )
+        `)
+          .in('loan_id', idChunk)
+          .order('due_date', { ascending: true });
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
+
+      if (chunkErr) {
+        return { data: null, error: chunkErr };
+      }
+      for (const s of chunkData || []) {
+        if (s?.id) {
+          if (seenSchedIds.has(s.id)) continue;
+          seenSchedIds.add(s.id);
+        }
+        allSchedules.push(s);
+      }
+    }
+
+    return { data: allSchedules, error: null };
   };
 
   let { data: schedules, error: scheduleError } = await runSchedulesQuery(true);
@@ -712,19 +786,35 @@ export const getLoanMatrix = async (
   const repaidByScheduleId: Record<string, number> = {};
   const repaidByLoanId: Record<string, number> = {};
   try {
-    const repayQ: any = supabase.from('loan_repayments')?.select?.('loan_id, schedule_id, amount_paid');
-    if (repayQ && typeof repayQ.in === 'function') {
-      const { data: repaymentRows } = await repayQ.in('loan_id', loanIds);
-      (repaymentRows || []).forEach((r: any) => {
-        const amt = Number(r?.amount_paid || 0);
-        if (amt <= 0) return;
-        if (r?.schedule_id) {
-          repaidByScheduleId[r.schedule_id] = (repaidByScheduleId[r.schedule_id] || 0) + amt;
-        }
-        if (r?.loan_id) {
-          repaidByLoanId[r.loan_id] = (repaidByLoanId[r.loan_id] || 0) + amt;
-        }
-      });
+    const seenRepayIds = new Set<string>();
+    for (const idChunk of loanIdChunks) {
+      const repayProbe: any = supabase.from('loan_repayments')?.select?.('id, loan_id, schedule_id, amount_paid');
+      if (repayProbe && typeof repayProbe.in === 'function') {
+        const { data: repaymentRows } = await fetchAllPaginatedSafe(() => {
+          let q: any = supabase
+            .from('loan_repayments')
+            ?.select?.('id, loan_id, schedule_id, amount_paid')
+            ?.in('loan_id', idChunk);
+          if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+            q = q.order('id', { ascending: true });
+          }
+          return q;
+        });
+        (repaymentRows || []).forEach((r: any) => {
+          if (r?.id) {
+            if (seenRepayIds.has(r.id)) return;
+            seenRepayIds.add(r.id);
+          }
+          const amt = Number(r?.amount_paid || 0);
+          if (amt <= 0) return;
+          if (r?.schedule_id) {
+            repaidByScheduleId[r.schedule_id] = (repaidByScheduleId[r.schedule_id] || 0) + amt;
+          }
+          if (r?.loan_id) {
+            repaidByLoanId[r.loan_id] = (repaidByLoanId[r.loan_id] || 0) + amt;
+          }
+        });
+      }
     }
   } catch {
     // Non-fatal fallback bila tabel loan_repayments tidak distub pada test
@@ -809,19 +899,20 @@ export const getLoanMatrix = async (
       loan.sisa_pinjaman !== null &&
       loan.sisa_pinjaman !== undefined &&
       Number(loan.sisa_pinjaman) > 0;
-    const hasPositiveRemaining =
-      hasPositiveSisaColumn || (hasUnpaidOrPartialSchedule && computedRemaining > 0);
+    const isMismarkedCompleted =
+      hasUnpaidOrPartialSchedule ||
+      (hasPositiveSisaColumn && (principalAmt <= 0 || computedRemaining > 5));
     const hasZeroRemaining =
       !hasUnpaidOrPartialSchedule &&
       loan.sisa_pinjaman !== null &&
       loan.sisa_pinjaman !== undefined &&
       Number(loan.sisa_pinjaman) <= 0;
 
-    if (isCompletedLoanStatus(statusLower) && (hasUnpaidOrPartialSchedule || hasPositiveRemaining)) {
+    if (isCompletedLoanStatus(statusLower) && isMismarkedCompleted) {
       mismarkedActiveLoanIds.add(loanId);
       mismarkedActiveLoanUpdates.push({
         id: loanId,
-        sisaPinjaman: hasPositiveSisaColumn ? Number(loan.sisa_pinjaman) : computedRemaining,
+        sisaPinjaman: hasPositiveSisaColumn ? Number(loan.sisa_pinjaman) : Math.round(computedRemaining),
       });
       activeLoanIdsSet.add(loanId);
       return;
@@ -854,13 +945,15 @@ export const getLoanMatrix = async (
     try {
       const loansTable: any = supabase.from('loans');
       if (loansTable && typeof loansTable.update === 'function') {
-        await Promise.all(
-          mismarkedActiveLoanUpdates.map((item) =>
-            loansTable
-              .update({ status: 'active', sisa_pinjaman: item.sisaPinjaman })
-              .eq('id', item.id)
-          )
-        );
+        for (const updateChunk of chunkMatrixArray(mismarkedActiveLoanUpdates, 10)) {
+          await Promise.all(
+            updateChunk.map((item) =>
+              loansTable
+                .update({ status: 'active', sisa_pinjaman: item.sisaPinjaman })
+                .eq('id', item.id)
+            )
+          );
+        }
       }
     } catch {
       // Non-blocking auto-repair fallback

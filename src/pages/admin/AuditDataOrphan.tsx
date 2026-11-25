@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Database,
   Loader2,
+  CheckCircle2,
 } from 'lucide-react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -21,6 +22,7 @@ import { formatCurrency } from '../../utils/formatCurrency';
 import {
   scanAllOrphanRecords,
   deleteOrphanRecords,
+  syncUnreceiptedInstallments,
   buildOrphanScanSummary,
   type OrphanRecordItem,
   type OrphanModuleCategory,
@@ -34,6 +36,7 @@ export interface AuditDataOrphanProps {
 
 const MODULE_OPTIONS: Array<'ALL' | OrphanModuleCategory> = [
   'ALL',
+  'Angsuran Tanpa Kwitansi/Kas',
   'Arus Kas Pinjaman',
   'Arus Kas Simpanan',
   'Arus Kas Retail/Bon',
@@ -71,6 +74,7 @@ export default function AuditDataOrphan({
     initialItems === undefined && !skipInitialScan
   );
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   const [moduleFilter, setModuleFilter] = useState<'ALL' | OrphanModuleCategory>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -78,6 +82,7 @@ export default function AuditDataOrphan({
 
   const [detailItem, setDetailItem] = useState<OrphanRecordItem | null>(null);
   const [pendingDeleteItems, setPendingDeleteItems] = useState<OrphanRecordItem[] | null>(null);
+  const [pendingSyncItems, setPendingSyncItems] = useState<OrphanRecordItem[] | null>(null);
 
   const runScan = useCallback(async () => {
     setLoading(true);
@@ -103,27 +108,7 @@ export default function AuditDataOrphan({
     }
   }, [initialItems, skipInitialScan, runScan]);
 
-  const summary = useMemo(() => {
-    const base = buildOrphanScanSummary(items);
-    let cashInImpact = 0;
-    let cashOutImpact = 0;
-
-    for (const item of items) {
-      if (item.sourceTable !== 'cash_flow') continue;
-      const amt = Number(item.amount || 0);
-      if (item.direction === 'in') {
-        cashInImpact += amt;
-      } else if (item.direction === 'out') {
-        cashOutImpact += amt;
-      }
-    }
-
-    return {
-      ...base,
-      cashInImpact,
-      cashOutImpact,
-    };
-  }, [items]);
+  const summary = useMemo(() => buildOrphanScanSummary(items), [items]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -179,28 +164,74 @@ export default function AuditDataOrphan({
     [items, selectedIds]
   );
 
-  const pendingDeleteSummary = useMemo(() => {
-    const targetItems = pendingDeleteItems ?? [];
-    const base = buildOrphanScanSummary(targetItems);
-    let cashInImpact = 0;
-    let cashOutImpact = 0;
+  const selectedDeleteItems = useMemo(
+    () =>
+      selectedItems.filter(
+        (item) => (item.anomalyType ?? 'orphan_delete') === 'orphan_delete'
+      ),
+    [selectedItems]
+  );
+
+  const selectedSyncItems = useMemo(
+    () =>
+      selectedItems.filter(
+        (item) => item.anomalyType === 'missing_receipt_and_cashflow'
+      ),
+    [selectedItems]
+  );
+
+  const pendingSyncSummary = useMemo(() => {
+    const targetItems = pendingSyncItems ?? [];
+    let totalAmount = 0;
+    let receiptsToCreate = 0;
+    let cashFlowsToCreate = 0;
 
     for (const item of targetItems) {
-      if (item.sourceTable !== 'cash_flow') continue;
-      const amt = Number(item.amount || 0);
-      if (item.direction === 'in') {
-        cashInImpact += amt;
-      } else if (item.direction === 'out') {
-        cashOutImpact += amt;
-      }
+      totalAmount += Number(item.amount || 0);
+      if (item.rawRecord?.hasReceipt !== true) receiptsToCreate += 1;
+      if (item.rawRecord?.hasCashFlow !== true) cashFlowsToCreate += 1;
     }
 
     return {
-      ...base,
-      cashInImpact,
-      cashOutImpact,
+      totalItems: targetItems.length,
+      totalAmount,
+      receiptsToCreate,
+      cashFlowsToCreate,
     };
+  }, [pendingSyncItems]);
+
+  const pendingDeleteSummary = useMemo(() => {
+    const targetItems = pendingDeleteItems ?? [];
+    return buildOrphanScanSummary(targetItems);
   }, [pendingDeleteItems]);
+
+  const handleConfirmSync = async () => {
+    if (!pendingSyncItems || pendingSyncItems.length === 0) return;
+    setIsSyncing(true);
+    try {
+      const res = await syncUnreceiptedInstallments(pendingSyncItems);
+      if (res.errors.length > 0) {
+        showToast(
+          `Sebagian sinkronisasi gagal: ${res.errors.join('; ')}`,
+          res.syncedCount > 0 ? 'warning' : 'error'
+        );
+      } else {
+        showToast(
+          `Berhasil menyinkronkan ${res.syncedCount} angsuran (${res.createdReceiptsCount} kwitansi & ${res.createdCashFlowsCount} arus kas).`,
+          'success'
+        );
+      }
+      setPendingSyncItems(null);
+      await runScan();
+    } catch (err: any) {
+      showToast(
+        'Gagal menyinkronkan angsuran: ' + (err?.message || 'Kesalahan sistem'),
+        'error'
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const handleConfirmDelete = async () => {
     if (!pendingDeleteItems || pendingDeleteItems.length === 0) return;
@@ -275,26 +306,37 @@ export default function AuditDataOrphan({
             <button
               type="button"
               onClick={runScan}
-              disabled={loading || isDeleting}
+              disabled={loading || isDeleting || isSyncing}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-xs transition-colors cursor-pointer disabled:opacity-60"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               Pindai Ulang Sekarang
             </button>
+            {(summary.missingSyncCount > 0 || selectedSyncItems.length > 0) && (
+              <button
+                type="button"
+                onClick={() => setPendingSyncItems(selectedSyncItems)}
+                disabled={selectedSyncItems.length === 0 || isSyncing || isDeleting}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Sinkronkan Terpilih ({selectedSyncItems.length})
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setPendingDeleteItems(selectedItems)}
-              disabled={selectedItems.length === 0 || isDeleting}
+              onClick={() => setPendingDeleteItems(selectedDeleteItems)}
+              disabled={selectedDeleteItems.length === 0 || isDeleting || isSyncing}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
             >
               <Trash2 className="w-4 h-4" />
-              Hapus Terpilih ({selectedItems.length})
+              Hapus Terpilih ({selectedDeleteItems.length})
             </button>
           </div>
         </div>
 
-        {/* 3-Column Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 4-Column Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between gap-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -314,7 +356,42 @@ export default function AuditDataOrphan({
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-extrabold text-slate-900">{summary.totalCount}</span>
-              <span className="text-xs text-slate-500">baris data yatim lintas modul</span>
+              <span className="text-xs text-slate-500">baris temuan lintas modul</span>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-emerald-200 p-5 shadow-xs flex flex-col justify-between gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Angsuran Belum Tersinkron
+              </span>
+              <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
+                <CheckCircle2 className="w-4 h-4" />
+              </span>
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-extrabold text-emerald-700">
+                  {summary.missingSyncCount}
+                </span>
+                <span className="text-xs text-slate-500">
+                  periode ({formatCurrency(summary.missingSyncAmount)})
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-slate-500">
+                  Angsuran lunas tanpa kwitansi / arus kas
+                </p>
+                {summary.missingSyncCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setModuleFilter('Angsuran Tanpa Kwitansi/Kas')}
+                    className="text-[11px] font-semibold text-emerald-700 hover:underline shrink-0 cursor-pointer"
+                  >
+                    Filter
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -468,11 +545,18 @@ export default function AuditDataOrphan({
                 <tbody className="divide-y divide-slate-100 text-xs">
                   {filteredItems.map((item) => {
                     const checked = selectedIds.has(item.id);
+                    const isSyncItem = item.anomalyType === 'missing_receipt_and_cashflow';
                     return (
                       <tr
                         key={`${item.sourceTable}-${item.id}`}
-                        className={`hover:bg-rose-50/30 transition-colors ${
-                          checked ? 'bg-rose-50/50' : ''
+                        className={`transition-colors ${
+                          isSyncItem
+                            ? checked
+                              ? 'bg-emerald-50/60 hover:bg-emerald-50/70'
+                              : 'hover:bg-emerald-50/30'
+                            : checked
+                              ? 'bg-rose-50/50 hover:bg-rose-50/60'
+                              : 'hover:bg-rose-50/30'
                         }`}
                       >
                         <td className="py-3 px-4 align-top">
@@ -481,7 +565,11 @@ export default function AuditDataOrphan({
                             checked={checked}
                             onChange={() => toggleSelectRow(item.id)}
                             aria-label={`Pilih ${item.referenceCode}`}
-                            className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 mt-0.5"
+                            className={`rounded border-slate-300 mt-0.5 ${
+                              isSyncItem
+                                ? 'text-emerald-600 focus:ring-emerald-500'
+                                : 'text-rose-600 focus:ring-rose-500'
+                            }`}
                           />
                         </td>
                         <td className="py-3 px-3 align-top text-slate-600 whitespace-nowrap">
@@ -497,6 +585,15 @@ export default function AuditDataOrphan({
                           <div className="text-[11px] font-mono text-slate-500">
                             public.{item.sourceTable}
                           </div>
+                          <span
+                            className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                              isSyncItem
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}
+                          >
+                            {isSyncItem ? 'Sinkronisasi Kwitansi & Kas' : 'Data Orphan'}
+                          </span>
                         </td>
                         <td className="py-3 px-3 align-top text-slate-700">
                           {item.description}
@@ -517,8 +614,16 @@ export default function AuditDataOrphan({
                           )}
                         </td>
                         <td className="py-3 px-3 align-top">
-                          <span className="inline-block px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold mb-1">
-                            Target Hilang: {item.missingTarget}
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded border text-[10px] font-semibold mb-1 ${
+                              isSyncItem
+                                ? 'bg-teal-50 border-teal-200 text-teal-800'
+                                : 'bg-amber-50 border-amber-200 text-amber-800'
+                            }`}
+                          >
+                            {isSyncItem
+                              ? `Belum Tercatat: ${item.missingTarget}`
+                              : `Target Hilang: ${item.missingTarget}`}
                           </span>
                           <p className="text-slate-600 leading-relaxed">{item.reason}</p>
                         </td>
@@ -532,14 +637,25 @@ export default function AuditDataOrphan({
                               <Eye className="w-3.5 h-3.5" />
                               Detail
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingDeleteItems([item])}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Hapus
-                            </button>
+                            {isSyncItem ? (
+                              <button
+                                type="button"
+                                onClick={() => setPendingSyncItems([item])}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[11px] font-semibold cursor-pointer"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                Sinkronkan
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setPendingDeleteItems([item])}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Hapus
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -623,16 +739,169 @@ export default function AuditDataOrphan({
               >
                 Tutup
               </button>
+              {detailItem.anomalyType === 'missing_receipt_and_cashflow' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = detailItem;
+                    setDetailItem(null);
+                    setPendingSyncItems([target]);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Sinkronkan Record Ini
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = detailItem;
+                    setDetailItem(null);
+                    setPendingDeleteItems([target]);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Hapus Record Ini
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Konfirmasi Sinkronisasi Kwitansi & Arus Kas */}
+      {pendingSyncItems && pendingSyncItems.length > 0 && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Konfirmasi Sinkronisasi Kwitansi & Arus Kas"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+        >
+          <div className="bg-white rounded-2xl border border-emerald-200 shadow-2xl max-w-2xl w-full overflow-hidden">
+            <div className="px-5 py-4 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-800">
+                <CheckCircle2 className="w-5 h-5 shrink-0" />
+                <h2 className="text-sm font-bold">
+                  Konfirmasi Sinkronisasi {pendingSyncItems.length} Angsuran Lunas
+                </h2>
+              </div>
               <button
                 type="button"
-                onClick={() => {
-                  const target = detailItem;
-                  setDetailItem(null);
-                  setPendingDeleteItems([target]);
-                }}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
+                onClick={() => setPendingSyncItems(null)}
+                disabled={isSyncing}
+                aria-label="Tutup konfirmasi sinkronisasi"
+                className="p-1 rounded-lg text-emerald-700 hover:bg-emerald-100 cursor-pointer"
               >
-                Hapus Record Ini
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <p className="text-slate-700 leading-relaxed">
+                Sistem akan menerbitkan rekaman kwitansi (<span className="font-mono">loan_repayments</span>) dan/atau mutasi kas masuk (<span className="font-mono">cash_flow</span>) secara idempoten sesuai tanggal jatuh tempo masing-masing periode:
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-slate-500 block">Kwitansi Baru</span>
+                  <strong className="text-slate-900">{pendingSyncSummary.receiptsToCreate} baris</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Mutasi Arus Kas Baru</span>
+                  <strong className="text-slate-900">{pendingSyncSummary.cashFlowsToCreate} baris</strong>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Total Nominal Angsuran</span>
+                  <strong className="text-emerald-700">{formatCurrency(pendingSyncSummary.totalAmount)}</strong>
+                </div>
+              </div>
+
+              <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+                {pendingSyncItems.map((item) => {
+                  const sch = item.rawRecord?.schedule;
+                  const loan = item.rawRecord?.loan;
+                  const loanNumber = String(loan?.loan_number || item.referenceCode);
+                  const periodNum = Number(sch?.period_number || 0);
+                  const previewReceipt =
+                    item.rawRecord?.previewReceiptNumber ||
+                    `KW-MIGRASI/${loanNumber}/B${periodNum}`;
+                  const previewDate =
+                    item.rawRecord?.previewCashFlowDate ||
+                    String(sch?.due_date || item.transactionDate || '-').slice(0, 10);
+                  const hasReceipt = item.rawRecord?.hasReceipt === true;
+                  const hasCashFlow = item.rawRecord?.hasCashFlow === true;
+
+                  return (
+                    <div
+                      key={`${item.sourceTable}-${item.id}`}
+                      className="px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="font-semibold text-slate-900 truncate">
+                          {item.description}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                            {previewReceipt}
+                          </span>
+                          <span className="text-slate-500">
+                            Tgl Kas: <strong className="text-slate-700">{previewDate}</strong>
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                              hasReceipt
+                                ? 'bg-slate-100 text-slate-500'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            {hasReceipt ? 'Kwitansi Ada' : 'Buat Kwitansi'}
+                          </span>
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                              hasCashFlow
+                                ? 'bg-slate-100 text-slate-500'
+                                : 'bg-teal-50 text-teal-700 border border-teal-200'
+                            }`}
+                          >
+                            {hasCashFlow ? 'Kas Ada' : 'Catat Arus Kas'}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="font-bold text-slate-900 shrink-0">
+                        {formatCurrency(item.amount)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingSyncItems(null)}
+                disabled={isSyncing}
+                className="px-4 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSync}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-60"
+              >
+                {isSyncing ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Menyinkronkan...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Konfirmasi &amp; Terapkan Sinkronisasi
+                  </>
+                )}
               </button>
             </div>
           </div>

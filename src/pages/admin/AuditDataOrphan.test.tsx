@@ -139,4 +139,46 @@ describe('AuditDataOrphan Page', () => {
     expect(html).toContain('125.000');
     expect(html).not.toContain('50.350.000');
   });
+
+  it('renders missing_receipt_and_cashflow items with Angsuran Belum Tersinkron summary and Sinkronkan actions without inflating cash impact', () => {
+    const syncItems: OrphanRecordItem[] = [
+      {
+        id: 'sch-mig-1',
+        sourceTable: 'loan_schedules',
+        anomalyType: 'missing_receipt_and_cashflow',
+        recommendedActionLabel: 'Sinkronkan Kwitansi & Kas',
+        referenceCode: 'SALDO-AWAL-197006162009101001-GAJISIPA • Bln Ke-1',
+        transactionDate: '2026-02-15',
+        moduleCategory: 'Angsuran Tanpa Kwitansi/Kas',
+        description: 'Angsuran Ke-1 (SALDO-AWAL-197006162009101001-GAJISIPA) — 197006162009101001 - Sutarman',
+        amount: 1000000,
+        direction: 'neutral',
+        missingTarget: 'loan_repayments & cash_flow',
+        reason: 'Jadwal angsuran sudah lunas namun belum memiliki No. Kwitansi dan belum tercatat di Arus Kas.',
+        rawRecord: {
+          hasReceipt: false,
+          hasCashFlow: false,
+          previewReceiptNumber: 'KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B1',
+          previewCashFlowDate: '2026-02-15',
+        },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/admin/audit-orphan']}>
+        <AuditDataOrphan
+          initialItems={syncItems}
+          initialScannedAt="2026-11-25T03:00:00.000Z"
+        />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Angsuran Belum Tersinkron');
+    expect(html).toContain('Angsuran Tanpa Kwitansi/Kas');
+    expect(html).toContain('Sinkronisasi Kwitansi &amp; Kas');
+    expect(html).toContain('Sinkronkan Terpilih (0)');
+    expect(html).toContain('Sinkronkan');
+    expect(html).toContain('SALDO-AWAL-197006162009101001-GAJISIPA');
+    expect(html).toContain('1.000.000');
+  });
 });

@@ -586,6 +586,28 @@ export async function syncInitialLoanBalances(
       .filter(Boolean);
 
     if (oldLoanIds.length > 0) {
+      try {
+        let oldSchedIds: string[] = [];
+        const schedTable: any = supabase.from('loan_schedules');
+        if (schedTable && typeof schedTable.select === 'function') {
+          const schedSelect = schedTable.select('id');
+          if (schedSelect && typeof schedSelect.in === 'function') {
+            const { data: oldScheds } = await schedSelect.in('loan_id', oldLoanIds);
+            oldSchedIds = (oldScheds || []).map((s: any) => s?.id).filter(Boolean);
+          }
+        }
+        const cfRefIdsToDelete = Array.from(new Set([...oldSchedIds, ...oldLoanIds]));
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfRefIdsToDelete.length > 0 && cfTable && typeof cfTable.delete === 'function') {
+          const cfDel = cfTable.delete();
+          if (cfDel && typeof cfDel.in === 'function') {
+            await cfDel.in('reference_id', cfRefIdsToDelete);
+          }
+        }
+      } catch (cfCleanupErr) {
+        console.warn('Gagal membersihkan cash_flow saldo awal pinjaman lama:', cfCleanupErr);
+      }
+
       const { error: delRepayErr } = await supabase
         .from('loan_repayments')
         .delete()
@@ -661,7 +683,12 @@ export async function syncInitialLoanBalances(
     }
 
     const allPeriodsPaid = paidPeriodsCount >= tenor;
-    const loanStatus = sisaPinjaman <= 0 && allPeriodsPaid ? 'completed' : 'active';
+    const isFullySettled =
+      principalAmount > 0 &&
+      totalTerangsur >= principalAmount &&
+      sisaPinjaman <= 0 &&
+      allPeriodsPaid;
+    const loanStatus: 'paid_off' | 'active' = isFullySettled ? 'paid_off' : 'active';
 
     const loanPayload = {
       loan_number: loanNumber,
@@ -685,11 +712,16 @@ export async function syncInitialLoanBalances(
       .select('id')
       .single();
 
-    if (insLoanErr && insLoanErr.message?.includes('sisa_pinjaman')) {
-      const { sisa_pinjaman: _omitted, ...fallbackPayload } = loanPayload;
+    if (insLoanErr && (insLoanErr.message?.includes('sisa_pinjaman') || isInvalidEnumStatusError(insLoanErr))) {
+      const retryPayload: Record<string, any> = insLoanErr.message?.includes('sisa_pinjaman')
+        ? (({ sisa_pinjaman: _omitted, ...rest }) => rest)(loanPayload)
+        : { ...loanPayload };
+      if (isInvalidEnumStatusError(insLoanErr)) {
+        retryPayload.status = isFullySettled ? 'completed' : 'active';
+      }
       const retryRes = await supabase
         .from('loans')
-        .insert(fallbackPayload)
+        .insert(retryPayload)
         .select('id')
         .single();
       newLoan = retryRes.data;
@@ -707,31 +739,121 @@ export async function syncInitialLoanBalances(
       ...s,
     }));
 
+    const insertedScheduleIdByPeriod = new Map<number, string>();
     if (schedulesToInsert.length > 0) {
-      const { error: insSchedErr } = await supabase
+      const schedInsertCall: any = supabase
         .from('loan_schedules')
         .insert(schedulesToInsert);
 
-      if (insSchedErr) {
-        throw new Error(
-          `Gagal menyimpan jadwal angsuran saldo awal anggota ${nrpKey}: ${insSchedErr.message}`
+      let insSchedRes: any;
+      if (schedInsertCall && typeof schedInsertCall.select === 'function') {
+        insSchedRes = await schedInsertCall.select(
+          'id, period_number, due_date, target_amount, paid_amount, status'
         );
+      } else {
+        insSchedRes = await schedInsertCall;
+      }
+
+      if (insSchedRes?.error) {
+        throw new Error(
+          `Gagal menyimpan jadwal angsuran saldo awal anggota ${nrpKey}: ${insSchedRes.error.message}`
+        );
+      }
+
+      if (Array.isArray(insSchedRes?.data)) {
+        for (const insertedSched of insSchedRes.data) {
+          if (insertedSched?.id && insertedSched?.period_number != null) {
+            insertedScheduleIdByPeriod.set(
+              Number(insertedSched.period_number),
+              String(insertedSched.id)
+            );
+          }
+        }
       }
     }
 
-    if (totalTerangsur > 0) {
-      const { error: insRepayErr } = await supabase.from('loan_repayments').insert({
-        loan_id: newLoan.id,
-        schedule_id: null,
-        payment_method: 'SALDO_AWAL',
-        amount_paid: totalTerangsur,
-        payment_date: new Date(`${trimmedDate}T00:00:00`).toISOString(),
-        notes: `Total Terangsur Saldo Awal (${trimmedDate})`,
+    const paidSchedules = preparedSchedules.filter(
+      (s) => Math.round(Number(s.paid_amount)) > 0
+    );
+
+    if (paidSchedules.length > 0) {
+      const memberName = memberMap.get(nrpKey)?.nama || row.nama || '';
+      const memberSeg = [nrpKey, memberName].filter(Boolean).join(' - ');
+
+      const repaymentsToInsert = paidSchedules.map((s) => {
+        const receiptNo = `KW-MIGRASI/${loanNumber}/B${s.period_number}`;
+        const paymentIso = s.due_date
+          ? `${s.due_date}T08:00:00.000Z`
+          : new Date(`${trimmedDate}T08:00:00.000Z`).toISOString();
+        return {
+          loan_id: newLoan.id,
+          schedule_id: insertedScheduleIdByPeriod.get(s.period_number) ?? null,
+          payment_method: 'SALDO_AWAL_MIGRASI',
+          amount_paid: Math.round(Number(s.paid_amount)),
+          payment_date: paymentIso,
+          receipt_number: receiptNo,
+          notes: `Angsuran Saldo Awal Migrasi (${loanNumber}) Bln ke-${s.period_number}`,
+        };
       });
+
+      let { error: insRepayErr } = await supabase
+        .from('loan_repayments')
+        .insert(repaymentsToInsert);
+
+      if (insRepayErr && isMissingColumnError(insRepayErr)) {
+        const fallbackRepayments = repaymentsToInsert.map(
+          ({ receipt_number: _omitted, ...rest }) => rest
+        );
+        const retryRepay = await supabase
+          .from('loan_repayments')
+          .insert(fallbackRepayments);
+        insRepayErr = retryRepay.error;
+      }
 
       if (insRepayErr) {
         throw new Error(
           `Gagal menyimpan ringkasan angsuran saldo awal anggota ${nrpKey}: ${insRepayErr.message}`
+        );
+      }
+
+      const cashFlowsToInsert = paidSchedules.map((s) => {
+        const receiptNo = `KW-MIGRASI/${loanNumber}/B${s.period_number}`;
+        const createdAtIso = s.due_date
+          ? `${s.due_date}T08:00:00.000Z`
+          : new Date(`${trimmedDate}T08:00:00.000Z`).toISOString();
+        return {
+          direction: 'in' as const,
+          amount: Math.round(Number(s.paid_amount)),
+          category: 'angsuran_pinjaman',
+          reference_id: insertedScheduleIdByPeriod.get(s.period_number) ?? newLoan.id,
+          description: `Angsuran Pinjaman (${loanNumber}) Bln ke-${s.period_number}${
+            memberSeg ? ` — ${memberSeg}` : ''
+          } [${receiptNo}]`,
+          created_at: createdAtIso,
+        };
+      });
+
+      try {
+        const cfTable: any = supabase.from('cash_flow');
+        if (cfTable && typeof cfTable.insert === 'function') {
+          let cfRes: any = await cfTable.insert(cashFlowsToInsert);
+          if (cfRes?.error && isMissingColumnError(cfRes.error)) {
+            const fallbackCashFlows = cashFlowsToInsert.map(
+              ({ description: _omitted, ...rest }) => rest
+            );
+            cfRes = await cfTable.insert(fallbackCashFlows);
+          }
+          if (cfRes?.error) {
+            console.warn(
+              `Gagal mencatat arus kas saldo awal pinjaman anggota ${nrpKey}:`,
+              cfRes.error.message
+            );
+          }
+        }
+      } catch (cfErr) {
+        console.warn(
+          `Gagal mencatat arus kas saldo awal pinjaman anggota ${nrpKey}:`,
+          cfErr
         );
       }
     }

@@ -972,4 +972,350 @@ describe('Clickable LOAN-... Reference & LoanSubsidiaryLedgerModal', () => {
     );
     expect(cashHtml).toContain('bg-emerald-50');
   });
+
+  it('excludes partially-paid SALDO-AWAL loan (HERY SETYO WIBOWO) from getPaidOffLoansReport, repairs it to active, and keeps truly settled LN2611-0002', async () => {
+    const updateEqMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    const updateMock = vi.fn().mockReturnValue({ eq: updateEqMock });
+
+    const heryLoan = {
+      id: 'loan-hery-1',
+      loan_number: 'SALDO-AWAL-75100839-GAJISIPA',
+      member_id: 'mem-hery',
+      loan_type_id: 'lt-reg',
+      principal_amount: 69000000,
+      tenor: 94,
+      agreed_tenor_months: 94,
+      monthly_target: 734043,
+      disbursed_at: '2025-12-01',
+      status: 'paid_off',
+      sisa_pinjaman: 0,
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-hery', nrp: '75100839', nama: 'HERY SETYO WIBOWO', tanggal_lahir: '1975-10-08' },
+    };
+
+    const ln2611Loan = {
+      id: 'loan-ln2611-2',
+      loan_number: 'LN2611-0002',
+      member_id: 'mem-tes-1',
+      loan_type_id: 'lt-brg',
+      principal_amount: 2020000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 673334,
+      disbursed_at: '2026-11-20',
+      status: 'paid_off',
+      sisa_pinjaman: 0,
+      loan_types: { id: 'lt-brg', code: 'PEMBIAYAAN_BARANG', name: 'Pembiayaan Barang' },
+      member: { id: 'mem-tes-1', nrp: '200001', nama: 'anggota tes 1', tanggal_lahir: '1990-01-01' },
+    };
+
+    const herySchedules = Array.from({ length: 94 }, (_, idx) => {
+      const period = idx + 1;
+      const isPaid = period <= 12;
+      return {
+        id: `sh-hery-${period}`,
+        loan_id: 'loan-hery-1',
+        period_number: period,
+        due_date: `2026-${String(((period - 1) % 12) + 1).padStart(2, '0')}-01`,
+        target_amount: 734043,
+        paid_amount: isPaid ? 734043 : 0,
+        status: isPaid ? 'paid' : 'unpaid',
+      };
+    });
+
+    const lnSchedules = [
+      { id: 'sl-1', loan_id: 'loan-ln2611-2', period_number: 1, due_date: '2026-12-24', target_amount: 673334, paid_amount: 673334, status: 'paid' },
+      { id: 'sl-2', loan_id: 'loan-ln2611-2', period_number: 2, due_date: '2027-01-24', target_amount: 673333, paid_amount: 673333, status: 'paid' },
+      { id: 'sl-3', loan_id: 'loan-ln2611-2', period_number: 3, due_date: '2027-02-24', target_amount: 673333, paid_amount: 673333, status: 'paid' },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockResolvedValue({ data: [heryLoan, ln2611Loan], error: null }),
+          update: updateMock,
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [...herySchedules, ...lnSchedules], error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'rep-ln-1',
+                    loan_id: 'loan-ln2611-2',
+                    schedule_id: null,
+                    amount_paid: 2020000,
+                    payment_date: '2026-11-24T10:00:00.000Z',
+                    payment_method: 'transfer',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getPaidOffLoansReport();
+
+    expect(summary.rows).toHaveLength(1);
+    expect(summary.rows[0].loanNumber).toBe('LN2611-0002');
+    expect(summary.rows.some((r) => r.loanNumber === 'SALDO-AWAL-75100839-GAJISIPA')).toBe(false);
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'active',
+        sisa_pinjaman: 60191484,
+        updated_at: expect.any(String),
+      })
+    );
+    expect(updateEqMock).toHaveBeenCalledWith('id', 'loan-hery-1');
+  });
+
+  it('renders dynamic "Berjalan (13% Terbayar)" and "Sisa Piutang: Rp 60.191.484" in LoanSubsidiaryLedgerModal for partially paid loan', () => {
+    const partialHeryRow: PaidOffLoanReportRow = {
+      id: 'loan-hery-1',
+      loanId: 'loan-hery-1',
+      loanNumber: 'SALDO-AWAL-75100839-GAJISIPA',
+      memberId: 'mem-hery',
+      memberName: 'HERY SETYO WIBOWO',
+      nrp: '75100839',
+      tanggal_lahir: '1975-10-08',
+      loanTypeId: 'lt-reg',
+      loanTypeCode: 'GAJISIPA',
+      loanTypeName: 'Gaji Sipa',
+      principalAmount: 69000000,
+      tenor: 94,
+      monthlyInstallment: 734043,
+      totalPaid: 8808516,
+      disbursedAt: '2025-12-01',
+      paidOffDate: null,
+      paidOffYear: null,
+      status: 'completed',
+      paidPeriodsCount: 12,
+      schedules: Array.from({ length: 12 }, (_, idx) => ({
+        id: `sh-hery-${idx + 1}`,
+        periodNumber: idx + 1,
+        dueDate: `2026-${String(idx + 1).padStart(2, '0')}-01`,
+        targetAmount: 734043,
+        paidAmount: 734043,
+        status: 'paid',
+      })),
+    };
+
+    const html = renderToStaticMarkup(
+      <LoanSubsidiaryLedgerModal loanRecord={partialHeryRow} onClose={() => {}} />
+    );
+
+    expect(html).toContain('Berjalan (13% Terbayar)');
+    expect(html).toContain('Sisa Piutang: Rp 60.191.484');
+    expect(html).not.toContain('✓ Lunas Penuh');
+    expect(html).not.toContain('100% Lunas');
+  });
+
+  it('filters out redundant legacy lump-sum SALDO_AWAL row (KW2611-0079) when per-period SALDO_AWAL_MIGRASI receipts exist in buildLoanSubsidiaryLedger', () => {
+    const harjosoRow: PaidOffLoanReportRow = {
+      id: 'loan-harjoso-1',
+      loanId: 'loan-harjoso-1',
+      loanNumber: 'SALDO-AWAL-197006162009101001-GAJISIPA',
+      memberId: 'mem-harjoso',
+      memberName: 'HARJOSO',
+      nrp: '197006162009101001',
+      tanggal_lahir: '1970-06-16',
+      loanTypeId: 'lt-reg',
+      loanTypeCode: 'GAJISIPA',
+      loanTypeName: 'Gaji Sipa',
+      principalAmount: 9000000,
+      tenor: 9,
+      monthlyInstallment: 1000000,
+      totalPaid: 9000000,
+      disbursedAt: '2026-01-01',
+      paidOffDate: '2026-11-22T08:00:00.000Z',
+      paidOffYear: 2026,
+      status: 'completed',
+      paidPeriodsCount: 9,
+      schedules: Array.from({ length: 9 }, (_, idx) => ({
+        id: `sh-harjoso-${idx + 1}`,
+        periodNumber: idx + 1,
+        dueDate: `2026-${String(idx + 2).padStart(2, '0')}-01`,
+        targetAmount: 1000000,
+        paidAmount: 1000000,
+        status: 'paid',
+        receiptNumber:
+          idx < 2
+            ? `KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B${idx + 1}`
+            : `KW2611-153${idx + 7}`,
+      })),
+      repayments: [
+        {
+          id: 'rep-harjoso-b1',
+          scheduleId: 'sh-harjoso-1',
+          periodNumber: 1,
+          amountPaid: 1000000,
+          paymentDate: '2026-02-01T08:00:00.000Z',
+          paymentMethod: 'SALDO_AWAL_MIGRASI',
+          receiptNumber: 'KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B1',
+          notes: 'Angsuran Saldo Awal Migrasi Bln ke-1',
+        },
+        {
+          id: 'rep-harjoso-b2',
+          scheduleId: 'sh-harjoso-2',
+          periodNumber: 2,
+          amountPaid: 1000000,
+          paymentDate: '2026-03-01T08:00:00.000Z',
+          paymentMethod: 'SALDO_AWAL_MIGRASI',
+          receiptNumber: 'KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B2',
+          notes: 'Angsuran Saldo Awal Migrasi Bln ke-2',
+        },
+        ...Array.from({ length: 7 }, (_, idx) => ({
+          id: `rep-harjoso-${idx + 3}`,
+          scheduleId: `sh-harjoso-${idx + 3}`,
+          periodNumber: idx + 3,
+          amountPaid: 1000000,
+          paymentDate: `2026-${String(idx + 4).padStart(2, '0')}-01T08:00:00.000Z`,
+          paymentMethod: 'potong_gaji',
+          receiptNumber: `KW2611-153${idx + 9}`,
+          notes: `Angsuran ke-${idx + 3}`,
+        })),
+        {
+          id: 'rep-harjoso-lump-sum',
+          scheduleId: null,
+          periodNumber: null,
+          amountPaid: 2000000,
+          paymentDate: '2026-11-22T08:00:00.000Z',
+          paymentMethod: 'SALDO_AWAL',
+          receiptNumber: 'KW2611-0079',
+          notes: 'Total Terangsur Saldo Awal (2026-11-22)',
+        },
+      ],
+    };
+
+    const ledger = buildLoanSubsidiaryLedger(harjosoRow);
+    expect(ledger.entries).toHaveLength(10);
+    expect(ledger.totalCredit).toBe(9000000);
+    expect(ledger.endingBalance).toBe(0);
+    expect(ledger.entries.some((e) => e.referenceNumber === 'KW2611-0079')).toBe(false);
+  });
+
+  it('excludes and deletes redundant legacy lump-sum SALDO_AWAL row in getPaidOffLoansReport', async () => {
+    const deleteInMock = vi.fn().mockResolvedValue({ data: null, error: null });
+    const deleteMock = vi.fn().mockReturnValue({ in: deleteInMock });
+
+    const harjosoLoan = {
+      id: 'loan-harjoso-1',
+      loan_number: 'SALDO-AWAL-197006162009101001-GAJISIPA',
+      member_id: 'mem-harjoso',
+      loan_type_id: 'lt-reg',
+      principal_amount: 9000000,
+      tenor: 9,
+      agreed_tenor_months: 9,
+      monthly_target: 1000000,
+      disbursed_at: '2026-01-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-harjoso', nrp: '197006162009101001', nama: 'HARJOSO', tanggal_lahir: '1970-06-16' },
+    };
+
+    const harjosoSchedules = Array.from({ length: 9 }, (_, idx) => ({
+      id: `sh-h-${idx + 1}`,
+      loan_id: 'loan-harjoso-1',
+      period_number: idx + 1,
+      due_date: `2026-${String(idx + 2).padStart(2, '0')}-01`,
+      target_amount: 1000000,
+      paid_amount: 1000000,
+      status: 'paid',
+    }));
+
+    const harjosoRepayments = [
+      {
+        id: 'rep-mig-1',
+        loan_id: 'loan-harjoso-1',
+        schedule_id: 'sh-h-1',
+        amount_paid: 1000000,
+        payment_date: '2026-02-01T08:00:00.000Z',
+        payment_method: 'SALDO_AWAL_MIGRASI',
+        receipt_number: 'KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B1',
+        notes: 'Angsuran Saldo Awal Migrasi Bln ke-1',
+      },
+      {
+        id: 'rep-mig-2',
+        loan_id: 'loan-harjoso-1',
+        schedule_id: 'sh-h-2',
+        amount_paid: 1000000,
+        payment_date: '2026-03-01T08:00:00.000Z',
+        payment_method: 'SALDO_AWAL_MIGRASI',
+        receipt_number: 'KW-MIGRASI/SALDO-AWAL-197006162009101001-GAJISIPA/B2',
+        notes: 'Angsuran Saldo Awal Migrasi Bln ke-2',
+      },
+      ...Array.from({ length: 7 }, (_, idx) => ({
+        id: `rep-reg-${idx + 3}`,
+        loan_id: 'loan-harjoso-1',
+        schedule_id: `sh-h-${idx + 3}`,
+        amount_paid: 1000000,
+        payment_date: `2026-${String(idx + 4).padStart(2, '0')}-01T08:00:00.000Z`,
+        payment_method: 'potong_gaji',
+        receipt_number: `KW2611-153${idx + 9}`,
+        notes: `Angsuran ke-${idx + 3}`,
+      })),
+      {
+        id: 'rep-lump-sum',
+        loan_id: 'loan-harjoso-1',
+        schedule_id: null,
+        amount_paid: 2000000,
+        payment_date: '2026-11-22T08:00:00.000Z',
+        payment_method: 'SALDO_AWAL',
+        receipt_number: 'KW2611-0079',
+        notes: 'Total Terangsur Saldo Awal (2026-11-22)',
+      },
+    ];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockResolvedValue({ data: [harjosoLoan], error: null }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: harjosoSchedules, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: harjosoRepayments, error: null }),
+            }),
+          }),
+          delete: deleteMock,
+        };
+      }
+      return {};
+    });
+
+    const summary = await getPaidOffLoansReport();
+    expect(summary.rows).toHaveLength(1);
+    expect(summary.rows[0].totalPaid).toBe(9000000);
+    expect(summary.rows[0].repayments).toHaveLength(9);
+    expect(summary.rows[0].repayments?.some((r) => r.receiptNumber === 'KW2611-0079')).toBe(false);
+    expect(deleteMock).toHaveBeenCalled();
+    expect(deleteInMock).toHaveBeenCalledWith('id', ['rep-lump-sum']);
+  });
 });

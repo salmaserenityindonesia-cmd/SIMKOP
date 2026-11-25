@@ -328,10 +328,18 @@ const hasRowRemainingPrincipal = (row: LoanMatrixMember): boolean => {
   );
 };
 
+const hasRowUnpaidInstallment = (row: LoanMatrixMember): boolean => {
+  if (hasRowRemainingPrincipal(row)) return true;
+  return Object.values(row.months || {}).some((cell) => {
+    const st = evaluateInstallmentStatus(cell).effectiveStatus;
+    return st === 'UNPAID' || st === 'PARTIAL';
+  });
+};
+
 const getRowComplianceInfo = (row: LoanMatrixMember, fallbackYear: number) => {
   const rowStatusLower = String((row as any).status || '').trim().toLowerCase();
   const isLoanCompleted =
-    !hasRowRemainingPrincipal(row) &&
+    !hasRowUnpaidInstallment(row) &&
     (!row.isLoanActive ||
       rowStatusLower === 'completed' ||
       rowStatusLower === 'paid_off' ||
@@ -681,9 +689,9 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
         (m.loanTypeName || m.loan_types?.name || '').toLowerCase().includes(search.toLowerCase()) ||
         (m.loanTypeCode || m.loan_types?.code || '').toLowerCase().includes(search.toLowerCase());
       const rowStatusLower = String(m.status || '').trim().toLowerCase();
-      const hasRemaining = hasRowRemainingPrincipal(m);
+      const hasUnpaid = hasRowUnpaidInstallment(m);
       const isRowCompleted =
-        !hasRemaining &&
+        !hasUnpaid &&
         (!m.isLoanActive ||
           rowStatusLower === 'completed' ||
           rowStatusLower === 'paid_off' ||
@@ -691,7 +699,7 @@ const LoanMatrixContent: React.FC<LoanMatrixInternalProps> = ({
           rowStatusLower === 'paid');
       const matchStatus = 
         statusFilter === 'ALL' ? true :
-        statusFilter === 'ACTIVE' ? ((m.isLoanActive || hasRemaining) && !isRowCompleted && rowStatusLower !== 'rejected') :
+        statusFilter === 'ACTIVE' ? ((m.isLoanActive || hasUnpaid) && !isRowCompleted && rowStatusLower !== 'rejected') :
         statusFilter === 'PAID' ? isRowCompleted :
         statusFilter === 'UNPAID' ? Object.values(m.months).some(mo => mo.status === 'UNPAID') :
         statusFilter === 'FROZEN' ? (
