@@ -12,11 +12,19 @@ import ParkedTransactionsModal from '../../components/pos/ParkedTransactionsModa
 import BukaKasirModal from '../../components/pos/BukaKasirModal';
 import TutupKasirModal from '../../components/pos/TutupKasirModal';
 import EditItemPriceModal from '../../components/pos/EditItemPriceModal';
+import OperatorOpnameDrawer from '../../components/pos/OperatorOpnameDrawer';
 import { processCheckout } from '../../services/posCheckoutService';
 import { getMemberFinancials, MemberFinancials } from '../../services/posCreditService';
 import { holdTransaction, getParkedSales } from '../../services/posParkedService';
 import { cleanupExpiredParkedSales, getPosSettings } from '../../services/posSettingsService';
 import { getActiveShift, CashierShift } from '../../services/cashierShiftService';
+import {
+  ensureDailyOpnameAssignments,
+  getOperatorDailyTasks,
+  submitOperatorBlindCount,
+  submitRecountObservation,
+  type OperatorBlindTask,
+} from '../../services/stockOpnameService';
 import { supabase } from '../../lib/supabaseClient';
 import { Produk } from '../../services/koperasiService';
 import { useFeedback } from '../../context/FeedbackContext';
@@ -67,7 +75,10 @@ export default function POSPage() {
     parked: false,
     bukaKasir: false,
     tutupKasir: false,
+    opname: false,
   });
+  const [opnameTasks, setOpnameTasks] = useState<OperatorBlindTask[]>([]);
+  const [isLoadingOpname, setIsLoadingOpname] = useState(false);
   const [initialPaymentMethod, setInitialPaymentMethod] = useState('Tunai');
   const [memberFinancials, setMemberFinancials] = useState<MemberFinancials | null>(null);
   const [isLoadingFinancials, setIsLoadingFinancials] = useState(false);
@@ -86,6 +97,20 @@ export default function POSPage() {
       setParkedCount(list.length);
     } catch {
       // ignore
+    }
+  }, []);
+
+  const loadOperatorOpnameTasks = useCallback(async (operatorId?: string) => {
+    if (!operatorId || operatorId === '00000000-0000-0000-0000-000000000000') return;
+    setIsLoadingOpname(true);
+    try {
+      await ensureDailyOpnameAssignments({ operatorId });
+      const list = await getOperatorDailyTasks(operatorId);
+      setOpnameTasks(list);
+    } catch (err) {
+      console.warn('Gagal memuat tugas cek fisik harian:', err);
+    } finally {
+      setIsLoadingOpname(false);
     }
   }, []);
 
@@ -117,6 +142,7 @@ export default function POSPage() {
         const shift = await getActiveShift(cashierInfo.id);
         if (shift) {
           setActiveShift(shift);
+          loadOperatorOpnameTasks(cashierInfo.id);
         } else {
           setActiveShift(null);
           setModals(m => ({ ...m, bukaKasir: true }));
@@ -255,7 +281,7 @@ export default function POSPage() {
   useEffect(() => {
     const handleGlobalKeydown = (e: KeyboardEvent) => {
       // Don't trigger if a modal is open
-      if (editingPriceItem || modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked || modals.bukaKasir || modals.tutupKasir) return;
+      if (editingPriceItem || modals.qty || modals.camera || modals.receipt || modals.splitPayment || modals.parked || modals.bukaKasir || modals.tutupKasir || modals.opname) return;
       
       if (e.key === 'F1') {
         e.preventDefault();
@@ -454,6 +480,12 @@ export default function POSPage() {
         activeShift={activeShift}
         onOpenBukaKasir={() => setModals(m => ({ ...m, bukaKasir: true }))}
         onOpenTutupKasir={() => setModals(m => ({ ...m, tutupKasir: true }))}
+        onOpenOpname={() => setModals(m => ({ ...m, opname: true }))}
+        opnameProgress={{
+          completed: opnameTasks.filter(t => t.status === 'counted' || t.status === 'recounted' || t.status === 'resolved').length,
+          total: opnameTasks.length,
+          pendingRecount: opnameTasks.filter(t => t.is_recount_task && t.status === 'recount_requested').length,
+        }}
       />
       
       <main className="w-full max-w-[1720px] mx-auto p-3 lg:p-4 flex-1 flex flex-col gap-3">
@@ -636,6 +668,7 @@ export default function POSPage() {
         onSuccess={(shift) => {
           setActiveShift(shift);
           setModals(m => ({ ...m, bukaKasir: false }));
+          loadOperatorOpnameTasks(shift.cashier_id || currentCashier?.id);
           setTimeout(() => searchInputRef.current?.focus(), 150);
         }}
       />
@@ -680,6 +713,36 @@ export default function POSPage() {
             )
           );
           loadProductCatalog();
+        }}
+      />
+      {/* Drawer Tugas Cek Fisik Harian (Blind Count) */}
+      <OperatorOpnameDrawer
+        isOpen={modals.opname}
+        onClose={() => {
+          setModals(m => ({ ...m, opname: false }));
+          setTimeout(() => searchInputRef.current?.focus(), 100);
+        }}
+        tasks={opnameTasks}
+        operatorName={activeShift?.cashier_name || currentCashier?.nama || 'Operator'}
+        isLoading={isLoadingOpname}
+        onRefresh={() => loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id)}
+        onSubmitCount={async (taskId, qty, notes) => {
+          try {
+            await submitOperatorBlindCount(taskId, qty, notes);
+            showToast('Angka pengamatan fisik berhasil disimpan (snapshot stok dikunci).', 'success');
+            await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
+          } catch (err: any) {
+            showToast(err?.message || 'Gagal menyimpan hitungan fisik', 'error');
+          }
+        }}
+        onSubmitRecount={async (taskId, qty, notes) => {
+          try {
+            await submitRecountObservation(taskId, qty, activeShift?.cashier_id || currentCashier?.id, notes);
+            showToast('Hasil pemeriksaan ulang (Re-Count) berhasil dikirim ke Admin.', 'success');
+            await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
+          } catch (err: any) {
+            showToast(err?.message || 'Gagal menyimpan hasil re-count', 'error');
+          }
         }}
       />
     </div>

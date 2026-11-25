@@ -97,10 +97,11 @@ export function filterShuRowsBySource(
       (row) => Number(row.omzet || 0) > 0 || Number(row.grossProfit || 0) > 0
     );
   }
-  // 'default_shu_and_paid_off': POS + Margin Pembiayaan (omzet/profit > 0) + Pinjaman Lunas Penuh
+  // 'default_shu_and_paid_off': POS + Margin Pembiayaan (omzet/profit > 0) + Stock Opname + Pinjaman Lunas Penuh
   return rows.filter(
     (row) =>
       row.sourceType.startsWith('pos_') ||
+      row.sourceType === 'stock_opname' ||
       Number(row.omzet || 0) > 0 ||
       Number(row.grossProfit || 0) > 0 ||
       row.isPaidOff === true
@@ -112,6 +113,9 @@ export interface ShuEstimationData {
   cogs: number;
   grossProfit: number;
   goodsFinancingMargin: number;
+  opnameShrinkageLoss?: number;
+  opnameSurplusGain?: number;
+  opnameNetImpact?: number;
   opex: number;
   estimatedShu: number;
   marginPercentage: number;
@@ -1014,6 +1018,7 @@ const SHU_SOURCE_BADGE: Record<ShuSourceType, { bg: string; text: string }> = {
   pos_split: { bg: 'bg-purple-50 border border-purple-200/80', text: 'text-purple-700' },
   goods_financing: { bg: 'bg-teal-50 border border-teal-200/80', text: 'text-teal-800' },
   LOAN_CONTRACT: { bg: 'bg-teal-50 border border-teal-200/80', text: 'text-teal-800' },
+  stock_opname: { bg: 'bg-purple-50 border border-purple-200/80', text: 'text-purple-800' },
 };
 
 const formatDisplayDateId = (raw?: string | null): string => {
@@ -1676,6 +1681,90 @@ export async function getShuEstimation(
     console.warn('Gagal menghitung pendapatan margin pembiayaan barang:', goodsMarginErr);
   }
 
+  // 4b. Dampak Penyesuaian Stock Opname Harian (Surplus / Susut Nilai HPP)
+  let opnameShrinkageLoss = 0;
+  let opnameSurplusGain = 0;
+  try {
+    const opnameAdjRes = await fetchAllPaginatedSafe<any>(() => {
+      const tbl: any = supabase.from('stock_opname_adjustments');
+      if (!tbl || typeof tbl.select !== 'function') return null;
+      let q: any = tbl.select('id, task_id, product_id, reference_no, qty_in, qty_out, unit_cost, total_value, notes, created_at');
+      if (!q) return null;
+      if (typeof q.gte === 'function') q = q.gte('created_at', startDate);
+      if (q && typeof q.lte === 'function') q = q.lte('created_at', endDate + 'T23:59:59');
+      return q;
+    });
+
+    const adjRows: any[] = !opnameAdjRes?.error && Array.isArray(opnameAdjRes?.data)
+      ? opnameAdjRes.data
+      : [];
+
+    if (adjRows.length > 0) {
+      const adjProdIds = Array.from(
+        new Set(adjRows.map((a: any) => a.product_id).filter(Boolean).map(String))
+      );
+      const adjProdMap: Record<string, { name: string; category_id?: string | null }> = {};
+      if (adjProdIds.length > 0) {
+        const prodRes = await fetchInChunksPaginated(
+          'products',
+          ['id, name, category_id'],
+          'id',
+          adjProdIds
+        );
+        for (const p of prodRes?.data || []) {
+          adjProdMap[String(p.id)] = { name: String(p.name || 'Produk'), category_id: p.category_id };
+        }
+      }
+
+      for (const adj of adjRows) {
+        const qtyIn = Number(adj.qty_in || 0);
+        const qtyOut = Number(adj.qty_out || 0);
+        const unitCost = Number(adj.unit_cost || 0);
+        const surplusVal = qtyIn * unitCost;
+        const shrinkageVal = qtyOut * unitCost;
+        const netVal = surplusVal - shrinkageVal;
+
+        opnameSurplusGain += surplusVal;
+        opnameShrinkageLoss += shrinkageVal;
+
+        const prod = adjProdMap[String(adj.product_id)];
+        const rawDate = String(adj.created_at || '');
+        const qtyDisplay = qtyIn > 0 ? qtyIn : qtyOut;
+
+        shuReferenceRows.push({
+          id: `opname-${String(adj.id)}`,
+          referenceNumber: String(adj.reference_no || `OPN-${String(adj.id).slice(0, 8).toUpperCase()}`),
+          sourceType: 'stock_opname',
+          transactionDate: formatDisplayDateId(rawDate),
+          rawDate,
+          memberName: 'Audit Inventori Gudang',
+          memberNrp: '',
+          paymentMethodLabel: qtyIn > 0 ? 'Surplus Stock Opname' : 'Selisih Kurang Opname',
+          omzet: surplusVal,
+          hpp: shrinkageVal,
+          grossProfit: netVal,
+          marginPercent: 0,
+          items: [
+            {
+              productName: prod?.name || adj.notes || 'Penyesuaian Opname',
+              categoryName: 'Stock Opname',
+              qty: qtyDisplay,
+              sellPrice: qtyIn > 0 ? unitCost : 0,
+              buyPrice: unitCost,
+              subtotalOmzet: surplusVal,
+              subtotalHpp: shrinkageVal,
+              subtotalProfit: netVal,
+            },
+          ],
+        });
+      }
+    }
+  } catch (opnameErr) {
+    console.warn('Gagal menghitung dampak selisih stock opname ke SHU:', opnameErr);
+  }
+
+  const opnameNetImpact = opnameSurplusGain - opnameShrinkageLoss;
+
   const getSafeTime = (raw: string): number => {
     if (!raw) return 0;
     const ms = new Date(raw).getTime();
@@ -1684,7 +1773,7 @@ export async function getShuEstimation(
   shuReferenceRows.sort((a, b) => getSafeTime(b.rawDate) - getSafeTime(a.rawDate));
 
   const grossProfit = grossSales - cogs;
-  const estimatedShu = grossProfit + goodsFinancingMargin - opex;
+  const estimatedShu = grossProfit + goodsFinancingMargin + opnameNetImpact - opex;
   const totalRevenue = grossSales + goodsFinancingMargin;
   const marginPct = totalRevenue > 0 ? (estimatedShu / totalRevenue) * 100 : 0;
 
@@ -1701,6 +1790,13 @@ export async function getShuEstimation(
     cogs,
     grossProfit,
     goodsFinancingMargin,
+    ...(opnameShrinkageLoss !== 0 || opnameSurplusGain !== 0
+      ? {
+          opnameShrinkageLoss,
+          opnameSurplusGain,
+          opnameNetImpact,
+        }
+      : {}),
     opex,
     estimatedShu,
     marginPercentage: marginPct,
@@ -2370,6 +2466,7 @@ function LaporanKeuanganContent({
         wsShu.addRow(['HPP / Modal Barang', shuData.cogs]);
         wsShu.addRow(['Laba Kotor', shuData.grossProfit]);
         wsShu.addRow(['Pendapatan Margin Pembiayaan Barang', shuData.goodsFinancingMargin]);
+        wsShu.addRow(['Koreksi Selisih Stock Opname (Net HPP)', shuData.opnameNetImpact ?? 0]);
         wsShu.addRow(['Beban Operasional', shuData.opex]);
         wsShu.addRow(['Estimasi SHU Bersih', shuData.estimatedShu]);
         wsShu.addRow([]);
@@ -3298,12 +3395,13 @@ function LaporanKeuanganContent({
       {!loading && activeTab === 'shu' && shuData && (
         <div className="space-y-6">
           {/* Waterfall Metric Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-3">
             {[
               { label: 'Total Omzet', value: shuData.grossSales, color: 'blue', icon: 'storefront', sub: 'Pendapatan kotor penjualan' },
               { label: 'HPP / Modal', value: shuData.cogs, color: 'orange', icon: 'inventory_2', sub: 'SUM(qty × buy_price)' },
               { label: 'Laba Kotor', value: shuData.grossProfit, color: 'emerald', icon: 'trending_up', sub: 'Omzet − HPP' },
               { label: 'Pendapatan Margin Pembiayaan Barang', value: shuData.goodsFinancingMargin, color: 'teal', icon: 'shopping_bag', sub: 'Realisasi margin angsuran barang (non-pokok)' },
+              { label: 'Koreksi Selisih Opname', value: shuData.opnameNetImpact ?? 0, color: (shuData.opnameNetImpact ?? 0) < 0 ? 'rose' : 'indigo', icon: 'fact_check', sub: `Surplus ${formatRp(shuData.opnameSurplusGain ?? 0)} / Susut ${formatRp(shuData.opnameShrinkageLoss ?? 0)}` },
               { label: 'Beban Operasional', value: shuData.opex, color: 'rose', icon: 'payments', sub: 'Listrik, gaji, depresiasi' },
               { label: 'Estimasi SHU Bersih', value: shuData.estimatedShu, color: 'purple', icon: 'stars', sub: `Margin ${shuData.marginPercentage.toFixed(1)}%` },
             ].map((m, i) => {
@@ -3312,6 +3410,7 @@ function LaporanKeuanganContent({
                 orange: { border: 'border-orange-200', bg: 'bg-orange-50', text: 'text-orange-800', accent: 'bg-orange-500', badge: 'bg-orange-100 text-orange-800' },
                 emerald: { border: 'border-emerald-200', bg: 'bg-emerald-50', text: 'text-emerald-800', accent: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800' },
                 teal: { border: 'border-teal-200', bg: 'bg-teal-50', text: 'text-teal-800', accent: 'bg-teal-500', badge: 'bg-teal-100 text-teal-800' },
+                indigo: { border: 'border-indigo-200', bg: 'bg-indigo-50', text: 'text-indigo-800', accent: 'bg-indigo-500', badge: 'bg-indigo-100 text-indigo-800' },
                 rose: { border: 'border-rose-200', bg: 'bg-rose-50', text: 'text-rose-800', accent: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800' },
                 purple: { border: 'border-purple-300', bg: 'bg-purple-50', text: 'text-purple-900', accent: 'bg-purple-600', badge: 'bg-purple-100 text-purple-800' },
               };
@@ -3492,7 +3591,7 @@ function LaporanKeuanganContent({
                           <td className="px-4 py-3 text-right tabular-nums text-orange-700 font-semibold whitespace-nowrap">
                             {formatRp(row.hpp)}
                           </td>
-                          <td className="px-4 py-3 text-right tabular-nums text-emerald-700 font-bold whitespace-nowrap">
+                          <td className={`px-4 py-3 text-right tabular-nums font-bold whitespace-nowrap ${row.grossProfit < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
                             {formatRp(row.grossProfit)}
                           </td>
                           <td className="px-4 py-3 text-right whitespace-nowrap">

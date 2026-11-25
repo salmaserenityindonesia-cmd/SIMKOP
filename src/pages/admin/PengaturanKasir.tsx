@@ -26,7 +26,8 @@ import {
   Percent,
   Printer,
   Trash2,
-  X
+  X,
+  ClipboardCheck
 } from 'lucide-react';
 
 export default function PengaturanKasir() {
@@ -55,7 +56,8 @@ export default function PengaturanKasir() {
       const data = await getPosSettings(true);
       const normalizedData: POSSettings = {
         ...data,
-        receipt_paper_size: data.receipt_paper_size || '80mm'
+        receipt_paper_size: data.receipt_paper_size || '80mm',
+        daily_opname_quota: data.daily_opname_quota ?? 15
       };
       setForm(normalizedData);
       setInitialData(normalizedData);
@@ -101,6 +103,11 @@ export default function PengaturanKasir() {
       form.member_discount_percentage > 100
     ) {
       showToast('Persentase diskon harus berada di antara 0% dan 100%', 'warning');
+      return;
+    }
+    const quota = Math.round(Number(form.daily_opname_quota ?? 15));
+    if (isNaN(quota) || quota < 1 || quota > 200) {
+      showToast('Kuota barang opname harian harus berada di antara 1 hingga 200 SKU/hari', 'warning');
       return;
     }
 
@@ -465,6 +472,37 @@ export default function PengaturanKasir() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <hr className="border-outline-variant/20" />
+
+                {/* Daily Opname Quota Input */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-primary" />
+                    <span>Kuota Stock Opname Harian per Operator (SKU/Hari)</span>
+                    <span className="text-error">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      name="daily_opname_quota"
+                      min={1}
+                      max={200}
+                      step={1}
+                      value={form.daily_opname_quota ?? 15}
+                      onChange={e => setForm(prev => ({ ...prev, daily_opname_quota: parseInt(e.target.value, 10) || 15 }))}
+                      disabled={isLoading || isSaving}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant/40 bg-surface-container-lowest text-on-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all pr-20"
+                      required
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-xs text-on-surface-variant font-medium">
+                      SKU / hari
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-on-surface-variant">
+                    Jumlah SKU yang wajib dihitung fisik secara blind count oleh setiap operator per hari (rotasi kategori A → Z, Tanpa Kategori di akhir).
+                  </p>
                 </div>
 
                 <hr className="border-outline-variant/20" />

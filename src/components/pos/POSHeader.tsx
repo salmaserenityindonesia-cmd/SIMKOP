@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutDashboard } from 'lucide-react';
+import { ClipboardCheck, LayoutDashboard } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { CashierShift } from '../../services/cashierShiftService';
 
@@ -15,6 +15,8 @@ interface POSHeaderProps {
   activeShift?: CashierShift | null;
   onOpenBukaKasir?: () => void;
   onOpenTutupKasir?: () => void;
+  onOpenOpname?: () => void;
+  opnameProgress?: { completed: number; total: number; pendingRecount: number } | null;
 }
 
 export default function POSHeader({
@@ -28,6 +30,8 @@ export default function POSHeader({
   activeShift = null,
   onOpenBukaKasir,
   onOpenTutupKasir,
+  onOpenOpname,
+  opnameProgress = null,
 }: POSHeaderProps) {
   const [time, setTime] = useState(new Date());
   const [isAdmin, setIsAdmin] = useState(false);
@@ -203,6 +207,27 @@ export default function POSHeader({
               </span>
               <span className="hidden md:inline">Scan Kamera</span>
             </button>
+
+            {activeShift && onOpenOpname && (
+              <button
+                type="button"
+                onClick={onOpenOpname}
+                title="Tugas Cek Fisik Harian (Blind Count)"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-label-sm font-label-sm font-semibold transition active:scale-95 shadow-sm cursor-pointer ${
+                  opnameProgress && opnameProgress.pendingRecount > 0
+                    ? 'bg-amber-400 text-slate-950 hover:bg-amber-300'
+                    : opnameProgress && opnameProgress.total > 0 && opnameProgress.completed >= opnameProgress.total
+                      ? 'bg-emerald-500 text-white hover:bg-emerald-400'
+                      : 'bg-teal-600 text-white hover:bg-teal-500'
+                }`}
+              >
+                <ClipboardCheck className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Cek Fisik</span>
+                <span className="font-mono text-[11px] px-1.5 py-0.2 rounded bg-black/20">
+                  {opnameProgress ? `${opnameProgress.completed}/${opnameProgress.total}` : '0/0'}
+                </span>
+              </button>
+            )}
 
             <button
               className="p-1 rounded text-on-primary-container hover:text-surface-container-lowest hover:bg-surface-container-lowest/10 transition-colors"

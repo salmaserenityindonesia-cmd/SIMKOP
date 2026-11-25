@@ -4,7 +4,8 @@ export type MutationType =
   | 'KELUAR_PENJUALAN'
   | 'MASUK_PEMBELIAN'
   | 'KELUAR_RETUR'
-  | 'MASUK_KLAIM_PENGGANTI';
+  | 'MASUK_KLAIM_PENGGANTI'
+  | 'PENYESUAIAN_OPNAME';
 
 export interface InventoryMutation {
   mutation_id: string;

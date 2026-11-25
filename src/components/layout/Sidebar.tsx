@@ -34,6 +34,7 @@ import {
   ChevronDown,
   Landmark,
   ShieldAlert,
+  ClipboardCheck,
 } from 'lucide-react';
 import {
   scanAllOrphanRecords,
@@ -133,6 +134,7 @@ export const navigationGroups: NavigationGroup[] = [
       { label: 'Pengaturan Kasir', icon: SlidersHorizontal, href: '/admin/pengaturan-kasir', adminOnly: true },
       { label: 'Laporan Retail & Stok', icon: TrendingUp, href: '/admin/laporan-retail' },
       { label: 'Laporan Mutasi Barang', icon: ArrowLeftRight, href: '/admin/laporan-mutasi' },
+      { label: 'Audit Opname & KPI', icon: ClipboardCheck, href: '/admin/stock-opname', adminOnly: true },
     ],
   },
   {

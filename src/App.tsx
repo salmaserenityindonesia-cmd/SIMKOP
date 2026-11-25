@@ -30,6 +30,7 @@ import LaporanKeuangan from './pages/admin/laporan-keuangan';
 import AuditDataOrphan from './pages/admin/AuditDataOrphan';
 import LaporanRetail from './pages/admin/laporan-retail';
 import LaporanMutasiBarang from './pages/admin/LaporanMutasiBarang';
+import StockOpnameAudit from './pages/admin/StockOpnameAudit';
 import LaporanPenarikanSimpanan from './pages/admin/LaporanPenarikanSimpanan';
 import TutupBuku from './pages/admin/TutupBuku';
 import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
@@ -317,6 +318,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <LaporanMutasiBarang />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/stock-opname" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <StockOpnameAudit />
             </ProtectedRoute>
           } 
         />

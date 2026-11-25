@@ -6,6 +6,7 @@ export interface POSSettings {
   allow_negative_stock: boolean;
   member_discount_percentage: number;
   receipt_paper_size?: '58mm' | '80mm';
+  daily_opname_quota?: number;
   updated_at?: string;
 }
 
@@ -14,8 +15,17 @@ export const DEFAULT_POS_SETTINGS: POSSettings = {
   max_hold_duration_minutes: 120, // 2 jam default
   allow_negative_stock: false,
   member_discount_percentage: 5.0,
-  receipt_paper_size: '80mm'
+  receipt_paper_size: '80mm',
+  daily_opname_quota: 15
 };
+
+export function normalizeDailyOpnameQuota(value: unknown): number {
+  const parsed = Math.round(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return DEFAULT_POS_SETTINGS.daily_opname_quota || 15;
+  }
+  return Math.min(200, Math.max(1, parsed));
+}
 
 export const POS_SETTINGS_STORAGE_KEY = 'simkop_pos_settings';
 
@@ -56,6 +66,7 @@ export function getStoredLocalSettings(): POSSettings | null {
           receipt_paper_size: (parsed.receipt_paper_size === '58mm' || parsed.receipt_paper_size === '80mm')
             ? parsed.receipt_paper_size
             : DEFAULT_POS_SETTINGS.receipt_paper_size,
+          daily_opname_quota: normalizeDailyOpnameQuota(parsed.daily_opname_quota),
           updated_at: parsed.updated_at
         };
       }
@@ -153,6 +164,7 @@ export async function getPosSettings(forceRefresh: boolean = false): Promise<POS
         receipt_paper_size: (data.receipt_paper_size === '58mm' || data.receipt_paper_size === '80mm')
           ? data.receipt_paper_size
           : (DEFAULT_POS_SETTINGS.receipt_paper_size || '80mm'),
+        daily_opname_quota: normalizeDailyOpnameQuota(data.daily_opname_quota),
         updated_at: data.updated_at
       };
       saveStoredLocalSettings(cachedSettings);
@@ -184,6 +196,9 @@ export async function updatePosSettings(
     receipt_paper_size: (settings.receipt_paper_size === '58mm' || settings.receipt_paper_size === '80mm')
       ? settings.receipt_paper_size
       : current.receipt_paper_size,
+    daily_opname_quota: typeof settings.daily_opname_quota !== 'undefined' && settings.daily_opname_quota !== null
+      ? normalizeDailyOpnameQuota(settings.daily_opname_quota)
+      : normalizeDailyOpnameQuota(current.daily_opname_quota),
     updated_at: new Date().toISOString()
   };
 
@@ -200,6 +215,7 @@ export async function updatePosSettings(
         allow_negative_stock: merged.allow_negative_stock,
         member_discount_percentage: merged.member_discount_percentage,
         receipt_paper_size: merged.receipt_paper_size,
+        daily_opname_quota: merged.daily_opname_quota,
         updated_at: merged.updated_at
       });
 

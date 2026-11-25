@@ -28,7 +28,7 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
     ]);
   });
 
-  it('preserves all 9 retail routes in Toko Retail & POS', () => {
+  it('preserves all 10 retail routes in Toko Retail & POS', () => {
     const retailGroup = navigationGroups.find((g) => g.id === 'retail');
     expect(retailGroup).toBeDefined();
 
@@ -42,6 +42,7 @@ describe('Sidebar Nested Accordion Navigation Hierarchy', () => {
       '/admin/pengaturan-kasir',
       '/admin/laporan-retail',
       '/admin/laporan-mutasi',
+      '/admin/stock-opname',
     ]);
   });
 

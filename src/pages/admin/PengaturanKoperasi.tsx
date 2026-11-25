@@ -36,8 +36,14 @@ import {
   ShieldAlert,
   ArrowRight,
   FileSpreadsheet,
-  CheckCircle2
+  CheckCircle2,
+  ClipboardCheck
 } from 'lucide-react';
+import {
+  getPosSettings,
+  updatePosSettings,
+  DEFAULT_POS_SETTINGS
+} from '../../services/posSettingsService';
 import {
   getRateTiers,
   addRateTier,
@@ -172,6 +178,12 @@ export default function PengaturanKoperasi({
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(initialConfirmModalOpen);
   const [confirmationInputText, setConfirmationInputText] = useState<string>(initialConfirmationInputText);
 
+  // Daily Stock Opname Quota State
+  const [dailyOpnameQuota, setDailyOpnameQuota] = useState<number>(
+    DEFAULT_POS_SETTINGS.daily_opname_quota ?? 15
+  );
+  const [isSavingOpnameQuota, setIsSavingOpnameQuota] = useState<boolean>(false);
+
   // Danger Zone: System Transactional Reset State
   const [isResetTransactionsModalOpen, setIsResetTransactionsModalOpen] = useState<boolean>(initialResetModalOpen);
   const [resetPhraseInput, setResetPhraseInput] = useState<string>(initialResetPhraseInput);
@@ -200,7 +212,46 @@ export default function PengaturanKoperasi({
     loadProfile();
     loadRateTiers();
     loadLoanSettings();
+    loadOpnameQuotaSettings();
   }, []);
+
+  const loadOpnameQuotaSettings = async () => {
+    try {
+      const posSettings = await getPosSettings(true);
+      if (posSettings && typeof posSettings.daily_opname_quota === 'number') {
+        setDailyOpnameQuota(posSettings.daily_opname_quota);
+      }
+    } catch {
+      // Fallback to default 15
+    }
+  };
+
+  const handleSaveOpnameQuota = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = Math.round(Number(dailyOpnameQuota));
+    if (isNaN(parsed) || parsed < 1 || parsed > 200) {
+      showToast('Kuota barang opname harian harus berada di antara 1 hingga 200 SKU/hari', 'warning');
+      return;
+    }
+    setIsSavingOpnameQuota(true);
+    try {
+      const res = await updatePosSettings({ daily_opname_quota: parsed });
+      if (res.success && res.data) {
+        setDailyOpnameQuota(res.data.daily_opname_quota ?? parsed);
+        if (res.isLocalFallback) {
+          showToast('Kuota opname tersimpan di penyimpanan lokal (migrasi 032 belum diterapkan).', 'warning');
+        } else {
+          showToast(`Kuota opname harian diperbarui menjadi ${parsed} SKU per operator/hari.`, 'success');
+        }
+      } else {
+        showToast(res.error || 'Gagal menyimpan kuota opname harian', 'error');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Terjadi kesalahan saat menyimpan kuota opname', 'error');
+    } finally {
+      setIsSavingOpnameQuota(false);
+    }
+  };
 
   const loadLoanSettings = async () => {
     try {
@@ -1127,6 +1178,92 @@ export default function PengaturanKoperasi({
                       <span>Simpan Kebijakan Kelayakan</span>
                     </>
                   )}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Konfigurasi Stock Opname Bergilir Harian (Blind Cycle Counting) */}
+          <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-teal-50 text-teal-600 rounded-xl">
+                  <ClipboardCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-slate-800 text-base">
+                    Konfigurasi Stock Opname Bergilir Harian (Cycle Counting)
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Atur kuota SKU harian per operator kasir untuk audit stok fisik bergilir tanpa menutup toko.
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs px-2.5 py-1 bg-teal-50 text-teal-700 font-medium rounded-full border border-teal-100 self-start sm:self-center">
+                Blind Cycle Count
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveOpnameQuota} className="p-6 space-y-4">
+              <div className="bg-teal-50/60 border border-teal-200 rounded-lg p-3.5 text-xs text-teal-900 space-y-1">
+                <p className="font-semibold">Mekanisme Rotasi Kategori &amp; Pengalihan Otomatis:</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-teal-800">
+                  <li>Produk aktif disapu berurutan per <strong>Kategori (A → Z)</strong>, dengan produk tanpa kategori di kelompok <strong>Tanpa Kategori</strong> pada urutan akhir.</li>
+                  <li>Setiap selesai 1 siklus penuh, penugasan digeser otomatis antar-operator agar seluruh produk teraudit silang.</li>
+                  <li>Jika ada operator libur / tidak membuka shift, tugas yang tertunda otomatis dialihkan ke hari kerja berikutnya sesuai batas kuota harian.</li>
+                </ul>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-end">
+                <div>
+                  <label htmlFor="dailyOpnameQuota" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                    Kuota Barang Opname Harian per Operator (SKU/Hari) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="dailyOpnameQuota"
+                      name="dailyOpnameQuota"
+                      type="number"
+                      min={0}
+                      max={200}
+                      step={1}
+                      required
+                      value={dailyOpnameQuota || ''}
+                      onChange={(e) => setDailyOpnameQuota(parseInt(e.target.value, 10) || 0)}
+                      className="w-full px-3.5 py-2.5 pr-20 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-600 transition-all font-semibold text-slate-800"
+                    />
+                    <span className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-semibold text-slate-400 pointer-events-none">
+                      SKU / hari
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {[10, 15, 20, 30, 50].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setDailyOpnameQuota(preset)}
+                      className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                        dailyOpnameQuota === preset
+                          ? 'bg-teal-600 text-white border-teal-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {preset} SKU
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={isSavingOpnameQuota}
+                  className="px-5 py-2.5 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:bg-teal-400 rounded-lg transition-colors shadow-xs flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingOpnameQuota ? 'Menyimpan Kuota...' : 'Simpan Kuota Opname Harian'}</span>
                 </button>
               </div>
             </form>

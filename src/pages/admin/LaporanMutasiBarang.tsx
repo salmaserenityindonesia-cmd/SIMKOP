@@ -112,6 +112,13 @@ function MutationTypeBadge({ type, label }: MutationBadgeProps) {
           {label || 'Klaim Pengganti'}
         </span>
       );
+    case 'PENYESUAIAN_OPNAME':
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+          <Scale className="w-3 h-3 text-purple-600" />
+          {label || 'Penyesuaian Opname'}
+        </span>
+      );
     default:
       return (
         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
@@ -671,6 +678,7 @@ export default function LaporanMutasiBarang() {
                 <option value="KELUAR_PENJUALAN">Penjualan Kasir POS (Keluar)</option>
                 <option value="KELUAR_RETUR">Retur ke Supplier (Keluar)</option>
                 <option value="MASUK_KLAIM_PENGGANTI">Klaim Pengganti Retur (Masuk)</option>
+                <option value="PENYESUAIAN_OPNAME">Penyesuaian Stock Opname</option>
               </select>
             </div>
 

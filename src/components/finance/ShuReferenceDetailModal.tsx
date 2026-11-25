@@ -14,7 +14,8 @@ export type ShuSourceType =
   | 'pos_credit'
   | 'pos_split'
   | 'goods_financing'
-  | 'LOAN_CONTRACT';
+  | 'LOAN_CONTRACT'
+  | 'stock_opname';
 
 export interface ShuReferenceLineItem {
   productName: string;
