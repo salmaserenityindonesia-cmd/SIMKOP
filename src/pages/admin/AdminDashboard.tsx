@@ -2,15 +2,286 @@ import { useEffect, useState } from 'react';
 import AdminLayout from '../../components/layout/AdminLayout';
 import { getCommitmentStats, CommitmentStats } from '../../services/koperasiService';
 import { getDashboardStats, DashboardStats } from '../../services/dashboardService';
+import { getPaidOffLoansReport } from '../../services/paidOffLoansReportService';
 import { useCart } from '../../lib/cartStore';
 import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { generateDatabaseBackup } from '../../services/backupService';
 import { useFeedback } from '../../context/FeedbackContext';
+import { supabase } from '../../lib/supabaseClient';
+import { fetchAllPaginated } from '../../utils/supabasePagination';
+
+interface ActiveMemberRow {
+  id: string;
+  status?: string | null;
+}
+
+interface ActiveLoanRow {
+  id: string;
+  member_id: string | null;
+  status?: string | null;
+  principal_amount?: number | null;
+  amount?: number | null;
+  sisa_pinjaman?: number | null;
+}
+
+interface LoanScheduleRow {
+  id: string;
+  loan_id: string;
+  target_amount?: number | null;
+  paid_amount?: number | null;
+}
+
+interface DepositTypeRow {
+  id: string;
+  code?: string | null;
+}
+
+interface MemberDepositRow {
+  id: string;
+  member_id: string | null;
+  deposit_type_id: string | null;
+}
+
+interface DepositTransactionRow {
+  id: string;
+  member_deposit_id: string | null;
+  transaction_type?: string | null;
+  amount?: number | null;
+}
+
+interface NetMemberSavingsSummary {
+  totalAll: number;
+  pokok: number;
+  wajib: number;
+  belanja: number;
+  lebaran: number;
+}
+
+const EMPTY_SAVINGS_BREAKDOWN: NetMemberSavingsSummary = {
+  totalAll: 0,
+  pokok: 0,
+  wajib: 0,
+  belanja: 0,
+  lebaran: 0,
+};
+
+const ACTIVE_LOAN_STATUSES = new Set(['berjalan', 'active', 'approved', 'disbursed']);
+const LOAN_ID_CHUNK_SIZE = 80;
+
+function isMissingColumnError(err: unknown): boolean {
+  const error = err as { code?: string; message?: string } | null;
+  const code = String(error?.code || '');
+  const message = String(error?.message || '').toLowerCase();
+  return code === 'PGRST204' || code === '42703' || message.includes('column');
+}
+
+async function fetchTotalActiveLoanReceivable(): Promise<number> {
+  const members = await fetchAllPaginated<ActiveMemberRow>((from, to) =>
+    supabase
+      .from('anggota')
+      .select('id, status')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+
+  const activeMemberIds = new Set<string>();
+  for (const m of members) {
+    if (m?.id && String(m.status || '').trim().toLowerCase() === 'aktif') {
+      activeMemberIds.add(String(m.id));
+    }
+  }
+
+  if (activeMemberIds.size === 0) {
+    return 0;
+  }
+
+  let loans: ActiveLoanRow[];
+  try {
+    loans = await fetchAllPaginated<ActiveLoanRow>((from, to) =>
+      supabase
+        .from('loans')
+        .select('id, member_id, status, principal_amount, amount, sisa_pinjaman')
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  } catch (err) {
+    if (!isMissingColumnError(err)) {
+      throw err;
+    }
+    loans = await fetchAllPaginated<ActiveLoanRow>((from, to) =>
+      supabase
+        .from('loans')
+        .select('*')
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+  }
+
+  const activeLoans = loans.filter(
+    (loan) =>
+      Boolean(loan?.id) &&
+      Boolean(loan?.member_id) &&
+      ACTIVE_LOAN_STATUSES.has(String(loan.status || '').trim().toLowerCase()) &&
+      activeMemberIds.has(String(loan.member_id))
+  );
+
+  if (activeLoans.length === 0) {
+    return 0;
+  }
+
+  const activeLoanIds = activeLoans.map((loan) => String(loan.id));
+  const schedulesByLoan = new Map<string, LoanScheduleRow[]>();
+
+  for (let i = 0; i < activeLoanIds.length; i += LOAN_ID_CHUNK_SIZE) {
+    const chunk = activeLoanIds.slice(i, i + LOAN_ID_CHUNK_SIZE);
+    const chunkSchedules = await fetchAllPaginated<LoanScheduleRow>((from, to) =>
+      supabase
+        .from('loan_schedules')
+        .select('id, loan_id, target_amount, paid_amount')
+        .in('loan_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to)
+    );
+
+    for (const schedule of chunkSchedules) {
+      if (!schedule?.loan_id) continue;
+      const key = String(schedule.loan_id);
+      const list = schedulesByLoan.get(key) || [];
+      list.push(schedule);
+      schedulesByLoan.set(key, list);
+    }
+  }
+
+  let sumRemaining = 0;
+  for (const loan of activeLoans) {
+    const schedulesForLoan = schedulesByLoan.get(String(loan.id)) || [];
+    const principalOrAmount = Number(loan.principal_amount ?? loan.amount ?? 0);
+    const totalAkad =
+      schedulesForLoan.length > 0
+        ? Math.max(
+            principalOrAmount,
+            schedulesForLoan.reduce((sum, s) => sum + Number(s.target_amount || 0), 0)
+          )
+        : principalOrAmount;
+    const totalPaid = schedulesForLoan.reduce(
+      (sum, s) => sum + Number(s.paid_amount || 0),
+      0
+    );
+    const remaining =
+      schedulesForLoan.length > 0
+        ? Math.max(0, Math.round(totalAkad - totalPaid))
+        : Math.max(0, Math.round(Number(loan.sisa_pinjaman ?? totalAkad)));
+    sumRemaining += remaining;
+  }
+
+  return sumRemaining;
+}
+
+async function fetchNetMemberSavings(): Promise<NetMemberSavingsSummary> {
+  const members = await fetchAllPaginated<ActiveMemberRow>((from, to) =>
+    supabase
+      .from('anggota')
+      .select('id, status')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+
+  const activeMemberIds = new Set<string>();
+  for (const m of members) {
+    if (m?.id && String(m.status || '').trim().toLowerCase() === 'aktif') {
+      activeMemberIds.add(String(m.id));
+    }
+  }
+
+  if (activeMemberIds.size === 0) {
+    return EMPTY_SAVINGS_BREAKDOWN;
+  }
+
+  const [depositTypes, memberDeposits] = await Promise.all([
+    fetchAllPaginated<DepositTypeRow>((from, to) =>
+      supabase
+        .from('deposit_types')
+        .select('id, code')
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
+    fetchAllPaginated<MemberDepositRow>((from, to) =>
+      supabase
+        .from('member_deposits')
+        .select('id, member_id, deposit_type_id')
+        .order('id', { ascending: true })
+        .range(from, to)
+    ),
+  ]);
+
+  const depositTypeCodeById = new Map<string, string>();
+  for (const dt of depositTypes) {
+    if (dt?.id) {
+      depositTypeCodeById.set(String(dt.id), String(dt.code || '').trim().toUpperCase());
+    }
+  }
+
+  const validMemberDepositMap = new Map<string, { depositCode: string }>();
+  for (const md of memberDeposits) {
+    if (md?.id && md?.member_id && activeMemberIds.has(String(md.member_id))) {
+      const depositCode = depositTypeCodeById.get(String(md.deposit_type_id || '')) || '';
+      validMemberDepositMap.set(String(md.id), { depositCode });
+    }
+  }
+
+  if (validMemberDepositMap.size === 0) {
+    return EMPTY_SAVINGS_BREAKDOWN;
+  }
+
+  const allDepositTransactions = await fetchAllPaginated<DepositTransactionRow>((from, to) =>
+    supabase
+      .from('deposit_transactions')
+      .select('id, member_deposit_id, transaction_type, amount')
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+
+  let netPokok = 0;
+  let netWajib = 0;
+  let netBelanja = 0;
+  let netLebaran = 0;
+
+  for (const tx of allDepositTransactions) {
+    const md = validMemberDepositMap.get(String(tx.member_deposit_id || ''));
+    if (!md) continue;
+
+    const amt = Number(tx.amount || 0);
+    const txType = String(tx.transaction_type || '').trim().toLowerCase();
+    const signedAmt = txType === 'deposit' ? amt : txType === 'withdrawal' ? -amt : 0;
+
+    if (md.depositCode === 'POKOK') netPokok += signedAmt;
+    else if (md.depositCode === 'WAJIB') netWajib += signedAmt;
+    else if (md.depositCode === 'BELANJA') netBelanja += signedAmt;
+    else if (md.depositCode === 'LEBARAN') netLebaran += signedAmt;
+  }
+
+  const safePokok = Math.max(0, Math.round(netPokok));
+  const safeWajib = Math.max(0, Math.round(netWajib));
+  const safeBelanja = Math.max(0, Math.round(netBelanja));
+  const safeLebaran = Math.max(0, Math.round(netLebaran));
+
+  return {
+    totalAll: safePokok + safeWajib + safeBelanja + safeLebaran,
+    pokok: safePokok,
+    wajib: safeWajib,
+    belanja: safeBelanja,
+    lebaran: safeLebaran,
+  };
+}
 
 export default function AdminDashboard() {
   const { showToast, showConfirm } = useFeedback();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [commitmentStats, setCommitmentStats] = useState<CommitmentStats | null>(null);
+  const [paidOffLoansCount, setPaidOffLoansCount] = useState<number>(0);
+  const [totalActiveLoanReceivable, setTotalActiveLoanReceivable] = useState<number>(0);
+  const [savingsBreakdown, setSavingsBreakdown] = useState<NetMemberSavingsSummary>(EMPTY_SAVINGS_BREAKDOWN);
   const [loading, setLoading] = useState(true);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const { parkedTransactions } = useCart();
@@ -21,10 +292,25 @@ export default function AdminDashboard() {
   useEffect(() => {
     Promise.all([
       getDashboardStats(),
-      getCommitmentStats(currentMonth, currentYear)
-    ]).then(([dashboardData, commitmentData]) => {
+      getCommitmentStats(currentMonth, currentYear),
+      getPaidOffLoansReport(currentYear).catch((err) => {
+        console.warn('Failed to load paid-off loans count:', err);
+        return null;
+      }),
+      fetchTotalActiveLoanReceivable().catch((err) => {
+        console.warn('Failed to load active loan receivable:', err);
+        return 0;
+      }),
+      fetchNetMemberSavings().catch((err) => {
+        console.warn('Failed to load net member savings:', err);
+        return EMPTY_SAVINGS_BREAKDOWN;
+      }),
+    ]).then(([dashboardData, commitmentData, paidOffData, activeLoanReceivable, netSavings]) => {
       setStats(dashboardData);
       setCommitmentStats(commitmentData);
+      setPaidOffLoansCount(paidOffData?.totalPaidOffLoans ?? 0);
+      setTotalActiveLoanReceivable(activeLoanReceivable);
+      setSavingsBreakdown(netSavings);
       setLoading(false);
     }).catch(error => {
       console.error('Failed to load dashboard stats:', error);
@@ -131,10 +417,23 @@ export default function AdminDashboard() {
                 {stats?.totalPinjamanAktif ?? 0}
               </div>
               <div className="text-label-sm font-label-sm text-on-surface-variant mt-0.5">Berkas pinjaman berjalan</div>
+              <div className="mt-2 pt-2 border-t border-slate-100">
+                <div className="text-[11px] font-medium text-slate-500">Sisa Piutang Aktif</div>
+                <div className="text-sm font-bold text-slate-900 tabular-nums">
+                  Rp {totalActiveLoanReceivable.toLocaleString('id-ID')}
+                </div>
+              </div>
             </div>
-            <div className="mt-4 pt-3 border-t border-outline-variant/30 flex items-center justify-between text-label-sm">
+            <div className="mt-4 pt-3 border-t border-outline-variant/30 flex flex-col gap-1.5 text-label-sm">
               <Link to="/admin/approval" className="text-primary hover:underline flex items-center gap-1 font-medium">
                 Kelola Pinjaman <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+              </Link>
+              <Link
+                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:text-emerald-800 hover:underline"
+                to="/admin/laporan-pinjaman-lunas"
+              >
+                <span>{paidOffLoansCount} Kontrak Lunas Penuh ({currentYear})</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
           </div>
@@ -206,6 +505,60 @@ export default function AdminDashboard() {
                   <div className="text-label-sm text-on-surface-variant">Belum Lunas</div>
                 </div>
               </div>
+              <div className="mt-3 pt-3 border-t border-slate-100 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-medium text-slate-500">
+                      Total Saldo Bersih Simpanan Anggota
+                    </div>
+                    <div className="text-sm font-bold text-emerald-700 tabular-nums">
+                      Rp {savingsBreakdown.totalAll.toLocaleString('id-ID')}
+                    </div>
+                  </div>
+                  <Link
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                    to="/admin/compliance-matrix"
+                  >
+                    <span>Matriks Simpanan</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+
+                {/* Sub-baris Rincian 4 Jenis Simpanan */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                  <div className="rounded-lg bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Pokok</div>
+                    <div className="text-xs font-bold text-slate-800 tabular-nums mt-0.5">
+                      Rp {savingsBreakdown.pokok.toLocaleString('id-ID')}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-50/60 border border-emerald-200/70 px-2.5 py-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Wajib</div>
+                    <div className="text-xs font-bold text-emerald-900 tabular-nums mt-0.5">
+                      Rp {savingsBreakdown.wajib.toLocaleString('id-ID')}
+                    </div>
+                  </div>
+                  <Link
+                    className="group block rounded-lg bg-teal-50/60 hover:bg-teal-100/80 border border-teal-200/70 hover:border-teal-400 px-2.5 py-1.5 transition-all cursor-pointer"
+                    title="Buka Buku Besar Simpanan Belanja"
+                    to="/admin/buku-besar-belanja"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-teal-700">
+                      <span>Belanja</span>
+                      <ArrowRight className="w-3 h-3 text-teal-600 opacity-75 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    </div>
+                    <div className="text-xs font-bold text-teal-900 tabular-nums mt-0.5">
+                      Rp {savingsBreakdown.belanja.toLocaleString('id-ID')}
+                    </div>
+                  </Link>
+                  <div className="rounded-lg bg-amber-50/60 border border-amber-200/70 px-2.5 py-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Lebaran</div>
+                    <div className="text-xs font-bold text-amber-900 tabular-nums mt-0.5">
+                      Rp {savingsBreakdown.lebaran.toLocaleString('id-ID')}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Loan Commitments */}
@@ -217,11 +570,11 @@ export default function AdminDashboard() {
               <div className="flex gap-4 items-center">
                 <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
                   <div className="text-headline-sm font-semibold text-[#10B981]">{commitmentStats?.loan.lunas || 0}</div>
-                  <div className="text-label-sm text-on-surface-variant">Sudah Lunas</div>
+                  <div className="text-label-sm text-on-surface-variant">Terbayar (Bln Ini)</div>
                 </div>
                 <div className="flex-1 bg-surface-container-low rounded-lg p-4 text-center">
                   <div className="text-headline-sm font-semibold text-error">{commitmentStats?.loan.belum_lunas || 0}</div>
-                  <div className="text-label-sm text-on-surface-variant">Belum Lunas</div>
+                  <div className="text-label-sm text-on-surface-variant">Belum Terbayar</div>
                 </div>
               </div>
               {(commitmentStats?.loan.lunas || 0) === 0 &&
