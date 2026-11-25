@@ -74,7 +74,7 @@ vi.mock('../../../lib/supabaseClient', () => ({
   },
 }));
 
-describe('LaporanKeuangan Page Component & Reset Modal', () => {
+describe('LaporanKeuangan Page Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -84,59 +84,16 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     expect(LaporanKeuanganReexport).toBe(LaporanKeuangan);
   });
 
-  it('renders "Reset Transaksi Kas" button on the action toolbar', () => {
+  it('renders action toolbar without "Reset Transaksi Kas" button or reset modal', () => {
     const html = renderToStaticMarkup(<LaporanKeuangan />);
 
-    expect(html).toContain('Reset Transaksi Kas');
-    expect(html).toContain('history_toggle_off');
-    expect(html).toContain('Download PDF');
+    expect(html).toContain('Terapkan');
     expect(html).toContain('Export Excel');
-  });
-
-  it('renders danger confirmation modal when isResetModalOpen is true', () => {
-    const html = renderToStaticMarkup(
-      <LaporanKeuangan initialResetModalOpen={true} />
-    );
-
-    // Modal Title and Badges
-    expect(html).toContain('Reset Transaksi Kas Keuangan');
-    expect(html).toContain('Aksi Destruktif');
-    expect(html).toContain('Tindakan ini permanen');
-
-    // Affected tables explanation
-    expect(html).toContain('cash_flow');
-    expect(html).toContain('sales');
-    expect(html).toContain('sale_items');
-    expect(html).toContain('cashier_shifts');
-    expect(html).toContain('deposit_transactions');
-    expect(html).toContain('Saldo kas brankas berjalan akan kembali ke');
-
-    // Master data security guarantee
-    expect(html).toContain('Penegasan Keamanan Data Master:');
-    expect(html).toContain('Master produk, harga modal (HPP), dan simpanan pokok anggota tetap aman');
-
-    // Verification keyword prompt
-    expect(html).toContain('RESET KAS KEUANGAN');
-    expect(html).toContain('Konfirmasi Reset');
-  });
-
-  it('disables submit button when verification keyword does not match', () => {
-    const html = renderToStaticMarkup(
-      <LaporanKeuangan initialResetModalOpen={true} initialConfirmText="RESET SALAH" />
-    );
-
-    // Button should be disabled
-    expect(html).toMatch(/<button type="submit"[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*?Konfirmasi Reset/);
-  });
-
-  it('enables submit button when verification keyword matches "RESET KAS KEUANGAN"', () => {
-    const html = renderToStaticMarkup(
-      <LaporanKeuangan initialResetModalOpen={true} initialConfirmText="RESET KAS KEUANGAN" />
-    );
-
-    // Button should NOT have disabled attribute
-    expect(html).not.toMatch(/<button type="submit"[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*?Konfirmasi Reset/);
-    expect(html).toContain('Konfirmasi Reset');
+    expect(html).toContain('Download PDF');
+    expect(html).not.toContain('Reset Transaksi Kas');
+    expect(html).not.toContain('history_toggle_off');
+    expect(html).not.toContain('Reset Transaksi Kas Keuangan');
+    expect(html).not.toContain('RESET KAS KEUANGAN');
   });
 
   it('renders pagination controls (10/25/50/100 rows, First/Prev, jump input, Next/Last) for Mutasi Arus Kas Terperinci', () => {

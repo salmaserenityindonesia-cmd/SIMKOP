@@ -188,4 +188,106 @@ describe('ShuReferenceDetailModal Component', () => {
     expect(html).toContain('150.000');
     expect(html).toContain('40.000');
   });
+
+  it('renders LOAN_CONTRACT installment receipts table for grouped contract LN2611-0002 with TOTAL matching row', () => {
+    const groupedLoanRef: ShuReferenceRow = {
+      id: 'loan-contract-loan-ln2611-0002',
+      referenceNumber: 'LN2611-0002',
+      subLabel: '3 Angsuran • Lunas Penuh',
+      sourceType: 'LOAN_CONTRACT',
+      transactionDate: '24/11/2026',
+      rawDate: '2026-11-24T07:21:00.000Z',
+      memberName: 'anggota tes 1',
+      memberNrp: '88010099',
+      paymentMethodLabel: 'Margin Pembiayaan',
+      omzet: 20000,
+      hpp: 0,
+      grossProfit: 20000,
+      marginPercent: 100,
+      repaymentAmount: 2020000,
+      principalPortion: 2000000,
+      loanNumber: 'LN2611-0002',
+      installmentCount: 3,
+      isPaidOff: true,
+      items: [
+        {
+          productName: 'KW2611-1578 — Kulkas mini',
+          categoryName: 'Pembiayaan Barang',
+          qty: 1,
+          sellPrice: 9901,
+          buyPrice: 0,
+          subtotalOmzet: 9901,
+          subtotalHpp: 0,
+          subtotalProfit: 9901,
+          receiptNumber: 'KW2611-1578',
+          periodNumber: 1,
+          paymentDate: '24/11/2026',
+          rawPaymentDate: '2026-11-24T07:19:53.000Z',
+          paidAmt: 1000000,
+          principalPortion: 990099,
+          realizedMargin: 9901,
+        },
+        {
+          productName: 'KW2611-1579 — Kulkas mini',
+          categoryName: 'Pembiayaan Barang',
+          qty: 1,
+          sellPrice: 8911,
+          buyPrice: 0,
+          subtotalOmzet: 8911,
+          subtotalHpp: 0,
+          subtotalProfit: 8911,
+          receiptNumber: 'KW2611-1579',
+          periodNumber: 2,
+          paymentDate: '24/11/2026',
+          rawPaymentDate: '2026-11-24T07:20:00.000Z',
+          paidAmt: 900000,
+          principalPortion: 891089,
+          realizedMargin: 8911,
+        },
+        {
+          productName: 'KW2611-1580 — Kulkas mini',
+          categoryName: 'Pembiayaan Barang',
+          qty: 1,
+          sellPrice: 1188,
+          buyPrice: 0,
+          subtotalOmzet: 1188,
+          subtotalHpp: 0,
+          subtotalProfit: 1188,
+          receiptNumber: 'KW2611-1580',
+          periodNumber: 3,
+          paymentDate: '24/11/2026',
+          rawPaymentDate: '2026-11-24T07:21:00.000Z',
+          paidAmt: 120000,
+          principalPortion: 118812,
+          realizedMargin: 1188,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <ShuReferenceDetailModal
+        referenceItem={groupedLoanRef}
+        onClose={() => {}}
+      />
+    );
+
+    expect(html).toContain('LN2611-0002');
+    expect(html).toContain('3 Angsuran • Lunas Penuh');
+    expect(html).toContain('Anggota: 88010099 - anggota tes 1');
+    expect(html).toContain('Rincian Kwitansi Angsuran');
+    expect(html).toContain('3 angsuran tercatat');
+    expect(html).toContain('NO. KWITANSI');
+    expect(html).toContain('PERIODE ANGSURAN');
+    expect(html).toContain('TANGGAL BAYAR');
+    expect(html).toContain('NOMINAL ANGSURAN');
+    expect(html).toContain('PORSI MARGIN SHU');
+    expect(html).toContain('KW2611-1578');
+    expect(html).toContain('KW2611-1579');
+    expect(html).toContain('KW2611-1580');
+    expect(html).toContain('Angsuran ke-1');
+    expect(html).toContain('Angsuran ke-2');
+    expect(html).toContain('Angsuran ke-3');
+    expect(html).toContain('2.020.000');
+    expect(html).toContain('20.000');
+  });
 });

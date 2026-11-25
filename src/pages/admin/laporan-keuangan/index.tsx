@@ -11,7 +11,6 @@ import ShuReferenceDetailModal, {
 import { supabase } from '../../../lib/supabaseClient';
 import { useFeedback } from '../../../context/FeedbackContext';
 import {
-  resetFinancialTransactions,
   syncOpeningSavingsBalanceToCashFlow,
 } from '../../../services/cashFlowService';
 import {
@@ -1646,8 +1645,8 @@ export async function getShuEstimation(
         const subLabel = `${group.installmentCount} Angsuran${isPaidOff ? ' • Lunas Penuh' : ''}`;
         const referenceNumber = String(
           loan?.loan_number ||
-            group.items[0]?.receiptNumber ||
-            `LOAN-${groupKey.slice(0, 8).toUpperCase()}`
+          group.items[0]?.receiptNumber ||
+          `LOAN-${groupKey.slice(0, 8).toUpperCase()}`
         );
 
         shuReferenceRows.push({
@@ -1826,8 +1825,6 @@ const ResetRefFilterButton = ({ onReset }: { onReset: () => void }) => (
 // ─── Main Page Component ──────────────────────────────────────────────────────
 
 export interface LaporanKeuanganProps {
-  initialResetModalOpen?: boolean;
-  initialConfirmText?: string;
   initialSelectedCashFlowRef?: CashFlowTransaction | null;
   initialStoreCreditSummary?: OutstandingStoreCreditSummary | null;
   initialActiveTab?: 'cashflow' | 'shu';
@@ -1857,8 +1854,6 @@ interface LaporanKeuanganContentProps extends LaporanKeuanganProps {
 }
 
 function LaporanKeuanganContent({
-  initialResetModalOpen = false,
-  initialConfirmText = '',
   initialSelectedCashFlowRef = null,
   initialStoreCreditSummary = null,
   initialActiveTab = 'cashflow',
@@ -1952,10 +1947,6 @@ function LaporanKeuanganContent({
   const [activeHighlightReceipt, setActiveHighlightReceipt] = useState<string>(urlReceipt);
   const [activeHighlightDate, setActiveHighlightDate] = useState<string>(urlDate);
 
-  // State Modal Konfirmasi Reset Kas
-  const [isResetModalOpen, setIsResetModalOpen] = useState(initialResetModalOpen);
-  const [confirmText, setConfirmText] = useState(initialConfirmText);
-  const [isResetting, setIsResetting] = useState(false);
   const [orphanCount, setOrphanCount] = useState<number>(initialOrphanCount ?? 0);
 
   const urlDeepLinkKey = `${urlTab ?? ''}|${urlRef}|${urlReceipt}|${urlDate}|${urlOpenRef}`;
@@ -2060,7 +2051,7 @@ function LaporanKeuanganContent({
             setOrphanCount(res.summary.totalCount);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     };
     loadOrphanStatus();
     const handleUpdated = () => loadOrphanStatus();
@@ -2090,14 +2081,14 @@ function LaporanKeuanganContent({
     dedupedRawTransactions.length < rawCashFlowTransactions.length;
   const cashFlowTransactions = hadInMemoryClearanceDupes
     ? (() => {
-        let running = openingCashBalance;
-        return [...dedupedRawTransactions]
-          .sort(compareCashFlowChronological)
-          .map((tx) => {
-            running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
-            return { ...tx, saldo_berjalan: running };
-          });
-      })()
+      let running = openingCashBalance;
+      return [...dedupedRawTransactions]
+        .sort(compareCashFlowChronological)
+        .map((tx) => {
+          running += Number(tx.kas_masuk || 0) - Number(tx.kas_keluar || 0);
+          return { ...tx, saldo_berjalan: running };
+        });
+    })()
     : rawCashFlowTransactions;
 
   // Auto-open CashFlowReferenceModal when ?openRef=CF-... is present in URL
@@ -2449,30 +2440,6 @@ function LaporanKeuanganContent({
   // ── Print PDF (client-side) ──────────────────────────────────────────────
   const handlePrintPDF = () => window.print();
 
-  // ── Reset Transaksi Keuangan (RPC) ────────────────────────────────────────
-  const handleConfirmReset = async () => {
-    if (confirmText !== 'RESET KAS KEUANGAN' || isResetting) return;
-    setIsResetting(true);
-    try {
-      const { data: authData } = await supabase.auth.getUser();
-      const currentUserId = authData?.user?.id;
-      const res = await resetFinancialTransactions(currentUserId);
-      if (res.success) {
-        setIsResetModalOpen(false);
-        setConfirmText('');
-        showToast(res.message || 'Seluruh transaksi kas berhasil di-reset.', 'success');
-        await fetchData();
-      } else {
-        showToast(res.message || 'Gagal mereset transaksi kas keuangan.', 'error');
-      }
-    } catch (err: any) {
-      console.error('Reset error:', err);
-      showToast(err?.message || 'Terjadi kesalahan sistem saat mereset kas.', 'error');
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
@@ -2626,18 +2593,6 @@ function LaporanKeuanganContent({
               <span className="material-symbols-outlined text-[18px]">picture_as_pdf</span>
               Download PDF
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setConfirmText('');
-                setIsResetModalOpen(true);
-              }}
-              title="Reset seluruh transaksi keuangan kas dan penjualan retail"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-rose-300 bg-rose-50/60 text-rose-700 text-sm font-semibold hover:bg-rose-100/80 hover:border-rose-400 transition-colors shadow-sm cursor-pointer"
-            >
-              <span className="material-symbols-outlined text-[18px]">history_toggle_off</span>
-              Reset Transaksi Kas
-            </button>
           </div>
         </div>
       </div>
@@ -2652,8 +2607,8 @@ function LaporanKeuanganContent({
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
             className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors ${activeTab === tab.key
-                ? 'border-secondary text-secondary'
-                : 'border-transparent text-on-surface-variant hover:text-on-surface'
+              ? 'border-secondary text-secondary'
+              : 'border-transparent text-on-surface-variant hover:text-on-surface'
               }`}
           >
             <span className="material-symbols-outlined text-[18px]">{tab.icon}</span>
@@ -2797,11 +2752,10 @@ function LaporanKeuanganContent({
                 {openingCashBalance !== 0 && (
                   <span
                     data-testid="cashflow-opening-balance-badge"
-                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                      openingCashBalance >= 0
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${openingCashBalance >= 0
                         ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                         : 'bg-rose-50 text-rose-700 border-rose-200'
-                    }`}
+                      }`}
                   >
                     Saldo Awal Sebelum Periode: {formatRp(openingCashBalance)}
                   </span>
@@ -2816,11 +2770,10 @@ function LaporanKeuanganContent({
                     aria-expanded={isCategoryDropdownOpen}
                     aria-haspopup="listbox"
                     data-testid="cashflow-category-filter-trigger"
-                    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-                      selectedCategories.length > 0
+                    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${selectedCategories.length > 0
                         ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <Filter className="w-3.5 h-3.5" />
                     <span>
@@ -2829,9 +2782,8 @@ function LaporanKeuanganContent({
                         : `${selectedCategories.length} Kategori Dipilih`}
                     </span>
                     <ChevronDown
-                      className={`w-3.5 h-3.5 opacity-70 transition-transform ${
-                        isCategoryDropdownOpen ? 'rotate-180' : ''
-                      }`}
+                      className={`w-3.5 h-3.5 opacity-70 transition-transform ${isCategoryDropdownOpen ? 'rotate-180' : ''
+                        }`}
                     />
                   </button>
 
@@ -2882,11 +2834,10 @@ function LaporanKeuanganContent({
                             return (
                               <label
                                 key={opt.label}
-                                className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${
-                                  checked
+                                className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer text-xs transition-colors ${checked
                                     ? 'bg-indigo-50/80 text-indigo-900 font-semibold'
                                     : 'hover:bg-slate-50 text-slate-700'
-                                }`}
+                                  }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0">
                                   <input
@@ -2943,11 +2894,10 @@ function LaporanKeuanganContent({
                   <Link
                     to="/admin/audit-orphan"
                     data-testid="cashflow-audit-orphan-link"
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${
-                      orphanCount > 0
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${orphanCount > 0
                         ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <ShieldAlert
                       className={`w-3.5 h-3.5 ${orphanCount > 0 ? 'text-rose-600' : 'text-slate-500'}`}
@@ -2966,11 +2916,10 @@ function LaporanKeuanganContent({
                   <a
                     href="/admin/audit-orphan"
                     data-testid="cashflow-audit-orphan-link"
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${
-                      orphanCount > 0
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-colors whitespace-nowrap ${orphanCount > 0
                         ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     <ShieldAlert
                       className={`w-3.5 h-3.5 ${orphanCount > 0 ? 'text-rose-600' : 'text-slate-500'}`}
@@ -3126,9 +3075,8 @@ function LaporanKeuanganContent({
                             <td className="px-4 py-3 text-right font-semibold text-on-surface-variant tabular-nums whitespace-nowrap">-</td>
                             <td className="px-4 py-3 text-right font-semibold text-on-surface-variant tabular-nums whitespace-nowrap">-</td>
                             <td
-                              className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${
-                                openingCashBalance >= 0 ? 'text-indigo-700' : 'text-rose-700'
-                              }`}
+                              className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${openingCashBalance >= 0 ? 'text-indigo-700' : 'text-rose-700'
+                                }`}
                             >
                               {formatRp(openingCashBalance)}
                             </td>
@@ -3141,8 +3089,8 @@ function LaporanKeuanganContent({
                             key={t.id}
                             data-highlighted-ref={isHighlighted ? 'true' : undefined}
                             className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
-                                ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
-                                : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
+                              ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
+                              : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
                               }`}
                           >
                             <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap align-top">
@@ -3237,9 +3185,8 @@ function LaporanKeuanganContent({
                         {formatRp(displayedCashFlowOutflow)}
                       </td>
                       <td
-                        className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${
-                          displayedCashFlowNet >= 0 ? 'text-indigo-700' : 'text-rose-700'
-                        }`}
+                        className={`px-4 py-3 text-right font-bold tabular-nums whitespace-nowrap ${displayedCashFlowNet >= 0 ? 'text-indigo-700' : 'text-rose-700'
+                          }`}
                       >
                         {formatRp(displayedCashFlowNet)}
                       </td>
@@ -3490,7 +3437,7 @@ function LaporanKeuanganContent({
                     paginatedShuRows.map((row, i) => {
                       const badgeStyle =
                         (row.sourceType === 'goods_financing' || row.sourceType === 'LOAN_CONTRACT') &&
-                        row.grossProfit === 0
+                          row.grossProfit === 0
                           ? { bg: 'bg-slate-100 border border-slate-200/80', text: 'text-slate-700' }
                           : (SHU_SOURCE_BADGE[row.sourceType] ?? SHU_SOURCE_BADGE.pos_cash);
                       const isHighlighted = highlightedShuIds.has(row.id);
@@ -3499,8 +3446,8 @@ function LaporanKeuanganContent({
                           key={row.id}
                           data-highlighted-ref={isHighlighted ? 'true' : undefined}
                           className={`border-b border-outline-variant/10 transition-colors ${isHighlighted
-                              ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
-                              : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
+                            ? 'bg-amber-50/90 ring-2 ring-amber-400/70 hover:bg-amber-100/70'
+                            : `hover:bg-surface-container-low/50 ${i % 2 === 1 ? 'bg-[#f8fafc]' : ''}`
                             }`}
                         >
                           <td className="px-4 py-3 text-on-surface-variant text-[13px] whitespace-nowrap">
@@ -3551,10 +3498,10 @@ function LaporanKeuanganContent({
                           <td className="px-4 py-3 text-right whitespace-nowrap">
                             <span
                               className={`inline-flex items-center px-2.5 py-1 rounded-full text-[12px] font-bold ${row.marginPercent >= 20
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : row.marginPercent >= 10
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : 'bg-rose-100 text-rose-800'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : row.marginPercent >= 10
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
                                 }`}
                             >
                               {row.marginPercent.toFixed(1)}%
@@ -3697,135 +3644,6 @@ function LaporanKeuanganContent({
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-      {/* ── MODAL KONFIRMASI BAHAYA RESET TRANSAKSI KEUANGAN ── */}
-      {isResetModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150 no-print">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reset-modal-title"
-            className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-rose-200 flex flex-col animate-in zoom-in-95 duration-150"
-          >
-            {/* Modal Header */}
-            <div className="p-5 border-b border-rose-100 flex items-start gap-3 bg-rose-50/70">
-              <div className="p-2.5 rounded-full shrink-0 bg-rose-100 text-rose-600">
-                <span className="material-symbols-outlined text-[24px]">warning</span>
-              </div>
-              <div className="flex-1 min-w-0 pr-2">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-rose-200 text-rose-800">
-                    Aksi Destruktif
-                  </span>
-                </div>
-                <h3 id="reset-modal-title" className="text-base font-bold text-rose-900 leading-tight">
-                  Reset Transaksi Kas Keuangan
-                </h3>
-                <p className="text-xs text-rose-600 mt-0.5">
-                  Tindakan ini permanen dan akan menghapus riwayat transaksi keuangan & retail
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!isResetting) {
-                    setIsResetModalOpen(false);
-                    setConfirmText('');
-                  }
-                }}
-                disabled={isResetting}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-white/60 transition-colors shrink-0 cursor-pointer disabled:opacity-50"
-                aria-label="Tutup modal"
-              >
-                <span className="material-symbols-outlined text-[20px]">close</span>
-              </button>
-            </div>
-
-            {/* Modal Body Form */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleConfirmReset();
-              }}
-            >
-              <div className="p-6 space-y-4">
-                <div className="text-sm text-gray-700 space-y-2">
-                  <p className="font-medium text-gray-900">
-                    Anda akan melakukan reset transaksi keuangan koperasi. Tindakan ini akan menghapus:
-                  </p>
-                  <ul className="list-disc pl-5 space-y-1 text-xs text-gray-600">
-                    <li>Seluruh riwayat arus kas masuk & keluar (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">cash_flow</code>).</li>
-                    <li>Seluruh penjualan retail POS kasir (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">sales</code>, <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">sale_items</code>, <code className="font-mono bg-gray-100 px-1 py-0.5 rounded">cashier_shifts</code>).</li>
-                    <li>Seluruh riwayat penarikan dan potongan simpanan anggota (<code className="font-mono bg-gray-100 px-1 py-0.5 rounded">deposit_transactions</code>).</li>
-                    <li>Saldo kas brankas berjalan akan kembali ke <strong>Rp 0</strong>.</li>
-                  </ul>
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-start gap-2 mt-2">
-                    <span className="material-symbols-outlined text-[18px] text-emerald-600 shrink-0 mt-0.5">verified_user</span>
-                    <div>
-                      <p className="font-semibold text-emerald-900">Penegasan Keamanan Data Master:</p>
-                      <p className="text-emerald-700 mt-0.5">
-                        Master produk, harga modal (HPP), dan simpanan pokok anggota tetap aman dan tidak akan terhapus.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-rose-50 border border-rose-200 rounded-lg p-3.5 space-y-2">
-                  <label htmlFor="confirm-reset-input" className="block text-xs font-medium text-rose-900">
-                    Ketik teks verifikasi persis di bawah ini untuk mengonfirmasi:
-                  </label>
-                  <div className="font-mono text-xs font-bold text-rose-800 bg-white/90 px-2.5 py-1.5 rounded border border-rose-300 select-all tracking-wider text-center">
-                    RESET KAS KEUANGAN
-                  </div>
-                  <input
-                    id="confirm-reset-input"
-                    type="text"
-                    autoComplete="off"
-                    disabled={isResetting}
-                    value={confirmText}
-                    onChange={(e) => setConfirmText(e.target.value)}
-                    placeholder='Ketik "RESET KAS KEUANGAN"'
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500 bg-white font-medium"
-                  />
-                </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="p-4 px-6 border-t border-gray-200 flex items-center justify-end gap-3 bg-gray-50">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!isResetting) {
-                      setIsResetModalOpen(false);
-                      setConfirmText('');
-                    }
-                  }}
-                  disabled={isResetting}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg border border-gray-300 transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  disabled={confirmText !== 'RESET KAS KEUANGAN' || isResetting}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-lg shadow-sm transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {isResetting ? (
-                    <>
-                      <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
-                      <span>Mereset Data...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-[18px]">delete_forever</span>
-                      <span>Konfirmasi Reset</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}
