@@ -526,18 +526,32 @@ export default function AdminDashboard() {
 
                 {/* Sub-baris Rincian 4 Jenis Simpanan */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                  <div className="rounded-lg bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Pokok</div>
+                  <Link
+                    className="group block rounded-lg bg-slate-50 hover:bg-slate-100/90 border border-slate-200/70 hover:border-slate-400 px-2.5 py-1.5 transition-all cursor-pointer"
+                    title="Buka Matriks Simpanan (Status Simpanan Pokok)"
+                    to="/admin/compliance-matrix"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      <span>Pokok</span>
+                      <ArrowRight className="w-3 h-3 text-slate-500 opacity-75 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    </div>
                     <div className="text-xs font-bold text-slate-800 tabular-nums mt-0.5">
                       Rp {savingsBreakdown.pokok.toLocaleString('id-ID')}
                     </div>
-                  </div>
-                  <div className="rounded-lg bg-emerald-50/60 border border-emerald-200/70 px-2.5 py-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Wajib</div>
+                  </Link>
+                  <Link
+                    className="group block rounded-lg bg-emerald-50/60 hover:bg-emerald-100/80 border border-emerald-200/70 hover:border-emerald-400 px-2.5 py-1.5 transition-all cursor-pointer"
+                    title="Buka Matriks Simpanan Wajib"
+                    to="/admin/compliance-matrix"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                      <span>Wajib</span>
+                      <ArrowRight className="w-3 h-3 text-emerald-600 opacity-75 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    </div>
                     <div className="text-xs font-bold text-emerald-900 tabular-nums mt-0.5">
                       Rp {savingsBreakdown.wajib.toLocaleString('id-ID')}
                     </div>
-                  </div>
+                  </Link>
                   <Link
                     className="group block rounded-lg bg-teal-50/60 hover:bg-teal-100/80 border border-teal-200/70 hover:border-teal-400 px-2.5 py-1.5 transition-all cursor-pointer"
                     title="Buka Buku Besar Simpanan Belanja"
@@ -551,12 +565,19 @@ export default function AdminDashboard() {
                       Rp {savingsBreakdown.belanja.toLocaleString('id-ID')}
                     </div>
                   </Link>
-                  <div className="rounded-lg bg-amber-50/60 border border-amber-200/70 px-2.5 py-1.5">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Lebaran</div>
+                  <Link
+                    className="group block rounded-lg bg-amber-50/60 hover:bg-amber-100/80 border border-amber-200/70 hover:border-amber-400 px-2.5 py-1.5 transition-all cursor-pointer"
+                    title="Buka Matriks Simpanan Lebaran"
+                    to="/admin/compliance-matrix"
+                  >
+                    <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                      <span>Lebaran</span>
+                      <ArrowRight className="w-3 h-3 text-amber-600 opacity-75 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    </div>
                     <div className="text-xs font-bold text-amber-900 tabular-nums mt-0.5">
                       Rp {savingsBreakdown.lebaran.toLocaleString('id-ID')}
                     </div>
-                  </div>
+                  </Link>
                 </div>
               </div>
             </div>
