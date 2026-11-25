@@ -46,7 +46,9 @@ import {
 import {
   scanAllOrphanRecords,
   ORPHAN_AUDIT_UPDATED_EVENT,
+  filterRedundantLegacySaldoAwalRepayments,
 } from '../../../services/orphanAuditService';
+import { fetchAllPaginatedSafe } from '../../../utils/supabasePagination';
 
 // ─── TypeScript Interfaces ───────────────────────────────────────────────────
 
@@ -83,6 +85,28 @@ export interface MarginKategori {
 }
 
 export type { ShuReferenceRow, ShuReferenceLineItem, ShuSourceType };
+
+export type ShuSourceFilterMode = 'default_shu_and_paid_off' | 'profit_only' | 'all';
+
+export function filterShuRowsBySource(
+  rows: ShuReferenceRow[],
+  filterMode: ShuSourceFilterMode
+): ShuReferenceRow[] {
+  if (filterMode === 'all') return rows;
+  if (filterMode === 'profit_only') {
+    return rows.filter(
+      (row) => Number(row.omzet || 0) > 0 || Number(row.grossProfit || 0) > 0
+    );
+  }
+  // 'default_shu_and_paid_off': POS + Margin Pembiayaan (omzet/profit > 0) + Pinjaman Lunas Penuh
+  return rows.filter(
+    (row) =>
+      row.sourceType.startsWith('pos_') ||
+      Number(row.omzet || 0) > 0 ||
+      Number(row.grossProfit || 0) > 0 ||
+      row.isPaidOff === true
+  );
+}
 
 export interface ShuEstimationData {
   grossSales: number;
@@ -990,12 +1014,89 @@ const SHU_SOURCE_BADGE: Record<ShuSourceType, { bg: string; text: string }> = {
   pos_credit: { bg: 'bg-amber-50 border border-amber-200/80', text: 'text-amber-800' },
   pos_split: { bg: 'bg-purple-50 border border-purple-200/80', text: 'text-purple-700' },
   goods_financing: { bg: 'bg-teal-50 border border-teal-200/80', text: 'text-teal-800' },
+  LOAN_CONTRACT: { bg: 'bg-teal-50 border border-teal-200/80', text: 'text-teal-800' },
 };
 
 const formatDisplayDateId = (raw?: string | null): string => {
   if (!raw) return '-';
   const d = new Date(raw);
   return isNaN(d.getTime()) ? String(raw) : d.toLocaleDateString('id-ID');
+};
+
+const chunkIds = (ids: string[], size = 80): string[][] => {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  const safeSize = Math.max(1, size);
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += safeSize) {
+    chunks.push(ids.slice(i, i + safeSize));
+  }
+  return chunks;
+};
+
+const fetchInChunksPaginated = async (
+  table: string,
+  columnVariants: string[],
+  filterColumn: string,
+  ids: string[]
+): Promise<{ data: any[]; error: any }> => {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean).map(String)));
+  if (uniqueIds.length === 0) return { data: [], error: null };
+
+  const idChunks = chunkIds(uniqueIds, 80);
+  const allRows: any[] = [];
+  let lastError: any = null;
+
+  for (const idChunk of idChunks) {
+    let chunkRows: any[] = [];
+    let chunkError: any = null;
+    let usedInFilter = false;
+
+    for (let i = 0; i < columnVariants.length; i++) {
+      const cols = columnVariants[i];
+      const res = await fetchAllPaginatedSafe(() => {
+        const tableRef: any = supabase.from(table);
+        if (!tableRef || typeof tableRef.select !== 'function') return null;
+        let q: any = tableRef.select(cols);
+        if (!q) return null;
+        if (typeof q.in === 'function') {
+          usedInFilter = true;
+          q = q.in(filterColumn, idChunk);
+        } else if (typeof q.then === 'function') {
+          return q;
+        } else {
+          return null;
+        }
+        if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+          q = q.order('id', { ascending: true });
+        }
+        return q;
+      });
+
+      if (!res.error) {
+        chunkRows = Array.isArray(res.data) ? res.data : [];
+        chunkError = null;
+        break;
+      }
+
+      chunkError = res.error;
+      if (isMissingColumnErr(res.error) && i < columnVariants.length - 1) {
+        continue;
+      }
+      break;
+    }
+
+    if (chunkError) {
+      lastError = chunkError;
+    }
+    if (chunkRows.length > 0) {
+      allRows.push(...chunkRows);
+    }
+    if (!usedInFilter) {
+      break;
+    }
+  }
+
+  return { data: allRows, error: lastError };
 };
 
 export async function getShuEstimation(
@@ -1005,11 +1106,19 @@ export async function getShuEstimation(
   // 1. Total Omzet dari sales.total_amount (completed)
   // NOTE: actual column is 'sale_status' (enum), not 'status'
   const runSalesQuery = async (cols: string): Promise<any> => {
-    return await (supabase.from('sales') as any)
-      .select(cols)
-      .gte('created_at', startDate)
-      .lte('created_at', endDate + 'T23:59:59')
-      .eq('sale_status', 'completed');
+    return await fetchAllPaginatedSafe(() => {
+      const salesTable: any = supabase.from('sales');
+      if (!salesTable || typeof salesTable.select !== 'function') return null;
+      let q: any = salesTable.select(cols);
+      if (!q) return null;
+      if (typeof q.gte === 'function') q = q.gte('created_at', startDate);
+      if (q && typeof q.lte === 'function') q = q.lte('created_at', endDate + 'T23:59:59');
+      if (q && typeof q.eq === 'function') q = q.eq('sale_status', 'completed');
+      if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+        q = q.order('id', { ascending: true });
+      }
+      return q;
+    });
   };
 
   let salesRes: any = await runSalesQuery(
@@ -1022,7 +1131,7 @@ export async function getShuEstimation(
 
   const salesData: any[] = Array.isArray(salesRes?.data) ? salesRes.data : [];
   const grossSales = salesData.reduce((s: number, r: any) => s + Number(r.total_amount ?? 0), 0);
-  const saleIds = salesData.map((r: any) => r.id);
+  const saleIds = Array.from(new Set(salesData.map((r: any) => r.id).filter(Boolean).map(String)));
 
   // 2. HPP = SUM(sale_items.quantity * products.buy_price) & Rincian per Referensi
   let cogs = 0;
@@ -1033,38 +1142,30 @@ export async function getShuEstimation(
   if (saleIds.length > 0) {
     // NOTE: sale_items has both (quantity/unit_price) and (qty/price) columns.
     // 'quantity' is NOT NULL so it's the canonical column for HPP calculation.
-    const runSaleItemsQuery = async (cols: string): Promise<any> => {
-      const q: any = (supabase.from('sale_items') as any).select(cols);
-      if (q && typeof q.in === 'function') {
-        return await q.in('sale_id', saleIds);
-      }
-      if (q && typeof q.then === 'function') return await q;
-      return { data: [], error: null };
-    };
-
-    let siRes: any = await runSaleItemsQuery(
-      'sale_id, product_id, product_name, quantity, qty, unit_price, price, subtotal'
+    const siRes = await fetchInChunksPaginated(
+      'sale_items',
+      [
+        'sale_id, product_id, product_name, quantity, qty, unit_price, price, subtotal',
+        'quantity, unit_price, product_id, sale_id',
+      ],
+      'sale_id',
+      saleIds
     );
-    if (siRes?.error && isMissingColumnErr(siRes.error)) {
-      siRes = await runSaleItemsQuery('quantity, unit_price, product_id, sale_id');
-    }
     if (siRes?.error) console.error('sale_items error:', siRes.error);
     const saleItems: any[] = Array.isArray(siRes?.data) ? siRes.data : [];
 
-    const productIds = [...new Set(saleItems.map((si: any) => si.product_id).filter(Boolean))];
+    const productIds = [
+      ...new Set(saleItems.map((si: any) => si.product_id).filter(Boolean).map(String)),
+    ];
 
     const productMap: Record<string, { name?: string; buy_price: number; category_id: string }> = {};
     if (productIds.length > 0) {
-      const runProdQuery = async (cols: string): Promise<any> => {
-        const q: any = (supabase.from('products') as any).select(cols);
-        if (q && typeof q.in === 'function') return await q.in('id', productIds);
-        if (q && typeof q.then === 'function') return await q;
-        return { data: [], error: null };
-      };
-      let prodRes: any = await runProdQuery('id, name, buy_price, category_id');
-      if (prodRes?.error && isMissingColumnErr(prodRes.error)) {
-        prodRes = await runProdQuery('id, buy_price, category_id');
-      }
+      const prodRes = await fetchInChunksPaginated(
+        'products',
+        ['id, name, buy_price, category_id', 'id, buy_price, category_id'],
+        'id',
+        productIds
+      );
       if (prodRes?.error) console.error('products error:', prodRes.error);
       for (const p of (Array.isArray(prodRes?.data) ? prodRes.data : [])) {
         productMap[p.id] = {
@@ -1076,15 +1177,19 @@ export async function getShuEstimation(
     }
 
     // Get categories
-    const catIds = [...new Set(Object.values(productMap).map(p => p.category_id).filter(Boolean))];
+    const catIds = [
+      ...new Set(Object.values(productMap).map(p => p.category_id).filter(Boolean).map(String)),
+    ];
     const catMap: Record<string, string> = {};
     if (catIds.length > 0) {
       try {
-        const catQ: any = supabase.from('product_categories')?.select?.('id, name');
-        if (catQ && typeof catQ.in === 'function') {
-          const { data: cats } = await catQ.in('id', catIds);
-          for (const c of (cats ?? [])) catMap[c.id] = c.name;
-        }
+        const catRes = await fetchInChunksPaginated(
+          'product_categories',
+          ['id, name'],
+          'id',
+          catIds
+        );
+        for (const c of (catRes?.data ?? [])) catMap[c.id] = c.name;
       } catch {
         // Non-blocking fallback
       }
@@ -1096,16 +1201,18 @@ export async function getShuEstimation(
     ];
     if (saleMemberIds.length > 0) {
       try {
-        const memQ: any = supabase.from('anggota')?.select?.('id, nrp, nama');
-        if (memQ && typeof memQ.in === 'function') {
-          const mRes = await memQ.in('id', saleMemberIds);
-          for (const m of mRes?.data || []) {
-            if (m?.id) {
-              memberMap[String(m.id)] = {
-                nrp: String(m.nrp ?? ''),
-                nama: String(m.nama ?? ''),
-              };
-            }
+        const mRes = await fetchInChunksPaginated(
+          'anggota',
+          ['id, nrp, nama'],
+          'id',
+          saleMemberIds
+        );
+        for (const m of mRes?.data || []) {
+          if (m?.id) {
+            memberMap[String(m.id)] = {
+              nrp: String(m.nrp ?? ''),
+              nama: String(m.nama ?? ''),
+            };
           }
         }
       } catch {
@@ -1186,13 +1293,20 @@ export async function getShuEstimation(
   }
 
   // 3. Beban Operasional (secara eksplisit hanya mengambil beban operasional, mengecualikan saldo awal/simpanan)
-  const { data: opexData, error: opexErr } = await supabase
-    .from('cash_flow')
-    .select('amount, category, direction')
-    .gte('created_at', startDate)
-    .lte('created_at', endDate + 'T23:59:59')
-    .eq('direction', 'out')
-    .eq('category', 'beban_operasional');
+  const { data: opexData, error: opexErr } = await fetchAllPaginatedSafe(() => {
+    const cfTable: any = supabase.from('cash_flow');
+    if (!cfTable || typeof cfTable.select !== 'function') return null;
+    let q: any = cfTable.select('amount, category, direction');
+    if (!q) return null;
+    if (typeof q.gte === 'function') q = q.gte('created_at', startDate);
+    if (q && typeof q.lte === 'function') q = q.lte('created_at', endDate + 'T23:59:59');
+    if (q && typeof q.eq === 'function') q = q.eq('direction', 'out');
+    if (q && typeof q.eq === 'function') q = q.eq('category', 'beban_operasional');
+    if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+      q = q.order('id', { ascending: true });
+    }
+    return q;
+  });
   if (opexErr) console.error('opex error:', opexErr);
 
   const NON_SHU_CATEGORIES = new Set([
@@ -1233,18 +1347,24 @@ export async function getShuEstimation(
     const repayTable: any = supabase.from('loan_repayments');
     if (repayTable && typeof repayTable.select === 'function') {
       const runRepayQuery = async (cols: string) => {
-        const q: any = repayTable.select(cols);
-        if (q && typeof q.gte === 'function') {
-          const gteQ = q.gte('payment_date', startDate);
-          if (gteQ && typeof gteQ.lte === 'function') {
-            return await gteQ.lte('payment_date', endDate + 'T23:59:59');
+        return await fetchAllPaginatedSafe(() => {
+          let q: any = repayTable.select(cols);
+          if (!q) return null;
+          if (typeof q.gte === 'function') {
+            q = q.gte('payment_date', startDate);
+            if (q && typeof q.lte === 'function') {
+              q = q.lte('payment_date', endDate + 'T23:59:59');
+            }
+            if (q && typeof q.range === 'function' && typeof q.order === 'function') {
+              q = q.order('id', { ascending: true });
+            }
+            return q;
           }
-          return await gteQ;
-        }
-        if (q && typeof q.then === 'function') {
-          return await q;
-        }
-        return { data: [], error: null };
+          if (typeof q.then === 'function') {
+            return q;
+          }
+          return null;
+        });
       };
 
       let repayRes = await runRepayQuery(
@@ -1262,7 +1382,22 @@ export async function getShuEstimation(
       }
 
       const rawRepayments = Array.isArray(repayRes?.data) ? repayRes.data : [];
+      const redundantLegacySet = new Set<any>();
+      const repaymentsByLoan = new Map<string, any[]>();
+      for (const r of rawRepayments) {
+        if (!r?.loan_id) continue;
+        const lid = String(r.loan_id);
+        const bucket = repaymentsByLoan.get(lid);
+        if (bucket) bucket.push(r);
+        else repaymentsByLoan.set(lid, [r]);
+      }
+      for (const bucket of repaymentsByLoan.values()) {
+        const { redundant } = filterRedundantLegacySaldoAwalRepayments(bucket);
+        for (const red of redundant) redundantLegacySet.add(red);
+      }
+
       const validRepayments = rawRepayments.filter((r: any) => {
+        if (redundantLegacySet.has(r)) return false;
         const method = String(r?.payment_method || '').toUpperCase();
         if (method === 'SALDO_AWAL' || method === 'TOPUP_COMPENSATION') return false;
         if (r?.payment_date) {
@@ -1282,19 +1417,16 @@ export async function getShuEstimation(
       );
       if (allSchedIds.length > 0) {
         try {
-          const runSchedQuery = async (cols: string) => {
-            const schedQ: any = supabase.from('loan_schedules')?.select?.(cols);
-            if (schedQ && typeof schedQ.in === 'function') {
-              return await schedQ.in('id', allSchedIds);
-            }
-            return { data: [], error: null };
-          };
-          let sRes = await runSchedQuery(
-            'id, target_amount, paid_amount, status, principal_portion, margin_portion'
+          const sRes = await fetchInChunksPaginated(
+            'loan_schedules',
+            [
+              'id, period_number, target_amount, paid_amount, status, principal_portion, margin_portion',
+              'id, target_amount, paid_amount, status, principal_portion, margin_portion',
+              'id, target_amount, paid_amount, status',
+            ],
+            'id',
+            allSchedIds
           );
-          if (sRes?.error && isMissingColumnErr(sRes.error)) {
-            sRes = await runSchedQuery('id, target_amount, paid_amount, status');
-          }
           for (const s of sRes?.data || []) {
             if (s?.id) scheduleLookup.set(String(s.id), s);
           }
@@ -1308,19 +1440,16 @@ export async function getShuEstimation(
       );
       if (allLoanIds.length > 0) {
         try {
-          const runLoanQuery = async (cols: string) => {
-            const loanQ: any = supabase.from('loans')?.select?.(cols);
-            if (loanQ && typeof loanQ.in === 'function') {
-              return await loanQ.in('id', allLoanIds);
-            }
-            return { data: [], error: null };
-          };
-          let lRes = await runLoanQuery(
-            'id, loan_number, member_id, amount, principal_amount, cost_price, markup_amount, item_description'
+          const lRes = await fetchInChunksPaginated(
+            'loans',
+            [
+              'id, loan_number, member_id, amount, principal_amount, cost_price, markup_amount, item_description, status',
+              'id, loan_number, member_id, amount, principal_amount, cost_price, markup_amount, item_description',
+              'id, amount, principal_amount, member_id',
+            ],
+            'id',
+            allLoanIds
           );
-          if (lRes?.error && isMissingColumnErr(lRes.error)) {
-            lRes = await runLoanQuery('id, amount, principal_amount, member_id');
-          }
           for (const l of lRes?.data || []) {
             if (l?.id) loanLookup.set(String(l.id), l);
           }
@@ -1339,22 +1468,42 @@ export async function getShuEstimation(
       );
       if (loanMemberIds.length > 0) {
         try {
-          const memQ: any = supabase.from('anggota')?.select?.('id, nrp, nama');
-          if (memQ && typeof memQ.in === 'function') {
-            const mRes = await memQ.in('id', loanMemberIds);
-            for (const m of mRes?.data || []) {
-              if (m?.id) {
-                memberMap[String(m.id)] = {
-                  nrp: String(m.nrp ?? ''),
-                  nama: String(m.nama ?? ''),
-                };
-              }
+          const mRes = await fetchInChunksPaginated(
+            'anggota',
+            ['id, nrp, nama'],
+            'id',
+            loanMemberIds
+          );
+          for (const m of mRes?.data || []) {
+            if (m?.id) {
+              memberMap[String(m.id)] = {
+                nrp: String(m.nrp ?? ''),
+                nama: String(m.nama ?? ''),
+              };
             }
           }
         } catch {
           // Non-blocking fallback
         }
       }
+
+      const getSafeTimeLocal = (raw: string): number => {
+        if (!raw) return 0;
+        const ms = new Date(raw).getTime();
+        return Number.isNaN(ms) ? 0 : ms;
+      };
+
+      interface GroupedLoanShuRow {
+        loan: any;
+        totalRealizedMargin: number;
+        totalPaidInPeriod: number;
+        totalPrincipalInPeriod: number;
+        installmentCount: number;
+        latestRawDate: string;
+        items: ShuReferenceLineItem[];
+      }
+
+      const groupedLoanMap = new Map<string, GroupedLoanShuRow>();
 
       for (const r of validRepayments) {
         const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
@@ -1399,48 +1548,129 @@ export async function getShuEstimation(
 
         goodsFinancingMargin += marginPortion;
 
-        if (marginPortion > 0) {
-          const refNo = String(
-            r?.receipt_number ||
-            loan?.loan_number ||
-            `PAY-${String(r?.id || '').slice(0, 8).toUpperCase()}`
-          );
-          const rawDate = String(r?.payment_date || '');
-          const member = loan?.member_id ? memberMap[String(loan.member_id)] : undefined;
-          const itemLabel = loan?.item_description
-            ? `Margin Pembiayaan Barang — ${String(loan.item_description)}`
-            : 'Realisasi Margin Pembiayaan Barang';
+        const groupKey = r?.loan_id
+          ? String(r.loan_id)
+          : loan?.loan_number
+            ? String(loan.loan_number)
+            : String(r?.receipt_number || r?.id);
 
-          shuReferenceRows.push({
-            id: `loan-repay-${String(r?.id || refNo)}`,
-            referenceNumber: refNo,
-            sourceType: 'goods_financing',
-            transactionDate: formatDisplayDateId(rawDate),
-            rawDate,
-            memberName: member?.nama || 'Pelanggan Umum',
-            memberNrp: member?.nrp ?? '',
-            paymentMethodLabel: 'Margin Pembiayaan',
-            omzet: marginPortion,
-            hpp: 0,
-            grossProfit: marginPortion,
-            marginPercent: 100,
-            repaymentAmount: Number(r?.amount_paid || 0),
-            principalPortion,
-            loanNumber: loan?.loan_number ?? null,
-            items: [
-              {
-                productName: itemLabel,
-                categoryName: 'Pembiayaan Barang',
-                qty: 1,
-                sellPrice: marginPortion,
-                buyPrice: 0,
-                subtotalOmzet: marginPortion,
-                subtotalHpp: 0,
-                subtotalProfit: marginPortion,
-              },
-            ],
+        const receiptNumber = String(
+          r?.receipt_number || `PAY-${String(r?.id || '').slice(0, 8).toUpperCase()}`
+        );
+        const rawDate = String(r?.payment_date || '');
+
+        let periodNumber: number | null = null;
+        if (sched?.period_number != null && !Number.isNaN(Number(sched.period_number))) {
+          periodNumber = Number(sched.period_number);
+        } else {
+          const receiptPeriod = extractReceiptPeriodNumber(receiptNumber);
+          if (receiptPeriod) {
+            periodNumber = Number(receiptPeriod);
+          } else {
+            const notesMatch = String(r?.notes || '').match(/(?:bln\s*)?ke-?(\d+)/i);
+            if (notesMatch) {
+              periodNumber = Number(notesMatch[1]);
+            }
+          }
+        }
+
+        const existingGroup = groupedLoanMap.get(groupKey);
+        const lineItem: ShuReferenceLineItem = {
+          productName: loan?.item_description
+            ? `${receiptNumber} — ${String(loan.item_description)}`
+            : receiptNumber,
+          categoryName: marginPortion > 0 ? 'Pembiayaan Barang' : 'Pinjaman Reguler (0% Jasa)',
+          qty: 1,
+          sellPrice: marginPortion,
+          buyPrice: 0,
+          subtotalOmzet: marginPortion,
+          subtotalHpp: 0,
+          subtotalProfit: marginPortion,
+          receiptNumber,
+          periodNumber,
+          paymentDate: formatDisplayDateId(rawDate),
+          rawPaymentDate: rawDate,
+          paidAmt,
+          principalPortion,
+          realizedMargin: marginPortion,
+        };
+
+        if (existingGroup) {
+          if (!existingGroup.loan && loan) {
+            existingGroup.loan = loan;
+          }
+          existingGroup.totalRealizedMargin += marginPortion;
+          existingGroup.totalPaidInPeriod += paidAmt;
+          existingGroup.totalPrincipalInPeriod += principalPortion;
+          existingGroup.installmentCount += 1;
+          const currentTime = getSafeTimeLocal(existingGroup.latestRawDate);
+          const candidateTime = getSafeTimeLocal(rawDate);
+          if (
+            !existingGroup.latestRawDate ||
+            candidateTime > currentTime ||
+            (candidateTime === currentTime && rawDate > existingGroup.latestRawDate)
+          ) {
+            existingGroup.latestRawDate = rawDate;
+          }
+          existingGroup.items.push(lineItem);
+        } else {
+          groupedLoanMap.set(groupKey, {
+            loan,
+            totalRealizedMargin: marginPortion,
+            totalPaidInPeriod: paidAmt,
+            totalPrincipalInPeriod: principalPortion,
+            installmentCount: 1,
+            latestRawDate: rawDate,
+            items: [lineItem],
           });
         }
+      }
+
+      for (const [groupKey, group] of groupedLoanMap.entries()) {
+        group.items.sort((a, b) => {
+          if (a.periodNumber != null && b.periodNumber != null && a.periodNumber !== b.periodNumber) {
+            return a.periodNumber - b.periodNumber;
+          }
+          const timeDiff =
+            getSafeTimeLocal(a.rawPaymentDate || '') - getSafeTimeLocal(b.rawPaymentDate || '');
+          if (timeDiff !== 0) return timeDiff;
+          return String(a.receiptNumber || '').localeCompare(String(b.receiptNumber || ''));
+        });
+
+        const loan = group.loan;
+        const member = loan?.member_id ? memberMap[String(loan.member_id)] : undefined;
+        const hasMargin = group.totalRealizedMargin > 0;
+        const isPaidOff = ['paid_off', 'lunas', 'completed', 'settled'].includes(
+          String(loan?.status || '').trim().toLowerCase()
+        );
+        const subLabel = `${group.installmentCount} Angsuran${isPaidOff ? ' • Lunas Penuh' : ''}`;
+        const referenceNumber = String(
+          loan?.loan_number ||
+            group.items[0]?.receiptNumber ||
+            `LOAN-${groupKey.slice(0, 8).toUpperCase()}`
+        );
+
+        shuReferenceRows.push({
+          id: `loan-contract-${groupKey}`,
+          referenceNumber,
+          subLabel,
+          sourceType: 'LOAN_CONTRACT',
+          transactionDate: formatDisplayDateId(group.latestRawDate),
+          rawDate: group.latestRawDate,
+          memberName: member?.nama || 'Pelanggan Umum',
+          memberNrp: member?.nrp ?? '',
+          paymentMethodLabel: hasMargin ? 'Margin Pembiayaan' : 'Pinjaman Reguler (0% Jasa)',
+          omzet: group.totalRealizedMargin,
+          hpp: 0,
+          grossProfit: group.totalRealizedMargin,
+          marginPercent: hasMargin ? 100 : 0,
+          repaymentAmount: group.totalPaidInPeriod,
+          principalPortion: group.totalPrincipalInPeriod,
+          loanNumber: loan?.loan_number ?? null,
+          installmentCount: group.installmentCount,
+          isPaidOff,
+          items: group.items,
+        });
       }
     }
   } catch (goodsMarginErr) {
@@ -1500,7 +1730,10 @@ export function getHighlightedShuRowIds(
   if (normReceipt) {
     const exactOrSub = rows.filter((row) => {
       const rNo = String(row.referenceNumber || '').toLowerCase();
-      return rNo === normReceipt || rNo.includes(normReceipt);
+      if (rNo === normReceipt || rNo.includes(normReceipt)) return true;
+      return (row.items ?? []).some((it) =>
+        String(it.receiptNumber || '').toLowerCase().includes(normReceipt)
+      );
     });
     if (exactOrSub.length > 0) {
       return new Set(exactOrSub.map((r) => r.id));
@@ -1605,6 +1838,7 @@ export interface LaporanKeuanganProps {
   initialShuData?: ShuEstimationData | null;
   initialSelectedShuRef?: ShuReferenceRow | null;
   initialShuSearchQuery?: string;
+  initialShuSourceFilter?: ShuSourceFilterMode;
   initialStartDate?: string;
   initialEndDate?: string;
   initialClosedFiscalYear?: FiscalYearClosingRecord | null;
@@ -1635,6 +1869,7 @@ function LaporanKeuanganContent({
   initialShuData = null,
   initialSelectedShuRef = null,
   initialShuSearchQuery = '',
+  initialShuSourceFilter = 'default_shu_and_paid_off',
   initialStartDate,
   initialEndDate,
   initialClosedFiscalYear = null,
@@ -1699,9 +1934,12 @@ function LaporanKeuanganContent({
   );
   const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
 
-  // State Pencarian, Pagination & Drill-Down Tabel Estimasi SHU
+  // State Pencarian, Filter Sumber, Pagination & Drill-Down Tabel Estimasi SHU
   const [shuSearchQuery, setShuSearchQuery] = useState<string>(
     urlTab === 'shu' && initialSearchValue ? initialSearchValue : initialShuSearchQuery
+  );
+  const [shuSourceFilter, setShuSourceFilter] = useState<ShuSourceFilterMode>(
+    initialShuSourceFilter
   );
   const [shuCurrentPage, setShuCurrentPage] = useState<number>(1);
   const [shuPageSize, setShuPageSize] = useState<number>(10);
@@ -1843,7 +2081,7 @@ function LaporanKeuanganContent({
 
   useEffect(() => {
     setShuCurrentPage(1);
-  }, [shuSearchQuery, shuPageSize, startDate, endDate, unit]);
+  }, [shuSearchQuery, shuSourceFilter, shuPageSize, startDate, endDate, unit]);
 
   const rawCashFlowTransactions = cashFlowData?.transactions ?? [];
   const openingCashBalance = Number(cashFlowData?.openingBalance ?? 0);
@@ -1962,17 +2200,21 @@ function LaporanKeuanganContent({
     : endingVaultBalance;
 
   const shuReferenceRows = shuData?.shuReferenceRows ?? [];
+  const sourceFilteredShuRows = filterShuRowsBySource(shuReferenceRows, shuSourceFilter);
   const normalizedShuQuery = shuSearchQuery.trim().toLowerCase();
   const filteredShuRows = normalizedShuQuery
-    ? shuReferenceRows.filter((row) => {
+    ? sourceFilteredShuRows.filter((row) => {
       const refMatch = row.referenceNumber.toLowerCase().includes(normalizedShuQuery);
       const loanMatch = String(row.loanNumber || '').toLowerCase().includes(normalizedShuQuery);
+      const receiptMatch = (row.items ?? []).some((it) =>
+        String(it.receiptNumber || '').toLowerCase().includes(normalizedShuQuery)
+      );
       const nameMatch = row.memberName.toLowerCase().includes(normalizedShuQuery);
       const nrpMatch = row.memberNrp.toLowerCase().includes(normalizedShuQuery);
       const methodMatch = row.paymentMethodLabel.toLowerCase().includes(normalizedShuQuery);
-      return refMatch || loanMatch || nameMatch || nrpMatch || methodMatch;
+      return refMatch || loanMatch || receiptMatch || nameMatch || nrpMatch || methodMatch;
     })
-    : shuReferenceRows;
+    : sourceFilteredShuRows;
   const totalShuItems = filteredShuRows.length;
   const totalShuPages = Math.max(1, Math.ceil(totalShuItems / shuPageSize));
   const safeShuPage = Math.min(shuCurrentPage, totalShuPages);
@@ -1995,6 +2237,7 @@ function LaporanKeuanganContent({
 
   const handleResetReferenceFilter = () => {
     setShuSearchQuery('');
+    setShuSourceFilter('default_shu_and_paid_off');
     setCashFlowSearchQuery('');
     setSelectedCategories([]);
     setActiveHighlightRef('');
@@ -3156,6 +3399,23 @@ function LaporanKeuanganContent({
               </div>
 
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto no-print">
+                <select
+                  value={shuSourceFilter}
+                  onChange={(e) => setShuSourceFilter(e.target.value as ShuSourceFilterMode)}
+                  aria-label="Filter sumber dan status SHU"
+                  data-testid="shu-source-filter"
+                  className="px-3 py-2 rounded-lg border border-outline-variant/50 bg-slate-50/50 focus:bg-white text-xs sm:text-sm text-on-surface focus:outline-none focus:border-secondary focus:ring-2 focus:ring-secondary/20 transition-colors cursor-pointer"
+                >
+                  <option value="default_shu_and_paid_off">
+                    Penyumbang SHU &amp; Pinjaman Lunas (Default)
+                  </option>
+                  <option value="profit_only">
+                    Hanya Penyumbang Laba (Omzet &gt; Rp 0)
+                  </option>
+                  <option value="all">
+                    Semua Aktivitas Angsuran (Termasuk Berjalan 0%)
+                  </option>
+                </select>
                 <div className="relative flex-1 md:w-80">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
@@ -3229,7 +3489,10 @@ function LaporanKeuanganContent({
                   ) : (
                     paginatedShuRows.map((row, i) => {
                       const badgeStyle =
-                        SHU_SOURCE_BADGE[row.sourceType] ?? SHU_SOURCE_BADGE.pos_cash;
+                        (row.sourceType === 'goods_financing' || row.sourceType === 'LOAN_CONTRACT') &&
+                        row.grossProfit === 0
+                          ? { bg: 'bg-slate-100 border border-slate-200/80', text: 'text-slate-700' }
+                          : (SHU_SOURCE_BADGE[row.sourceType] ?? SHU_SOURCE_BADGE.pos_cash);
                       const isHighlighted = highlightedShuIds.has(row.id);
                       return (
                         <tr
@@ -3253,6 +3516,11 @@ function LaporanKeuanganContent({
                               <span>{row.referenceNumber}</span>
                               <ExternalLink className="w-3 h-3 opacity-70 group-hover:opacity-100 transition-opacity" />
                             </button>
+                            {row.sourceType === 'LOAN_CONTRACT' && row.subLabel && (
+                              <div className="text-[11px] text-on-surface-variant mt-1 pl-0.5 font-medium">
+                                {row.subLabel}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span
