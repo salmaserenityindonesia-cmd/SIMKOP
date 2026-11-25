@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import LaporanPinjamanLunas from './LaporanPinjamanLunas';
 import LoanSubsidiaryLedgerModal, {
   buildLoanSubsidiaryLedger,
@@ -13,6 +13,7 @@ import {
   exportPaidOffLoansExcel,
   exportPaidOffLoansPdf,
   exportPaidOffLoanCertificatePdf,
+  formatReportDate,
   type PaidOffLoansSummary,
   type PaidOffLoanReportRow,
   type LoanTypeOption,
@@ -1317,5 +1318,487 @@ describe('Clickable LOAN-... Reference & LoanSubsidiaryLedgerModal', () => {
     expect(summary.rows[0].repayments?.some((r) => r.receiptNumber === 'KW2611-0079')).toBe(false);
     expect(deleteMock).toHaveBeenCalled();
     expect(deleteInMock).toHaveBeenCalledWith('id', ['rep-lump-sum']);
+  });
+});
+
+describe('paidOffLoansReportService - Idempotent Migration Backfill, In-Flight Lock & Date Clamping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createStatefulBackfillMock(options: {
+    loans: any[];
+    schedules: any[];
+    initialRepayments: any[];
+    omitReceiptColumnOnInsert?: boolean;
+    asyncOrDelay?: boolean;
+  }) {
+    let repaymentsDb = options.initialRepayments.map((r) => ({ ...r }));
+    const insertedPayloads: any[][] = [];
+    const deletedIds: string[] = [];
+    const cashFlowCalls: string[] = [];
+    let schedBackfillCalls = 0;
+    let nextRepId = 1;
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'cash_flow') {
+        cashFlowCalls.push('called');
+        return {
+          select: vi.fn().mockResolvedValue({ data: [], error: null }),
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        };
+      }
+
+      if (table === 'loans') {
+        return {
+          select: vi.fn(() => {
+            const fullResult = Promise.resolve({ data: options.loans, error: null });
+            return {
+              in: vi.fn((_col: string, ids: string[]) =>
+                Promise.resolve({
+                  data: options.loans.filter((l) => ids.includes(l.id)),
+                  error: null,
+                })
+              ),
+              then: fullResult.then.bind(fullResult),
+            };
+          }),
+        };
+      }
+
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn(() => ({
+            or: vi.fn(() => {
+              schedBackfillCalls += 1;
+              const filtered = options.schedules.filter(
+                (s) => Number(s.paid_amount || 0) > 0 || String(s.status || '').toLowerCase() === 'paid'
+              );
+              if (options.asyncOrDelay) {
+                return (async () => {
+                  await Promise.resolve();
+                  await Promise.resolve();
+                  return { data: filtered, error: null };
+                })();
+              }
+              return Promise.resolve({ data: filtered, error: null });
+            }),
+            in: vi.fn((_col: string, ids: string[]) => ({
+              order: vi.fn().mockResolvedValue({
+                data: options.schedules.filter((s) => ids.includes(s.loan_id)),
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn((cols?: string) => ({
+            in: vi.fn((_col: string, ids: string[]) => {
+              if (
+                options.omitReceiptColumnOnInsert &&
+                typeof cols === 'string' &&
+                cols.includes('receipt_number')
+              ) {
+                const colErrRes = Promise.resolve({
+                  data: null,
+                  error: { code: '42703', message: 'column loan_repayments.receipt_number does not exist' },
+                });
+                return {
+                  order: vi.fn().mockImplementation(() => colErrRes),
+                  then: colErrRes.then.bind(colErrRes),
+                };
+              }
+              const matching = repaymentsDb.filter((r) => ids.includes(r.loan_id));
+              const resPromise = Promise.resolve({
+                data: matching.map((r) => ({ ...r })),
+                error: null,
+              });
+              return {
+                order: vi.fn().mockResolvedValue({
+                  data: matching.map((r) => ({ ...r })),
+                  error: null,
+                }),
+                then: resPromise.then.bind(resPromise),
+              };
+            }),
+          })),
+          insert: vi.fn(async (payload: any) => {
+            const rows = Array.isArray(payload) ? payload : [payload];
+            if (
+              options.omitReceiptColumnOnInsert &&
+              rows.some((r) => Object.prototype.hasOwnProperty.call(r, 'receipt_number'))
+            ) {
+              return {
+                data: null,
+                error: { code: 'PGRST204', message: "Could not find the 'receipt_number' column" },
+              };
+            }
+            const cloned = rows.map((r) => ({ id: `rep-auto-${nextRepId++}`, ...r }));
+            insertedPayloads.push(cloned);
+            repaymentsDb.push(...cloned);
+            return { data: cloned, error: null };
+          }),
+          delete: vi.fn(() => ({
+            in: vi.fn(async (_col: string, ids: string[]) => {
+              deletedIds.push(...ids);
+              repaymentsDb = repaymentsDb.filter((r) => !ids.includes(r.id));
+              return { data: null, error: null };
+            }),
+          })),
+        };
+      }
+
+      return {};
+    });
+
+    return {
+      getRepaymentsDb: () => repaymentsDb,
+      insertedPayloads,
+      deletedIds,
+      cashFlowCalls,
+      getSchedBackfillCalls: () => schedBackfillCalls,
+    };
+  }
+
+  it('auto-backfills SALDO_AWAL_MIGRASI receipts with payment_date <= today and 0 inserts into cash_flow', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 25, 10, 0, 0));
+
+    const loan = {
+      id: 'loan-mig-only-1',
+      loan_number: 'SALDO-AWAL-19800101-GAJISIPA',
+      member_id: 'mem-mig-1',
+      loan_type_id: 'lt-reg',
+      principal_amount: 3000000,
+      tenor: 3,
+      agreed_tenor_months: 3,
+      monthly_target: 1000000,
+      disbursed_at: '2026-08-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-mig-1', nrp: '19800101', nama: 'Anggota Migrasi', tanggal_lahir: '1980-01-01' },
+    };
+
+    const schedules = [
+      { id: 'sm-1', loan_id: loan.id, period_number: 1, due_date: '2026-09-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sm-2', loan_id: loan.id, period_number: 2, due_date: '2026-10-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sm-3', loan_id: loan.id, period_number: 3, due_date: '2026-12-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+    ];
+
+    const state = createStatefulBackfillMock({
+      loans: [loan],
+      schedules,
+      initialRepayments: [],
+    });
+
+    const summary = await getPaidOffLoansReport();
+
+    expect(state.cashFlowCalls).toHaveLength(0);
+    expect(state.insertedPayloads).toHaveLength(1);
+    expect(state.insertedPayloads[0]).toHaveLength(3);
+    expect(state.insertedPayloads[0][0]).toMatchObject({
+      loan_id: loan.id,
+      schedule_id: 'sm-1',
+      amount_paid: 1000000,
+      payment_date: '2026-09-01T08:00:00.000Z',
+      payment_method: 'SALDO_AWAL_MIGRASI',
+      receipt_number: 'KW-MIGRASI/SALDO-AWAL-19800101-GAJISIPA/B1',
+      notes: 'Angsuran Saldo Awal Migrasi (SALDO-AWAL-19800101-GAJISIPA) Bln ke-1',
+    });
+    // Periode ke-3 due_date 2026-12-01 dikunci maksimal hari ini (2026-11-25)
+    expect(state.insertedPayloads[0][2]).toMatchObject({
+      schedule_id: 'sm-3',
+      payment_date: '2026-11-25T08:00:00.000Z',
+      receipt_number: 'KW-MIGRASI/SALDO-AWAL-19800101-GAJISIPA/B3',
+    });
+
+    expect(summary.rows).toHaveLength(1);
+    expect(summary.rows[0].totalPaid).toBe(3000000);
+    expect(summary.rows[0].paidOffDate).toBe('2026-11-25T08:00:00.000Z');
+    expect(summary.rows[0].repayments).toHaveLength(3);
+    expect(summary.rows[0].repayments?.every((r) => r.paymentMethod === 'SALDO_AWAL_MIGRASI')).toBe(true);
+  });
+
+  it('cleans up redundant legacy SALDO_AWAL / migrasi_awal lump-sum rows after backfill so totals are not double-counted', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 25, 10, 0, 0));
+
+    const loanA = {
+      id: 'loan-legacy-sa',
+      loan_number: 'SALDO-AWAL-19810202-GAJISIPA',
+      member_id: 'mem-a',
+      loan_type_id: 'lt-reg',
+      principal_amount: 2000000,
+      tenor: 2,
+      agreed_tenor_months: 2,
+      monthly_target: 1000000,
+      disbursed_at: '2026-08-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-a', nrp: '19810202', nama: 'Anggota SA', tanggal_lahir: '1981-02-02' },
+    };
+
+    const loanB = {
+      id: 'loan-legacy-ma',
+      loan_number: 'SALDO-AWAL-19820303-GAJISIPA',
+      member_id: 'mem-b',
+      loan_type_id: 'lt-reg',
+      principal_amount: 1500000,
+      tenor: 1,
+      agreed_tenor_months: 1,
+      monthly_target: 1500000,
+      disbursed_at: '2026-08-01',
+      status: 'paid_off',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-b', nrp: '19820303', nama: 'Anggota MA', tanggal_lahir: '1982-03-03' },
+    };
+
+    const schedules = [
+      { id: 'sa-1', loan_id: loanA.id, period_number: 1, due_date: '2026-09-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sa-2', loan_id: loanA.id, period_number: 2, due_date: '2026-10-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'sb-1', loan_id: loanB.id, period_number: 1, due_date: '2026-09-15', target_amount: 1500000, paid_amount: 1500000, status: 'paid' },
+    ];
+
+    const initialRepayments = [
+      {
+        id: 'rep-old-sa',
+        loan_id: loanA.id,
+        schedule_id: null,
+        amount_paid: 2000000,
+        payment_date: '2026-10-01T08:00:00.000Z',
+        payment_method: 'SALDO_AWAL',
+        receipt_number: 'KW2610-0011',
+        notes: 'Ringkasan Total Terangsur Saldo Awal',
+      },
+      {
+        id: 'rep-old-ma',
+        loan_id: loanB.id,
+        schedule_id: null,
+        amount_paid: 1500000,
+        payment_date: '2026-09-15T08:00:00.000Z',
+        payment_method: 'migrasi_awal',
+        receipt_number: 'KW2609-0022',
+        notes: 'Total Terangsur Saldo Awal',
+      },
+    ];
+
+    const state = createStatefulBackfillMock({
+      loans: [loanA, loanB],
+      schedules,
+      initialRepayments,
+    });
+
+    const summary = await getPaidOffLoansReport();
+
+    expect(state.cashFlowCalls).toHaveLength(0);
+    expect(state.deletedIds).toEqual(expect.arrayContaining(['rep-old-sa', 'rep-old-ma']));
+    expect(state.getRepaymentsDb().some((r) => r.id === 'rep-old-sa' || r.id === 'rep-old-ma')).toBe(false);
+    expect(state.getRepaymentsDb()).toHaveLength(3);
+
+    const rowA = summary.rows.find((r) => r.loanId === loanA.id);
+    const rowB = summary.rows.find((r) => r.loanId === loanB.id);
+    expect(rowA?.totalPaid).toBe(2000000);
+    expect(rowA?.repayments).toHaveLength(2);
+    expect(rowB?.totalPaid).toBe(1500000);
+    expect(rowB?.repayments).toHaveLength(1);
+    expect(summary.totalPaidAmount).toBe(3500000);
+  });
+
+  it('deduplicates concurrent Promise.all calls via in-flight lock and stays idempotent on sequential re-calls', async () => {
+    const loan = {
+      id: 'loan-lock-1',
+      loan_number: 'SALDO-AWAL-19900101-GAJISIPA',
+      member_id: 'mem-lock-1',
+      loan_type_id: 'lt-reg',
+      principal_amount: 2000000,
+      tenor: 2,
+      agreed_tenor_months: 2,
+      monthly_target: 1000000,
+      disbursed_at: '2026-07-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-lock-1', nrp: '19900101', nama: 'Anggota Lock', tanggal_lahir: '1990-01-01' },
+    };
+
+    const schedules = [
+      { id: 'slk-1', loan_id: loan.id, period_number: 1, due_date: '2026-08-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 'slk-2', loan_id: loan.id, period_number: 2, due_date: '2026-09-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+    ];
+
+    const state = createStatefulBackfillMock({
+      loans: [loan],
+      schedules,
+      initialRepayments: [],
+      asyncOrDelay: true,
+    });
+
+    // Pemanggilan paralel: in-flight lock memastikan backfill hanya berjalan 1x
+    const [res1, res2] = await Promise.all([
+      getPaidOffLoansReport(),
+      getPaidOffLoansReport(),
+    ]);
+
+    expect(state.getSchedBackfillCalls()).toBe(1);
+    expect(state.insertedPayloads).toHaveLength(1);
+    expect(state.getRepaymentsDb()).toHaveLength(2);
+    expect(res1.rows).toHaveLength(1);
+    expect(res2.rows).toHaveLength(1);
+
+    // Pemanggilan ulang setelah selesai: lock sudah dilepas di finally, dan 0 insert baru (idempoten)
+    const res3 = await getPaidOffLoansReport();
+    expect(state.getSchedBackfillCalls()).toBe(2);
+    expect(state.insertedPayloads).toHaveLength(1);
+    expect(state.getRepaymentsDb()).toHaveLength(2);
+    expect(res3.rows[0].repayments).toHaveLength(2);
+    expect(state.cashFlowCalls).toHaveLength(0);
+  });
+
+  it('clamps future payment_date and fallback due_date (e.g. 2026-12-01) to today (2026-11-25)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 10, 25, 10, 0, 0));
+
+    const loanFutureRepay = {
+      id: 'loan-future-repay',
+      loan_number: 'PJ-FUTURE-01',
+      member_id: 'mem-fr-1',
+      loan_type_id: 'lt-reg',
+      principal_amount: 1000000,
+      tenor: 1,
+      disbursed_at: '2026-10-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'REG', name: 'Pinjaman Reguler' },
+      member: { id: 'mem-fr-1', nrp: '700001', nama: 'Anggota Future Repay', tanggal_lahir: '1988-01-01' },
+    };
+
+    const loanFutureFallbackDue = {
+      id: 'loan-future-due',
+      loan_number: 'PJ-FUTURE-02',
+      member_id: 'mem-fd-2',
+      loan_type_id: 'lt-reg',
+      principal_amount: 1000000,
+      tenor: 1,
+      disbursed_at: '2026-10-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'REG', name: 'Pinjaman Reguler' },
+      member: { id: 'mem-fd-2', nrp: '700002', nama: 'Anggota Future Due', tanggal_lahir: '1989-02-02' },
+    };
+
+    const schedules = [
+      { id: 's-fr-1', loan_id: loanFutureRepay.id, period_number: 1, due_date: '2026-12-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+      { id: 's-fd-1', loan_id: loanFutureFallbackDue.id, period_number: 1, due_date: '2026-12-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+    ];
+
+    const repayments = [
+      {
+        id: 'rep-future-1',
+        loan_id: loanFutureRepay.id,
+        schedule_id: 's-fr-1',
+        amount_paid: 1000000,
+        payment_date: '2026-12-01T10:00:00.000Z',
+        payment_method: 'potong_gaji',
+        receipt_number: 'KW-PINJ/PJ-FUTURE-01/B1',
+      },
+    ];
+
+    // Tanpa .or() pada loan_schedules agar menguji langsung guard clamp di getPaidOffLoansReport
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'loans') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [loanFutureRepay, loanFutureFallbackDue],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'loan_schedules') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn((_col: string, ids: string[]) => ({
+              order: vi.fn().mockResolvedValue({
+                data: schedules.filter((s) => ids.includes(s.loan_id)),
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      if (table === 'loan_repayments') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn((_col: string, ids: string[]) => ({
+              order: vi.fn().mockResolvedValue({
+                data: repayments.filter((r) => ids.includes(r.loan_id)),
+                error: null,
+              }),
+            })),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const summary = await getPaidOffLoansReport();
+    expect(summary.rows).toHaveLength(2);
+
+    const rowRepay = summary.rows.find((r) => r.loanId === loanFutureRepay.id);
+    expect(rowRepay?.paidOffDate).toBe('2026-11-25T08:00:00.000Z');
+    expect(rowRepay?.paidOffYear).toBe(2026);
+    expect(formatReportDate(rowRepay?.paidOffDate)).toBe('25 Nov 2026');
+    expect(formatReportDate(rowRepay?.paidOffDate)).not.toBe('1 Des 2026');
+
+    const rowDue = summary.rows.find((r) => r.loanId === loanFutureFallbackDue.id);
+    expect(rowDue?.paidOffDate).toBe('2026-11-25');
+    expect(rowDue?.paidOffYear).toBe(2026);
+    expect(formatReportDate(rowDue?.paidOffDate)).toBe('25 Nov 2026');
+    expect(formatReportDate(rowDue?.paidOffDate)).not.toBe('1 Des 2026');
+  });
+
+  it('falls back gracefully when receipt_number column is missing on loan_repayments and stays idempotent via schedule_id', async () => {
+    const loan = {
+      id: 'loan-no-receipt-col',
+      loan_number: 'SALDO-AWAL-19850505-GAJISIPA',
+      member_id: 'mem-nrc',
+      loan_type_id: 'lt-reg',
+      principal_amount: 1000000,
+      tenor: 1,
+      disbursed_at: '2026-08-01',
+      status: 'completed',
+      loan_types: { id: 'lt-reg', code: 'GAJISIPA', name: 'Gaji Sipa' },
+      member: { id: 'mem-nrc', nrp: '19850505', nama: 'Anggota Fallback', tanggal_lahir: '1985-05-05' },
+    };
+
+    const schedules = [
+      { id: 'snrc-1', loan_id: loan.id, period_number: 1, due_date: '2026-09-01', target_amount: 1000000, paid_amount: 1000000, status: 'paid' },
+    ];
+
+    const state = createStatefulBackfillMock({
+      loans: [loan],
+      schedules,
+      initialRepayments: [],
+      omitReceiptColumnOnInsert: true,
+    });
+
+    const res1 = await getPaidOffLoansReport();
+    expect(res1.rows).toHaveLength(1);
+    expect(state.insertedPayloads).toHaveLength(1);
+    expect(state.insertedPayloads[0][0]).not.toHaveProperty('receipt_number');
+    expect(state.insertedPayloads[0][0]).toMatchObject({
+      loan_id: loan.id,
+      schedule_id: 'snrc-1',
+      payment_method: 'SALDO_AWAL_MIGRASI',
+    });
+
+    // Re-call stays idempotent via schedule_id even without receipt_number column
+    const res2 = await getPaidOffLoansReport();
+    expect(res2.rows).toHaveLength(1);
+    expect(state.insertedPayloads).toHaveLength(1);
+    expect(state.cashFlowCalls).toHaveLength(0);
   });
 });
