@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import ExcelJS from 'exceljs';
 import {
   INITIAL_LOANS_HEADERS,
@@ -180,6 +180,10 @@ describe('initialLoansParser', () => {
 describe('syncInitialLoanBalances', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('throws an error if a non-empty effectiveDate has an invalid date format', async () => {
@@ -683,6 +687,146 @@ describe('syncInitialLoanBalances', () => {
       status: 'paid_off',
       sisa_pinjaman: 0,
     });
+  });
+
+  it('clamps future due_date payment_date and cash_flow created_at to today while keeping loan_schedules due_date and setting paid_off status', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-25T10:00:00+07:00'));
+
+    try {
+      const insertedLoans: any[] = [];
+      const insertedSchedules: any[] = [];
+      const insertedRepayments: any[] = [];
+      const insertedCashFlows: any[] = [];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: 'm-1', nrp: '12345678', nama: 'Budi Santoso' }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+            insert: vi.fn().mockImplementation((payload: any) => {
+              insertedLoans.push(payload);
+              return {
+                select: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({
+                    data: { id: 'new-loan-clamp' },
+                    error: null,
+                  }),
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedSchedules.push(payload);
+              return {
+                select: vi.fn().mockResolvedValue({
+                  data: payload.map((p, idx) => ({ ...p, id: `new-sched-${idx + 1}` })),
+                  error: null,
+                }),
+              };
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedRepayments.push(payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            insert: vi.fn().mockImplementation((payload: any[]) => {
+              insertedCashFlows.push(payload);
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === 'system_settings') {
+          return {
+            delete: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ error: null }),
+            }),
+          };
+        }
+        if (table === 'audit_logs') {
+          return {
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        return {};
+      });
+
+      const result = await syncInitialLoanBalances([
+        {
+          nrp: '12345678',
+          nama: 'Budi Santoso',
+          jenis_pinjaman: 'REG',
+          loan_type_id: 'lt-1',
+          loan_type_name: 'Pinjaman Reguler',
+          jumlah_pinjaman: 6000000,
+          tgl_awal_pinjaman: '2026-06-01',
+          nilai_angsuran: 1000000,
+          tenor: 6,
+          total_terangsur: 6000000,
+          sisa_pinjaman: 0,
+          isValid: true,
+        },
+      ]);
+
+      expect(result.insertedCount).toBe(1);
+      expect(insertedLoans[0]).toMatchObject({
+        loan_number: 'SALDO-AWAL-12345678-REG',
+        status: 'paid_off',
+        sisa_pinjaman: 0,
+      });
+
+      expect(insertedSchedules[0]).toHaveLength(6);
+      expect(insertedSchedules[0][5]).toMatchObject({
+        period_number: 6,
+        due_date: '2026-12-01',
+        paid_amount: 1000000,
+        status: 'paid',
+      });
+
+      expect(insertedRepayments[0]).toHaveLength(6);
+      expect(insertedRepayments[0][4]).toMatchObject({
+        payment_method: 'SALDO_AWAL_MIGRASI',
+        receipt_number: 'KW-MIGRASI/SALDO-AWAL-12345678-REG/B5',
+        payment_date: '2026-11-01T08:00:00.000Z',
+      });
+      expect(insertedRepayments[0][5]).toMatchObject({
+        payment_method: 'SALDO_AWAL_MIGRASI',
+        receipt_number: 'KW-MIGRASI/SALDO-AWAL-12345678-REG/B6',
+        payment_date: '2026-11-25T08:00:00.000Z',
+      });
+      expect(
+        insertedRepayments[0].some((r: any) => r.payment_method === 'SALDO_AWAL')
+      ).toBe(false);
+
+      expect(insertedCashFlows[0]).toHaveLength(6);
+      expect(insertedCashFlows[0][4]).toMatchObject({
+        created_at: '2026-11-01T08:00:00.000Z',
+      });
+      expect(insertedCashFlows[0][5]).toMatchObject({
+        created_at: '2026-11-25T08:00:00.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
