@@ -20,7 +20,9 @@ import LaporanKeuangan, {
   formatDateDdMmYyyy,
   resolveJumpPage,
   computeOpeningBalanceFromRows,
+  filterShuRowsBySource,
   type CashFlowTransaction,
+  type ShuReferenceRow,
 } from './index';
 import LaporanKeuanganReexport from '../LaporanKeuangan';
 import * as cashFlowService from '../../../services/cashFlowService';
@@ -1335,7 +1337,7 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
     }
   });
 
-  it('getShuEstimation includes goods financing repayments with margin_portion > 0 in shuReferenceRows and excludes 0%-margin loans', async () => {
+  it('getShuEstimation includes both goods financing repayments (Margin Pembiayaan) and 0%-margin loan repayments (Pinjaman Reguler (0% Jasa)) in shuReferenceRows with Rp 0 profit', async () => {
     const defaultFromImpl = (supabase.from as any).getMockImplementation();
     try {
       (supabase.from as any).mockImplementation((table: string) => {
@@ -1434,10 +1436,14 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
 
       const shu = await getShuEstimation('2026-11-01', '2026-11-30');
       expect(shu.goodsFinancingMargin).toBe(60000);
-      expect(shu.shuReferenceRows).toHaveLength(1);
-      expect(shu.shuReferenceRows![0]).toMatchObject({
-        referenceNumber: 'PAY-BRG-001',
-        sourceType: 'goods_financing',
+      expect(shu.estimatedShu).toBe(60000);
+      expect(shu.shuReferenceRows).toHaveLength(2);
+
+      const brgRow = shu.shuReferenceRows!.find((r) => r.referenceNumber === 'LOAN-BRG-001');
+      expect(brgRow).toMatchObject({
+        referenceNumber: 'LOAN-BRG-001',
+        subLabel: '1 Angsuran',
+        sourceType: 'LOAN_CONTRACT',
         paymentMethodLabel: 'Margin Pembiayaan',
         memberName: 'Budi Santoso',
         memberNrp: '88010001',
@@ -1448,8 +1454,24 @@ describe('LaporanKeuangan Page Component & Reset Modal', () => {
         repaymentAmount: 460000,
         principalPortion: 400000,
         loanNumber: 'LOAN-BRG-001',
+        installmentCount: 1,
       });
-      expect(shu.shuReferenceRows![0].items[0].productName).toContain('Kulkas 2 Pintu');
+      expect(brgRow!.items[0].receiptNumber).toBe('PAY-BRG-001');
+      expect(brgRow!.items[0].productName).toContain('Kulkas 2 Pintu');
+
+      const cashRow = shu.shuReferenceRows!.find((r) => r.referenceNumber === 'PAY-CASH-001');
+      expect(cashRow).toMatchObject({
+        referenceNumber: 'PAY-CASH-001',
+        subLabel: '1 Angsuran',
+        sourceType: 'LOAN_CONTRACT',
+        paymentMethodLabel: 'Pinjaman Reguler (0% Jasa)',
+        omzet: 0,
+        hpp: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+        repaymentAmount: 500000,
+        principalPortion: 500000,
+      });
     } finally {
       if (defaultFromImpl) {
         (supabase.from as any).mockImplementation(defaultFromImpl);
@@ -4600,13 +4622,13 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
     expect(html).not.toContain('CF-99999999');
   });
 
-  it('getShuEstimation excludes repayments tied to unpaid schedules and computes proportional realized margin for LN2611-0002', async () => {
+  it('getShuEstimation excludes repayments tied to unpaid schedules and groups realized margin per loan contract for LN2611-0002', async () => {
     const defaultFromImpl = (supabase.from as any).getMockImplementation();
     try {
       const mockScheduleRows = [
-        { id: 'sch-1', target_amount: 673334, paid_amount: 1000000, status: 'paid', principal_portion: 666667, margin_portion: 6667 },
-        { id: 'sch-2', target_amount: 673334, paid_amount: 0, status: 'unpaid', principal_portion: 666667, margin_portion: 6667 },
-        { id: 'sch-3', target_amount: 346666, paid_amount: 0, status: 'unpaid', principal_portion: 343234, margin_portion: 3432 },
+        { id: 'sch-1', period_number: 1, target_amount: 673334, paid_amount: 1000000, status: 'paid', principal_portion: 666667, margin_portion: 6667 },
+        { id: 'sch-2', period_number: 2, target_amount: 673334, paid_amount: 0, status: 'unpaid', principal_portion: 666667, margin_portion: 6667 },
+        { id: 'sch-3', period_number: 3, target_amount: 346666, paid_amount: 0, status: 'unpaid', principal_portion: 343234, margin_portion: 3432 },
       ];
       const mockRepaymentRows = [
         {
@@ -4643,6 +4665,17 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
           receipt_number: 'KW2611-1580',
         },
       ];
+      const mockLoanRow: any = {
+        id: 'loan-ln2611-0002',
+        loan_number: 'LN2611-0002',
+        member_id: 'mem-1',
+        amount: 2020000,
+        principal_amount: 2020000,
+        cost_price: 2000000,
+        markup_amount: 20000,
+        item_description: 'Kulkas mini',
+        status: 'active',
+      };
 
       (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'sales') {
@@ -4689,18 +4722,7 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
           return {
             select: vi.fn().mockReturnValue({
               in: vi.fn().mockResolvedValue({
-                data: [
-                  {
-                    id: 'loan-ln2611-0002',
-                    loan_number: 'LN2611-0002',
-                    member_id: 'mem-1',
-                    amount: 2020000,
-                    principal_amount: 2020000,
-                    cost_price: 2000000,
-                    markup_amount: 20000,
-                    item_description: 'Kulkas mini',
-                  },
-                ],
+                data: [mockLoanRow],
                 error: null,
               }),
             }),
@@ -4724,7 +4746,9 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
       expect(shu.estimatedShu).toBe(9901);
       expect(shu.shuReferenceRows).toHaveLength(1);
       expect(shu.shuReferenceRows![0]).toMatchObject({
-        referenceNumber: 'KW2611-1578',
+        referenceNumber: 'LN2611-0002',
+        sourceType: 'LOAN_CONTRACT',
+        subLabel: '1 Angsuran',
         omzet: 9901,
         hpp: 0,
         grossProfit: 9901,
@@ -4732,16 +4756,830 @@ describe('Pre-Period Opening Balance & Cumulative Vault Balance', () => {
         repaymentAmount: 1000000,
         principalPortion: 990099,
       });
+      expect(shu.shuReferenceRows![0].items).toHaveLength(1);
+      expect(shu.shuReferenceRows![0].items[0].receiptNumber).toBe('KW2611-1578');
 
       // Now simulate all 3 schedules paid (1.000.000 + 900.000 + 120.000) -> 9.901 + 8.911 + 1.188 = 20.000
-      mockScheduleRows[1] = { id: 'sch-2', target_amount: 673334, paid_amount: 900000, status: 'paid', principal_portion: 891089, margin_portion: 8911 };
-      mockScheduleRows[2] = { id: 'sch-3', target_amount: 120000, paid_amount: 120000, status: 'paid', principal_portion: 118812, margin_portion: 1188 };
+      mockScheduleRows[1] = { id: 'sch-2', period_number: 2, target_amount: 673334, paid_amount: 900000, status: 'paid', principal_portion: 891089, margin_portion: 8911 };
+      mockScheduleRows[2] = { id: 'sch-3', period_number: 3, target_amount: 120000, paid_amount: 120000, status: 'paid', principal_portion: 118812, margin_portion: 1188 };
       mockRepaymentRows[1].amount_paid = 900000;
       mockRepaymentRows[2].amount_paid = 120000;
+      mockLoanRow.status = 'paid_off';
 
       const shuAllPaid = await getShuEstimation('2026-11-01', '2026-11-30');
       expect(shuAllPaid.goodsFinancingMargin).toBe(20000);
-      expect(shuAllPaid.shuReferenceRows).toHaveLength(3);
+      expect(shuAllPaid.shuReferenceRows).toHaveLength(1);
+      expect(shuAllPaid.shuReferenceRows![0]).toMatchObject({
+        referenceNumber: 'LN2611-0002',
+        sourceType: 'LOAN_CONTRACT',
+        subLabel: '3 Angsuran • Lunas Penuh',
+        omzet: 20000,
+        hpp: 0,
+        grossProfit: 20000,
+        marginPercent: 100,
+        repaymentAmount: 2020000,
+        principalPortion: 2000000,
+        rawDate: '2026-11-24T07:21:00.000Z',
+        installmentCount: 3,
+        isPaidOff: true,
+      });
+      expect(shuAllPaid.shuReferenceRows![0].items.map((it) => it.receiptNumber)).toEqual([
+        'KW2611-1578',
+        'KW2611-1579',
+        'KW2611-1580',
+      ]);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('groups multiple 0%-margin loan repayments per loan_number, renders subLabel in SHU table SSR, and matches nested receipts in getHighlightedShuRowIds', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            select: vi.fn().mockReturnValue({
+              gte: vi.fn().mockReturnValue({
+                lte: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 'rep-reg-1a',
+                      loan_id: 'loan-reg-1',
+                      schedule_id: 'sch-reg-1a',
+                      amount_paid: 500000,
+                      principal_portion: 500000,
+                      margin_portion: 0,
+                      payment_date: '2026-11-10T08:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                      receipt_number: 'KW2611-1001',
+                    },
+                    {
+                      id: 'rep-reg-1b',
+                      loan_id: 'loan-reg-1',
+                      schedule_id: 'sch-reg-1b',
+                      amount_paid: 500000,
+                      principal_portion: 500000,
+                      margin_portion: 0,
+                      payment_date: '2026-11-20T08:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                      receipt_number: 'KW2611-1002',
+                    },
+                    {
+                      id: 'rep-reg-2a',
+                      loan_id: 'loan-reg-2',
+                      schedule_id: 'sch-reg-2a',
+                      amount_paid: 750000,
+                      principal_portion: 750000,
+                      margin_portion: 0,
+                      payment_date: '2026-11-15T08:00:00.000Z',
+                      payment_method: 'POTONG_GAJI',
+                      receipt_number: 'KW2611-1003',
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'sch-reg-1a', period_number: 7, target_amount: 500000, paid_amount: 500000, status: 'paid' },
+                  { id: 'sch-reg-1b', period_number: 8, target_amount: 500000, paid_amount: 500000, status: 'paid' },
+                  { id: 'sch-reg-2a', period_number: 5, target_amount: 750000, paid_amount: 750000, status: 'paid' },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'loans') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: 'loan-reg-1',
+                    loan_number: 'SALDO-AWAL-84121709-GAJISIPA',
+                    member_id: 'mem-a',
+                    amount: 5000000,
+                    principal_amount: 5000000,
+                    markup_amount: 0,
+                    status: 'active',
+                  },
+                  {
+                    id: 'loan-reg-2',
+                    loan_number: 'SALDO-AWAL-85061460-GAJISIPA',
+                    member_id: 'mem-b',
+                    amount: 3000000,
+                    principal_amount: 3000000,
+                    markup_amount: 0,
+                    status: 'paid_off',
+                  },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        if (table === 'anggota') {
+          return {
+            select: vi.fn().mockReturnValue({
+              in: vi.fn().mockResolvedValue({
+                data: [
+                  { id: 'mem-a', nrp: '84121709', nama: 'Anggota A' },
+                  { id: 'mem-b', nrp: '85061460', nama: 'Anggota B' },
+                ],
+                error: null,
+              }),
+            }),
+          };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+      expect(shu.shuReferenceRows).toHaveLength(2);
+
+      const row1 = shu.shuReferenceRows!.find(
+        (r) => r.referenceNumber === 'SALDO-AWAL-84121709-GAJISIPA'
+      );
+      expect(row1).toMatchObject({
+        referenceNumber: 'SALDO-AWAL-84121709-GAJISIPA',
+        sourceType: 'LOAN_CONTRACT',
+        subLabel: '2 Angsuran',
+        paymentMethodLabel: 'Pinjaman Reguler (0% Jasa)',
+        omzet: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+        repaymentAmount: 1000000,
+        rawDate: '2026-11-20T08:00:00.000Z',
+      });
+      expect(row1!.items).toHaveLength(2);
+
+      const row2 = shu.shuReferenceRows!.find(
+        (r) => r.referenceNumber === 'SALDO-AWAL-85061460-GAJISIPA'
+      );
+      expect(row2).toMatchObject({
+        referenceNumber: 'SALDO-AWAL-85061460-GAJISIPA',
+        sourceType: 'LOAN_CONTRACT',
+        subLabel: '1 Angsuran • Lunas Penuh',
+        paymentMethodLabel: 'Pinjaman Reguler (0% Jasa)',
+        omzet: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+        repaymentAmount: 750000,
+      });
+
+      const highlighted = getHighlightedShuRowIds(
+        shu.shuReferenceRows!,
+        '',
+        'KW2611-1002'
+      );
+      expect(Array.from(highlighted)).toEqual([row1!.id]);
+
+      const html = renderToStaticMarkup(
+        <LaporanKeuangan
+          initialActiveTab="shu"
+          initialShuData={{
+            grossSales: 0,
+            cogs: 0,
+            grossProfit: 0,
+            goodsFinancingMargin: 0,
+            opex: 0,
+            estimatedShu: 0,
+            marginPercentage: 0,
+            marginPerKategori: [],
+            shuReferenceRows: [
+              {
+                id: 'loan-contract-ln2611-0002',
+                referenceNumber: 'LN2611-0002',
+                subLabel: '3 Angsuran • Lunas Penuh',
+                sourceType: 'LOAN_CONTRACT',
+                transactionDate: '24/11/2026',
+                rawDate: '2026-11-24T07:21:00.000Z',
+                memberName: 'anggota tes 1',
+                memberNrp: '88010099',
+                paymentMethodLabel: 'Margin Pembiayaan',
+                omzet: 20000,
+                hpp: 0,
+                grossProfit: 20000,
+                marginPercent: 100,
+                items: [],
+              },
+            ],
+          }}
+        />
+      );
+      expect(html).toContain('LN2611-0002');
+      expect(html).toContain('3 Angsuran • Lunas Penuh');
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('filters out active 0%-margin loans by default while keeping POS, margin-bearing loans, and paid-off loans, and supports all 3 filter modes', () => {
+    const sampleRows: ShuReferenceRow[] = [
+      {
+        id: 'pos-1',
+        referenceNumber: 'INV-POS-001',
+        sourceType: 'pos_cash',
+        transactionDate: '22/11/2026',
+        rawDate: '2026-11-22T10:00:00.000Z',
+        memberName: 'Budi POS',
+        memberNrp: '88010001',
+        paymentMethodLabel: 'POS • Tunai',
+        omzet: 150000,
+        hpp: 120000,
+        grossProfit: 30000,
+        marginPercent: 20,
+        items: [],
+      },
+      {
+        id: 'loan-margin-1',
+        referenceNumber: 'LN-BRG-001',
+        subLabel: '2 Angsuran',
+        sourceType: 'LOAN_CONTRACT',
+        transactionDate: '22/11/2026',
+        rawDate: '2026-11-22T09:00:00.000Z',
+        memberName: 'Siti Barang',
+        memberNrp: '88010002',
+        paymentMethodLabel: 'Margin Pembiayaan',
+        omzet: 50000,
+        hpp: 0,
+        grossProfit: 50000,
+        marginPercent: 100,
+        isPaidOff: false,
+        items: [],
+      },
+      {
+        id: 'loan-paidoff-0',
+        referenceNumber: 'LN-LUNAS-001',
+        subLabel: '4 Angsuran • Lunas Penuh',
+        sourceType: 'LOAN_CONTRACT',
+        transactionDate: '22/11/2026',
+        rawDate: '2026-11-22T08:00:00.000Z',
+        memberName: 'Agus Lunas',
+        memberNrp: '88010003',
+        paymentMethodLabel: 'Pinjaman Reguler (0% Jasa)',
+        omzet: 0,
+        hpp: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+        isPaidOff: true,
+        items: [],
+      },
+      {
+        id: 'loan-active-0',
+        referenceNumber: 'LN-AKTIF-001',
+        subLabel: '1 Angsuran',
+        sourceType: 'LOAN_CONTRACT',
+        transactionDate: '22/11/2026',
+        rawDate: '2026-11-22T07:00:00.000Z',
+        memberName: 'Dedi Berjalan',
+        memberNrp: '88010004',
+        paymentMethodLabel: 'Pinjaman Reguler (0% Jasa)',
+        omzet: 0,
+        hpp: 0,
+        grossProfit: 0,
+        marginPercent: 0,
+        isPaidOff: false,
+        items: [],
+      },
+    ];
+
+    expect(
+      filterShuRowsBySource(sampleRows, 'default_shu_and_paid_off').map((r) => r.referenceNumber)
+    ).toEqual(['INV-POS-001', 'LN-BRG-001', 'LN-LUNAS-001']);
+
+    expect(
+      filterShuRowsBySource(sampleRows, 'profit_only').map((r) => r.referenceNumber)
+    ).toEqual(['INV-POS-001', 'LN-BRG-001']);
+
+    expect(filterShuRowsBySource(sampleRows, 'all').map((r) => r.referenceNumber)).toEqual([
+      'INV-POS-001',
+      'LN-BRG-001',
+      'LN-LUNAS-001',
+      'LN-AKTIF-001',
+    ]);
+
+    const shuData = {
+      grossSales: 150000,
+      cogs: 120000,
+      grossProfit: 30000,
+      goodsFinancingMargin: 50000,
+      opex: 0,
+      estimatedShu: 80000,
+      marginPercentage: 40,
+      marginPerKategori: [],
+      shuReferenceRows: sampleRows,
+    };
+
+    const defaultHtml = renderToStaticMarkup(
+      <LaporanKeuangan initialActiveTab="shu" initialShuData={shuData} />
+    );
+    expect(defaultHtml).toContain('data-testid="shu-source-filter"');
+    expect(defaultHtml).toContain('Penyumbang SHU &amp; Pinjaman Lunas (Default)');
+    expect(defaultHtml).toContain('Hanya Penyumbang Laba (Omzet &gt; Rp 0)');
+    expect(defaultHtml).toContain('Semua Aktivitas Angsuran (Termasuk Berjalan 0%)');
+    expect(defaultHtml).toContain('INV-POS-001');
+    expect(defaultHtml).toContain('LN-BRG-001');
+    expect(defaultHtml).toContain('LN-LUNAS-001');
+    expect(defaultHtml).not.toContain('LN-AKTIF-001');
+
+    const profitOnlyHtml = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuData={shuData}
+        initialShuSourceFilter="profit_only"
+      />
+    );
+    expect(profitOnlyHtml).toContain('INV-POS-001');
+    expect(profitOnlyHtml).toContain('LN-BRG-001');
+    expect(profitOnlyHtml).not.toContain('LN-LUNAS-001');
+    expect(profitOnlyHtml).not.toContain('LN-AKTIF-001');
+
+    const allHtml = renderToStaticMarkup(
+      <LaporanKeuangan
+        initialActiveTab="shu"
+        initialShuData={shuData}
+        initialShuSourceFilter="all"
+      />
+    );
+    expect(allHtml).toContain('INV-POS-001');
+    expect(allHtml).toContain('LN-BRG-001');
+    expect(allHtml).toContain('LN-LUNAS-001');
+    expect(allHtml).toContain('LN-AKTIF-001');
+  });
+});
+
+describe('getShuEstimation Full Pagination & ID Chunking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('paginates loan_repayments beyond 1,000 rows, chunks ID lookups by <=80, deduplicates legacy SALDO_AWAL rows, and retains second-page SALDO_AWAL_MIGRASI paid-off contract', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const repayRows: any[] = [];
+      const scheduleRows: any[] = [];
+      const loanRows: any[] = [];
+      const memberRows: any[] = [];
+
+      // 100 active margin contracts on page 1 (100 * 10 = 1,000 rows -> fills range 0..999)
+      for (let c = 1; c <= 100; c++) {
+        const lid = `loan-p1-${String(c).padStart(3, '0')}`;
+        const mid = `mem-p1-${String(c).padStart(3, '0')}`;
+        loanRows.push({
+          id: lid,
+          loan_number: `LN-P1-${String(c).padStart(3, '0')}`,
+          member_id: mid,
+          amount: 1010000,
+          principal_amount: 1010000,
+          cost_price: 1000000,
+          markup_amount: 10000,
+          item_description: 'Barang P1',
+          status: 'active',
+        });
+        memberRows.push({
+          id: mid,
+          nrp: `8801${String(c).padStart(4, '0')}`,
+          nama: `Anggota P1 ${c}`,
+        });
+        for (let p = 1; p <= 10; p++) {
+          const sid = `sch-p1-${c}-${p}`;
+          scheduleRows.push({
+            id: sid,
+            period_number: p,
+            target_amount: 101000,
+            paid_amount: 101000,
+            status: 'paid',
+            principal_portion: 100000,
+            margin_portion: 1000,
+          });
+          repayRows.push({
+            id: `rep-p1-${c}-${p}`,
+            loan_id: lid,
+            schedule_id: sid,
+            amount_paid: 101000,
+            principal_portion: 100000,
+            margin_portion: 1000,
+            payment_date: `2026-11-${String((p % 28) + 1).padStart(2, '0')}T08:00:00.000Z`,
+            payment_method: 'POTONG_GAJI',
+            receipt_number: `KW-P1-${c}-B${p}`,
+          });
+        }
+      }
+
+      // Page 2 (1000..1999): 4 more active contracts (40 rows) + 1 paid-off SALDO_AWAL_MIGRASI contract (10 rows + 1 legacy lump-sum)
+      for (let c = 1; c <= 4; c++) {
+        const lid = `loan-p2-${String(c).padStart(3, '0')}`;
+        const mid = `mem-p2-${String(c).padStart(3, '0')}`;
+        loanRows.push({
+          id: lid,
+          loan_number: `LN-P2-${String(c).padStart(3, '0')}`,
+          member_id: mid,
+          amount: 1010000,
+          principal_amount: 1010000,
+          cost_price: 1000000,
+          markup_amount: 10000,
+          item_description: 'Barang P2',
+          status: 'active',
+        });
+        memberRows.push({
+          id: mid,
+          nrp: `8802${String(c).padStart(4, '0')}`,
+          nama: `Anggota P2 ${c}`,
+        });
+        for (let p = 1; p <= 10; p++) {
+          const sid = `sch-p2-${c}-${p}`;
+          scheduleRows.push({
+            id: sid,
+            period_number: p,
+            target_amount: 101000,
+            paid_amount: 101000,
+            status: 'paid',
+            principal_portion: 100000,
+            margin_portion: 1000,
+          });
+          repayRows.push({
+            id: `rep-p2-${c}-${p}`,
+            loan_id: lid,
+            schedule_id: sid,
+            amount_paid: 101000,
+            principal_portion: 100000,
+            margin_portion: 1000,
+            payment_date: `2026-11-${String((p % 28) + 1).padStart(2, '0')}T09:00:00.000Z`,
+            payment_method: 'POTONG_GAJI',
+            receipt_number: `KW-P2-${c}-B${p}`,
+          });
+        }
+      }
+
+      const paidOffLoanId = 'loan-p2-paidoff';
+      const paidOffMemberId = 'mem-p2-paidoff';
+      loanRows.push({
+        id: paidOffLoanId,
+        loan_number: 'SALDO-AWAL-99010001-GAJISIPA',
+        member_id: paidOffMemberId,
+        amount: 2500000,
+        principal_amount: 2500000,
+        cost_price: 2500000,
+        markup_amount: 0,
+        status: 'paid_off',
+      });
+      memberRows.push({
+        id: paidOffMemberId,
+        nrp: '99010001',
+        nama: 'Purnomo Migrasi',
+      });
+      for (let p = 1; p <= 10; p++) {
+        const sid = `sch-p2-paidoff-${p}`;
+        scheduleRows.push({
+          id: sid,
+          period_number: p,
+          target_amount: 250000,
+          paid_amount: 250000,
+          status: 'paid',
+          principal_portion: 250000,
+          margin_portion: 0,
+        });
+        repayRows.push({
+          id: `rep-p2-paidoff-${p}`,
+          loan_id: paidOffLoanId,
+          schedule_id: sid,
+          amount_paid: 250000,
+          principal_portion: 250000,
+          margin_portion: 0,
+          payment_date: `2026-11-${String(p).padStart(2, '0')}T10:00:00.000Z`,
+          payment_method: 'SALDO_AWAL_MIGRASI',
+          receipt_number: `KW-MIGRASI/SALDO-AWAL-99010001-GAJISIPA/B${p}`,
+        });
+      }
+      // Redundant legacy lump-sum row on page 2 for the same contract (must not double-count)
+      repayRows.push({
+        id: 'rep-p2-paidoff-legacy',
+        loan_id: paidOffLoanId,
+        schedule_id: null,
+        amount_paid: 2500000,
+        principal_portion: 2500000,
+        margin_portion: 0,
+        payment_date: '2026-11-01T00:00:00.000Z',
+        payment_method: 'MIGRASI_AWAL',
+        receipt_number: 'LEGACY-LUMP-01',
+        notes: 'Total terangsur saldo awal',
+      });
+
+      const repayRangeCalls: Array<[number, number]> = [];
+      const schedInSizes: number[] = [];
+      const loanInSizes: number[] = [];
+      const memberInSizes: number[] = [];
+
+      const makeInPaginatedMock = (rows: any[], sizesSpy: number[]) => ({
+        select: vi.fn().mockImplementation(() => {
+          let filtered = rows;
+          const chain: any = {
+            in: vi.fn((col: string, ids: string[]) => {
+              sizesSpy.push(ids.length);
+              const set = new Set(ids.map(String));
+              filtered = rows.filter((r) => set.has(String(r[col])));
+              return chain;
+            }),
+            order: vi.fn(() => chain),
+            range: vi.fn(async (from: number, to: number) => ({
+              data: filtered.slice(from, to + 1),
+              error: null,
+            })),
+          };
+          return chain;
+        }),
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          const chain: any = {
+            gte: vi.fn(() => chain),
+            lte: vi.fn(() => chain),
+            eq: vi.fn(() => chain),
+            order: vi.fn(() => chain),
+            range: vi.fn(async () => ({ data: [], error: null })),
+          };
+          return { select: vi.fn(() => chain) };
+        }
+        if (table === 'cash_flow') {
+          const chain: any = {
+            gte: vi.fn(() => chain),
+            lte: vi.fn(() => chain),
+            eq: vi.fn(() => chain),
+            order: vi.fn(() => chain),
+            range: vi.fn(async () => ({ data: [], error: null })),
+          };
+          return { select: vi.fn(() => chain) };
+        }
+        if (table === 'loan_repayments') {
+          return {
+            select: vi.fn().mockImplementation(() => {
+              const chain: any = {
+                gte: vi.fn(() => chain),
+                lte: vi.fn(() => chain),
+                order: vi.fn(() => chain),
+                range: vi.fn(async (from: number, to: number) => {
+                  repayRangeCalls.push([from, to]);
+                  return { data: repayRows.slice(from, to + 1), error: null };
+                }),
+              };
+              return chain;
+            }),
+          };
+        }
+        if (table === 'loan_schedules') {
+          return makeInPaginatedMock(scheduleRows, schedInSizes);
+        }
+        if (table === 'loans') {
+          return makeInPaginatedMock(loanRows, loanInSizes);
+        }
+        if (table === 'anggota') {
+          return makeInPaginatedMock(memberRows, memberInSizes);
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+
+      expect(repayRangeCalls).toEqual([
+        [0, 999],
+        [1000, 1999],
+      ]);
+      expect(schedInSizes.length).toBeGreaterThan(1);
+      expect(schedInSizes.every((len) => len <= 80)).toBe(true);
+      expect(loanInSizes).toEqual([80, 25]);
+      expect(memberInSizes).toEqual([80, 25]);
+
+      expect(shu.goodsFinancingMargin).toBe(1040000);
+      expect(shu.shuReferenceRows).toHaveLength(105);
+
+      const paidOffRow = shu.shuReferenceRows!.find(
+        (r) => r.referenceNumber === 'SALDO-AWAL-99010001-GAJISIPA'
+      );
+      expect(paidOffRow).toBeDefined();
+      expect(paidOffRow).toMatchObject({
+        id: 'loan-contract-loan-p2-paidoff',
+        referenceNumber: 'SALDO-AWAL-99010001-GAJISIPA',
+        subLabel: '10 Angsuran • Lunas Penuh',
+        sourceType: 'LOAN_CONTRACT',
+        memberName: 'Purnomo Migrasi',
+        memberNrp: '99010001',
+        repaymentAmount: 2500000,
+        principalPortion: 2500000,
+        installmentCount: 10,
+        isPaidOff: true,
+      });
+      expect(paidOffRow!.items).toHaveLength(10);
+      expect(paidOffRow!.items.map((it) => it.receiptNumber)).not.toContain('LEGACY-LUMP-01');
+
+      const defaultVisible = filterShuRowsBySource(
+        shu.shuReferenceRows!,
+        'default_shu_and_paid_off'
+      );
+      expect(defaultVisible).toHaveLength(105);
+      expect(
+        defaultVisible.some((r) => r.referenceNumber === 'SALDO-AWAL-99010001-GAJISIPA')
+      ).toBe(true);
+    } finally {
+      if (defaultFromImpl) {
+        (supabase.from as any).mockImplementation(defaultFromImpl);
+      }
+    }
+  });
+
+  it('paginates sales, chunked sale_items, and cash_flow opex beyond 1,000 rows in getShuEstimation', async () => {
+    const defaultFromImpl = (supabase.from as any).getMockImplementation();
+    try {
+      const salesRows: any[] = [];
+      const saleItemRows: any[] = [];
+      const memberRows: any[] = [];
+      const opexRows: any[] = [];
+
+      for (let m = 1; m <= 90; m++) {
+        memberRows.push({
+          id: `mem-s-${m}`,
+          nrp: `7700${String(m).padStart(4, '0')}`,
+          nama: `Pembeli ${m}`,
+        });
+      }
+
+      for (let i = 1; i <= 1020; i++) {
+        const sid = `sale-${String(i).padStart(4, '0')}`;
+        const mid = `mem-s-${((i - 1) % 90) + 1}`;
+        salesRows.push({
+          id: sid,
+          sale_number: `INV-PAG-${String(i).padStart(4, '0')}`,
+          member_id: mid,
+          subtotal: 10000,
+          discount: 0,
+          total_amount: 10000,
+          paid_cash: 10000,
+          paid_deposit: 0,
+          paid_credit: 0,
+          payment_scheme: 'cash',
+          created_at: '2026-11-15T10:00:00.000Z',
+        });
+        saleItemRows.push({
+          sale_id: sid,
+          product_id: 'prod-1',
+          product_name: 'Air Mineral',
+          quantity: 1,
+          unit_price: 10000,
+        });
+      }
+
+      for (let i = 1; i <= 1010; i++) {
+        opexRows.push({
+          amount: 1000,
+          category: 'beban_operasional',
+          direction: 'out',
+        });
+      }
+
+      const salesRangeCalls: Array<[number, number]> = [];
+      const opexRangeCalls: Array<[number, number]> = [];
+      const saleItemInSizes: number[] = [];
+      const memberInSizes: number[] = [];
+
+      const makeInPaginatedMock = (rows: any[], sizesSpy?: number[]) => ({
+        select: vi.fn().mockImplementation(() => {
+          let filtered = rows;
+          const chain: any = {
+            in: vi.fn((col: string, ids: string[]) => {
+              if (sizesSpy) sizesSpy.push(ids.length);
+              const set = new Set(ids.map(String));
+              filtered = rows.filter((r) => set.has(String(r[col])));
+              return chain;
+            }),
+            order: vi.fn(() => chain),
+            range: vi.fn(async (from: number, to: number) => ({
+              data: filtered.slice(from, to + 1),
+              error: null,
+            })),
+          };
+          return chain;
+        }),
+      });
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'sales') {
+          return {
+            select: vi.fn().mockImplementation(() => {
+              const chain: any = {
+                gte: vi.fn(() => chain),
+                lte: vi.fn(() => chain),
+                eq: vi.fn(() => chain),
+                order: vi.fn(() => chain),
+                range: vi.fn(async (from: number, to: number) => {
+                  salesRangeCalls.push([from, to]);
+                  return { data: salesRows.slice(from, to + 1), error: null };
+                }),
+              };
+              return chain;
+            }),
+          };
+        }
+        if (table === 'sale_items') {
+          return makeInPaginatedMock(saleItemRows, saleItemInSizes);
+        }
+        if (table === 'products') {
+          return makeInPaginatedMock([
+            { id: 'prod-1', name: 'Air Mineral', buy_price: 7000, category_id: 'cat-1' },
+          ]);
+        }
+        if (table === 'product_categories') {
+          return makeInPaginatedMock([{ id: 'cat-1', name: 'Minuman' }]);
+        }
+        if (table === 'anggota') {
+          return makeInPaginatedMock(memberRows, memberInSizes);
+        }
+        if (table === 'cash_flow') {
+          return {
+            select: vi.fn().mockImplementation(() => {
+              const chain: any = {
+                gte: vi.fn(() => chain),
+                lte: vi.fn(() => chain),
+                eq: vi.fn(() => chain),
+                order: vi.fn(() => chain),
+                range: vi.fn(async (from: number, to: number) => {
+                  opexRangeCalls.push([from, to]);
+                  return { data: opexRows.slice(from, to + 1), error: null };
+                }),
+              };
+              return chain;
+            }),
+          };
+        }
+        if (table === 'loan_repayments') {
+          const chain: any = {
+            gte: vi.fn(() => chain),
+            lte: vi.fn(() => chain),
+            order: vi.fn(() => chain),
+            range: vi.fn(async () => ({ data: [], error: null })),
+          };
+          return { select: vi.fn(() => chain) };
+        }
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      });
+
+      const shu = await getShuEstimation('2026-11-01', '2026-11-30');
+
+      expect(salesRangeCalls).toEqual([
+        [0, 999],
+        [1000, 1999],
+      ]);
+      expect(opexRangeCalls).toEqual([
+        [0, 999],
+        [1000, 1999],
+      ]);
+      expect(saleItemInSizes.length).toBe(13);
+      expect(saleItemInSizes.every((len) => len <= 80)).toBe(true);
+      expect(memberInSizes).toEqual([80, 10]);
+
+      expect(shu.grossSales).toBe(10200000);
+      expect(shu.cogs).toBe(7140000);
+      expect(shu.grossProfit).toBe(3060000);
+      expect(shu.opex).toBe(1010000);
+      expect(shu.estimatedShu).toBe(2050000);
+      expect(shu.shuReferenceRows).toHaveLength(1020);
+      expect(shu.shuReferenceRows!.some((r) => r.referenceNumber === 'INV-PAG-1020')).toBe(true);
     } finally {
       if (defaultFromImpl) {
         (supabase.from as any).mockImplementation(defaultFromImpl);
