@@ -406,6 +406,35 @@ function formatDateYmd(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+function isValidYmdString(val: unknown): val is string {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;
+  const [y, m, d] = trimmed.split('-').map((p) => Number(p));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    !Number.isNaN(dt.getTime()) &&
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+/**
+ * Menormalkan kandidat tanggal ke YYYY-MM-DD dan membatasinya maksimal maxDate (<= hari ini)
+ * agar pembayaran migrasi tidak pernah tercatat di masa depan.
+ */
+function clampToTodayYmd(
+  candidateDate: string | null | undefined,
+  fallbackDate: string,
+  maxDate: string
+): string {
+  const safeMax = isValidYmdString(maxDate) ? maxDate.trim() : formatDateYmd(new Date());
+  const safeFallback = isValidYmdString(fallbackDate) ? fallbackDate.trim() : safeMax;
+  const resolved = isValidYmdString(candidateDate) ? candidateDate.trim() : safeFallback;
+  return resolved > safeMax ? safeMax : resolved;
+}
+
 function buildMonthlyDueDate(baseDateStr: string, periodNumber: number): string {
   const parts = baseDateStr.split('-').map((p) => parseInt(p, 10));
   const baseYear = parts[0];
@@ -454,7 +483,8 @@ export async function syncInitialLoanBalances(
       throw new Error('Tanggal aktif saldo awal pinjaman wajib diisi dengan format YYYY-MM-DD yang valid.');
     }
   }
-  const trimmedDate = rawEffective || formatDateYmd(new Date());
+  const todayDate = formatDateYmd(new Date());
+  const trimmedDate = rawEffective || todayDate;
 
   if (!rows || rows.length === 0) {
     throw new Error('Tidak ada data baris saldo awal pinjaman untuk disimpan.');
@@ -782,9 +812,8 @@ export async function syncInitialLoanBalances(
 
       const repaymentsToInsert = paidSchedules.map((s) => {
         const receiptNo = `KW-MIGRASI/${loanNumber}/B${s.period_number}`;
-        const paymentIso = s.due_date
-          ? `${s.due_date}T08:00:00.000Z`
-          : new Date(`${trimmedDate}T08:00:00.000Z`).toISOString();
+        const safePaymentDate = clampToTodayYmd(s.due_date, trimmedDate, todayDate);
+        const paymentIso = `${safePaymentDate}T08:00:00.000Z`;
         return {
           loan_id: newLoan.id,
           schedule_id: insertedScheduleIdByPeriod.get(s.period_number) ?? null,
@@ -818,9 +847,8 @@ export async function syncInitialLoanBalances(
 
       const cashFlowsToInsert = paidSchedules.map((s) => {
         const receiptNo = `KW-MIGRASI/${loanNumber}/B${s.period_number}`;
-        const createdAtIso = s.due_date
-          ? `${s.due_date}T08:00:00.000Z`
-          : new Date(`${trimmedDate}T08:00:00.000Z`).toISOString();
+        const safePaymentDate = clampToTodayYmd(s.due_date, trimmedDate, todayDate);
+        const createdAtIso = `${safePaymentDate}T08:00:00.000Z`;
         return {
           direction: 'in' as const,
           amount: Math.round(Number(s.paid_amount)),
