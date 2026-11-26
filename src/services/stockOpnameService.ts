@@ -28,6 +28,39 @@ export interface OpnameOperator {
   nama: string;
   role: string;
   created_at?: string;
+  email?: string | null;
+  is_active?: boolean;
+  can_access_pos?: boolean;
+  can_access_opname?: boolean;
+  opname_only_login?: boolean;
+}
+
+export interface OperatorAccessConfig {
+  id: string;
+  nama: string;
+  email: string | null;
+  role: string;
+  created_at?: string;
+  is_active?: boolean;
+  can_access_pos: boolean;
+  can_access_opname: boolean;
+  opname_only_login: boolean;
+}
+
+export interface OperatorAccessUpdatePayload {
+  can_access_pos: boolean;
+  can_access_opname: boolean;
+  opname_only_login: boolean;
+}
+
+export interface CurrentOperatorAccess {
+  id: string;
+  nama: string;
+  role: string;
+  is_active?: boolean;
+  can_access_pos: boolean;
+  can_access_opname: boolean;
+  opname_only_login: boolean;
 }
 
 export interface OpnameProductSource {
@@ -118,8 +151,11 @@ export interface OpnameComparisonRow extends OpnameTaskRecord {
   current_system_stock: number;
   current_buy_price: number;
   assigned_operator_name: string;
+  assigned_operator_is_active: boolean;
   reassigned_from_operator_name?: string;
+  reassigned_from_operator_is_active?: boolean;
   recount_operator_name?: string;
+  recount_operator_is_active?: boolean;
   variance_at_count: number | null;
   recount_variance: number | null;
   mutations_since_count: PostCountMutationBreakdown;
@@ -132,6 +168,7 @@ export interface OperatorKpiRow {
   operator_id: string;
   operator_name: string;
   role: string;
+  isActive: boolean;
   total_scheduled_tasks: number;
   completed_on_time_count: number;
   reassigned_away_count: number;
@@ -145,6 +182,11 @@ export interface OperatorKpiRow {
   discipline_score: number;
   discovery_score: number;
   total_kpi_score: number;
+}
+
+export interface InactiveHandoverResult {
+  reassignedCount: number;
+  returnedToQueueCount: number;
 }
 
 export interface DailyAssignmentResult {
@@ -445,6 +487,7 @@ export function calculateOperatorOpnameKpis(
       operator_id: op.id,
       operator_name: op.nama,
       role: op.role,
+      isActive: op.is_active !== false,
       total_scheduled_tasks: scheduledActiveTasks.length,
       completed_on_time_count: completedOnTimeCount,
       reassigned_away_count: reassignedAwayTasks.length,
@@ -470,44 +513,516 @@ export function calculateOperatorOpnameKpis(
   });
 }
 
+// ─── Operator Feature Access Helpers ──────────────────────────────────────────
+
+const MIN_FEATURE_ACCESS_ERROR =
+  'Minimal satu izin fitur (Kasir POS atau Cek Fisik Inventory) harus aktif untuk akun operator.';
+
+export function normalizeOperatorAccessUpdate(
+  current: OperatorAccessUpdatePayload,
+  patch: Partial<OperatorAccessUpdatePayload>
+): OperatorAccessUpdatePayload {
+  const next: OperatorAccessUpdatePayload = {
+    can_access_pos: current.can_access_pos,
+    can_access_opname: current.can_access_opname,
+    opname_only_login: current.opname_only_login,
+    ...patch,
+  };
+
+  if (patch.opname_only_login === true) {
+    next.can_access_opname = true;
+  }
+
+  if (patch.can_access_opname === false) {
+    if (!next.can_access_pos) {
+      throw new Error(MIN_FEATURE_ACCESS_ERROR);
+    }
+    next.opname_only_login = false;
+  }
+
+  if (patch.can_access_pos === false) {
+    if (!next.can_access_opname) {
+      throw new Error(MIN_FEATURE_ACCESS_ERROR);
+    }
+    next.opname_only_login = true;
+  }
+
+  if (!next.can_access_pos && !next.can_access_opname) {
+    throw new Error(MIN_FEATURE_ACCESS_ERROR);
+  }
+
+  if (!next.can_access_pos && next.can_access_opname) {
+    next.opname_only_login = true;
+  }
+
+  if (next.opname_only_login) {
+    next.can_access_opname = true;
+  }
+
+  return {
+    can_access_pos: Boolean(next.can_access_pos),
+    can_access_opname: Boolean(next.can_access_opname),
+    opname_only_login: Boolean(next.opname_only_login),
+  };
+}
+
+export async function getMyOperatorAccess(
+  userId: string,
+  fallbackRole: string = 'operator'
+): Promise<CurrentOperatorAccess> {
+  const defaultAccess: CurrentOperatorAccess = {
+    id: userId,
+    nama: 'Operator',
+    role: fallbackRole || 'operator',
+    is_active: true,
+    can_access_pos: true,
+    can_access_opname: true,
+    opname_only_login: false,
+  };
+
+  if (!userId) return defaultAccess;
+
+  const { data, error } = await supabase
+    .from('pengelola')
+    .select('id, nama, role, is_active, can_access_pos, can_access_opname, opname_only_login')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    // Fallback if permission/lifecycle columns have not been migrated yet
+    const { data: basicData } = await supabase
+      .from('pengelola')
+      .select('id, nama, role')
+      .eq('id', userId)
+      .maybeSingle();
+    if (!basicData) return defaultAccess;
+    return {
+      ...defaultAccess,
+      id: String(basicData.id || userId),
+      nama: String(basicData.nama || 'Operator'),
+      role: String(basicData.role || fallbackRole || 'operator'),
+    };
+  }
+
+  if (!data) return defaultAccess;
+
+  return {
+    id: String(data.id || userId),
+    nama: String(data.nama || 'Operator'),
+    role: String(data.role || fallbackRole || 'operator'),
+    is_active: data.is_active !== false,
+    can_access_pos: data.can_access_pos !== false,
+    can_access_opname: data.can_access_opname !== false,
+    opname_only_login: Boolean(data.opname_only_login),
+  };
+}
+
+export async function getOperatorAccessConfigs(): Promise<OperatorAccessConfig[]> {
+  try {
+    if (typeof supabase.rpc === 'function') {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_operator_access_configs');
+      if (!rpcError && Array.isArray(rpcData)) {
+        return rpcData
+          .filter((r: any) => r.is_active !== false)
+          .map((r: any) => ({
+            id: String(r.id),
+            nama: String(r.nama || 'Operator'),
+            email: r.email ? String(r.email) : null,
+            role: String(r.role || 'operator'),
+            created_at: r.created_at,
+            is_active: true,
+            can_access_pos: r.can_access_pos !== false,
+            can_access_opname: r.can_access_opname !== false,
+            opname_only_login: Boolean(r.opname_only_login),
+          }));
+      }
+    }
+  } catch {
+    // Fallback to direct pengelola query
+  }
+
+  let { data, error } = await supabase
+    .from('pengelola')
+    .select('id, nama, role, created_at, is_active, can_access_pos, can_access_opname, opname_only_login')
+    .in('role', ['operator', 'kasir'])
+    .eq('is_active', true)
+    .order('nama', { ascending: true });
+
+  if (error) {
+    // Fallback if is_active column has not been migrated yet
+    const fallbackRes = await supabase
+      .from('pengelola')
+      .select('id, nama, role, created_at, can_access_pos, can_access_opname, opname_only_login')
+      .in('role', ['operator', 'kasir'])
+      .order('nama', { ascending: true });
+    data = fallbackRes.data as any;
+    error = fallbackRes.error;
+  }
+
+  if (error) {
+    throw new Error(`Gagal memuat daftar hak akses operator: ${error.message}`);
+  }
+
+  return (data || [])
+    .filter((r: any) => r.is_active !== false)
+    .map((r: any) => ({
+      id: String(r.id),
+      nama: String(r.nama || 'Operator'),
+      email: null,
+      role: String(r.role || 'operator'),
+      created_at: r.created_at,
+      is_active: r.is_active !== false,
+      can_access_pos: r.can_access_pos !== false,
+      can_access_opname: r.can_access_opname !== false,
+      opname_only_login: Boolean(r.opname_only_login),
+    }));
+}
+
+export const getOperatorAccessList = getOperatorAccessConfigs;
+
+export async function reassignPendingTasksFromOperator(
+  disabledOperatorId: string,
+  todayStr: string = getLocalDateStr()
+): Promise<number> {
+  if (!disabledOperatorId) return 0;
+
+  const enabledOperators = (await getOpnameOperators()).filter(
+    (op) => op.id !== disabledOperatorId && op.is_active !== false && op.can_access_opname !== false
+  );
+
+  if (enabledOperators.length === 0) return 0;
+
+  const { data: pendingTasks, error: pendingErr } = await fetchAllPaginatedSafe<any>(() =>
+    supabase
+      .from('stock_opname_tasks')
+      .select('id, assigned_operator_id, reassigned_from_operator_id, scheduled_date, slot_index')
+      .eq('assigned_operator_id', disabledOperatorId)
+      .eq('status', 'pending')
+      .order('scheduled_date', { ascending: true })
+      .order('slot_index', { ascending: true })
+  );
+
+  if (pendingErr || !pendingTasks || pendingTasks.length === 0) {
+    return 0;
+  }
+
+  const loadMap = new Map<string, number>();
+  for (const op of enabledOperators) {
+    loadMap.set(op.id, 0);
+  }
+
+  const { data: todayTasks } = await fetchAllPaginatedSafe<any>(() =>
+    supabase
+      .from('stock_opname_tasks')
+      .select('id, assigned_operator_id')
+      .eq('scheduled_date', todayStr)
+  );
+
+  for (const t of todayTasks || []) {
+    const opId = String(t.assigned_operator_id);
+    if (loadMap.has(opId)) {
+      loadMap.set(opId, (loadMap.get(opId) || 0) + 1);
+    }
+  }
+
+  let reassignedCount = 0;
+  for (const task of pendingTasks) {
+    const receiver = [...enabledOperators].sort(
+      (a, b) => (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0)
+    )[0];
+
+    if (!receiver) break;
+
+    const { error: updErr } = await supabase
+      .from('stock_opname_tasks')
+      .update({
+        assigned_operator_id: receiver.id,
+        reassigned_from_operator_id: task.reassigned_from_operator_id || disabledOperatorId,
+        scheduled_date: todayStr,
+      })
+      .eq('id', task.id)
+      .eq('status', 'pending');
+
+    if (!updErr) {
+      loadMap.set(receiver.id, (loadMap.get(receiver.id) || 0) + 1);
+      reassignedCount += 1;
+    }
+  }
+
+  return reassignedCount;
+}
+
+/**
+ * Reassign open stock opname tasks ('pending' & 'recount_requested') belonging to
+ * inactive or opname-disabled operators evenly across active opname-enabled operators,
+ * or return them to the cycle/audit queue if no active opname operator exists.
+ */
+export async function reassignTasksFromInactiveOperators(
+  todayStr: string = getLocalDateStr()
+): Promise<InactiveHandoverResult> {
+  const allOps = await getOpnameOperators({ includeDisabled: true, includeInactive: true });
+  const eligibleOperators = allOps.filter(
+    (op) => op.is_active !== false && op.can_access_opname !== false
+  );
+  const ineligibleIdSet = new Set<string>(
+    allOps
+      .filter((op) => op.is_active === false || op.can_access_opname === false)
+      .map((op) => op.id)
+  );
+
+  // Also check pengelola directly in case a deactivated staff member's role changed
+  try {
+    const { data: pengelolaRows } = await supabase
+      .from('pengelola')
+      .select('id, is_active, can_access_opname');
+    for (const row of pengelolaRows || []) {
+      if (row && (row.is_active === false || row.can_access_opname === false)) {
+        ineligibleIdSet.add(String(row.id));
+      }
+    }
+  } catch {
+    // Safe ignore when running under minimal unit-test mocks
+  }
+
+  if (ineligibleIdSet.size === 0) {
+    return { reassignedCount: 0, returnedToQueueCount: 0 };
+  }
+
+  const { data: openTasks, error: openErr } = await fetchAllPaginatedSafe<any>(() =>
+    supabase
+      .from('stock_opname_tasks')
+      .select(
+        'id, status, assigned_operator_id, reassigned_from_operator_id, recount_operator_id, scheduled_date, slot_index'
+      )
+      .in('status', ['pending', 'recount_requested'])
+      .order('scheduled_date', { ascending: true })
+      .order('slot_index', { ascending: true })
+  );
+
+  if (openErr || !openTasks || openTasks.length === 0) {
+    return { reassignedCount: 0, returnedToQueueCount: 0 };
+  }
+
+  const pendingToHandle = openTasks.filter(
+    (t: any) => t.status === 'pending' && ineligibleIdSet.has(String(t.assigned_operator_id))
+  );
+  const recountToHandle = openTasks.filter(
+    (t: any) =>
+      t.status === 'recount_requested' &&
+      t.recount_operator_id &&
+      ineligibleIdSet.has(String(t.recount_operator_id))
+  );
+
+  if (pendingToHandle.length === 0 && recountToHandle.length === 0) {
+    return { reassignedCount: 0, returnedToQueueCount: 0 };
+  }
+
+  let reassignedCount = 0;
+  let returnedToQueueCount = 0;
+
+  if (eligibleOperators.length > 0) {
+    const loadMap = new Map<string, number>();
+    for (const op of eligibleOperators) {
+      loadMap.set(op.id, 0);
+    }
+
+    const { data: todayTasks } = await fetchAllPaginatedSafe<any>(() =>
+      supabase
+        .from('stock_opname_tasks')
+        .select('id, assigned_operator_id')
+        .eq('scheduled_date', todayStr)
+    );
+
+    for (const t of todayTasks || []) {
+      const opId = String(t.assigned_operator_id);
+      if (loadMap.has(opId)) {
+        loadMap.set(opId, (loadMap.get(opId) || 0) + 1);
+      }
+    }
+
+    for (const task of pendingToHandle) {
+      const receiver = [...eligibleOperators].sort(
+        (a, b) => (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0)
+      )[0];
+      if (!receiver) break;
+
+      const { error: updErr } = await supabase
+        .from('stock_opname_tasks')
+        .update({
+          assigned_operator_id: receiver.id,
+          reassigned_from_operator_id:
+            task.reassigned_from_operator_id || task.assigned_operator_id,
+          scheduled_date: todayStr,
+        })
+        .eq('id', task.id)
+        .eq('status', 'pending');
+
+      if (!updErr) {
+        loadMap.set(receiver.id, (loadMap.get(receiver.id) || 0) + 1);
+        reassignedCount += 1;
+      }
+    }
+
+    for (const task of recountToHandle) {
+      const primaryOpId = String(task.assigned_operator_id);
+      const receiver = [...eligibleOperators].sort((a, b) => {
+        const aIsPrimary = a.id === primaryOpId ? 1 : 0;
+        const bIsPrimary = b.id === primaryOpId ? 1 : 0;
+        if (aIsPrimary !== bIsPrimary) return aIsPrimary - bIsPrimary;
+        return (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0);
+      })[0];
+      if (!receiver) break;
+
+      const { error: updErr } = await supabase
+        .from('stock_opname_tasks')
+        .update({
+          recount_operator_id: receiver.id,
+        })
+        .eq('id', task.id)
+        .eq('status', 'recount_requested');
+
+      if (!updErr) {
+        loadMap.set(receiver.id, (loadMap.get(receiver.id) || 0) + 1);
+        reassignedCount += 1;
+      }
+    }
+  } else {
+    for (const task of pendingToHandle) {
+      const { error: delErr } = await supabase
+        .from('stock_opname_tasks')
+        .delete()
+        .eq('id', task.id)
+        .eq('status', 'pending');
+      if (!delErr) {
+        returnedToQueueCount += 1;
+      }
+    }
+
+    for (const task of recountToHandle) {
+      const { error: revErr } = await supabase
+        .from('stock_opname_tasks')
+        .update({
+          status: 'counted',
+          recount_operator_id: null,
+        })
+        .eq('id', task.id)
+        .eq('status', 'recount_requested');
+      if (!revErr) {
+        returnedToQueueCount += 1;
+      }
+    }
+  }
+
+  return { reassignedCount, returnedToQueueCount };
+}
+
+export async function updateOperatorAccessConfig(
+  operatorId: string,
+  payload: OperatorAccessUpdatePayload
+): Promise<{ config: OperatorAccessUpdatePayload; reassignedCount: number }> {
+  const normalized = normalizeOperatorAccessUpdate(payload, payload);
+
+  let updatedViaRpc = false;
+  if (typeof supabase.rpc === 'function') {
+    const { error: rpcError } = await supabase.rpc('admin_update_operator_access', {
+      p_operator_id: operatorId,
+      p_can_access_pos: normalized.can_access_pos,
+      p_can_access_opname: normalized.can_access_opname,
+      p_opname_only_login: normalized.opname_only_login,
+    });
+
+    if (!rpcError) {
+      updatedViaRpc = true;
+    } else if (
+      rpcError.code !== '42883' &&
+      !rpcError.message?.toLowerCase().includes('does not exist')
+    ) {
+      throw new Error(`Gagal memperbarui hak akses operator: ${rpcError.message}`);
+    }
+  }
+
+  if (!updatedViaRpc) {
+    const { error: updErr } = await supabase
+      .from('pengelola')
+      .update(normalized)
+      .eq('id', operatorId);
+
+    if (updErr) {
+      throw new Error(`Gagal memperbarui hak akses operator: ${updErr.message}`);
+    }
+  }
+
+  let reassignedCount = 0;
+  if (!normalized.can_access_opname) {
+    reassignedCount = await reassignPendingTasksFromOperator(operatorId);
+  }
+
+  return { config: normalized, reassignedCount };
+}
+
+export const updateOperatorAccess = updateOperatorAccessConfig;
+
 // ─── Supabase Data Access & Orchestration ────────────────────────────────────
 
-export async function getOpnameOperators(): Promise<OpnameOperator[]> {
+export async function getOpnameOperators(options?: {
+  includeDisabled?: boolean;
+  includeInactive?: boolean;
+}): Promise<OpnameOperator[]> {
+  const mapRow = (r: any): OpnameOperator => ({
+    id: String(r.id),
+    nama: String(r.nama || 'Operator'),
+    role: String(r.role || 'operator'),
+    created_at: r.created_at,
+    is_active: r.is_active !== false,
+    can_access_pos: r.can_access_pos !== false,
+    can_access_opname: r.can_access_opname !== false,
+    opname_only_login: Boolean(r.opname_only_login),
+  });
+
+  const filterList = (list: OpnameOperator[]): OpnameOperator[] =>
+    list.filter((op) => {
+      if (!options?.includeInactive && op.is_active === false) return false;
+      if (!options?.includeDisabled && op.can_access_opname === false) return false;
+      return true;
+    });
+
   // Primary path: SECURITY DEFINER RPC so operators opening POS can see all operator peers despite pengelola RLS
   try {
     if (typeof supabase.rpc === 'function') {
       const { data: rpcData, error: rpcError } = await supabase.rpc('get_opname_operators');
       if (!rpcError && Array.isArray(rpcData)) {
-        return rpcData.map((r: any) => ({
-          id: String(r.id),
-          nama: String(r.nama || 'Operator'),
-          role: String(r.role || 'operator'),
-          created_at: r.created_at,
-        }));
+        return filterList(rpcData.map(mapRow));
       }
     }
   } catch {
     // Fallback to direct query when RPC is unavailable (e.g., admin context or test mocks)
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('pengelola')
-    .select('id, nama, role, created_at')
+    .select('id, nama, role, created_at, is_active, can_access_pos, can_access_opname, opname_only_login')
     .in('role', ['operator', 'kasir'])
     .order('created_at', { ascending: true })
     .order('id', { ascending: true });
+
+  if (error) {
+    // Fallback if is_active column has not been migrated yet
+    const fallbackRes = await supabase
+      .from('pengelola')
+      .select('id, nama, role, created_at, can_access_pos, can_access_opname, opname_only_login')
+      .in('role', ['operator', 'kasir'])
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
+    data = fallbackRes.data as any;
+    error = fallbackRes.error;
+  }
 
   if (error) {
     console.warn('[stockOpnameService] getOpnameOperators fallback error:', error.message);
     return [];
   }
 
-  return (data || []).map((r: any) => ({
-    id: String(r.id),
-    nama: String(r.nama || 'Operator'),
-    role: String(r.role || 'operator'),
-    created_at: r.created_at,
-  }));
+  return filterList((data || []).map(mapRow));
 }
 
 async function loadAllProductsAndCategories(): Promise<SortedCycleProduct[]> {
@@ -642,8 +1157,12 @@ export async function deferMissedOperatorTasksToNextDay(params: {
   allOperators: OpnameOperator[];
 }): Promise<{ deferredCount: number; todayLoadMap: Map<string, number> }> {
   const { todayStr, quota, activeOperatorIdsToday, allOperators } = params;
+  const enabledOperators = allOperators.filter(
+    (op) => op.is_active !== false && op.can_access_opname !== false
+  );
+  const enabledIdSet = new Set(enabledOperators.map((op) => op.id));
   const todayLoadMap = new Map<string, number>();
-  for (const op of allOperators) {
+  for (const op of enabledOperators) {
     todayLoadMap.set(op.id, 0);
   }
 
@@ -657,7 +1176,9 @@ export async function deferMissedOperatorTasksToNextDay(params: {
 
   for (const t of todayTasks || []) {
     const opId = String(t.assigned_operator_id);
-    todayLoadMap.set(opId, (todayLoadMap.get(opId) || 0) + 1);
+    if (enabledIdSet.has(opId)) {
+      todayLoadMap.set(opId, (todayLoadMap.get(opId) || 0) + 1);
+    }
   }
 
   // Load past pending tasks
@@ -690,10 +1211,11 @@ export async function deferMissedOperatorTasksToNextDay(params: {
     shiftDateSet.add(`${s.cashier_id}|${getLocalDateStr(new Date(s.opened_at))}`);
   }
 
+  const enabledActiveToday = activeOperatorIdsToday.filter((id) => enabledIdSet.has(id));
   const candidateReceivers =
-    activeOperatorIdsToday.length > 0
-      ? activeOperatorIdsToday
-      : allOperators.map((o) => o.id);
+    enabledActiveToday.length > 0
+      ? enabledActiveToday
+      : enabledOperators.map((o) => o.id);
 
   if (candidateReceivers.length === 0) {
     return { deferredCount: 0, todayLoadMap };
@@ -762,6 +1284,7 @@ export async function ensureDailyOpnameAssignments(options?: {
   todayStr?: string;
 }): Promise<DailyAssignmentResult> {
   const todayStr = options?.todayStr || getLocalDateStr();
+  const handover = await reassignTasksFromInactiveOperators(todayStr);
   const settings = await getPosSettings();
   const quota = Math.max(1, Math.min(200, Number(settings.daily_opname_quota) || 15));
 
@@ -771,7 +1294,7 @@ export async function ensureDailyOpnameAssignments(options?: {
       cycleNumber: 1,
       cycleId: null,
       quota,
-      deferredCount: 0,
+      deferredCount: handover.reassignedCount,
       assignedCount: 0,
       totalActiveProducts: 0,
       cycleAssignedCount: 0,
@@ -800,6 +1323,15 @@ export async function ensureDailyOpnameAssignments(options?: {
   }
   if (options?.operatorId && operatorIdSet.has(options.operatorId)) {
     activeTodaySet.add(options.operatorId);
+  }
+
+  // Include opname-only operators during global/admin sync when any shift is open today
+  if (!options?.operatorId && activeTodaySet.size > 0) {
+    for (const op of allOperators) {
+      if (op.opname_only_login === true || op.can_access_pos === false) {
+        activeTodaySet.add(op.id);
+      }
+    }
   }
 
   // If no shift is open yet (e.g., Admin manually triggers sync from Audit page), schedule across all operators
@@ -954,7 +1486,7 @@ export async function ensureDailyOpnameAssignments(options?: {
     cycleNumber: cycle.cycle_number,
     cycleId: cycle.id,
     quota,
-    deferredCount,
+    deferredCount: handover.reassignedCount + deferredCount,
     assignedCount: totalInserted,
     totalActiveProducts: sortedCatalog.length,
     cycleAssignedCount,
@@ -1027,7 +1559,7 @@ export async function getOperatorDailyTasks(
     });
   }
 
-  const operators = await getOpnameOperators();
+  const operators = await getOpnameOperators({ includeDisabled: true, includeInactive: true });
   const operatorNameMap = new Map<string, string>(operators.map((o) => [o.id, o.nama]));
 
   return rawTasks
@@ -1250,23 +1782,35 @@ export async function getActiveCycleProgress(): Promise<OpnameCycleProgress> {
  * Fetches tasks for Admin Audit & Comparison along with live system stock and post-count store mutations.
  */
 export async function getOpnameComparisonList(filters?: {
+  mode?: 'active_30d' | 'all' | 'custom';
+  sinceDate?: string;
   startDate?: string;
   endDate?: string;
   status?: string;
   operatorId?: string;
 }): Promise<OpnameComparisonRow[]> {
+  const mode = filters?.mode || (filters?.startDate || filters?.endDate ? 'custom' : 'active_30d');
+  const since30d =
+    filters?.sinceDate || getLocalDateStr(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+
   const { data: rawTasks, error: tasksErr } = await fetchAllPaginatedSafe<any>(() => {
     let q: any = supabase
       .from('stock_opname_tasks')
       .select('*')
       .order('scheduled_date', { ascending: false })
       .order('slot_index', { ascending: true });
-    if (filters?.startDate) {
-      q = q.gte('scheduled_date', filters.startDate);
+
+    if (mode === 'active_30d') {
+      q = q.or(`status.neq.resolved,scheduled_date.gte.${since30d}`);
+    } else if (mode === 'custom') {
+      if (filters?.startDate) {
+        q = q.gte('scheduled_date', filters.startDate);
+      }
+      if (filters?.endDate) {
+        q = q.lte('scheduled_date', filters.endDate);
+      }
     }
-    if (filters?.endDate) {
-      q = q.lte('scheduled_date', filters.endDate);
-    }
+
     if (filters?.status && filters.status !== 'all') {
       q = q.eq('status', filters.status);
     }
@@ -1283,13 +1827,13 @@ export async function getOpnameComparisonList(filters?: {
   const tasks: OpnameTaskRecord[] = (rawTasks || []) as OpnameTaskRecord[];
   if (tasks.length === 0) return [];
 
-  // Load products, staff names (admin context can read pengelola directly + fallback to getOpnameOperators)
+  // Load products, staff names/active status (admin context can read pengelola directly + fallback to getOpnameOperators)
   const [prodRes, staffRes, opsFallback, adjRes] = await Promise.all([
     fetchAllPaginatedSafe<any>(() =>
       supabase.from('products').select('id, sku, name, unit, stock, buy_price')
     ),
-    supabase.from('pengelola').select('id, nama'),
-    getOpnameOperators(),
+    supabase.from('pengelola').select('id, nama, is_active'),
+    getOpnameOperators({ includeDisabled: true, includeInactive: true }),
     fetchAllPaginatedSafe<any>(() =>
       supabase
         .from('stock_opname_adjustments')
@@ -1303,11 +1847,14 @@ export async function getOpnameComparisonList(filters?: {
   }
 
   const staffNameMap = new Map<string, string>();
+  const staffActiveMap = new Map<string, boolean>();
   for (const o of opsFallback) {
     staffNameMap.set(o.id, o.nama);
+    staffActiveMap.set(o.id, o.is_active !== false);
   }
   for (const s of staffRes.data || []) {
     staffNameMap.set(String(s.id), String(s.nama || 'Staf'));
+    staffActiveMap.set(String(s.id), s.is_active !== false);
   }
 
   const taskRefMap = new Map<string, string>();
@@ -1315,8 +1862,9 @@ export async function getOpnameComparisonList(filters?: {
     taskRefMap.set(String(a.task_id), String(a.reference_no));
   }
 
-  // Determine earliest counted_at timestamp to query post-count mutations efficiently
+  // Only scan post-count mutations for unresolved tasks so large historical queries stay fast
   const countTimes = tasks
+    .filter((t) => t.status !== 'resolved')
     .map((t) => t.counted_at || t.recounted_at)
     .filter(Boolean)
     .map((iso) => new Date(String(iso)).getTime())
@@ -1342,12 +1890,17 @@ export async function getOpnameComparisonList(filters?: {
 
     const anchorTime =
       t.status === 'recounted' && t.recounted_at ? t.recounted_at : t.counted_at;
-    const mutationsSinceCount = calculatePostCountMutations(
-      mutations,
-      t.product_id,
-      anchorTime,
-      ownRefNo
-    );
+    const mutationsSinceCount =
+      t.status === 'resolved'
+        ? {
+            pembelian: 0,
+            pengganti_retur: 0,
+            penjualan: 0,
+            retur_supplier: 0,
+            other_opname: 0,
+            netDeltaSinceCount: 0,
+          }
+        : calculatePostCountMutations(mutations, t.product_id, anchorTime, ownRefNo);
 
     const varianceAtCount =
       t.observed_qty !== null && t.system_stock_snapshot !== null
@@ -1389,11 +1942,18 @@ export async function getOpnameComparisonList(filters?: {
       current_system_stock: currentStock,
       current_buy_price: currentBuyPrice,
       assigned_operator_name: staffNameMap.get(t.assigned_operator_id) || 'Operator',
+      assigned_operator_is_active: staffActiveMap.get(t.assigned_operator_id) !== false,
       reassigned_from_operator_name: t.reassigned_from_operator_id
         ? staffNameMap.get(t.reassigned_from_operator_id) || 'Operator Lain'
         : undefined,
+      reassigned_from_operator_is_active: t.reassigned_from_operator_id
+        ? staffActiveMap.get(t.reassigned_from_operator_id) !== false
+        : undefined,
       recount_operator_name: t.recount_operator_id
         ? staffNameMap.get(t.recount_operator_id) || 'Pengusul Ulang'
+        : undefined,
+      recount_operator_is_active: t.recount_operator_id
+        ? staffActiveMap.get(t.recount_operator_id) !== false
         : undefined,
       variance_at_count: varianceAtCount,
       recount_variance: recountVariance,
@@ -1591,7 +2151,7 @@ export async function getOperatorOpnameKpis(
   endDate: string
 ): Promise<OperatorKpiRow[]> {
   const [operators, tasksRes, shiftsRes] = await Promise.all([
-    getOpnameOperators(),
+    getOpnameOperators({ includeDisabled: true, includeInactive: true }),
     fetchAllPaginatedSafe<any>(() =>
       supabase
         .from('stock_opname_tasks')

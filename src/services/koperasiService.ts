@@ -67,8 +67,15 @@ export {
 export interface Pengelola {
   id: string;
   nama: string;
+  email?: string | null;
   role: 'admin' | 'operator';
   created_at?: string;
+  is_active?: boolean;
+  can_access_pos?: boolean;
+  can_access_opname?: boolean;
+  opname_only_login?: boolean;
+  deactivated_at?: string | null;
+  deactivation_reason?: string | null;
   [key: string]: any;
 }
 

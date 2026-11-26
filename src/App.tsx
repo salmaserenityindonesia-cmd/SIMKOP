@@ -4,6 +4,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import UserManagement from './pages/admin/UserManagement';
 import POSPage from './pages/pos';
+import OperatorOpnameOnlyPage from './pages/pos/OperatorOpnameOnlyPage';
 import DashboardSimpanan from './pages/admin/DashboardSimpanan';
 import ApprovalPinjaman from './pages/admin/ApprovalPinjaman';
 import PengajuanPinjaman from './pages/admin/PengajuanPinjaman';
@@ -74,8 +75,17 @@ export default function App() {
         <Route 
           path="/admin/kasir" 
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requirePosAccess={true}>
               <POSPage />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/operator/stock-opname" 
+          element={
+            <ProtectedRoute requireOpnameAccess={true}>
+              <OperatorOpnameOnlyPage />
             </ProtectedRoute>
           } 
         />

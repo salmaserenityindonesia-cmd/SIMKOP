@@ -3,6 +3,10 @@ import {
   calculateOperatorOpnameKpis,
   calculatePostCountMutations,
   deferMissedOperatorTasksToNextDay,
+  getOperatorAccessConfigs,
+  normalizeOperatorAccessUpdate,
+  reassignPendingTasksFromOperator,
+  reassignTasksFromInactiveOperators,
   resolveOperatorIndexForSlot,
   resolveOpnameTask,
   sortProductsForCycleCount,
@@ -430,5 +434,389 @@ describe('stockOpnameService', () => {
     expect(kpiB.discovery_score).toBe(0);
     expect(kpiB.false_alarm_count).toBe(1);
     expect(kpiB.total_kpi_score).toBe(42.5); // 50*0.6 + 50*0.25 + 0*0.15
+  });
+
+  it('enforces operator feature access consistency rules and rejects disabling both POS and Opname', () => {
+    // Turning on opname_only_login automatically enables can_access_opname
+    expect(
+      normalizeOperatorAccessUpdate(
+        { can_access_pos: true, can_access_opname: false, opname_only_login: false },
+        { opname_only_login: true }
+      )
+    ).toEqual({
+      can_access_pos: true,
+      can_access_opname: true,
+      opname_only_login: true,
+    });
+
+    // Turning off can_access_pos when opname is enabled automatically enables opname_only_login
+    expect(
+      normalizeOperatorAccessUpdate(
+        { can_access_pos: true, can_access_opname: true, opname_only_login: false },
+        { can_access_pos: false }
+      )
+    ).toEqual({
+      can_access_pos: false,
+      can_access_opname: true,
+      opname_only_login: true,
+    });
+
+    // Turning off can_access_opname when POS is enabled disables opname_only_login
+    expect(
+      normalizeOperatorAccessUpdate(
+        { can_access_pos: true, can_access_opname: true, opname_only_login: true },
+        { can_access_opname: false }
+      )
+    ).toEqual({
+      can_access_pos: true,
+      can_access_opname: false,
+      opname_only_login: false,
+    });
+
+    // Disabling both POS and Opname throws an error
+    expect(() =>
+      normalizeOperatorAccessUpdate(
+        { can_access_pos: false, can_access_opname: true, opname_only_login: true },
+        { can_access_opname: false }
+      )
+    ).toThrow(/Minimal satu izin fitur/);
+  });
+
+  it('excludes operators with can_access_opname = false from receiving deferred tasks', async () => {
+    const operators: OpnameOperator[] = [
+      { id: 'op-disabled', nama: 'Kasir Saja', role: 'operator', can_access_opname: false },
+      { id: 'op-enabled', nama: 'Petugas Opname', role: 'operator', can_access_opname: true },
+    ];
+
+    const pastPending = [
+      { id: 't1', assigned_operator_id: 'op-disabled', reassigned_from_operator_id: null, scheduled_date: '2026-11-24', slot_index: 0 },
+    ];
+
+    const updatedPayloads: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'stock_opname_tasks') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('assigned_operator_id') && !cols.includes('slot_index')) {
+              return {
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              };
+            }
+            return {
+              eq: vi.fn().mockReturnValue({
+                lt: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({ data: pastPending, error: null }),
+                  }),
+                }),
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((payload: any) => {
+            updatedPayloads.push(payload);
+            return {
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      if (table === 'cashier_shifts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await deferMissedOperatorTasksToNextDay({
+      todayStr: '2026-11-25',
+      quota: 5,
+      activeOperatorIdsToday: ['op-disabled', 'op-enabled'],
+      allOperators: operators,
+    });
+
+    expect(res.deferredCount).toBe(1);
+    expect(updatedPayloads[0]).toEqual({
+      assigned_operator_id: 'op-enabled',
+      reassigned_from_operator_id: 'op-disabled',
+      scheduled_date: '2026-11-25',
+    });
+  });
+
+  it('reassigns pending tasks of an opname-disabled operator to active opname-enabled operators', async () => {
+    (supabase.rpc as any).mockResolvedValue({
+      data: [
+        { id: 'op-disabled', nama: 'Kasir A', role: 'operator', can_access_opname: false },
+        { id: 'op-1', nama: 'Opname 1', role: 'operator', can_access_opname: true },
+        { id: 'op-2', nama: 'Opname 2', role: 'operator', can_access_opname: true },
+      ],
+      error: null,
+    });
+
+    const updates: any[] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'stock_opname_tasks') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('slot_index')) {
+              return {
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      order: vi.fn().mockResolvedValue({
+                        data: [
+                          {
+                            id: 'task-p1',
+                            assigned_operator_id: 'op-disabled',
+                            reassigned_from_operator_id: null,
+                            scheduled_date: '2026-11-25',
+                            slot_index: 1,
+                          },
+                          {
+                            id: 'task-p2',
+                            assigned_operator_id: 'op-disabled',
+                            reassigned_from_operator_id: null,
+                            scheduled_date: '2026-11-25',
+                            slot_index: 2,
+                          },
+                        ],
+                        error: null,
+                      }),
+                    }),
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'existing-1', assigned_operator_id: 'op-1' }],
+                error: null,
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((payload: any) => {
+            updates.push(payload);
+            return {
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const count = await reassignPendingTasksFromOperator('op-disabled', '2026-11-26');
+    expect(count).toBe(2);
+    expect(updates).toEqual([
+      {
+        assigned_operator_id: 'op-2',
+        reassigned_from_operator_id: 'op-disabled',
+        scheduled_date: '2026-11-26',
+      },
+      {
+        assigned_operator_id: 'op-1',
+        reassigned_from_operator_id: 'op-disabled',
+        scheduled_date: '2026-11-26',
+      },
+    ]);
+  });
+
+  it('reassigns both pending and recount_requested tasks from inactive operators to active opname-enabled operators', async () => {
+    (supabase.rpc as any).mockResolvedValue({
+      data: [
+        { id: 'op-resigned', nama: 'Mantan Kasir', role: 'operator', is_active: false, can_access_opname: false },
+        { id: 'op-active-1', nama: 'Kasir Aktif 1', role: 'operator', is_active: true, can_access_opname: true },
+        { id: 'op-active-2', nama: 'Kasir Aktif 2', role: 'operator', is_active: true, can_access_opname: true },
+      ],
+      error: null,
+    });
+
+    const updates: any[] = [];
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'pengelola') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'op-resigned', is_active: false, can_access_opname: false }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'stock_opname_tasks') {
+        return {
+          select: vi.fn().mockImplementation((cols: string) => {
+            if (cols.includes('recount_operator_id')) {
+              return {
+                in: vi.fn().mockReturnValue({
+                  order: vi.fn().mockReturnValue({
+                    order: vi.fn().mockResolvedValue({
+                      data: [
+                        {
+                          id: 't-pend-1',
+                          status: 'pending',
+                          assigned_operator_id: 'op-resigned',
+                          reassigned_from_operator_id: null,
+                          recount_operator_id: null,
+                          scheduled_date: '2026-11-25',
+                          slot_index: 1,
+                        },
+                        {
+                          id: 't-rec-1',
+                          status: 'recount_requested',
+                          assigned_operator_id: 'op-active-1',
+                          reassigned_from_operator_id: null,
+                          recount_operator_id: 'op-resigned',
+                          scheduled_date: '2026-11-25',
+                          slot_index: 2,
+                        },
+                      ],
+                      error: null,
+                    }),
+                  }),
+                }),
+              };
+            }
+            return {
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'today-1', assigned_operator_id: 'op-active-1' }],
+                error: null,
+              }),
+            };
+          }),
+          update: vi.fn().mockImplementation((payload: any) => {
+            updates.push(payload);
+            return {
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await reassignTasksFromInactiveOperators('2026-11-26');
+    expect(res).toEqual({ reassignedCount: 2, returnedToQueueCount: 0 });
+    expect(updates).toEqual([
+      {
+        assigned_operator_id: 'op-active-2',
+        reassigned_from_operator_id: 'op-resigned',
+        scheduled_date: '2026-11-26',
+      },
+      {
+        recount_operator_id: 'op-active-2',
+      },
+    ]);
+  });
+
+  it('returns pending tasks to cycle queue and reverts recount_requested when no active opname operator exists', async () => {
+    (supabase.rpc as any).mockResolvedValue({
+      data: [
+        { id: 'op-resigned', nama: 'Mantan Kasir', role: 'operator', is_active: false, can_access_opname: false },
+      ],
+      error: null,
+    });
+
+    const deletedIds: string[] = [];
+    const revertedPayloads: any[] = [];
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'pengelola') {
+        return {
+          select: vi.fn().mockResolvedValue({
+            data: [{ id: 'op-resigned', is_active: false, can_access_opname: false }],
+            error: null,
+          }),
+        };
+      }
+      if (table === 'stock_opname_tasks') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                order: vi.fn().mockResolvedValue({
+                  data: [
+                    {
+                      id: 't-pend-only',
+                      status: 'pending',
+                      assigned_operator_id: 'op-resigned',
+                      reassigned_from_operator_id: null,
+                      recount_operator_id: null,
+                      scheduled_date: '2026-11-25',
+                      slot_index: 1,
+                    },
+                    {
+                      id: 't-rec-only',
+                      status: 'recount_requested',
+                      assigned_operator_id: 'op-resigned',
+                      reassigned_from_operator_id: null,
+                      recount_operator_id: 'op-resigned',
+                      scheduled_date: '2026-11-25',
+                      slot_index: 2,
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+          delete: vi.fn().mockReturnValue({
+            eq: vi.fn().mockImplementation((_col: string, id: string) => {
+              deletedIds.push(id);
+              return {
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              };
+            }),
+          }),
+          update: vi.fn().mockImplementation((payload: any) => {
+            revertedPayloads.push(payload);
+            return {
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            };
+          }),
+        };
+      }
+      return {};
+    });
+
+    const res = await reassignTasksFromInactiveOperators('2026-11-26');
+    expect(res).toEqual({ reassignedCount: 0, returnedToQueueCount: 2 });
+    expect(deletedIds).toEqual(['t-pend-only']);
+    expect(revertedPayloads).toEqual([{ status: 'counted', recount_operator_id: null }]);
+  });
+
+  it('excludes inactive operators in getOperatorAccessConfigs and sets isActive flag in calculateOperatorOpnameKpis', async () => {
+    (supabase.rpc as any).mockResolvedValueOnce({
+      data: [
+        { id: 'op-1', nama: 'Aktif', email: 'a@k.id', role: 'operator', is_active: true, can_access_pos: true, can_access_opname: true, opname_only_login: false },
+        { id: 'op-2', nama: 'Keluar', email: 'k@k.id', role: 'operator', is_active: false, can_access_pos: false, can_access_opname: false, opname_only_login: false },
+      ],
+      error: null,
+    });
+
+    const configs = await getOperatorAccessConfigs();
+    expect(configs).toHaveLength(1);
+    expect(configs[0].id).toBe('op-1');
+
+    const kpis = calculateOperatorOpnameKpis(
+      [
+        { id: 'op-1', nama: 'Aktif', role: 'operator', is_active: true },
+        { id: 'op-2', nama: 'Keluar', role: 'operator', is_active: false },
+      ],
+      []
+    );
+    expect(kpis.find((k) => k.operator_id === 'op-1')?.isActive).toBe(true);
+    expect(kpis.find((k) => k.operator_id === 'op-2')?.isActive).toBe(false);
   });
 });

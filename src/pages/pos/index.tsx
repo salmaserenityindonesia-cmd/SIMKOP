@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import POSHeader from '../../components/pos/POSHeader';
 import ProductSearchInput from '../../components/pos/ProductSearchInput';
 import CartTable from '../../components/pos/CartTable';
@@ -49,6 +49,8 @@ export interface CartItem {
 
 export default function POSPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useFeedback();
   const [products, setProducts] = useState<Produk[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -65,7 +67,14 @@ export default function POSPage() {
 
   // Shift & Cashier State
   const [activeShift, setActiveShift] = useState<CashierShift | null>(null);
-  const [currentCashier, setCurrentCashier] = useState<{ id: string; nama?: string; role?: string } | null>(null);
+  const [currentCashier, setCurrentCashier] = useState<{
+    id: string;
+    nama?: string;
+    role?: string;
+    can_access_pos?: boolean;
+    can_access_opname?: boolean;
+    opname_only_login?: boolean;
+  } | null>(null);
 
   const [modals, setModals] = useState({
     qty: false,
@@ -115,34 +124,85 @@ export default function POSPage() {
   }, []);
 
   useEffect(() => {
+    const allowPosSwitch = Boolean(
+      (location.state as { allowPosSwitch?: boolean } | null)?.allowPosSwitch
+    );
+
     async function initSession() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        let cashierInfo: { id: string; nama: string; role?: string } = {
+        let cashierInfo: {
+          id: string;
+          nama: string;
+          role?: string;
+          can_access_pos?: boolean;
+          can_access_opname?: boolean;
+          opname_only_login?: boolean;
+        } = {
           id: user?.id || '00000000-0000-0000-0000-000000000000',
           nama: 'Kasir POS',
           role: user?.app_metadata?.role || 'operator',
+          can_access_pos: true,
+          can_access_opname: true,
+          opname_only_login: false,
         };
 
         if (user?.id) {
-          const { data: pengelola } = await supabase
+          const { data: pengelola, error: pengelolaErr } = await supabase
             .from('pengelola')
-            .select('id, nama, role')
+            .select('id, nama, role, can_access_pos, can_access_opname, opname_only_login')
             .eq('id', user.id)
             .single();
-          const effectiveRole = pengelola?.role || user.app_metadata?.role || 'operator';
-          if (pengelola?.nama) {
-            cashierInfo = { id: pengelola.id, nama: pengelola.nama, role: effectiveRole };
+
+          if (!pengelolaErr && pengelola) {
+            const effectiveRole = pengelola.role || user.app_metadata?.role || 'operator';
+            cashierInfo = {
+              id: pengelola.id,
+              nama: pengelola.nama || 'Kasir POS',
+              role: effectiveRole,
+              can_access_pos: pengelola.can_access_pos !== false,
+              can_access_opname: pengelola.can_access_opname !== false,
+              opname_only_login: Boolean(pengelola.opname_only_login),
+            };
           } else {
-            cashierInfo.role = effectiveRole;
+            const { data: basicPengelola } = await supabase
+              .from('pengelola')
+              .select('id, nama, role')
+              .eq('id', user.id)
+              .single();
+            const effectiveRole = basicPengelola?.role || user.app_metadata?.role || 'operator';
+            if (basicPengelola?.nama) {
+              cashierInfo = {
+                ...cashierInfo,
+                id: basicPengelola.id,
+                nama: basicPengelola.nama,
+                role: effectiveRole,
+              };
+            } else {
+              cashierInfo.role = effectiveRole;
+            }
           }
         }
+
+        if (
+          cashierInfo.role !== 'admin' &&
+          (cashierInfo.can_access_pos === false ||
+            (cashierInfo.opname_only_login === true && !allowPosSwitch))
+        ) {
+          navigate('/operator/stock-opname', { replace: true });
+          return;
+        }
+
         setCurrentCashier(cashierInfo);
 
+        const canLoadOpname =
+          cashierInfo.role === 'admin' || cashierInfo.can_access_opname !== false;
         const shift = await getActiveShift(cashierInfo.id);
         if (shift) {
           setActiveShift(shift);
-          loadOperatorOpnameTasks(cashierInfo.id);
+          if (canLoadOpname) {
+            loadOperatorOpnameTasks(cashierInfo.id);
+          }
         } else {
           setActiveShift(null);
           setModals(m => ({ ...m, bukaKasir: true }));
@@ -238,6 +298,8 @@ export default function POSPage() {
   const subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
   const discount = selectedMember ? subtotal * (memberDiscountPercentage / 100) : 0; 
   const total = subtotal - discount;
+  const canAccessOpname =
+    currentCashier?.role === 'admin' || currentCashier?.can_access_opname !== false;
 
   const handleHoldTransaction = useCallback(async () => {
     if (!activeShift) {
@@ -480,12 +542,16 @@ export default function POSPage() {
         activeShift={activeShift}
         onOpenBukaKasir={() => setModals(m => ({ ...m, bukaKasir: true }))}
         onOpenTutupKasir={() => setModals(m => ({ ...m, tutupKasir: true }))}
-        onOpenOpname={() => setModals(m => ({ ...m, opname: true }))}
-        opnameProgress={{
-          completed: opnameTasks.filter(t => t.status === 'counted' || t.status === 'recounted' || t.status === 'resolved').length,
-          total: opnameTasks.length,
-          pendingRecount: opnameTasks.filter(t => t.is_recount_task && t.status === 'recount_requested').length,
-        }}
+        onOpenOpname={canAccessOpname ? () => setModals(m => ({ ...m, opname: true })) : undefined}
+        opnameProgress={
+          canAccessOpname
+            ? {
+                completed: opnameTasks.filter(t => t.status === 'counted' || t.status === 'recounted' || t.status === 'resolved').length,
+                total: opnameTasks.length,
+                pendingRecount: opnameTasks.filter(t => t.is_recount_task && t.status === 'recount_requested').length,
+              }
+            : null
+        }
       />
       
       <main className="w-full max-w-[1720px] mx-auto p-3 lg:p-4 flex-1 flex flex-col gap-3">
@@ -668,7 +734,9 @@ export default function POSPage() {
         onSuccess={(shift) => {
           setActiveShift(shift);
           setModals(m => ({ ...m, bukaKasir: false }));
-          loadOperatorOpnameTasks(shift.cashier_id || currentCashier?.id);
+          if (canAccessOpname) {
+            loadOperatorOpnameTasks(shift.cashier_id || currentCashier?.id);
+          }
           setTimeout(() => searchInputRef.current?.focus(), 150);
         }}
       />
@@ -716,35 +784,37 @@ export default function POSPage() {
         }}
       />
       {/* Drawer Tugas Cek Fisik Harian (Blind Count) */}
-      <OperatorOpnameDrawer
-        isOpen={modals.opname}
-        onClose={() => {
-          setModals(m => ({ ...m, opname: false }));
-          setTimeout(() => searchInputRef.current?.focus(), 100);
-        }}
-        tasks={opnameTasks}
-        operatorName={activeShift?.cashier_name || currentCashier?.nama || 'Operator'}
-        isLoading={isLoadingOpname}
-        onRefresh={() => loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id)}
-        onSubmitCount={async (taskId, qty, notes) => {
-          try {
-            await submitOperatorBlindCount(taskId, qty, notes);
-            showToast('Angka pengamatan fisik berhasil disimpan (snapshot stok dikunci).', 'success');
-            await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
-          } catch (err: any) {
-            showToast(err?.message || 'Gagal menyimpan hitungan fisik', 'error');
-          }
-        }}
-        onSubmitRecount={async (taskId, qty, notes) => {
-          try {
-            await submitRecountObservation(taskId, qty, activeShift?.cashier_id || currentCashier?.id, notes);
-            showToast('Hasil pemeriksaan ulang (Re-Count) berhasil dikirim ke Admin.', 'success');
-            await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
-          } catch (err: any) {
-            showToast(err?.message || 'Gagal menyimpan hasil re-count', 'error');
-          }
-        }}
-      />
+      {canAccessOpname && (
+        <OperatorOpnameDrawer
+          isOpen={modals.opname}
+          onClose={() => {
+            setModals(m => ({ ...m, opname: false }));
+            setTimeout(() => searchInputRef.current?.focus(), 100);
+          }}
+          tasks={opnameTasks}
+          operatorName={activeShift?.cashier_name || currentCashier?.nama || 'Operator'}
+          isLoading={isLoadingOpname}
+          onRefresh={() => loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id)}
+          onSubmitCount={async (taskId, qty, notes) => {
+            try {
+              await submitOperatorBlindCount(taskId, qty, notes);
+              showToast('Angka pengamatan fisik berhasil disimpan (snapshot stok dikunci).', 'success');
+              await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
+            } catch (err: any) {
+              showToast(err?.message || 'Gagal menyimpan hitungan fisik', 'error');
+            }
+          }}
+          onSubmitRecount={async (taskId, qty, notes) => {
+            try {
+              await submitRecountObservation(taskId, qty, activeShift?.cashier_id || currentCashier?.id, notes);
+              showToast('Hasil pemeriksaan ulang (Re-Count) berhasil dikirim ke Admin.', 'success');
+              await loadOperatorOpnameTasks(activeShift?.cashier_id || currentCashier?.id);
+            } catch (err: any) {
+              showToast(err?.message || 'Gagal menyimpan hasil re-count', 'error');
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

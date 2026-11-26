@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { supabase } from '../../lib/supabaseClient';
 import { getKoperasiProfile } from '../../services/settingsService';
 
 export default function LoginForm() {
+  const location = useLocation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -10,6 +12,13 @@ export default function LoginForm() {
   const [errorMsg, setErrorMsg] = useState('');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [namaKoperasi, setNamaKoperasi] = useState<string>('SIM Koperasi');
+
+  useEffect(() => {
+    const authError = (location.state as { authError?: string } | null)?.authError;
+    if (authError) {
+      setErrorMsg(authError);
+    }
+  }, [location.state]);
 
   useEffect(() => {
     let isMounted = true;
@@ -48,11 +57,46 @@ export default function LoginForm() {
         setErrorMsg(error.message || 'Kredensial tidak valid');
       } else {
         const role = data.session?.user.app_metadata?.role;
-        if (role === 'admin') {
-          window.location.href = '/admin';
-        } else {
-          window.location.href = '/admin/kasir';
+        const userId = data.session?.user.id;
+        let targetPath = role === 'admin' ? '/admin' : '/admin/kasir';
+
+        if (userId) {
+          try {
+            let { data: pengelola, error: pengelolaErr } = await supabase
+              .from('pengelola')
+              .select('role, is_active, can_access_pos, can_access_opname, opname_only_login')
+              .eq('id', userId)
+              .maybeSingle();
+
+            if (pengelolaErr) {
+              const fallbackRes = await supabase
+                .from('pengelola')
+                .select('role, can_access_pos, can_access_opname, opname_only_login')
+                .eq('id', userId)
+                .maybeSingle();
+              pengelola = fallbackRes.data as any;
+            }
+
+            if ((pengelola as any)?.is_active === false) {
+              await supabase.auth.signOut();
+              setErrorMsg('Akun Anda telah dinonaktifkan oleh Admin.');
+              return;
+            }
+
+            if (pengelola?.role === 'admin' || role === 'admin') {
+              targetPath = '/admin';
+            } else if (
+              pengelola &&
+              (pengelola.opname_only_login === true || pengelola.can_access_pos === false)
+            ) {
+              targetPath = '/operator/stock-opname';
+            }
+          } catch {
+            // Fallback safely to role-based route when permission columns are unavailable
+          }
         }
+
+        window.location.href = targetPath;
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Otentikasi Gagal');

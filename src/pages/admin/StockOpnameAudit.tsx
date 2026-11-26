@@ -18,18 +18,24 @@ import {
   TrendingDown,
   TrendingUp,
   UserCheck,
+  UserCog,
   X,
 } from 'lucide-react';
 import {
   ensureDailyOpnameAssignments,
   getActiveCycleProgress,
   getLocalDateStr,
+  getOperatorAccessConfigs,
   getOperatorOpnameKpis,
   getOpnameComparisonList,
   getOpnameOperators,
+  normalizeOperatorAccessUpdate,
   requestTaskRecount,
   resolveBulkZeroVarianceTasks,
   resolveOpnameTask,
+  updateOperatorAccessConfig,
+  type OperatorAccessConfig,
+  type OperatorAccessUpdatePayload,
   type OperatorKpiRow,
   type OpnameComparisonRow,
   type OpnameCycleProgress,
@@ -110,18 +116,25 @@ function TaskStatusBadge({ row }: { row: OpnameComparisonRow }) {
 
 export default function StockOpnameAudit() {
   const { showToast } = useFeedback();
-  const [activeTab, setActiveTab] = useState<'audit' | 'kpi'>('audit');
+  const [activeTab, setActiveTab] = useState<'audit' | 'kpi' | 'access'>('audit');
   const [currentUserId, setCurrentUserId] = useState<string>('');
 
   // Shared Date Range & Filters
-  const [startDate, setStartDate] = useState<string>(() => getDaysAgoDateStr(14));
+  const [viewWindow, setViewWindow] = useState<'active_30d' | 'all' | 'custom'>('active_30d');
+  const [startDate, setStartDate] = useState<string>(() => getDaysAgoDateStr(30));
   const [endDate, setEndDate] = useState<string>(() => getLocalDateStr());
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [operatorFilter, setOperatorFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
+  const [includeFormerOperators, setIncludeFormerOperators] = useState<boolean>(false);
 
   // Data States
   const [operators, setOperators] = useState<OpnameOperator[]>([]);
+  const [allOperators, setAllOperators] = useState<OpnameOperator[]>([]);
+  const [operatorAccessList, setOperatorAccessList] = useState<OperatorAccessConfig[]>([]);
+  const [savingAccessId, setSavingAccessId] = useState<string | null>(null);
   const [cycleProgress, setCycleProgress] = useState<OpnameCycleProgress | null>(null);
   const [comparisonRows, setComparisonRows] = useState<OpnameComparisonRow[]>([]);
   const [kpiRows, setKpiRows] = useState<OperatorKpiRow[]>([]);
@@ -156,18 +169,24 @@ export default function StockOpnameAudit() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [ops, progress, comparisons, kpis] = await Promise.all([
+      const [ops, allOps, accessConfigs, progress, comparisons, kpis] = await Promise.all([
         getOpnameOperators(),
+        getOpnameOperators({ includeDisabled: true, includeInactive: true }),
+        getOperatorAccessConfigs(),
         getActiveCycleProgress(),
         getOpnameComparisonList({
-          startDate,
-          endDate,
+          mode: viewWindow,
+          sinceDate: getDaysAgoDateStr(30),
+          startDate: viewWindow === 'custom' ? startDate : undefined,
+          endDate: viewWindow === 'custom' ? endDate : undefined,
           status: statusFilter,
           operatorId: operatorFilter,
         }),
         getOperatorOpnameKpis(startDate, endDate),
       ]);
       setOperators(ops);
+      setAllOperators(allOps);
+      setOperatorAccessList(accessConfigs);
       setCycleProgress(progress);
       setComparisonRows(comparisons);
       setKpiRows(kpis);
@@ -176,11 +195,15 @@ export default function StockOpnameAudit() {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, statusFilter, operatorFilter, showToast]);
+  }, [viewWindow, startDate, endDate, statusFilter, operatorFilter, showToast]);
 
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, operatorFilter, viewWindow, startDate, endDate, itemsPerPage]);
 
   const handleSyncAssignments = async () => {
     setIsSyncing(true);
@@ -209,6 +232,28 @@ export default function StockOpnameAudit() {
         r.assigned_operator_name.toLowerCase().includes(q)
     );
   }, [comparisonRows, searchQuery]);
+
+  const totalComparisonPages = Math.ceil(filteredComparisonRows.length / itemsPerPage);
+  const safeComparisonPage =
+    totalComparisonPages === 0 ? 1 : Math.min(currentPage, totalComparisonPages);
+  const paginatedComparisonRows = useMemo(
+    () =>
+      filteredComparisonRows.slice(
+        (safeComparisonPage - 1) * itemsPerPage,
+        safeComparisonPage * itemsPerPage
+      ),
+    [filteredComparisonRows, safeComparisonPage, itemsPerPage]
+  );
+
+  const formerOperatorsCount = useMemo(
+    () => kpiRows.filter((k) => !k.isActive).length,
+    [kpiRows]
+  );
+
+  const visibleKpiRows = useMemo(
+    () => (includeFormerOperators ? kpiRows : kpiRows.filter((k) => k.isActive)),
+    [kpiRows, includeFormerOperators]
+  );
 
   const summary = useMemo(() => {
     const awaitingVerification = comparisonRows.filter(
@@ -335,6 +380,54 @@ export default function StockOpnameAudit() {
     }
   };
 
+  const handleToggleOperatorAccess = async (
+    op: OperatorAccessConfig,
+    field: keyof OperatorAccessUpdatePayload,
+    nextValue: boolean
+  ) => {
+    let normalized: OperatorAccessUpdatePayload;
+    try {
+      normalized = normalizeOperatorAccessUpdate(
+        {
+          can_access_pos: op.can_access_pos,
+          can_access_opname: op.can_access_opname,
+          opname_only_login: op.opname_only_login,
+        },
+        { [field]: nextValue }
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Kombinasi hak akses operator tidak valid.', 'warning');
+      return;
+    }
+
+    setSavingAccessId(op.id);
+    try {
+      const { config, reassignedCount } = await updateOperatorAccessConfig(op.id, normalized);
+
+      setOperatorAccessList((prev) =>
+        prev.map((item) => (item.id === op.id ? { ...item, ...config } : item))
+      );
+
+      if (!op.can_access_opname && config.can_access_opname) {
+        await ensureDailyOpnameAssignments({ operatorId: op.id });
+      }
+
+      const reassignNote =
+        reassignedCount > 0
+          ? ` ${reassignedCount} tugas pending dialihkan ke operator opname aktif.`
+          : '';
+      showToast(
+        `Hak akses "${op.nama}" berhasil diperbarui.${reassignNote}`,
+        'success'
+      );
+      await fetchAll();
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memperbarui hak akses operator', 'error');
+    } finally {
+      setSavingAccessId(null);
+    }
+  };
+
   const cyclePct =
     cycleProgress && cycleProgress.totalActiveProducts > 0
       ? Math.min(
@@ -422,44 +515,66 @@ export default function StockOpnameAudit() {
               <Award className="w-4 h-4" />
               <span>Evaluasi &amp; Peringkat KPI Operator</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('access')}
+              className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors cursor-pointer ${
+                activeTab === 'access'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <UserCog className="w-4 h-4" />
+              <span>Hak Akses &amp; Mode Operator</span>
+            </button>
           </div>
 
           {/* Shared Quick Date Presets */}
-          <div className="flex flex-wrap items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 rounded border border-slate-200 text-slate-700 text-xs"
-            />
-            <span className="text-slate-400">s/d</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 rounded border border-slate-200 text-slate-700 text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                setStartDate(getLocalDateStr());
-                setEndDate(getLocalDateStr());
-              }}
-              className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer"
-            >
-              Hari Ini
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStartDate(getMonthStartStr());
-                setEndDate(getLocalDateStr());
-              }}
-              className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer"
-            >
-              Bulan Ini
-            </button>
-          </div>
+          {activeTab !== 'access' && (
+            <div className="flex flex-wrap items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 text-xs">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  if (activeTab === 'audit') setViewWindow('custom');
+                }}
+                className="px-2 py-1 rounded border border-slate-200 text-slate-700 text-xs"
+              />
+              <span className="text-slate-400">s/d</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  if (activeTab === 'audit') setViewWindow('custom');
+                }}
+                className="px-2 py-1 rounded border border-slate-200 text-slate-700 text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDate(getLocalDateStr());
+                  setEndDate(getLocalDateStr());
+                  if (activeTab === 'audit') setViewWindow('custom');
+                }}
+                className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer"
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStartDate(getMonthStartStr());
+                  setEndDate(getLocalDateStr());
+                  if (activeTab === 'audit') setViewWindow('custom');
+                }}
+                className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer"
+              >
+                Bulan Ini
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ══════════════════════════════════════════════════
@@ -533,6 +648,20 @@ export default function StockOpnameAudit() {
                 </div>
 
                 <select
+                  value={viewWindow}
+                  onChange={(e) =>
+                    setViewWindow(e.target.value as 'active_30d' | 'all' | 'custom')
+                  }
+                  className="px-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700 font-medium"
+                >
+                  <option value="active_30d">
+                    Belum Selesai &amp; 30 Hari Terakhir (Default)
+                  </option>
+                  <option value="all">Semua Riwayat</option>
+                  <option value="custom">Rentang Tanggal Kustom</option>
+                </select>
+
+                <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
                   className="px-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700"
@@ -551,9 +680,10 @@ export default function StockOpnameAudit() {
                   className="px-3 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-700"
                 >
                   <option value="all">Semua Operator</option>
-                  {operators.map((op) => (
+                  {(allOperators.length > 0 ? allOperators : operators).map((op) => (
                     <option key={op.id} value={op.id}>
                       {op.nama}
+                      {op.is_active === false ? ' (Nonaktif)' : ''}
                     </option>
                   ))}
                 </select>
@@ -611,7 +741,7 @@ export default function StockOpnameAudit() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredComparisonRows.map((row) => {
+                      {paginatedComparisonRows.map((row) => {
                         const mut = row.mutations_since_count;
                         const activeVariance =
                           row.status === 'resolved'
@@ -643,14 +773,21 @@ export default function StockOpnameAudit() {
                               <div className="font-semibold text-slate-800">
                                 {row.assigned_operator_name}
                               </div>
+                              {row.assigned_operator_is_active === false && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600 mt-0.5">
+                                  Nonaktif
+                                </span>
+                              )}
                               {row.reassigned_from_operator_name && (
                                 <div className="text-[11px] text-sky-700 mt-0.5">
                                   Alihan dari: {row.reassigned_from_operator_name}
+                                  {row.reassigned_from_operator_is_active === false ? ' (Nonaktif)' : ''}
                                 </div>
                               )}
                               {row.recount_operator_name && (
                                 <div className="text-[11px] text-purple-700 mt-0.5">
                                   Re-Count: {row.recount_operator_name}
+                                  {row.recount_operator_is_active === false ? ' (Nonaktif)' : ''}
                                 </div>
                               )}
                             </td>
@@ -851,6 +988,58 @@ export default function StockOpnameAudit() {
                   </table>
                 </div>
               )}
+
+              {!loading && filteredComparisonRows.length > 0 && (
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm px-4 py-3.5 border-t border-slate-200 bg-slate-50/70">
+                  <div className="flex flex-wrap items-center gap-2 text-slate-600">
+                    <span>
+                      Menampilkan {(safeComparisonPage - 1) * itemsPerPage + 1}&ndash;
+                      {Math.min(safeComparisonPage * itemsPerPage, filteredComparisonRows.length)}{' '}
+                      dari {filteredComparisonRows.length} tugas
+                    </span>
+                    <select
+                      aria-label="Jumlah baris per halaman"
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 text-xs cursor-pointer"
+                    >
+                      <option value={10}>10 / halaman</option>
+                      <option value={25}>25 / halaman</option>
+                      <option value={50}>50 / halaman</option>
+                      <option value={100}>100 / halaman</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safeComparisonPage === 1}
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-semibold px-2.5 text-slate-700 tabular-nums">
+                      {safeComparisonPage} / {totalComparisonPages || 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((p) => Math.min(totalComparisonPages, p + 1))
+                      }
+                      disabled={
+                        safeComparisonPage === totalComparisonPages || totalComparisonPages === 0
+                      }
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -889,12 +1078,37 @@ export default function StockOpnameAudit() {
 
             {/* KPI Leaderboard Table */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-slate-600">
+                  Menampilkan <strong className="text-slate-900">{visibleKpiRows.length}</strong>{' '}
+                  operator
+                  {!includeFormerOperators && formerOperatorsCount > 0 && (
+                    <span className="text-slate-400">
+                      {' '}
+                      ({formerOperatorsCount} mantan operator disembunyikan)
+                    </span>
+                  )}
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeFormerOperators}
+                    onChange={(e) => setIncludeFormerOperators(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>
+                    Sertakan Mantan Operator
+                    {formerOperatorsCount > 0 ? ` (${formerOperatorsCount})` : ''}
+                  </span>
+                </label>
+              </div>
+
               {loading ? (
                 <div className="py-20 text-center text-slate-500 text-sm">
                   <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-2" />
                   <p>Menghitung KPI operator...</p>
                 </div>
-              ) : kpiRows.length === 0 ? (
+              ) : visibleKpiRows.length === 0 ? (
                 <div className="py-16 text-center text-slate-500 text-sm">
                   <Award className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                   <p className="font-semibold text-slate-700">
@@ -918,7 +1132,7 @@ export default function StockOpnameAudit() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {kpiRows.map((kpi, idx) => (
+                      {visibleKpiRows.map((kpi, idx) => (
                         <tr key={kpi.operator_id} className="hover:bg-slate-50/70">
                           <td className="px-4 py-3.5 text-center font-bold">
                             <span
@@ -936,7 +1150,14 @@ export default function StockOpnameAudit() {
                             </span>
                           </td>
                           <td className="px-4 py-3.5">
-                            <div className="font-bold text-slate-900">{kpi.operator_name}</div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-bold text-slate-900">{kpi.operator_name}</span>
+                              {!kpi.isActive && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 text-slate-600">
+                                  Nonaktif
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[11px] text-slate-500">
                               Audit Disahkan: {kpi.resolved_primary_count} • Re-Count: {kpi.recount_completed_count}
                               {kpi.reassigned_away_count > 0 && ` • Dialihkan saat libur: ${kpi.reassigned_away_count}`}
@@ -985,6 +1206,325 @@ export default function StockOpnameAudit() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {!loading && filteredComparisonRows.length > 0 && (
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm px-4 py-3.5 border-t border-slate-200 bg-slate-50/70">
+                  <div className="flex flex-wrap items-center gap-2 text-slate-600">
+                    <span>
+                      Menampilkan {(safeComparisonPage - 1) * itemsPerPage + 1}&ndash;
+                      {Math.min(safeComparisonPage * itemsPerPage, filteredComparisonRows.length)}{' '}
+                      dari {filteredComparisonRows.length} tugas
+                    </span>
+                    <select
+                      aria-label="Jumlah baris per halaman"
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 text-xs cursor-pointer"
+                    >
+                      <option value={10}>10 / halaman</option>
+                      <option value={25}>25 / halaman</option>
+                      <option value={50}>50 / halaman</option>
+                      <option value={100}>100 / halaman</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safeComparisonPage === 1}
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-semibold px-2.5 text-slate-700 tabular-nums">
+                      {safeComparisonPage} / {totalComparisonPages || 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((p) => Math.min(totalComparisonPages, p + 1))
+                      }
+                      disabled={
+                        safeComparisonPage === totalComparisonPages || totalComparisonPages === 0
+                      }
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════
+            TAB 3: HAK AKSES & MODE OPERATOR
+           ══════════════════════════════════════════════════ */}
+        {activeTab === 'access' && (
+          <div className="space-y-5">
+            <div className="bg-gradient-to-r from-slate-900 to-teal-950 text-white rounded-2xl p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-teal-300 text-xs font-bold uppercase tracking-wider">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Kontrol Fitur Kasir POS vs Cek Fisik Inventory</span>
+                </div>
+                <h2 className="text-lg font-bold">
+                  Pengaturan Hak Akses &amp; Mode Login Operator
+                </h2>
+                <p className="text-xs text-slate-300 max-w-3xl">
+                  Atur akun operator mana yang boleh mengakses Kasir POS, mana yang masuk rotasi tugas Cek Fisik Inventory harian, serta akun yang langsung diarahkan ke layar Cek Fisik saja saat login tanpa modal Buka Shift Kasir.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] shrink-0">
+                <span className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 font-semibold">
+                  Total Operator: <strong>{operatorAccessList.length}</strong>
+                </span>
+                <span className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 font-semibold">
+                  Ikut Opname:{' '}
+                  <strong className="text-emerald-300">
+                    {operatorAccessList.filter((o) => o.can_access_opname).length}
+                  </strong>
+                </span>
+                <span className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 font-semibold">
+                  Mode Cek Fisik Langsung:{' '}
+                  <strong className="text-amber-300">
+                    {operatorAccessList.filter((o) => o.opname_only_login).length}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+              {loading ? (
+                <div className="py-20 text-center text-slate-500 text-sm">
+                  <Loader2 className="w-8 h-8 animate-spin text-teal-600 mx-auto mb-2" />
+                  <p>Memuat daftar hak akses operator...</p>
+                </div>
+              ) : operatorAccessList.length === 0 ? (
+                <div className="py-16 text-center text-slate-500 text-sm">
+                  <UserCog className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                  <p className="font-semibold text-slate-700">
+                    Belum ada akun operator terdaftar
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Tambahkan akun ber-role operator melalui menu Manajemen User Sistem terlebih dahulu.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs sm:text-sm text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      <tr>
+                        <th className="px-5 py-3.5">Nama &amp; Akun Operator</th>
+                        <th className="px-5 py-3.5 text-center">Akses Kasir (POS)</th>
+                        <th className="px-5 py-3.5 text-center">Akses Cek Fisik Inventory</th>
+                        <th className="px-5 py-3.5 text-center">Login Langsung Cek Fisik Saja</th>
+                        <th className="px-5 py-3.5">Ringkasan Mode Aktif</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {operatorAccessList.map((op) => {
+                        const isSaving = savingAccessId === op.id;
+
+                        const modeBadge =
+                          !op.can_access_pos && op.can_access_opname
+                            ? {
+                                label: 'Khusus Cek Fisik (Tanpa Shift Kasir)',
+                                cls: 'bg-purple-100 text-purple-800 border-purple-200',
+                              }
+                            : op.can_access_pos && !op.can_access_opname
+                              ? {
+                                  label: 'Kasir Saja',
+                                  cls: 'bg-sky-100 text-sky-800 border-sky-200',
+                                }
+                              : op.can_access_pos && op.can_access_opname && op.opname_only_login
+                                ? {
+                                    label: 'Cek Fisik Utama (+ Opsi Kasir)',
+                                    cls: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                                  }
+                                : {
+                                    label: 'Kasir + Cek Fisik',
+                                    cls: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                                  };
+
+                        return (
+                          <tr key={op.id} className="hover:bg-slate-50/70 align-middle">
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900">{op.nama}</span>
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600">
+                                  {op.role}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5 font-mono">
+                                {op.email || `${op.id.slice(0, 8)}...`}
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <div className="flex flex-col items-center gap-1">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={op.can_access_pos}
+                                  aria-label={`Akses Kasir POS untuk ${op.nama}`}
+                                  disabled={isSaving}
+                                  onClick={() =>
+                                    handleToggleOperatorAccess(
+                                      op,
+                                      'can_access_pos',
+                                      !op.can_access_pos
+                                    )
+                                  }
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                                    op.can_access_pos ? 'bg-teal-600' : 'bg-slate-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-xs ${
+                                      op.can_access_pos ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                  />
+                                </button>
+                                <span className="text-[10px] text-slate-500">
+                                  {op.can_access_pos ? 'Diizinkan' : 'Diblokir'}
+                                </span>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <div className="flex flex-col items-center gap-1">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={op.can_access_opname}
+                                  aria-label={`Akses Cek Fisik Inventory untuk ${op.nama}`}
+                                  disabled={isSaving}
+                                  onClick={() =>
+                                    handleToggleOperatorAccess(
+                                      op,
+                                      'can_access_opname',
+                                      !op.can_access_opname
+                                    )
+                                  }
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                                    op.can_access_opname ? 'bg-emerald-600' : 'bg-slate-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-xs ${
+                                      op.can_access_opname ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                  />
+                                </button>
+                                <span className="text-[10px] text-slate-500 max-w-[160px]">
+                                  Ikut rotasi &amp; kuota cek fisik harian
+                                </span>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 text-center">
+                              <div className="flex flex-col items-center gap-1">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={op.opname_only_login}
+                                  aria-label={`Login Langsung Cek Fisik Saja untuk ${op.nama}`}
+                                  disabled={isSaving}
+                                  onClick={() =>
+                                    handleToggleOperatorAccess(
+                                      op,
+                                      'opname_only_login',
+                                      !op.opname_only_login
+                                    )
+                                  }
+                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                                    op.opname_only_login ? 'bg-amber-500' : 'bg-slate-300'
+                                  }`}
+                                >
+                                  <span
+                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-xs ${
+                                      op.opname_only_login ? 'translate-x-6' : 'translate-x-1'
+                                    }`}
+                                  />
+                                </button>
+                                <span className="text-[10px] text-slate-500 max-w-[200px]">
+                                  Lewati modal Buka Shift Kasir &amp; langsung tampil layar Cek Fisik
+                                </span>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${modeBadge.cls}`}
+                              >
+                                {isSaving ? 'Menyimpan...' : modeBadge.label}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {!loading && filteredComparisonRows.length > 0 && (
+                <div className="flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm px-4 py-3.5 border-t border-slate-200 bg-slate-50/70">
+                  <div className="flex flex-wrap items-center gap-2 text-slate-600">
+                    <span>
+                      Menampilkan {(safeComparisonPage - 1) * itemsPerPage + 1}&ndash;
+                      {Math.min(safeComparisonPage * itemsPerPage, filteredComparisonRows.length)}{' '}
+                      dari {filteredComparisonRows.length} tugas
+                    </span>
+                    <select
+                      aria-label="Jumlah baris per halaman"
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 rounded-lg border border-slate-200 bg-white font-medium text-slate-700 text-xs cursor-pointer"
+                    >
+                      <option value={10}>10 / halaman</option>
+                      <option value={25}>25 / halaman</option>
+                      <option value={50}>50 / halaman</option>
+                      <option value={100}>100 / halaman</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safeComparisonPage === 1}
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-semibold px-2.5 text-slate-700 tabular-nums">
+                      {safeComparisonPage} / {totalComparisonPages || 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((p) => Math.min(totalComparisonPages, p + 1))
+                      }
+                      disabled={
+                        safeComparisonPage === totalComparisonPages || totalComparisonPages === 0
+                      }
+                      className="px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
