@@ -33,6 +33,7 @@ import LaporanRetail from './pages/admin/laporan-retail';
 import LaporanMutasiBarang from './pages/admin/LaporanMutasiBarang';
 import StockOpnameAudit from './pages/admin/StockOpnameAudit';
 import LaporanPenarikanSimpanan from './pages/admin/LaporanPenarikanSimpanan';
+import MonthlyClosing from './pages/admin/MonthlyClosing';
 import TutupBuku from './pages/admin/TutupBuku';
 import PengaturanKoperasi from './pages/admin/PengaturanKoperasi';
 import PengaturanKasir from './pages/admin/PengaturanKasir';
@@ -301,6 +302,15 @@ export default function App() {
           element={
             <ProtectedRoute requireAdmin={true}>
               <AuditDataOrphan />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/admin/tutup-bulan" 
+          element={
+            <ProtectedRoute requireAdmin={true}>
+              <MonthlyClosing />
             </ProtectedRoute>
           } 
         />

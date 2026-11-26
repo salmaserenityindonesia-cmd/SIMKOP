@@ -35,6 +35,7 @@ import {
   Landmark,
   ShieldAlert,
   ClipboardCheck,
+  CalendarCheck2,
 } from 'lucide-react';
 import {
   scanAllOrphanRecords,
@@ -179,6 +180,7 @@ export const navigationGroups: NavigationGroup[] = [
     items: [
       { label: 'Laporan Keuangan Terpadu', icon: FileSpreadsheet, href: '/admin/laporan-keuangan', adminOnly: true },
       { label: 'Verifikasi Data Orphan', icon: ShieldAlert, href: '/admin/audit-orphan', adminOnly: true },
+      { label: 'Rekap Akhir Bulan', icon: CalendarCheck2, href: '/admin/tutup-bulan', adminOnly: true },
       { label: 'Tutup Buku & SHU RAT', icon: Landmark, href: '/admin/tutup-buku', adminOnly: true },
     ],
   },
