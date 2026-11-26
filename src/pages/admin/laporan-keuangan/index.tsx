@@ -230,6 +230,9 @@ const KATEGORI_BADGE: Record<string, { bg: string; text: string; label: string }
   PEMBAGIAN_SHU_RAT: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
   pembagian_shu_rat: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
   'Pembagian SHU (RAT)': { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Pembagian SHU (RAT)' },
+  KOREKSI_TAHUN_LALU: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Koreksi Tahun Lalu (Pasca-RAT)' },
+  koreksi_tahun_lalu: { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Koreksi Tahun Lalu (Pasca-RAT)' },
+  'Koreksi Tahun Lalu (Pasca-RAT)': { bg: 'bg-purple-50 border border-purple-200', text: 'text-purple-800', label: 'Koreksi Tahun Lalu (Pasca-RAT)' },
   beban_operasional: { bg: 'bg-red-50', text: 'text-red-800', label: 'Beban Operasional' },
 };
 
@@ -1330,6 +1333,9 @@ export async function getShuEstimation(
     'Koreksi / Pembatalan',
     'PEMBAGIAN_SHU_RAT',
     'pembagian_shu_rat',
+    'KOREKSI_TAHUN_LALU',
+    'koreksi_tahun_lalu',
+    'Koreksi Tahun Lalu (Pasca-RAT)',
     'OPENING_BALANCE_NEW_YEAR',
   ]);
 

@@ -13,9 +13,18 @@ export const REQUIRED_SAVINGS_HEADERS = [
   'jumlah_simpanan_lebaran',
 ] as const;
 
-export const INITIAL_SAVINGS_HEADERS = REQUIRED_SAVINGS_HEADERS;
+export const INITIAL_SAVINGS_HEADERS = [
+  'nomor_referensi',
+  'nrp',
+  'nama',
+  'jumlah_simpanan_pokok',
+  'jumlah_simpanan_wajib',
+  'jumlah_simpanan_belanja',
+  'jumlah_simpanan_lebaran',
+] as const;
 
 export interface InitialSavingsRow {
+  nomor_referensi?: string;
   nrp: string;
   nama: string;
   jumlah_simpanan_pokok: number;
@@ -27,6 +36,7 @@ export interface InitialSavingsRow {
 }
 
 export interface InitialSavingsTemplateMember {
+  nomor_referensi?: string | null;
   nrp?: string | null;
   nama?: string | null;
   status?: string | null;
@@ -38,7 +48,7 @@ export const normalizeName = (val: unknown): string =>
 
 async function fetchRegisteredMembersFallback(): Promise<InitialSavingsTemplateMember[] | null> {
   try {
-    const query: any = supabase.from('anggota')?.select('nrp, nama');
+    const query: any = supabase.from('anggota')?.select('nomor_referensi, nrp, nama');
     if (!query || typeof query.then !== 'function') return null;
     const { data, error } = await query;
     if (!error && Array.isArray(data)) {
@@ -51,7 +61,7 @@ async function fetchRegisteredMembersFallback(): Promise<InitialSavingsTemplateM
 }
 
 /**
- * Membangun workbook Excel template 6 kolom Saldo Awal Simpanan.
+ * Membangun workbook Excel template 7 kolom Saldo Awal Simpanan.
  * Jika daftar anggota tidak disediakan, mencoba mengambil anggota aktif dari database.
  */
 export async function buildInitialSavingsTemplateWorkbook(
@@ -63,7 +73,7 @@ export async function buildInitialSavingsTemplateWorkbook(
     try {
       const { data, error } = await supabase
         .from('anggota')
-        .select('nrp, nama, status, membership_status')
+        .select('nomor_referensi, nrp, nama, status, membership_status')
         .order('nama', { ascending: true });
 
       if (!error && Array.isArray(data) && data.length > 0) {
@@ -87,6 +97,7 @@ export async function buildInitialSavingsTemplateWorkbook(
   const worksheet = workbook.addWorksheet('Saldo Awal Simpanan');
 
   worksheet.columns = [
+    { header: 'nomor_referensi', key: 'nomor_referensi', width: 20 },
     { header: 'nrp', key: 'nrp', width: 18 },
     { header: 'nama', key: 'nama', width: 30 },
     { header: 'jumlah_simpanan_pokok', key: 'jumlah_simpanan_pokok', width: 24 },
@@ -95,14 +106,16 @@ export async function buildInitialSavingsTemplateWorkbook(
     { header: 'jumlah_simpanan_lebaran', key: 'jumlah_simpanan_lebaran', width: 24 },
   ];
 
+  worksheet.getColumn('nomor_referensi').numFmt = '@';
   worksheet.getColumn('nrp').numFmt = '@';
   worksheet.getColumn('nama').numFmt = '@';
 
   if (activeMembers.length > 0) {
     for (const member of activeMembers) {
       worksheet.addRow({
-        nrp: String(member.nrp || '').trim(),
-        nama: String(member.nama || '-').trim(),
+        nomor_referensi: String(member.nomor_referensi ?? '').trim(),
+        nrp: String(member.nrp ?? '').trim(),
+        nama: String(member.nama ?? '-').trim(),
         jumlah_simpanan_pokok: 0,
         jumlah_simpanan_wajib: 0,
         jumlah_simpanan_belanja: 0,
@@ -111,6 +124,7 @@ export async function buildInitialSavingsTemplateWorkbook(
     }
   } else {
     worksheet.addRow({
+      nomor_referensi: '0001',
       nrp: '95168420',
       nama: 'Budi Santoso',
       jumlah_simpanan_pokok: 0,
@@ -204,6 +218,7 @@ export async function parseInitialSavingsExcel(
   if (
     headerList.includes('jumlah_pinjaman') ||
     headerList.includes('jenis_pinjaman') ||
+    headerList.includes('pangkat') ||
     headerList.includes('tanggal_lahir') ||
     headerList.includes('tanggal lahir')
   ) {
@@ -247,6 +262,8 @@ export async function parseInitialSavingsExcel(
       return extractCellValue(row.getCell(idx));
     };
 
+    const rawNoRef = getVal('nomor_referensi');
+    const nomorReferensi = rawNoRef !== null && rawNoRef !== undefined ? String(rawNoRef).trim() : '';
     const rawNrp = getVal('nrp');
     const nrp = rawNrp !== null && rawNrp !== undefined ? String(rawNrp).trim() : '';
     const rawNama = getVal('nama');
@@ -286,6 +303,7 @@ export async function parseInitialSavingsExcel(
     }
 
     rows.push({
+      nomor_referensi: nomorReferensi,
       nrp,
       nama: namaDisplay,
       jumlah_simpanan_pokok: pokok,

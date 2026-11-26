@@ -927,6 +927,55 @@ function formatSafeDate(dateInput?: string | Date | null): string {
   return `${y}-${m}-${day}`;
 }
 
+const EXPORT_PAGE_SIZE = 1000;
+const EXPORT_IN_CHUNK_SIZE = 100;
+
+async function fetchPagedExportTable<T = any>(
+  table: string,
+  selectClause: string,
+  configureQuery?: (query: any) => any
+): Promise<{ data: T[]; error: any }> {
+  let from = 0;
+  let allRows: T[] = [];
+
+  while (true) {
+    let query: any = supabase.from(table).select(selectClause);
+    if (configureQuery) {
+      query = configureQuery(query);
+    }
+    const { data, error } = await query.range(from, from + EXPORT_PAGE_SIZE - 1);
+    if (error) {
+      return { data: allRows, error };
+    }
+    if (!data || data.length === 0) {
+      break;
+    }
+    allRows = allRows.concat(data as T[]);
+    if (data.length < EXPORT_PAGE_SIZE) {
+      break;
+    }
+    from += EXPORT_PAGE_SIZE;
+  }
+
+  return { data: allRows, error: null };
+}
+
+function classifyDepositCategory(
+  code?: string | null,
+  name?: string | null
+): 'pokok' | 'wajib' | 'belanja' | 'lebaran' | null {
+  const c = (code || '').trim().toUpperCase();
+  const n = (name || '').trim().toLowerCase();
+
+  if (c === 'POKOK' || c === 'SP' || n.includes('pokok')) return 'pokok';
+  if (c === 'WAJIB' || c === 'SW' || n.includes('wajib')) return 'wajib';
+  if (c === 'BELANJA' || c === 'SB' || n.includes('belanja')) return 'belanja';
+  if (c === 'LEBARAN' || c === 'SL' || n.includes('lebaran') || n.includes('hari raya')) {
+    return 'lebaran';
+  }
+  return null;
+}
+
 export async function getMembersComprehensiveReport(
   memberIds?: string[]
 ): Promise<MemberComprehensiveExportRow[]> {
@@ -934,169 +983,208 @@ export async function getMembersComprehensiveReport(
     return [];
   }
 
-  // Query 1: Anggota
-  let memberQuery = supabase
-    .from('anggota')
-    .select('id, nomor_referensi, nrp, nama, tanggal_lahir, bank_account_number, membership_status, created_at, status');
+  // Query 1: Anggota (hindari .in() raksasa yang melebihi batas panjang URI PostgREST/Cloudflare)
+  let members: any[] = [];
+  if (memberIds && memberIds.length > 0 && memberIds.length <= EXPORT_IN_CHUNK_SIZE) {
+    const { data, error: memberError } = await supabase
+      .from('anggota')
+      .select('*')
+      .in('id', memberIds)
+      .order('nama', { ascending: true });
 
-  if (memberIds && memberIds.length > 0) {
-    memberQuery = memberQuery.in('id', memberIds);
-  }
-
-  const { data: members, error: memberError } = await memberQuery.order('nama', { ascending: true });
-  if (memberError) {
-    throw new Error(`Gagal memuat data anggota: ${memberError.message}`);
-  }
-
-  if (!members || members.length === 0) {
-    return [];
-  }
-
-  const targetMemberIds = members.map((m: any) => m.id);
-
-  // Query 2: Simpanan
-  let depositsQuery = supabase
-    .from('member_deposits')
-    .select(`
-      member_id,
-      deposit_types ( name ),
-      deposit_transactions ( amount, transaction_type )
-    `);
-
-  if (targetMemberIds.length > 0) {
-    depositsQuery = depositsQuery.in('member_id', targetMemberIds);
-  }
-
-  const { data: depositsData, error: depositsError } = await depositsQuery;
-  if (depositsError) {
-    console.warn('Gagal memuat relasi simpanan anggota:', depositsError.message);
-  }
-
-  // Agregasi saldo simpanan per member_id dan kategori
-  const depositTotals: Record<
-    string,
-    { pokok: number; wajib: number; belanja: number; lebaran: number }
-  > = {};
-
-  if (depositsData) {
-    for (const item of depositsData as any[]) {
-      const memberId = item.member_id;
-      if (!memberId) continue;
-
-      if (!depositTotals[memberId]) {
-        depositTotals[memberId] = { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
-      }
-
-      const typeInfo = Array.isArray(item.deposit_types)
-        ? item.deposit_types[0]
-        : item.deposit_types;
-      const typeName = (typeInfo?.name || '').toLowerCase();
-
-      const txs = Array.isArray(item.deposit_transactions)
-        ? item.deposit_transactions
-        : [];
-
-      let netBalance = 0;
-      for (const tx of txs) {
-        const amt = Number(tx.amount || 0);
-        if (isNaN(amt)) continue;
-        if (tx.transaction_type === 'withdrawal') {
-          netBalance -= amt;
-        } else {
-          netBalance += amt;
-        }
-      }
-
-      if (typeName.includes('pokok')) {
-        depositTotals[memberId].pokok += netBalance;
-      } else if (typeName.includes('wajib')) {
-        depositTotals[memberId].wajib += netBalance;
-      } else if (typeName.includes('belanja')) {
-        depositTotals[memberId].belanja += netBalance;
-      } else if (typeName.includes('lebaran') || typeName.includes('hari raya')) {
-        depositTotals[memberId].lebaran += netBalance;
-      }
+    if (memberError) {
+      throw new Error(`Gagal memuat data anggota: ${memberError.message}`);
+    }
+    members = data || [];
+  } else {
+    const { data: pagedMembers, error: memberError } = await fetchPagedExportTable<any>(
+      'anggota',
+      '*',
+      (q) => q.order('nama', { ascending: true })
+    );
+    if (memberError) {
+      throw new Error(`Gagal memuat data anggota: ${memberError.message}`);
+    }
+    if (memberIds && memberIds.length > 0) {
+      const idSet = new Set(memberIds);
+      members = pagedMembers.filter((m: any) => idSet.has(m.id));
+    } else {
+      members = pagedMembers;
     }
   }
 
-  // Query 3: Pinjaman Aktif
-  let loansQuery = supabase
-    .from('loans')
-    .select(`
-      id, member_id, amount, principal_amount, tenor, agreed_tenor_months, disbursed_at, created_at, status,
-      loan_schedules ( id, target_amount, paid_amount, status ),
-      loan_repayments ( amount_paid )
-    `)
-    .in('status', ['active', 'approved']);
-
-  if (targetMemberIds.length > 0) {
-    loansQuery = loansQuery.in('member_id', targetMemberIds);
+  if (members.length === 0) {
+    return [];
   }
 
-  const { data: loansData, error: loansError } = await loansQuery;
+  const targetMemberSet = new Set<string>(members.map((m: any) => m.id).filter(Boolean));
+
+  // Query 2: Jenis Simpanan, Akun Simpanan Anggota, dan Mutasi Transaksi secara terpisah + paginasi
+  const [typesRes, depositsRes, transactionsRes] = await Promise.all([
+    supabase.from('deposit_types').select('id, code, name'),
+    fetchPagedExportTable<any>('member_deposits', 'id, member_id, deposit_type_id, balance'),
+    fetchPagedExportTable<any>('deposit_transactions', 'member_deposit_id, transaction_type, amount'),
+  ]);
+
+  if (typesRes.error) {
+    console.warn('Gagal memuat jenis simpanan:', typesRes.error.message);
+  }
+  if (depositsRes.error) {
+    console.warn('Gagal memuat simpanan anggota:', depositsRes.error.message);
+  }
+  if (transactionsRes.error) {
+    console.warn('Gagal memuat mutasi simpanan anggota:', transactionsRes.error.message);
+  }
+
+  const depositTypeMap = new Map<string, { code?: string | null; name?: string | null }>();
+  for (const dt of typesRes.data || []) {
+    if (dt?.id) {
+      depositTypeMap.set(dt.id, { code: dt.code, name: dt.name });
+    }
+  }
+
+  const txNetByDepositId = new Map<string, number>();
+  const hasTxByDepositId = new Set<string>();
+  for (const tx of transactionsRes.data || []) {
+    const depId = tx?.member_deposit_id;
+    if (!depId) continue;
+    hasTxByDepositId.add(depId);
+    const amt = Number(tx.amount || 0);
+    if (isNaN(amt)) continue;
+    const prev = txNetByDepositId.get(depId) ?? 0;
+    txNetByDepositId.set(
+      depId,
+      tx.transaction_type === 'withdrawal' ? prev - amt : prev + amt
+    );
+  }
+
+  // Agregasi saldo simpanan per member_id dan kategori
+  const depositTotals = new Map<
+    string,
+    { pokok: number; wajib: number; belanja: number; lebaran: number }
+  >();
+
+  for (const dep of depositsRes.data || []) {
+    const memberId = dep?.member_id;
+    if (!memberId || !targetMemberSet.has(memberId)) continue;
+
+    let totals = depositTotals.get(memberId);
+    if (!totals) {
+      totals = { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
+      depositTotals.set(memberId, totals);
+    }
+
+    const typeInfo = depositTypeMap.get(dep.deposit_type_id);
+    const category = classifyDepositCategory(typeInfo?.code, typeInfo?.name);
+    if (!category) continue;
+
+    const netBalance = hasTxByDepositId.has(dep.id)
+      ? (txNetByDepositId.get(dep.id) ?? 0)
+      : Number(dep.balance || 0);
+
+    totals[category] += netBalance;
+  }
+
+  // Query 3: Pinjaman Aktif, Jadwal Angsuran, dan Pembayaran secara terpisah + paginasi
+  const { data: loansData, error: loansError } = await fetchPagedExportTable<any>(
+    'loans',
+    '*',
+    (q) => q.in('status', ['active', 'approved'])
+  );
+
   if (loansError) {
     console.warn('Gagal memuat pinjaman aktif anggota:', loansError.message);
   }
 
-  // Kelompokkan pinjaman per member_id
-  const memberLoansMap: Record<string, any[]> = {};
-  if (loansData) {
-    for (const loan of loansData as any[]) {
-      const memberId = loan.member_id;
-      if (!memberId) continue;
-      if (!memberLoansMap[memberId]) {
-        memberLoansMap[memberId] = [];
-      }
-      memberLoansMap[memberId].push(loan);
+  const activeLoans = (loansData || []).filter(
+    (loan: any) => loan?.member_id && targetMemberSet.has(loan.member_id)
+  );
+
+  const schedulesByLoanId = new Map<string, any[]>();
+  const repaymentsByLoanId = new Map<string, any[]>();
+
+  if (activeLoans.length > 0) {
+    const activeLoanIds = new Set<string>(activeLoans.map((l: any) => l.id).filter(Boolean));
+    const [schedulesRes, repaymentsRes] = await Promise.all([
+      fetchPagedExportTable<any>('loan_schedules', 'id, loan_id, target_amount, paid_amount, status'),
+      fetchPagedExportTable<any>('loan_repayments', 'loan_id, amount_paid'),
+    ]);
+
+    if (schedulesRes.error) {
+      console.warn('Gagal memuat jadwal angsuran pinjaman:', schedulesRes.error.message);
     }
+    if (repaymentsRes.error) {
+      console.warn('Gagal memuat riwayat angsuran pinjaman:', repaymentsRes.error.message);
+    }
+
+    for (const sched of schedulesRes.data || []) {
+      if (!sched?.loan_id || !activeLoanIds.has(sched.loan_id)) continue;
+      const list = schedulesByLoanId.get(sched.loan_id) || [];
+      list.push(sched);
+      schedulesByLoanId.set(sched.loan_id, list);
+    }
+
+    for (const rep of repaymentsRes.data || []) {
+      if (!rep?.loan_id || !activeLoanIds.has(rep.loan_id)) continue;
+      const list = repaymentsByLoanId.get(rep.loan_id) || [];
+      list.push(rep);
+      repaymentsByLoanId.set(rep.loan_id, list);
+    }
+  }
+
+  // Kelompokkan pinjaman per member_id
+  const memberLoansMap = new Map<string, any[]>();
+  for (const loan of activeLoans) {
+    const list = memberLoansMap.get(loan.member_id) || [];
+    list.push(loan);
+    memberLoansMap.set(loan.member_id, list);
   }
 
   // Petakan ke MemberComprehensiveExportRow[]
   const result: MemberComprehensiveExportRow[] = members.map((m: any) => {
-    const dep = depositTotals[m.id] || { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
-    const memberLoans = memberLoansMap[m.id] || [];
+    const dep = depositTotals.get(m.id) || { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
+    const memberLoans = memberLoansMap.get(m.id) || [];
 
     let jumlahPinjaman = 0;
     let sisaPinjaman = 0;
     let tenor = 0;
     let tglAwalPinjaman = '';
 
-    if (memberLoans.length > 0) {
-      for (const loan of memberLoans) {
-        const principal = Number(loan.principal_amount || loan.amount || 0);
-        jumlahPinjaman += principal;
+    for (const loan of memberLoans) {
+      const principal = Number(loan.principal_amount || loan.amount || 0);
+      jumlahPinjaman += principal;
 
-        let sisa = 0;
-        const scheds = Array.isArray(loan.loan_schedules) ? loan.loan_schedules : [];
-        if (scheds.length > 0) {
-          sisa = scheds
-            .filter((s: any) => s.status !== 'paid')
-            .reduce((sum: number, s: any) => {
-              const target = Number(s.target_amount || 0);
-              const paid = Number(s.paid_amount || 0);
-              return sum + Math.max(0, target - paid);
-            }, 0);
-        } else {
-          const reps = Array.isArray(loan.loan_repayments) ? loan.loan_repayments : [];
-          const paidReps = reps.reduce(
-            (sum: number, r: any) => sum + Number(r.amount_paid || 0),
-            0
-          );
-          sisa = Math.max(0, principal - paidReps);
-        }
-        sisaPinjaman += sisa;
+      let sisa = 0;
+      const scheds = schedulesByLoanId.get(loan.id) || [];
+      if (scheds.length > 0) {
+        sisa = scheds
+          .filter((s: any) => s.status !== 'paid')
+          .reduce((sum: number, s: any) => {
+            const target = Number(s.target_amount || 0);
+            const paid = Number(s.paid_amount || 0);
+            return sum + Math.max(0, target - paid);
+          }, 0);
+      } else {
+        const reps = repaymentsByLoanId.get(loan.id) || [];
+        const paidReps = reps.reduce(
+          (sum: number, r: any) => sum + Number(r.amount_paid || 0),
+          0
+        );
+        sisa = Math.max(0, principal - paidReps);
+      }
+      sisaPinjaman += sisa;
 
-        const loanTenor = Number(loan.agreed_tenor_months || loan.tenor || 0);
-        if (loanTenor > tenor) {
-          tenor = loanTenor;
-        }
+      const loanTenor = Number(loan.agreed_tenor_months || loan.tenor || 0);
+      if (loanTenor > tenor) {
+        tenor = loanTenor;
+      }
 
-        const dateStr = loan.disbursed_at || loan.created_at;
-        if (dateStr) {
-          const formatted = formatSafeDate(dateStr);
-          if (!tglAwalPinjaman || (formatted && formatted < tglAwalPinjaman)) {
-            tglAwalPinjaman = formatted;
-          }
+      const dateStr =
+        loan.disbursed_at || loan.start_date || loan.approved_at || loan.created_at || loan.applied_at;
+      if (dateStr) {
+        const formatted = formatSafeDate(dateStr);
+        if (!tglAwalPinjaman || (formatted && formatted < tglAwalPinjaman)) {
+          tglAwalPinjaman = formatted;
         }
       }
     }
@@ -1107,7 +1195,7 @@ export async function getMembersComprehensiveReport(
       tanggal_lahir: formatSafeDate(m.tanggal_lahir),
       bank_account_number: m.bank_account_number || '',
       membership_status: m.membership_status || m.status || 'ACTIVE',
-      tgl_awal_anggota: formatSafeDate(m.tgl_awal_anggota || m.created_at),
+      tgl_awal_anggota: formatSafeDate(m.tgl_awal_anggota || m.joined_at || m.created_at),
       jumlah_simpanan_pokok: Math.max(0, dep.pokok),
       jumlah_simpanan_wajib: Math.max(0, dep.wajib),
       jumlah_simpanan_belanja: Math.max(0, dep.belanja),
@@ -1120,6 +1208,278 @@ export async function getMembersComprehensiveReport(
   });
 
   return result;
+}
+
+export interface MemberTemplateDataAnggotaRow {
+  nomor_referensi: string;
+  nrp: string;
+  nama: string;
+  tanggal_lahir: string;
+  bank_account_number: string;
+  membership_status: string;
+  tgl_awal_anggota: string;
+}
+
+export interface MemberTemplateDataAkhirSimpananRow {
+  nomor_referensi: string;
+  nrp: string;
+  nama: string;
+  jumlah_simpanan_pokok: number;
+  jumlah_simpanan_wajib: number;
+  jumlah_simpanan_belanja: number;
+  jumlah_simpanan_lebaran: number;
+}
+
+export interface MemberTemplateDataAkhirPinjamanRow {
+  nomor_referensi: string;
+  nrp: string;
+  nama: string;
+  jenis_pinjaman: string;
+  jumlah_pinjaman: number;
+  tgl_awal_pinjaman: string;
+  nilai_angsuran: number;
+  tenor: number;
+  total_terangsur: number;
+}
+
+export interface MemberTemplateExportBundle {
+  anggota: MemberTemplateDataAnggotaRow[];
+  simpanan: MemberTemplateDataAkhirSimpananRow[];
+  pinjaman: MemberTemplateDataAkhirPinjamanRow[];
+  members?: any[];
+}
+
+export async function getMembersTemplateExportData(
+  memberIds?: string[]
+): Promise<MemberTemplateExportBundle> {
+  if (memberIds && memberIds.length === 0) {
+    return { anggota: [], simpanan: [], pinjaman: [], members: [] };
+  }
+
+  // Muat seluruh anggota dengan paginasi .range(from, from + 999) tanpa .in() raksasa
+  const { data: pagedMembers, error: memberError } = await fetchPagedExportTable<any>(
+    'anggota',
+    '*',
+    (q) => q.order('nama', { ascending: true })
+  );
+  if (memberError) {
+    throw new Error(`Gagal memuat data anggota: ${memberError.message}`);
+  }
+
+  const members =
+    memberIds && memberIds.length > 0
+      ? (() => {
+          const idSet = new Set(memberIds);
+          return pagedMembers.filter((m: any) => idSet.has(m.id));
+        })()
+      : pagedMembers;
+
+  if (members.length === 0) {
+    return { anggota: [], simpanan: [], pinjaman: [] };
+  }
+
+  const targetMemberSet = new Set<string>(members.map((m: any) => m.id).filter(Boolean));
+
+  // Muat seluruh tabel terkait secara terpisah menggunakan paginasi .range(from, from + 999)
+  const [
+    depositTypesRes,
+    depositsRes,
+    transactionsRes,
+    loanTypesRes,
+    loansRes,
+    schedulesRes,
+    repaymentsRes,
+  ] = await Promise.all([
+    fetchPagedExportTable<any>('deposit_types', '*'),
+    fetchPagedExportTable<any>('member_deposits', '*'),
+    fetchPagedExportTable<any>('deposit_transactions', '*'),
+    fetchPagedExportTable<any>('loan_types', '*'),
+    fetchPagedExportTable<any>('loans', '*', (q) => q.in('status', ['active', 'approved'])),
+    fetchPagedExportTable<any>('loan_schedules', '*'),
+    fetchPagedExportTable<any>('loan_repayments', '*'),
+  ]);
+
+  if (depositTypesRes.error) {
+    console.warn('Gagal memuat jenis simpanan:', depositTypesRes.error.message);
+  }
+  if (depositsRes.error) {
+    console.warn('Gagal memuat simpanan anggota:', depositsRes.error.message);
+  }
+  if (transactionsRes.error) {
+    console.warn('Gagal memuat mutasi simpanan anggota:', transactionsRes.error.message);
+  }
+  if (loanTypesRes.error) {
+    console.warn('Gagal memuat jenis pinjaman:', loanTypesRes.error.message);
+  }
+  if (loansRes.error) {
+    console.warn('Gagal memuat pinjaman aktif anggota:', loansRes.error.message);
+  }
+  if (schedulesRes.error) {
+    console.warn('Gagal memuat jadwal angsuran pinjaman:', schedulesRes.error.message);
+  }
+  if (repaymentsRes.error) {
+    console.warn('Gagal memuat riwayat angsuran pinjaman:', repaymentsRes.error.message);
+  }
+
+  // 1. Peta Jenis Simpanan & Mutasi Simpanan
+  const depositTypeMap = new Map<string, { code?: string | null; name?: string | null }>();
+  for (const dt of depositTypesRes.data || []) {
+    if (dt?.id) {
+      depositTypeMap.set(dt.id, { code: dt.code, name: dt.name });
+    }
+  }
+
+  const txNetByDepositId = new Map<string, number>();
+  const hasTxByDepositId = new Set<string>();
+  for (const tx of transactionsRes.data || []) {
+    const depId = tx?.member_deposit_id;
+    if (!depId) continue;
+    hasTxByDepositId.add(depId);
+    const amt = Number(tx.amount || 0);
+    if (isNaN(amt)) continue;
+    const prev = txNetByDepositId.get(depId) ?? 0;
+    txNetByDepositId.set(
+      depId,
+      tx.transaction_type === 'withdrawal' ? prev - amt : prev + amt
+    );
+  }
+
+  const depositTotals = new Map<
+    string,
+    { pokok: number; wajib: number; belanja: number; lebaran: number }
+  >();
+
+  for (const dep of depositsRes.data || []) {
+    const memberId = dep?.member_id;
+    if (!memberId || !targetMemberSet.has(memberId)) continue;
+
+    let totals = depositTotals.get(memberId);
+    if (!totals) {
+      totals = { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
+      depositTotals.set(memberId, totals);
+    }
+
+    const typeInfo = depositTypeMap.get(dep.deposit_type_id);
+    const category = classifyDepositCategory(typeInfo?.code, typeInfo?.name);
+    if (!category) continue;
+
+    const netBalance = hasTxByDepositId.has(dep.id)
+      ? (txNetByDepositId.get(dep.id) ?? 0)
+      : Number(dep.balance || 0);
+
+    totals[category] += netBalance;
+  }
+
+  // 2. Peta Jenis Pinjaman, Jadwal, dan Pembayaran
+  const loanTypeMap = new Map<string, { code?: string | null; name?: string | null }>();
+  for (const lt of loanTypesRes.data || []) {
+    if (lt?.id) {
+      loanTypeMap.set(lt.id, { code: lt.code, name: lt.name });
+    }
+  }
+
+  const activeLoans = (loansRes.data || []).filter(
+    (loan: any) => loan?.member_id && targetMemberSet.has(loan.member_id)
+  );
+  const activeLoanIds = new Set<string>(activeLoans.map((l: any) => l.id).filter(Boolean));
+
+  const paidFromSchedulesByLoanId = new Map<string, number>();
+  for (const sched of schedulesRes.data || []) {
+    if (!sched?.loan_id || !activeLoanIds.has(sched.loan_id)) continue;
+    const prev = paidFromSchedulesByLoanId.get(sched.loan_id) ?? 0;
+    paidFromSchedulesByLoanId.set(sched.loan_id, prev + Number(sched.paid_amount || 0));
+  }
+
+  const paidFromRepaymentsByLoanId = new Map<string, number>();
+  const hasRepaymentsByLoanId = new Set<string>();
+  for (const rep of repaymentsRes.data || []) {
+    if (!rep?.loan_id || !activeLoanIds.has(rep.loan_id)) continue;
+    hasRepaymentsByLoanId.add(rep.loan_id);
+    const prev = paidFromRepaymentsByLoanId.get(rep.loan_id) ?? 0;
+    paidFromRepaymentsByLoanId.set(rep.loan_id, prev + Number(rep.amount_paid || 0));
+  }
+
+  const memberLoansMap = new Map<string, any[]>();
+  for (const loan of activeLoans) {
+    const list = memberLoansMap.get(loan.member_id) || [];
+    list.push(loan);
+    memberLoansMap.set(loan.member_id, list);
+  }
+
+  // 3. Susun 3 array terpisah sesuai masing-masing template impor
+  const anggotaRows: MemberTemplateDataAnggotaRow[] = [];
+  const simpananRows: MemberTemplateDataAkhirSimpananRow[] = [];
+  const pinjamanRows: MemberTemplateDataAkhirPinjamanRow[] = [];
+
+  for (const m of members) {
+    const nomorReferensi = String(m.nomor_referensi ?? '');
+    const nrp = String(m.nrp ?? '');
+    const nama = String(m.nama ?? '');
+
+    anggotaRows.push({
+      nomor_referensi: nomorReferensi,
+      nrp,
+      nama,
+      tanggal_lahir: formatSafeDate(m.tanggal_lahir || m.birth_date),
+      bank_account_number: String(m.bank_account_number ?? ''),
+      membership_status: String(m.membership_status || m.status || 'ACTIVE'),
+      tgl_awal_anggota: formatSafeDate(m.tgl_awal_anggota || m.joined_at || m.created_at),
+    });
+
+    const dep = depositTotals.get(m.id) || { pokok: 0, wajib: 0, belanja: 0, lebaran: 0 };
+    simpananRows.push({
+      nomor_referensi: nomorReferensi,
+      nrp,
+      nama,
+      jumlah_simpanan_pokok: Math.max(0, dep.pokok),
+      jumlah_simpanan_wajib: Math.max(0, dep.wajib),
+      jumlah_simpanan_belanja: Math.max(0, dep.belanja),
+      jumlah_simpanan_lebaran: Math.max(0, dep.lebaran),
+    });
+
+    const memberLoans = memberLoansMap.get(m.id) || [];
+    if (memberLoans.length === 0) {
+      pinjamanRows.push({
+        nomor_referensi: nomorReferensi,
+        nrp,
+        nama,
+        jenis_pinjaman: '-',
+        jumlah_pinjaman: 0,
+        tgl_awal_pinjaman: '',
+        nilai_angsuran: 0,
+        tenor: 0,
+        total_terangsur: 0,
+      });
+    } else {
+      for (const loan of memberLoans) {
+        const loanType = loanTypeMap.get(loan.loan_type_id);
+        const totalTerangsur = hasRepaymentsByLoanId.has(loan.id)
+          ? (paidFromRepaymentsByLoanId.get(loan.id) ?? 0)
+          : (paidFromSchedulesByLoanId.get(loan.id) ?? 0);
+
+        pinjamanRows.push({
+          nomor_referensi: nomorReferensi,
+          nrp,
+          nama,
+          jenis_pinjaman: loanType?.name || loanType?.code || '-',
+          jumlah_pinjaman: Number(loan.principal_amount ?? loan.amount ?? 0),
+          tgl_awal_pinjaman: formatSafeDate(
+            loan.disbursed_at || loan.start_date || loan.approved_at || loan.created_at
+          ),
+          nilai_angsuran: Number(loan.planned_installment_amount ?? loan.monthly_target ?? 0),
+          tenor: Number(loan.agreed_tenor_months ?? loan.tenor ?? 0),
+          total_terangsur: Math.max(0, totalTerangsur),
+        });
+      }
+    }
+  }
+
+  return {
+    anggota: anggotaRows,
+    simpanan: simpananRows,
+    pinjaman: pinjamanRows,
+    members,
+  };
 }
 
 export const RESET_MEMBERS_CONFIRMATION_PHRASE = 'RESET ANGGOTA' as const;

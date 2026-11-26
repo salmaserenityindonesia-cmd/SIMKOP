@@ -988,9 +988,9 @@ describe('savingsRateService', () => {
 
     it('buildMemberLebaranRateTemplateWorkbook & parseMemberLebaranRateExcel should round-trip and skip empty/zero rows', async () => {
       const mockMembers = [
-        { id: 'm-1', nrp: '001122', nama: 'Budi', tanggal_lahir: '1988-11-10', status: 'aktif' },
-        { id: 'm-2', nrp: '001133', nama: 'Siti', tanggal_lahir: '1986-07-15', status: 'aktif' },
-        { id: 'm-3', nrp: '001144', nama: 'Andi', tanggal_lahir: '1980-05-14', status: 'aktif' },
+        { id: 'm-1', nomor_referensi: '00001001', nrp: '001122', nama: 'Budi', tanggal_lahir: '1988-11-10', status: 'aktif' },
+        { id: 'm-2', nomor_referensi: '00001002', nrp: '001133', nama: 'Siti', tanggal_lahir: '1986-07-15', status: 'aktif' },
+        { id: 'm-3', nomor_referensi: '00001003', nrp: '001144', nama: 'Andi', tanggal_lahir: '1980-05-14', status: 'aktif' },
       ];
       const mockRates: MemberLebaranRate[] = [
         { id: 'r-1', member_id: 'm-1', effective_year: 2025, effective_month: 5, monthly_rate: 300000 },
@@ -1053,14 +1053,29 @@ describe('savingsRateService', () => {
       expect(meta.totalMembers).toBe(3);
 
       const sheet = workbook.getWorksheet('Tarif Lebaran Anggota')!;
+      // 9-column header check
+      expect(sheet.getRow(1).values).toEqual([
+        undefined,
+        'nomor_referensi',
+        'nrp',
+        'nama',
+        'tanggal_lahir',
+        'tarif_saat_ini',
+        'tarif_lebaran_baru',
+        'mulai_bulan',
+        'mulai_tahun',
+        'keterangan_siklus',
+      ]);
       // Row 2 = Budi (personal rate 300000), Row 3 = Siti (global rate 150000)
-      expect(sheet.getRow(2).getCell(1).value).toBe('001122');
-      expect(sheet.getRow(2).getCell(4).value).toBe(300000);
-      expect(sheet.getRow(3).getCell(4).value).toBe(150000);
+      expect(sheet.getRow(2).getCell(1).value).toBe('00001001');
+      expect(sheet.getRow(2).getCell(2).value).toBe('001122');
+      expect(sheet.getRow(2).getCell(4).value).toBe('1988-11-10');
+      expect(sheet.getRow(2).getCell(5).value).toBe(300000);
+      expect(sheet.getRow(3).getCell(5).value).toBe(150000);
 
       // Admin edits row 2 (Budi -> 500000) and row 4 (Andi -> 0 -> skipped), row 3 remains empty -> skipped
-      sheet.getRow(2).getCell(5).value = 500000;
-      sheet.getRow(4).getCell(5).value = 0;
+      sheet.getRow(2).getCell(6).value = 500000;
+      sheet.getRow(4).getCell(6).value = 0;
 
       const buffer = await workbook.xlsx.writeBuffer();
       const parsed = await parseMemberLebaranRateExcel(buffer as ArrayBuffer);
@@ -1070,7 +1085,9 @@ describe('savingsRateService', () => {
       expect(parsed.invalidRows).toHaveLength(0);
       expect(parsed.validRows).toHaveLength(1);
       expect(parsed.validRows[0]).toMatchObject({
+        nomor_referensi: '00001001',
         nrp: '001122',
+        tanggal_lahir: '1988-11-10',
         tarif_lebaran_baru: 500000,
         mulai_bulan: 4,
         mulai_tahun: 2026,

@@ -238,7 +238,11 @@ export default function BulkLebaranRateImportModal({
                   <span>Unduh Template Excel Pre-Populated</span>
                 </div>
                 <p className="text-xs text-indigo-800/90 leading-relaxed">
-                  Template berisi seluruh anggota aktif beserta tarif Lebaran mereka saat ini. Isi kolom{' '}
+                  Template berisi seluruh anggota aktif dengan 9 kolom baku (
+                  <code className="px-1 py-0.5 bg-white/80 rounded border border-indigo-200 font-mono text-[11px]">
+                    nomor_referensi, nrp, nama, tanggal_lahir, tarif_saat_ini, tarif_lebaran_baru, mulai_bulan, mulai_tahun, keterangan_siklus
+                  </code>
+                  ). Isi kolom{' '}
                   <code className="px-1.5 py-0.5 bg-white/80 rounded border border-indigo-200 font-mono text-[11px]">
                     tarif_lebaran_baru
                   </code>{' '}
@@ -387,8 +391,10 @@ export default function BulkLebaranRateImportModal({
                       <table className="w-full text-left border-collapse text-xs">
                         <thead className="bg-slate-100 text-slate-600 font-semibold sticky top-0">
                           <tr>
+                            <th className="py-2.5 px-3 border-b border-slate-200">No. Referensi</th>
                             <th className="py-2.5 px-3 border-b border-slate-200">NRP</th>
                             <th className="py-2.5 px-3 border-b border-slate-200">Nama</th>
+                            <th className="py-2.5 px-3 border-b border-slate-200">Tgl Lahir</th>
                             <th className="py-2.5 px-3 border-b border-slate-200 text-right">Tarif Saat Ini</th>
                             <th className="py-2.5 px-3 border-b border-slate-200 text-right">Tarif Lebaran Baru</th>
                             <th className="py-2.5 px-3 border-b border-slate-200 text-center">Mulai Berlaku</th>
@@ -398,8 +404,14 @@ export default function BulkLebaranRateImportModal({
                         <tbody className="divide-y divide-slate-100">
                           {validRows.slice(0, 100).map((row) => (
                             <tr key={`${row.nrp}-${row.rowNumber}`} className="hover:bg-slate-50">
+                              <td className="py-2 px-3 font-mono text-slate-600">
+                                {row.nomor_referensi || '-'}
+                              </td>
                               <td className="py-2 px-3 font-mono text-slate-700">{row.nrp}</td>
                               <td className="py-2 px-3 font-medium text-slate-900">{row.nama}</td>
+                              <td className="py-2 px-3 font-mono text-slate-600">
+                                {row.tanggal_lahir || '-'}
+                              </td>
                               <td className="py-2 px-3 text-right text-slate-500">
                                 {formatCurrency(row.tarif_saat_ini)}
                               </td>

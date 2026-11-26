@@ -243,7 +243,11 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
   const filteredData = memberList.filter((m) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase().trim();
-    return (m.nama && m.nama.toLowerCase().includes(q)) || (m.nrp && m.nrp.toLowerCase().includes(q));
+    return (
+      (m.nama && m.nama.toLowerCase().includes(q)) ||
+      (m.nrp && m.nrp.toLowerCase().includes(q)) ||
+      (m.nomor_referensi && m.nomor_referensi.toLowerCase().includes(q))
+    );
   });
 
   const totalItems = filteredData.length;
@@ -312,7 +316,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
         <div>
           <h1 className="text-title-lg font-title-lg text-primary">Import Gaji &amp; Rekening</h1>
           <p className="text-body-md text-on-surface-variant">
-            Unduh template 5 kolom baku (<span className="font-medium text-on-surface">NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain</span>), isi nominal Gaji Pokok dan Angsuran Lain-lain setiap bulan, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
+            Unduh template 6 kolom baku (<span className="font-medium text-on-surface">nomor_referensi, NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain</span>), isi nominal Gaji Pokok dan Angsuran Lain-lain setiap bulan, lalu unggah kembali untuk melakukan sinkronisasi data rekening dan gaji anggota.
           </p>
         </div>
 
@@ -435,6 +439,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
               <table className="w-full text-left text-sm">
                 <thead className="bg-surface-container-low text-on-surface-variant">
                   <tr>
+                    <th className="px-4 py-3 font-medium">No. Referensi</th>
                     <th className="px-4 py-3 font-medium">NRP</th>
                     <th className="px-4 py-3 font-medium">Nama</th>
                     <th className="px-4 py-3 font-medium text-right">Gaji Pokok</th>
@@ -450,6 +455,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
                     const previewExternalInstallment = Number(r.angsuran_lain_lain ?? 0);
                     return (
                       <tr key={actualIdx} className="hover:bg-surface-container-lowest/50">
+                        <td className="px-4 py-3 font-mono text-xs text-on-surface">{r.nomor_referensi || '-'}</td>
                         <td className="px-4 py-3">{r.nrp}</td>
                         <td className="px-4 py-3">{r.nama}</td>
                         <td className="px-4 py-3 text-right tabular-nums">
@@ -600,6 +606,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
               <table className="w-full text-left text-sm">
                 <thead className="bg-surface-container-low text-on-surface-variant">
                   <tr>
+                    <th className="px-4 py-3 font-medium">No. Referensi</th>
                     <th className="px-4 py-3 font-medium">NRP</th>
                     <th className="px-4 py-3 font-medium">Nama Anggota</th>
                     <th className="px-4 py-3 font-medium">Tanggal Lahir</th>
@@ -618,6 +625,7 @@ export function SalaryImport({ initialMembers }: SalaryImportProps = {}) {
 
                     return (
                       <tr key={row.id || row.nrp} className="hover:bg-surface-container-lowest/50 transition-colors">
+                        <td className="px-4 py-3 font-mono text-xs text-on-surface">{row.nomor_referensi || '-'}</td>
                         <td className="px-4 py-3 font-mono text-xs text-on-surface">{row.nrp}</td>
                         <td className="px-4 py-3 font-medium text-on-surface">{row.nama}</td>
                         <td className="px-4 py-3 text-on-surface-variant">{formatTanggalLahirWithAge(row.tanggal_lahir)}</td>

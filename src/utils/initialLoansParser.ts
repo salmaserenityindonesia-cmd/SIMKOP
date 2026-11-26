@@ -15,9 +15,20 @@ export const REQUIRED_LOAN_HEADERS = [
   'total_terangsur',
 ] as const;
 
-export const INITIAL_LOANS_HEADERS = REQUIRED_LOAN_HEADERS;
+export const INITIAL_LOANS_HEADERS = [
+  'nomor_referensi',
+  'nrp',
+  'nama',
+  'jenis_pinjaman',
+  'jumlah_pinjaman',
+  'tgl_awal_pinjaman',
+  'nilai_angsuran',
+  'tenor',
+  'total_terangsur',
+] as const;
 
 export interface InitialLoanRow {
+  nomor_referensi?: string;
   nrp: string;
   nama: string;
   jenis_pinjaman: string;
@@ -34,6 +45,7 @@ export interface InitialLoanRow {
 }
 
 export interface InitialLoansTemplateMember {
+  nomor_referensi?: string | null;
   nrp?: string | null;
   nama?: string | null;
   status?: string | null;
@@ -53,7 +65,7 @@ export const normalizeName = (val: unknown): string =>
 
 async function fetchRegisteredMembersFallback(): Promise<InitialLoansTemplateMember[] | null> {
   try {
-    const query: any = supabase.from('anggota')?.select('nrp, nama');
+    const query: any = supabase.from('anggota')?.select('nomor_referensi, nrp, nama');
     if (!query || typeof query.then !== 'function') return null;
     const { data, error } = await query;
     if (!error && Array.isArray(data)) {
@@ -87,7 +99,7 @@ async function fetchActiveLoanTypesFallback(): Promise<InitialLoansTemplateLoanT
 
 /**
  * Membangun workbook Excel template Saldo Awal Pinjaman dengan 2 sheet:
- * 1) Sheet 'Saldo Awal Pinjaman' berisi 8 kolom wajib & daftar anggota aktif + dropdown jenis pinjaman.
+ * 1) Sheet 'Saldo Awal Pinjaman' berisi 9 kolom (nomor_referensi di paling kiri) & daftar anggota aktif + dropdown jenis pinjaman.
  * 2) Sheet 'Referensi Jenis Pinjaman' berisi daftar produk pinjaman aktif dari Master Produk.
  */
 export async function buildInitialLoansTemplateWorkbook(
@@ -108,7 +120,7 @@ export async function buildInitialLoansTemplateWorkbook(
     try {
       const { data, error } = await supabase
         .from('anggota')
-        .select('nrp, nama, status, membership_status')
+        .select('nomor_referensi, nrp, nama, status, membership_status')
         .order('nama', { ascending: true });
 
       if (!error && Array.isArray(data) && data.length > 0) {
@@ -131,6 +143,7 @@ export async function buildInitialLoansTemplateWorkbook(
   const worksheet = workbook.addWorksheet('Saldo Awal Pinjaman');
 
   worksheet.columns = [
+    { header: 'nomor_referensi', key: 'nomor_referensi', width: 20 },
     { header: 'nrp', key: 'nrp', width: 18 },
     { header: 'nama', key: 'nama', width: 30 },
     { header: 'jenis_pinjaman', key: 'jenis_pinjaman', width: 24 },
@@ -141,6 +154,7 @@ export async function buildInitialLoansTemplateWorkbook(
     { header: 'total_terangsur', key: 'total_terangsur', width: 20 },
   ];
 
+  worksheet.getColumn('nomor_referensi').numFmt = '@';
   worksheet.getColumn('nrp').numFmt = '@';
   worksheet.getColumn('nama').numFmt = '@';
   worksheet.getColumn('jenis_pinjaman').numFmt = '@';
@@ -149,6 +163,7 @@ export async function buildInitialLoansTemplateWorkbook(
   const rowsToWrite =
     activeMembers.length > 0
       ? activeMembers.map((member) => ({
+          nomor_referensi: String(member.nomor_referensi ?? '').trim(),
           nrp: String(member.nrp || '').trim(),
           nama: String(member.nama || '-').trim(),
           jenis_pinjaman: '',
@@ -160,6 +175,7 @@ export async function buildInitialLoansTemplateWorkbook(
         }))
       : [
           {
+            nomor_referensi: '0001',
             nrp: '95168420',
             nama: 'Budi Santoso',
             jenis_pinjaman: '',
@@ -191,11 +207,11 @@ export async function buildInitialLoansTemplateWorkbook(
     });
   }
 
-  // DataValidation dropdown pada kolom jenis_pinjaman (kolom C)
+  // DataValidation dropdown pada kolom jenis_pinjaman (kolom D)
   if (loanTypes.length > 0) {
     const formulaRange = `'Referensi Jenis Pinjaman'!$A$2:$A$${loanTypes.length + 1}`;
     for (let rowIdx = 2; rowIdx <= rowsToWrite.length + 1; rowIdx++) {
-      const cell = worksheet.getCell(`C${rowIdx}`);
+      const cell = worksheet.getCell(`D${rowIdx}`);
       cell.dataValidation = {
         type: 'list',
         allowBlank: true,
@@ -328,7 +344,8 @@ export async function parseInitialLoansExcel(
     headerList.includes('jumlah_simpanan_wajib') ||
     headerList.includes('jumlah_simpanan_pokok') ||
     headerList.includes('tanggal_lahir') ||
-    headerList.includes('tanggal lahir')
+    headerList.includes('tanggal lahir') ||
+    headerList.includes('membership_status')
   ) {
     throw new Error(
       'File tidak sesuai! Pastikan Anda mengunggah file dari "Unduh Template Saldo Awal Pinjaman (.xlsx)" pada menu ini.'
@@ -370,6 +387,8 @@ export async function parseInitialLoansExcel(
       return extractCellValue(row.getCell(idx));
     };
 
+    const rawNoRef = getVal('nomor_referensi');
+    const nomorReferensi = rawNoRef !== null && rawNoRef !== undefined ? String(rawNoRef).trim() : '';
     const rawNrp = getVal('nrp');
     const nrp = rawNrp !== null && rawNrp !== undefined ? String(rawNrp).trim() : '';
     const rawNama = getVal('nama');
@@ -420,6 +439,7 @@ export async function parseInitialLoansExcel(
     const errorMessage = memberErrorMessage || loanTypeErrorMessage;
 
     rows.push({
+      nomor_referensi: nomorReferensi,
       nrp,
       nama: namaDisplay,
       jenis_pinjaman: jenisPinjaman,

@@ -25,47 +25,52 @@ describe('yearEndClosingService — Pure RAT Validation & SHU Allocation', () =>
 
     expect(res.valid).toBe(true);
     expect(res.mainTotal).toBe(100);
-    expect(res.memberSubTotal).toBe(100);
+    expect(res.memberSubTotal).toBe(55);
     expect(res.errors).toEqual([]);
   });
 
-  it('rejects RAT settings when main allocation or member sub-ratios do not total 100%', () => {
+  it('rejects RAT settings when 7 AD/ART allocations do not total 100%', () => {
     const invalidMain = {
       ...createDefaultRatSettings(2026),
-      reserve_fund_pct: 50,
-      member_shu_pct: 60,
-      other_fund_pct: 0,
+      reserve_fund_pct: 30, // 30+30+25+10+5+5+5 = 110%
     };
     const resMain = validateRatSettings(invalidMain);
     expect(resMain.valid).toBe(false);
     expect(resMain.mainTotal).toBe(110);
 
-    const invalidSub = {
+    const invalidUnder = {
       ...createDefaultRatSettings(2026),
-      member_business_pct: 80,
-      member_capital_pct: 10,
+      member_borrower_pct: 20, // 20+20+25+10+5+5+5 = 90%
     };
-    const resSub = validateRatSettings(invalidSub);
-    expect(resSub.valid).toBe(false);
-    expect(resSub.memberSubTotal).toBe(90);
+    const resUnder = validateRatSettings(invalidUnder);
+    expect(resUnder.valid).toBe(false);
+    expect(resUnder.mainTotal).toBe(90);
   });
 
-  it('splits net SHU accurately across reserve, other fund, Jasa Usaha, and Jasa Modal pools', () => {
+  it('splits net SHU accurately across 7 AD/ART pots', () => {
     const settings = {
       ...createDefaultRatSettings(2026),
-      reserve_fund_pct: 35,
-      member_shu_pct: 60,
-      other_fund_pct: 5,
-      member_business_pct: 70,
-      member_capital_pct: 30,
+      reserve_fund_pct: 20,
+      member_borrower_pct: 30,
+      member_depositor_pct: 25,
+      management_fund_pct: 10,
+      employee_fund_pct: 5,
+      social_fund_pct: 5,
+      education_fund_pct: 5,
     };
 
     const alloc = calculateShuAllocation(10_000_000, settings);
-    expect(alloc.reserveFundAmount).toBe(3_500_000);
-    expect(alloc.otherFundAmount).toBe(500_000);
-    expect(alloc.memberShuTotal).toBe(6_000_000);
-    expect(alloc.jasaUsahaPool).toBe(4_200_000);
-    expect(alloc.jasaModalPool).toBe(1_800_000);
+    expect(alloc.reserveFundAmount).toBe(2_000_000);
+    expect(alloc.memberBorrowerPool).toBe(3_000_000);
+    expect(alloc.memberDepositorPool).toBe(2_500_000);
+    expect(alloc.managementFundAmount).toBe(1_000_000);
+    expect(alloc.employeeFundAmount).toBe(500_000);
+    expect(alloc.socialFundAmount).toBe(500_000);
+    expect(alloc.educationFundAmount).toBe(500_000);
+    expect(alloc.otherFundAmount).toBe(2_500_000);
+    expect(alloc.memberShuTotal).toBe(5_500_000);
+    expect(alloc.jasaUsahaPool).toBe(3_000_000);
+    expect(alloc.jasaModalPool).toBe(2_500_000);
   });
 
   it('handles negative net SHU safely without distributing negative pools', () => {
@@ -149,6 +154,12 @@ describe('yearEndClosingService — Pure RAT Validation & SHU Allocation', () =>
       opex: 10_000_000,
       netShuAmount: 20_000_000,
       reserveFundAmount: 0,
+      memberBorrowerPool: 0,
+      memberDepositorPool: 0,
+      managementFundAmount: 0,
+      employeeFundAmount: 0,
+      socialFundAmount: 0,
+      educationFundAmount: 0,
       otherFundAmount: 0,
       memberShuTotal: 0,
       jasaUsahaPool: 0,
@@ -174,8 +185,8 @@ describe('yearEndClosingService — Pure RAT Validation & SHU Allocation', () =>
       ...createDefaultRatSettings(2026),
       payout_method: 'CASH_PAYOUT',
     });
-    expect(cashMode.memberShuTotal).toBe(12_000_000);
-    expect(cashMode.postShuCashBalance).toBe(38_000_000);
+    expect(cashMode.memberShuTotal).toBe(11_000_000);
+    expect(cashMode.postShuCashBalance).toBe(39_000_000);
     expect(cashMode.postShuMemberSavings).toBe(40_000_000);
 
     const creditMode = recalculatePreviewWithSettings(basePreview, {
@@ -183,7 +194,7 @@ describe('yearEndClosingService — Pure RAT Validation & SHU Allocation', () =>
       payout_method: 'CREDIT_SAVINGS',
     });
     expect(creditMode.postShuCashBalance).toBe(50_000_000);
-    expect(creditMode.postShuMemberSavings).toBe(52_000_000);
+    expect(creditMode.postShuMemberSavings).toBe(51_000_000);
   });
 });
 
@@ -352,11 +363,13 @@ describe('yearEndClosingService — Preview & 1-Click Execution Integration', ()
     expect(preview.opex).toBe(2_000_000);
     expect(preview.netShuAmount).toBe(6_000_000);
 
-    // 40% cadangan = 2.4M, 60% anggota = 3.6M -> 70% usaha = 2.52M, 30% modal = 1.08M
-    expect(preview.reserveFundAmount).toBe(2_400_000);
-    expect(preview.memberShuTotal).toBe(3_600_000);
+    // 20% cadangan = 1.2M, 55% anggota (30% peminjam = 1.8M, 25% penyimpan = 1.5M) = 3.3M
+    expect(preview.reserveFundAmount).toBe(1_200_000);
+    expect(preview.memberBorrowerPool).toBe(1_800_000);
+    expect(preview.memberDepositorPool).toBe(1_500_000);
+    expect(preview.memberShuTotal).toBe(3_300_000);
     expect(preview.memberRows).toHaveLength(2);
-    expect(preview.postShuCashBalance).toBe(38_000_000 - 3_600_000);
+    expect(preview.postShuCashBalance).toBe(38_000_000 - 3_300_000);
   });
 
   it('executes 1-click closing with CASH_PAYOUT: inserts PEMBAGIAN_SHU_RAT with direction="out" & audit marker', async () => {
@@ -453,20 +466,20 @@ describe('yearEndClosingService — Preview & 1-Click Execution Integration', ()
 
     expect(insertedClosings).toHaveLength(1);
     expect(insertedDistributions).toHaveLength(1);
-    expect(insertedDistributions[0].total_shu_received).toBe(6_000_000);
+    expect(insertedDistributions[0].total_shu_received).toBe(5_500_000);
 
     // Must use direction: 'out' (never type: 'out')
     expect(insertedCashFlows).toHaveLength(1);
     expect(insertedCashFlows[0].direction).toBe('out');
     expect(insertedCashFlows[0].type).toBeUndefined();
     expect(insertedCashFlows[0].category).toBe('PEMBAGIAN_SHU_RAT');
-    expect(insertedCashFlows[0].amount).toBe(6_000_000);
+    expect(insertedCashFlows[0].amount).toBe(5_500_000);
     expect(insertedCashFlows[0].created_at).toBe('2026-12-31T23:59:00.000Z');
 
     expect(insertedAudits).toHaveLength(1);
     expect(insertedAudits[0].action).toBe('OPENING_BALANCE_NEW_YEAR');
     expect(insertedAudits[0].new_data.opening_shu_amount).toBe(0);
-    expect(insertedAudits[0].new_data.opening_cash_balance).toBe(14_000_000);
+    expect(insertedAudits[0].new_data.opening_cash_balance).toBe(14_500_000);
   });
 
   it('executes 1-click closing with CREDIT_SAVINGS: inserts deposit_transactions without touching cash_flow', async () => {
@@ -565,7 +578,7 @@ describe('yearEndClosingService — Preview & 1-Click Execution Integration', ()
     expect(insertedDepositTxs).toHaveLength(1);
     expect(insertedDepositTxs[0].member_deposit_id).toBe('md-sb-1');
     expect(insertedDepositTxs[0].transaction_type).toBe('deposit');
-    expect(insertedDepositTxs[0].amount).toBe(6_000_000);
+    expect(insertedDepositTxs[0].amount).toBe(5_500_000);
     expect(insertedDepositTxs[0].for_year).toBe(2026);
     expect(insertedDepositTxs[0].for_month).toBe(12);
   });

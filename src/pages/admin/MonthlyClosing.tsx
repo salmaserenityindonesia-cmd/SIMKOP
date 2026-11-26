@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Archive,
   CalendarCheck2,
@@ -58,12 +59,31 @@ function getTodayIsoDate(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function parseQueryPeriod(params: URLSearchParams): {
+  year: number | null;
+  month: number | null;
+} {
+  const rawYear = Number(params.get('year'));
+  const rawMonth = Number(params.get('month'));
+  const year =
+    Number.isInteger(rawYear) && rawYear >= 2000 && rawYear <= 2100 ? rawYear : null;
+  const month =
+    Number.isInteger(rawMonth) && rawMonth >= 1 && rawMonth <= 12 ? rawMonth : null;
+  return { year, month };
+}
+
 export default function MonthlyClosing() {
   const { showToast } = useFeedback();
+  const [searchParams, setSearchParams] = useSearchParams();
   const now = new Date();
+  const initialQuery = parseQueryPeriod(searchParams);
 
-  const [fiscalYear, setFiscalYear] = useState<number>(now.getFullYear());
-  const [periodMonth, setPeriodMonth] = useState<number>(now.getMonth() + 1);
+  const [fiscalYear, setFiscalYear] = useState<number>(
+    initialQuery.year ?? now.getFullYear()
+  );
+  const [periodMonth, setPeriodMonth] = useState<number>(
+    initialQuery.month ?? now.getMonth() + 1
+  );
   const [snapshot, setSnapshot] = useState<MonthlyClosingSnapshot | null>(null);
   const [yearlyClosings, setYearlyClosings] = useState<MonthlyClosingRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -129,6 +149,38 @@ export default function MonthlyClosing() {
       }
     },
     [showToast, syncFormFromRecord]
+  );
+
+  useEffect(() => {
+    const { year, month } = parseQueryPeriod(searchParams);
+    if (year !== null && year !== fiscalYear) {
+      setFiscalYear(year);
+    }
+    if (month !== null && month !== periodMonth) {
+      setPeriodMonth(month);
+    }
+  }, [searchParams, fiscalYear, periodMonth]);
+
+  const handleSelectMonth = useCallback(
+    (nextMonth: number) => {
+      setPeriodMonth(nextMonth);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('year', String(fiscalYear));
+      nextParams.set('month', String(nextMonth));
+      setSearchParams(nextParams, { replace: true });
+    },
+    [fiscalYear, searchParams, setSearchParams]
+  );
+
+  const handleSelectYear = useCallback(
+    (nextYear: number) => {
+      setFiscalYear(nextYear);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('year', String(nextYear));
+      nextParams.set('month', String(periodMonth));
+      setSearchParams(nextParams, { replace: true });
+    },
+    [periodMonth, searchParams, setSearchParams]
   );
 
   useEffect(() => {
@@ -254,7 +306,7 @@ export default function MonthlyClosing() {
               <select
                 aria-label="Pilih Bulan"
                 value={periodMonth}
-                onChange={(e) => setPeriodMonth(Number(e.target.value))}
+                onChange={(e) => handleSelectMonth(Number(e.target.value))}
                 className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {MONTH_NAMES_ID.map((name, idx) => (
@@ -267,7 +319,7 @@ export default function MonthlyClosing() {
               <select
                 aria-label="Pilih Tahun Buku"
                 value={fiscalYear}
-                onChange={(e) => setFiscalYear(Number(e.target.value))}
+                onChange={(e) => handleSelectYear(Number(e.target.value))}
                 className="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {availableYears.map((y) => (
@@ -744,7 +796,7 @@ export default function MonthlyClosing() {
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => setPeriodMonth(m)}
+                                onClick={() => handleSelectMonth(m)}
                                 className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer"
                               >
                                 Lihat / Edit

@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 
 export type ReconciliationResult = {
+  nomor_referensi?: string;
   nrp: string;
   nama: string;
   gaji_pokok?: number | null;
@@ -110,25 +111,51 @@ const normalizeHeader = (raw: any): string =>
     .replace(/[\s_-]+/g, ' ');
 
 const queryActiveMembersForTemplate = async (fields: string) => {
-  const query: any = supabase
-    .from('anggota')
-    .select(fields)
-    .eq('status', 'aktif');
-  if (query && typeof query.order === 'function') {
-    return await query.order('nama', { ascending: true });
+  const PAGE_SIZE = 1000;
+  let from = 0;
+  let allData: any[] = [];
+  let hasMore = true;
+
+  while (hasMore) {
+    let query: any = supabase
+      .from('anggota')
+      .select(fields)
+      .eq('status', 'aktif');
+    if (query && typeof query.order === 'function') {
+      query = query.order('nama', { ascending: true });
+    }
+    if (query && typeof query.range === 'function') {
+      const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        return { data: null, error };
+      }
+      if (data && data.length > 0) {
+        allData = allData.concat(data);
+        from += PAGE_SIZE;
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
+      }
+    } else {
+      return await query;
+    }
   }
-  return await query;
+
+  return { data: allData, error: null };
 };
 
 /**
- * Membangun workbook Excel template rekonsiliasi 5 kolom:
- * NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
+ * Membangun workbook Excel template rekonsiliasi 6 kolom:
+ * nomor_referensi, NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
  */
 export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workbook => {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('Template Rekonsiliasi');
 
   worksheet.columns = [
+    { header: 'nomor_referensi', key: 'nomor_referensi', width: 20 },
     { header: 'NRP', key: 'nrp', width: 20 },
     { header: 'Nama Lengkap', key: 'nama', width: 30 },
     { header: 'Nomor Rekening', key: 'nomor_rekening', width: 25 },
@@ -145,17 +172,19 @@ export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workb
 
   const applyRowFormats = (row: ExcelJS.Row) => {
     row.getCell(1).numFmt = '@';
-    row.getCell(3).numFmt = '@';
-    row.getCell(4).numFmt = '#,##0';
+    row.getCell(2).numFmt = '@';
+    row.getCell(4).numFmt = '@';
     row.getCell(5).numFmt = '#,##0';
+    row.getCell(6).numFmt = '#,##0';
   };
 
   if (members && members.length > 0) {
     members.forEach((anggota: any) => {
       const row = worksheet.addRow({
-        nrp: String(anggota.nrp || ''),
-        nama: String(anggota.nama || ''),
-        nomor_rekening: String(anggota.bank_account_number || ''),
+        nomor_referensi: String(anggota.nomor_referensi ?? ''),
+        nrp: String(anggota.nrp ?? ''),
+        nama: String(anggota.nama ?? ''),
+        nomor_rekening: String(anggota.bank_account_number ?? ''),
         gaji_pokok: resolveMemberSalary(anggota),
         angsuran_lain_lain: Number(anggota.angsuran_lain_lain ?? 0) || 0,
       });
@@ -163,6 +192,7 @@ export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workb
     });
   } else {
     const row = worksheet.addRow({
+      nomor_referensi: 'REF-001',
       nrp: '12345678',
       nama: 'Contoh Nama',
       nomor_rekening: '0011223344',
@@ -176,19 +206,20 @@ export const buildSalaryReconciliationWorkbook = (members: any[]): ExcelJS.Workb
 };
 
 /**
- * Menghasilkan dan mengunduh template Excel 5 kolom untuk rekonsiliasi gaji & rekening:
- * NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
+ * Menghasilkan dan mengunduh template Excel 6 kolom untuk rekonsiliasi gaji & rekening:
+ * nomor_referensi, NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain.
  */
 export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> => {
   try {
-    // 1. Ambil data anggota aktif dari public.anggota urut nama ASC dengan fallback kolom
+    // 1. Ambil data anggota aktif dari public.anggota urut nama ASC dengan paginasi & fallback kolom
     let { data, error }: { data: any; error: any } = await queryActiveMembersForTemplate(
-      'id, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
+      'id, nomor_referensi, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
     );
 
     if (error && error.message) {
       const msg = error.message.toLowerCase();
       if (
+        msg.includes('nomor_referensi') ||
         msg.includes('angsuran_lain_lain') ||
         msg.includes('master_thp') ||
         msg.includes('take_home_pay') ||
@@ -216,7 +247,7 @@ export const downloadSalaryReconciliationTemplate = async (): Promise<boolean> =
       throw error;
     }
 
-    // 2. Inisialisasi workbook dan worksheet 5 kolom baku
+    // 2. Inisialisasi workbook dan worksheet 6 kolom baku
     const workbook = buildSalaryReconciliationWorkbook(data || []);
 
     // 3. Generate dan trigger unduhan file
@@ -273,6 +304,7 @@ export const parseSalaryReconciliationFile = async (
 
     // Default posisi kolom 1-based dengan dukungan deteksi header dinamis
     const colIndex = {
+      nomorReferensi: null as number | null,
       nrp: 1,
       nama: 2,
       account: 3,
@@ -284,7 +316,10 @@ export const parseSalaryReconciliationFile = async (
       if (rowNumber === 1) {
         row.eachCell((cell, colNum) => {
           const header = normalizeHeader(cell.value);
-          if (header === 'nrp' || header === 'no nrp' || header === 'nomor nrp') {
+          const cleanHeader = header.replace(/\./g, '').trim();
+          if (cleanHeader === 'nomor referensi' || cleanHeader === 'no referensi') {
+            colIndex.nomorReferensi = colNum;
+          } else if (header === 'nrp' || header === 'no nrp' || header === 'nomor nrp') {
             colIndex.nrp = colNum;
           } else if (header === 'nama lengkap' || header === 'nama' || header === 'nama anggota') {
             colIndex.nama = colNum;
@@ -313,6 +348,11 @@ export const parseSalaryReconciliationFile = async (
         return;
       }
 
+      const rawNomorReferensi = colIndex.nomorReferensi
+        ? extractCellValue(row.getCell(colIndex.nomorReferensi).value)
+        : '';
+      const nomor_referensi = String(rawNomorReferensi ?? '').trim();
+
       const rawNrp = extractCellValue(row.getCell(colIndex.nrp).value);
       const nrp = normalizeNrpValue(rawNrp);
 
@@ -337,6 +377,7 @@ export const parseSalaryReconciliationFile = async (
       if (nrp) {
         nrpList.push(nrp);
         excelDataMap.set(nrp, {
+          nomor_referensi,
           nama,
           account_number,
           thp: gajiPokok,
@@ -463,6 +504,7 @@ export const parseSalaryReconciliationFile = async (
           }
 
           results.push({
+            nomor_referensi: excelRow.nomor_referensi || '',
             nrp: canonicalNrp,
             nama: excelRow.nama,
             gaji_pokok: excelRow.thp,
@@ -703,6 +745,7 @@ export const confirmSalaryReconciliation = async (payload: FinalReconciliationPa
 
 export interface MemberSalaryAccountItem {
   id: string;
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   tanggal_lahir?: string | null;
@@ -720,6 +763,7 @@ export interface MemberSalaryAccountItem {
 }
 
 const OPTIONAL_MEMBER_SALARY_SELECT_COLS = [
+  'nomor_referensi',
   'salary',
   'angsuran_lain_lain',
   'gaji_pokok',
@@ -747,7 +791,7 @@ export function isFallbackError(error: any): boolean {
  */
 export async function fetchMemberSalaryData(): Promise<MemberSalaryAccountItem[]> {
   try {
-    const baseFields = ['id', 'nrp', 'nama', 'tanggal_lahir', 'bank_account_number', 'take_home_pay', 'master_thp'];
+    const baseFields = ['id', 'nomor_referensi', 'nrp', 'nama', 'tanggal_lahir', 'bank_account_number', 'take_home_pay', 'master_thp'];
     let selectFields = [...baseFields, 'salary', 'angsuran_lain_lain'];
 
     let { data, error }: { data: any; error: any } = await supabase
@@ -802,6 +846,7 @@ export async function fetchMembersSalaryAndAccounts(): Promise<MemberSalaryAccou
     while (hasMore) {
       let selectFields = [
         'id',
+        'nomor_referensi',
         'nrp',
         'nama',
         'tanggal_lahir',

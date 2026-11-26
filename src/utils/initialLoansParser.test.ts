@@ -19,11 +19,11 @@ describe('initialLoansParser', () => {
     vi.clearAllMocks();
   });
 
-  it('builds an 8-column template workbook populated with active members and reference loan types sheet', async () => {
+  it('builds a 9-column template workbook populated with active members (nomor_referensi leftmost) and reference loan types sheet', async () => {
     const workbook = await buildInitialLoansTemplateWorkbook(
       [
-        { nrp: '12345678', nama: 'Budi Santoso', status: 'aktif', membership_status: 'ACTIVE' },
-        { nrp: '99999999', nama: 'Non Aktif', status: 'resign', membership_status: 'RESIGNED' },
+        { nomor_referensi: '0001', nrp: '12345678', nama: 'Budi Santoso', status: 'aktif', membership_status: 'ACTIVE' },
+        { nomor_referensi: '0002', nrp: '99999999', nama: 'Non Aktif', status: 'resign', membership_status: 'RESIGNED' },
       ],
       [
         { id: 'lt-1', code: 'REG', name: 'Pinjaman Reguler', max_duration_months: 12, is_active: true },
@@ -42,11 +42,14 @@ describe('initialLoansParser', () => {
 
     expect(sheet1!.rowCount).toBe(2);
     const row2 = sheet1!.getRow(2);
-    expect(row2.getCell(1).value).toBe('12345678');
-    expect(row2.getCell(2).value).toBe('Budi Santoso');
-    expect(row2.getCell(3).value).toBe('');
-    expect(row2.getCell(4).value).toBe(0);
-    expect(row2.getCell(3).dataValidation?.type).toBe('list');
+    expect(row2.getCell(1).value).toBe('0001');
+    expect(row2.getCell(2).value).toBe('12345678');
+    expect(row2.getCell(3).value).toBe('Budi Santoso');
+    expect(row2.getCell(4).value).toBe('');
+    expect(row2.getCell(5).value).toBe(0);
+    expect(sheet1!.getColumn('nomor_referensi').numFmt).toBe('@');
+    expect(sheet1!.getColumn('nrp').numFmt).toBe('@');
+    expect(row2.getCell(4).dataValidation?.type).toBe('list');
 
     const sheet2 = workbook.getWorksheet('Referensi Jenis Pinjaman');
     expect(sheet2).toBeDefined();
@@ -60,10 +63,10 @@ describe('initialLoansParser', () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Saldo Awal Pinjaman');
     ws.addRow([...INITIAL_LOANS_HEADERS]);
-    ws.addRow(['12345678', 'Budi Santoso', 'reg', 12000000, '2025-10-01', 1000000, 12, 3000000]);
-    ws.addRow(['87654321', 'Siti Aminah', 'Pinjaman Darurat', '6.000.000', '2026-01-15', '1.000.000', 6, 1500000]);
-    ws.addRow(['11112222', 'Tanpa Pinjaman', 'REG', 0, '', 0, 0, 0]);
-    ws.addRow(['33334444', 'Jenis Salah', 'TIDAK_ADA', 5000000, '2026-02-01', 500000, 10, 0]);
+    ws.addRow(['0001', '12345678', 'Budi Santoso', 'reg', 12000000, '2025-10-01', 1000000, 12, 3000000]);
+    ws.addRow(['0002', '87654321', 'Siti Aminah', 'Pinjaman Darurat', '6.000.000', '2026-01-15', '1.000.000', 6, 1500000]);
+    ws.addRow(['0003', '11112222', 'Tanpa Pinjaman', 'REG', 0, '', 0, 0, 0]);
+    ws.addRow(['0004', '33334444', 'Jenis Salah', 'TIDAK_ADA', 5000000, '2026-02-01', 500000, 10, 0]);
 
     const buffer = await workbook.xlsx.writeBuffer();
     const parsed = await parseInitialLoansExcel(buffer as ArrayBuffer, [
@@ -73,6 +76,7 @@ describe('initialLoansParser', () => {
 
     expect(parsed).toHaveLength(3);
     expect(parsed[0]).toEqual({
+      nomor_referensi: '0001',
       nrp: '12345678',
       nama: 'Budi Santoso',
       jenis_pinjaman: 'reg',
@@ -88,6 +92,7 @@ describe('initialLoansParser', () => {
       errorMessage: undefined,
     });
     expect(parsed[1]).toMatchObject({
+      nomor_referensi: '0002',
       nrp: '87654321',
       loan_type_id: 'lt-2',
       loan_type_name: 'Pinjaman Darurat',
@@ -97,6 +102,7 @@ describe('initialLoansParser', () => {
       isValid: true,
     });
     expect(parsed[2]).toMatchObject({
+      nomor_referensi: '0004',
       nrp: '33334444',
       loan_type_id: null,
       isValid: false,
@@ -104,10 +110,10 @@ describe('initialLoansParser', () => {
     expect(parsed[2].errorMessage).toContain('tidak terdaftar di Master Produk');
   });
 
-  it('validates NRP existence and normalized Name against registeredMembers', async () => {
+  it('validates NRP existence and normalized Name against registeredMembers (and stays backward-compatible with 8-column files)', async () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Saldo Awal Pinjaman');
-    ws.addRow([...INITIAL_LOANS_HEADERS]);
+    ws.addRow(['nrp', 'nama', 'jenis_pinjaman', 'jumlah_pinjaman', 'tgl_awal_pinjaman', 'nilai_angsuran', 'tenor', 'total_terangsur']);
     ws.addRow(['12345678', '  budi   SANTOSO ', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
     ws.addRow(['99999999', 'Belum Terdaftar', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);
     ws.addRow(['87654321', 'Nama Berbeda', 'REG', 5000000, '2026-01-01', 500000, 10, 0]);

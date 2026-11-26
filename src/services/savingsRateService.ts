@@ -1,7 +1,6 @@
 import ExcelJS from 'exceljs';
 import { supabase } from '../lib/supabaseClient';
 import { getLastCompletedLebaranCycle } from './bulkWithdrawalService';
-import { formatTanggalLahirWithAge } from '../utils/dateUtils';
 
 export type DepositTypeCode = 'POKOK' | 'WAJIB' | 'BELANJA' | 'LEBARAN';
 
@@ -551,6 +550,7 @@ function isValidMemberLebaranRateRow(row: any): row is MemberLebaranRate {
 
 export interface ActiveMemberRateTarget {
   id: string;
+  nomor_referensi?: string | null;
   nrp: string;
   nama: string;
   tanggal_lahir?: string | null;
@@ -628,7 +628,7 @@ export async function fetchAllActiveMembersPaged(): Promise<ActiveMemberRateTarg
   while (hasMore) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-    let query: any = tableObj.select('id, nrp, nama, tanggal_lahir, status, membership_status');
+    let query: any = tableObj.select('id, nomor_referensi, nrp, nama, tanggal_lahir, status, membership_status');
     if (query && typeof query.eq === 'function') {
       query = query.eq('status', 'aktif');
     }
@@ -1241,8 +1241,10 @@ export interface ExportMemberLebaranTemplateResult {
 
 export interface ParsedMemberLebaranRateRow {
   rowNumber: number;
+  nomor_referensi?: string;
   nrp: string;
   nama: string;
+  tanggal_lahir?: string;
   tarif_saat_ini: number;
   tarif_lebaran_baru: number;
   mulai_bulan: number;
@@ -1268,7 +1270,7 @@ export interface BulkUpsertMemberLebaranResult {
   notFoundNrps: string[];
 }
 
-function resolveDefaultLebaranCyclePeriod(
+export function resolveDefaultLebaranCyclePeriod(
   cutOffOrDisbursementDate?: string | null,
   fallbackDate: Date = new Date()
 ): { year: number; month: number; cycleLabel: string } {
@@ -1370,6 +1372,7 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
 
   const sheet = workbook.addWorksheet('Tarif Lebaran Anggota');
   const headers = [
+    'nomor_referensi',
     'nrp',
     'nama',
     'tanggal_lahir',
@@ -1381,14 +1384,15 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
   ];
 
   sheet.columns = [
-    { header: headers[0], key: 'nrp', width: 18 },
-    { header: headers[1], key: 'nama', width: 32 },
-    { header: headers[2], key: 'tanggal_lahir', width: 22 },
-    { header: headers[3], key: 'tarif_saat_ini', width: 18 },
-    { header: headers[4], key: 'tarif_lebaran_baru', width: 22 },
-    { header: headers[5], key: 'mulai_bulan', width: 14 },
-    { header: headers[6], key: 'mulai_tahun', width: 14 },
-    { header: headers[7], key: 'keterangan_siklus', width: 30 },
+    { header: headers[0], key: 'nomor_referensi', width: 20 },
+    { header: headers[1], key: 'nrp', width: 18 },
+    { header: headers[2], key: 'nama', width: 32 },
+    { header: headers[3], key: 'tanggal_lahir', width: 16 },
+    { header: headers[4], key: 'tarif_saat_ini', width: 18 },
+    { header: headers[5], key: 'tarif_lebaran_baru', width: 22 },
+    { header: headers[6], key: 'mulai_bulan', width: 14 },
+    { header: headers[7], key: 'mulai_tahun', width: 14 },
+    { header: headers[8], key: 'keterangan_siklus', width: 30 },
   ];
 
   const headerRow = sheet.getRow(1);
@@ -1401,7 +1405,7 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
   headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
   headerRow.height = 24;
 
-  const newRateHeaderCell = headerRow.getCell(5);
+  const newRateHeaderCell = headerRow.getCell(6);
   newRateHeaderCell.note =
     'Isi nominal baru jika anggota mengajukan perubahan tarif. Jika dibiarkan kosong, ketentuan terakhir/global tetap digunakan.';
 
@@ -1421,9 +1425,10 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
     );
 
     const row = sheet.addRow({
+      nomor_referensi: String(m.nomor_referensi ?? ''),
       nrp: String(m.nrp ?? ''),
       nama: m.nama || '',
-      tanggal_lahir: formatTanggalLahirWithAge(m.tanggal_lahir),
+      tanggal_lahir: m.tanggal_lahir ? String(m.tanggal_lahir).slice(0, 10) : '',
       tarif_saat_ini: currentRate,
       tarif_lebaran_baru: '',
       mulai_bulan: defaultMonth,
@@ -1432,10 +1437,12 @@ export async function buildMemberLebaranRateTemplateWorkbook(): Promise<{
     });
 
     row.getCell(1).numFmt = '@';
-    row.getCell(4).numFmt = '#,##0';
+    row.getCell(2).numFmt = '@';
+    row.getCell(4).numFmt = '@';
     row.getCell(5).numFmt = '#,##0';
-    row.getCell(6).alignment = { horizontal: 'center' };
+    row.getCell(6).numFmt = '#,##0';
     row.getCell(7).alignment = { horizontal: 'center' };
+    row.getCell(8).alignment = { horizontal: 'center' };
   }
 
   // Sheet Petunjuk Pengisian
@@ -1535,8 +1542,10 @@ export async function parseMemberLebaranRateExcel(
     );
   }
 
+  const refCol = headerIndexMap['nomor_referensi'];
   const nrpCol = headerIndexMap['nrp'];
   const namaCol = headerIndexMap['nama'];
+  const dobCol = headerIndexMap['tanggal_lahir'];
   const currentRateCol = headerIndexMap['tarif_saat_ini'];
   const newRateCol = headerIndexMap['tarif_lebaran_baru'];
   const monthCol = headerIndexMap['mulai_bulan'];
@@ -1550,9 +1559,11 @@ export async function parseMemberLebaranRateExcel(
 
   for (let rowNum = 2; rowNum <= sheet.rowCount; rowNum++) {
     const row = sheet.getRow(rowNum);
+    const nomor_referensi = refCol ? extractExcelCellText(row.getCell(refCol).value) : '';
     const nrp = extractExcelCellText(row.getCell(nrpCol).value);
     const rawNewRateText = extractExcelCellText(row.getCell(newRateCol).value);
     const nama = namaCol ? extractExcelCellText(row.getCell(namaCol).value) : '';
+    const tanggal_lahir = dobCol ? extractExcelCellText(row.getCell(dobCol).value) : '';
 
     if (!nrp && !rawNewRateText && !nama) {
       continue;
@@ -1622,8 +1633,10 @@ export async function parseMemberLebaranRateExcel(
 
     validRows.push({
       rowNumber: rowNum,
+      nomor_referensi,
       nrp,
       nama,
+      tanggal_lahir,
       tarif_saat_ini: isNaN(currentRate) ? 0 : currentRate,
       tarif_lebaran_baru: parsedNewRate,
       mulai_bulan: parsedMonth,

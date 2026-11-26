@@ -479,10 +479,11 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
   });
 
   describe('buildSalaryReconciliationWorkbook & downloadSalaryReconciliationTemplate', () => {
-    it('menghasilkan workbook 5 kolom baku (NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain) dengan format sel yang benar', () => {
+    it('menghasilkan workbook 6 kolom baku (nomor_referensi, NRP, Nama Lengkap, Nomor Rekening, Gaji Pokok, Angsuran Lain-lain) dengan format sel yang benar', () => {
       const workbook = buildSalaryReconciliationWorkbook([
         {
           id: 'm-1',
+          nomor_referensi: '001234',
           nrp: '0095168420',
           nama: 'Agus Susanto',
           bank_account_number: '0011223344',
@@ -492,6 +493,7 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         },
         {
           id: 'm-2',
+          nomor_referensi: null,
           nrp: '88776655',
           nama: 'Budi Hartono',
           bank_account_number: null,
@@ -505,6 +507,7 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
       expect(ws).toBeDefined();
       expect(ws!.getRow(1).values).toEqual([
         undefined,
+        'nomor_referensi',
         'NRP',
         'Nama Lengkap',
         'Nomor Rekening',
@@ -513,20 +516,23 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
       ]);
 
       const row2 = ws!.getRow(2);
-      expect(row2.getCell(1).value).toBe('0095168420');
-      expect(row2.getCell(2).value).toBe('Agus Susanto');
-      expect(row2.getCell(3).value).toBe('0011223344');
-      expect(row2.getCell(4).value).toBe(6000000);
-      expect(row2.getCell(5).value).toBe(1000000);
+      expect(row2.getCell(1).value).toBe('001234');
+      expect(row2.getCell(2).value).toBe('0095168420');
+      expect(row2.getCell(3).value).toBe('Agus Susanto');
+      expect(row2.getCell(4).value).toBe('0011223344');
+      expect(row2.getCell(5).value).toBe(6000000);
+      expect(row2.getCell(6).value).toBe(1000000);
       expect(row2.getCell(1).numFmt).toBe('@');
-      expect(row2.getCell(3).numFmt).toBe('@');
-      expect(row2.getCell(4).numFmt).toBe('#,##0');
+      expect(row2.getCell(2).numFmt).toBe('@');
+      expect(row2.getCell(4).numFmt).toBe('@');
       expect(row2.getCell(5).numFmt).toBe('#,##0');
+      expect(row2.getCell(6).numFmt).toBe('#,##0');
 
       const row3 = ws!.getRow(3);
-      expect(row3.getCell(3).value).toBe('');
-      expect(row3.getCell(4).value).toBe(4800000);
-      expect(row3.getCell(5).value).toBe(0);
+      expect(row3.getCell(1).value).toBe('');
+      expect(row3.getCell(4).value).toBe('');
+      expect(row3.getCell(5).value).toBe(4800000);
+      expect(row3.getCell(6).value).toBe(0);
     });
 
     it('mengambil anggota aktif urut nama ASC dan mengunduh file Template_Rekonsiliasi_YYYY-MM-DD.xlsx', async () => {
@@ -534,6 +540,7 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         data: [
           {
             id: 'm-1',
+            nomor_referensi: 'REF-001',
             nrp: '95168420',
             nama: 'Agus Susanto',
             bank_account_number: '1122334455',
@@ -582,7 +589,7 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
         const result = await downloadSalaryReconciliationTemplate();
         expect(result).toBe(true);
         expect(mockSelect).toHaveBeenCalledWith(
-          'id, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
+          'id, nomor_referensi, nrp, nama, bank_account_number, master_thp, take_home_pay, angsuran_lain_lain'
         );
         expect(mockEq).toHaveBeenCalledWith('status', 'aktif');
         expect(mockOrder).toHaveBeenCalledWith('nama', { ascending: true });
@@ -601,6 +608,40 @@ describe('salaryImportService - Paged Fetching & Reconciliation Confirmation', (
   });
 
   describe('parseSalaryReconciliationFile', () => {
+    it('memparsing template 6 kolom dengan nomor_referensi di paling kiri dan mempertahankan kompatibilitas 5 kolom', async () => {
+      const mockIn = vi.fn().mockResolvedValue({
+        data: [
+          { nrp: '95168420', nama: 'Agus Susanto', bank_account_number: '123456' },
+        ],
+        error: null,
+      });
+      const mockSelect = vi.fn().mockReturnValue({ in: mockIn });
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'anggota') {
+          return { select: mockSelect };
+        }
+        return {};
+      });
+
+      const wb6 = new ExcelJS.Workbook();
+      const ws6 = wb6.addWorksheet('Template');
+      ws6.addRow(['nomor_referensi', 'NRP', 'Nama Lengkap', 'Nomor Rekening', 'Gaji Pokok', 'Angsuran Lain-lain']);
+      ws6.addRow(['009911', '95168420', 'Agus Susanto', '123456', 8000000, 350000]);
+      const buf6 = await wb6.xlsx.writeBuffer();
+      const file6 = { arrayBuffer: async () => buf6 } as unknown as File;
+
+      const res6 = await parseSalaryReconciliationFile(file6);
+      expect(res6).toHaveLength(1);
+      expect(res6[0]).toMatchObject({
+        nomor_referensi: '009911',
+        nrp: '95168420',
+        nama: 'Agus Susanto',
+        gaji_pokok: 8000000,
+        angsuran_lain_lain: 350000,
+        status: 'MATCH',
+      });
+    });
+
     it('memparsing template 5 kolom (Gaji Pokok & Angsuran Lain-lain) dan mendukung fallback header lama Take Home Pay (THP)', async () => {
       const mockIn = vi.fn().mockResolvedValue({
         data: [

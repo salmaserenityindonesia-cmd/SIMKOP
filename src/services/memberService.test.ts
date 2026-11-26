@@ -26,6 +26,15 @@ vi.mock('../lib/supabaseClient', () => ({
   },
 }));
 
+function makePagedChain(result: { data: any[] | null; error: any }) {
+  const chain: any = {
+    order: vi.fn(() => chain),
+    in: vi.fn(() => chain),
+    range: vi.fn().mockResolvedValue(result),
+  };
+  return chain;
+}
+
 describe('memberService - getMembersComprehensiveReport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -39,9 +48,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
 
   it('should return empty array when no members found in database', async () => {
     const mockFrom = vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        order: vi.fn().mockResolvedValue({ data: [], error: null }),
-      }),
+      select: vi.fn().mockReturnValue(makePagedChain({ data: [], error: null })),
     });
     (supabase.from as any) = mockFrom;
 
@@ -51,12 +58,12 @@ describe('memberService - getMembersComprehensiveReport', () => {
 
   it('should throw an error when member query fails', async () => {
     const mockFrom = vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        order: vi.fn().mockResolvedValue({
+      select: vi.fn().mockReturnValue(
+        makePagedChain({
           data: null,
           error: { message: 'Database connection error' },
-        }),
-      }),
+        })
+      ),
     });
     (supabase.from as any) = mockFrom;
 
@@ -89,35 +96,29 @@ describe('memberService - getMembersComprehensiveReport', () => {
       },
     ];
 
-    const mockDeposits = [
-      // member-1: Pokok 100k, Wajib 200k - 50k = 150k, Belanja 50k, Lebaran 75k
-      {
-        member_id: 'member-1',
-        deposit_types: { name: 'Simpanan Pokok' },
-        deposit_transactions: [{ amount: 100000, transaction_type: 'deposit' }],
-      },
-      {
-        member_id: 'member-1',
-        deposit_types: { name: 'Simpanan Wajib Bulanan' },
-        deposit_transactions: [
-          { amount: 200000, transaction_type: 'deposit' },
-          { amount: 50000, transaction_type: 'withdrawal' },
-        ],
-      },
-      {
-        member_id: 'member-1',
-        deposit_types: { name: 'Simpanan Belanja Sukarela' },
-        deposit_transactions: [{ amount: 50000, transaction_type: 'deposit' }],
-      },
-      {
-        member_id: 'member-1',
-        deposit_types: { name: 'Simpanan Hari Raya' },
-        deposit_transactions: [{ amount: 75000, transaction_type: 'deposit' }],
-      },
+    const mockDepositTypes = [
+      { id: 'dt-pokok', code: 'POKOK', name: 'Simpanan Pokok' },
+      { id: 'dt-wajib', code: 'WAJIB', name: 'Simpanan Wajib Bulanan' },
+      { id: 'dt-belanja', code: 'BELANJA', name: 'Simpanan Belanja Sukarela' },
+      { id: 'dt-lebaran', code: 'LEBARAN', name: 'Simpanan Hari Raya' },
+    ];
+
+    const mockMemberDeposits = [
+      { id: 'dep-1', member_id: 'member-1', deposit_type_id: 'dt-pokok', balance: 100000 },
+      { id: 'dep-2', member_id: 'member-1', deposit_type_id: 'dt-wajib', balance: 150000 },
+      { id: 'dep-3', member_id: 'member-1', deposit_type_id: 'dt-belanja', balance: 50000 },
+      { id: 'dep-4', member_id: 'member-1', deposit_type_id: 'dt-lebaran', balance: 75000 },
+    ];
+
+    const mockDepositTransactions = [
+      { member_deposit_id: 'dep-1', amount: 100000, transaction_type: 'deposit' },
+      { member_deposit_id: 'dep-2', amount: 200000, transaction_type: 'deposit' },
+      { member_deposit_id: 'dep-2', amount: 50000, transaction_type: 'withdrawal' },
+      { member_deposit_id: 'dep-3', amount: 50000, transaction_type: 'deposit' },
+      { member_deposit_id: 'dep-4', amount: 75000, transaction_type: 'deposit' },
     ];
 
     const mockLoans = [
-      // member-1 has active loan with schedules
       {
         id: 'loan-1',
         member_id: 'member-1',
@@ -128,14 +129,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
         disbursed_at: '2024-02-01T00:00:00.000Z',
         created_at: '2024-02-01T00:00:00.000Z',
         status: 'active',
-        loan_schedules: [
-          { id: 's1', target_amount: 500000, paid_amount: 500000, status: 'paid' },
-          { id: 's2', target_amount: 500000, paid_amount: 200000, status: 'partial' },
-          { id: 's3', target_amount: 500000, paid_amount: 0, status: 'unpaid' },
-        ],
-        loan_repayments: [],
       },
-      // member-2 has approved loan with repayments only (no schedules)
       {
         id: 'loan-2',
         member_id: 'member-2',
@@ -146,36 +140,30 @@ describe('memberService - getMembersComprehensiveReport', () => {
         disbursed_at: '2024-03-10T00:00:00.000Z',
         created_at: '2024-03-10T00:00:00.000Z',
         status: 'approved',
-        loan_schedules: [],
-        loan_repayments: [{ amount_paid: 800000 }],
       },
     ];
 
+    const mockSchedules = [
+      { id: 's1', loan_id: 'loan-1', target_amount: 500000, paid_amount: 500000, status: 'paid' },
+      { id: 's2', loan_id: 'loan-1', target_amount: 500000, paid_amount: 200000, status: 'partial' },
+      { id: 's3', loan_id: 'loan-1', target_amount: 500000, paid_amount: 0, status: 'unpaid' },
+    ];
+
+    const mockRepayments = [{ loan_id: 'loan-2', amount_paid: 800000 }];
+
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
-      if (table === 'anggota') {
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
-          }),
-        };
-      }
-      if (table === 'member_deposits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: mockDeposits, error: null }),
-          }),
-        };
-      }
-      if (table === 'loans') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
-            }),
-          }),
-        };
-      }
-      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      const tableMap: Record<string, any> = {
+        anggota: makePagedChain({ data: mockMembers, error: null }),
+        deposit_types: Promise.resolve({ data: mockDepositTypes, error: null }),
+        member_deposits: makePagedChain({ data: mockMemberDeposits, error: null }),
+        deposit_transactions: makePagedChain({ data: mockDepositTransactions, error: null }),
+        loans: makePagedChain({ data: mockLoans, error: null }),
+        loan_schedules: makePagedChain({ data: mockSchedules, error: null }),
+        loan_repayments: makePagedChain({ data: mockRepayments, error: null }),
+      };
+      return {
+        select: vi.fn().mockReturnValue(tableMap[table] ?? makePagedChain({ data: [], error: null })),
+      };
     });
 
     const report = await getMembersComprehensiveReport();
@@ -223,6 +211,39 @@ describe('memberService - getMembersComprehensiveReport', () => {
     });
   });
 
+  it('should fallback to member_deposits.balance when no deposit_transactions exist', async () => {
+    const mockMembers = [
+      { id: 'm-bal', nrp: '101', nama: 'Anggota Saldo Awal', tgl_awal_anggota: '2024-01-05' },
+    ];
+    const mockDepositTypes = [
+      { id: 'dt-1', code: 'POKOK', name: 'Simpanan Pokok' },
+      { id: 'dt-2', code: 'WAJIB', name: 'Simpanan Wajib' },
+    ];
+    const mockMemberDeposits = [
+      { id: 'dep-a', member_id: 'm-bal', deposit_type_id: 'dt-1', balance: 250000 },
+      { id: 'dep-b', member_id: 'm-bal', deposit_type_id: 'dt-2', balance: 500000 },
+    ];
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      const tableMap: Record<string, any> = {
+        anggota: makePagedChain({ data: mockMembers, error: null }),
+        deposit_types: Promise.resolve({ data: mockDepositTypes, error: null }),
+        member_deposits: makePagedChain({ data: mockMemberDeposits, error: null }),
+        deposit_transactions: makePagedChain({ data: [], error: null }),
+        loans: makePagedChain({ data: [], error: null }),
+      };
+      return {
+        select: vi.fn().mockReturnValue(tableMap[table] ?? makePagedChain({ data: [], error: null })),
+      };
+    });
+
+    const report = await getMembersComprehensiveReport();
+    expect(report).toHaveLength(1);
+    expect(report[0].tgl_awal_anggota).toBe('2024-01-05');
+    expect(report[0].jumlah_simpanan_pokok).toBe(250000);
+    expect(report[0].jumlah_simpanan_wajib).toBe(500000);
+  });
+
   it('should safely handle members without any deposit or loan history', async () => {
     const mockMembers = [
       {
@@ -239,29 +260,12 @@ describe('memberService - getMembersComprehensiveReport', () => {
 
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
       if (table === 'anggota') {
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
-          }),
-        };
+        return { select: vi.fn().mockReturnValue(makePagedChain({ data: mockMembers, error: null })) };
       }
-      if (table === 'member_deposits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        };
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
       }
-      if (table === 'loans') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          }),
-        };
-      }
-      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      return { select: vi.fn().mockReturnValue(makePagedChain({ data: [], error: null })) };
     });
 
     const report = await getMembersComprehensiveReport();
@@ -284,7 +288,7 @@ describe('memberService - getMembersComprehensiveReport', () => {
     expect(m.sisa_pinjaman).toBe(0);
   });
 
-  it('should filter by memberIds when provided', async () => {
+  it('should filter by memberIds when provided (small list)', async () => {
     const mockInMember = vi.fn().mockReturnValue({
       order: vi.fn().mockResolvedValue({
         data: [{ id: 'm-selected', nrp: '111', nama: 'Selected Member', created_at: '2024-01-01' }],
@@ -300,29 +304,53 @@ describe('memberService - getMembersComprehensiveReport', () => {
           }),
         };
       }
-      if (table === 'member_deposits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        };
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
       }
-      if (table === 'loans') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          }),
-        };
-      }
-      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      return { select: vi.fn().mockReturnValue(makePagedChain({ data: [], error: null })) };
     });
 
     const report = await getMembersComprehensiveReport(['m-selected']);
     expect(mockInMember).toHaveBeenCalledWith('id', ['m-selected']);
     expect(report).toHaveLength(1);
     expect(report[0].nrp).toBe('111');
+  });
+
+  it('should NOT use oversized .in() URL filter when exporting 894+ memberIds', async () => {
+    const manyIds = Array.from({ length: 894 }, (_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`);
+    const mockMembers = manyIds.map((id, i) => ({
+      id,
+      nrp: String(1000 + i),
+      nama: `Anggota ${i}`,
+      created_at: '2024-01-01',
+    }));
+
+    const inCalls: any[][] = [];
+
+    (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      }
+      const chain: any = {
+        order: vi.fn(() => chain),
+        in: vi.fn((col: string, vals: any[]) => {
+          inCalls.push([table, col, vals]);
+          return chain;
+        }),
+        range: vi.fn().mockResolvedValue({
+          data: table === 'anggota' ? mockMembers : [],
+          error: null,
+        }),
+      };
+      return { select: vi.fn().mockReturnValue(chain) };
+    });
+
+    const report = await getMembersComprehensiveReport(manyIds);
+    expect(report).toHaveLength(894);
+    // Pastikan tidak ada panggilan .in() dengan 894 UUID (hanya loans.status ['active', 'approved'])
+    for (const [, , vals] of inCalls) {
+      expect(vals.length).toBeLessThanOrEqual(100);
+    }
   });
 
   it('should aggregate multiple active loans for the same member correctly (sum amounts, max tenor, earliest date)', async () => {
@@ -345,8 +373,6 @@ describe('memberService - getMembersComprehensiveReport', () => {
         amount: 3000000,
         tenor: 6,
         disbursed_at: '2024-01-15T00:00:00Z',
-        loan_schedules: [],
-        loan_repayments: [{ amount_paid: 1000000 }], // sisa = 2M
       },
       {
         id: 'loan-b',
@@ -354,36 +380,27 @@ describe('memberService - getMembersComprehensiveReport', () => {
         amount: 2000000,
         tenor: 12,
         disbursed_at: '2024-02-01T00:00:00Z',
-        loan_schedules: [],
-        loan_repayments: [{ amount_paid: 500000 }], // sisa = 1.5M
       },
     ];
 
+    const mockRepayments = [
+      { loan_id: 'loan-a', amount_paid: 1000000 }, // sisa = 2M
+      { loan_id: 'loan-b', amount_paid: 500000 }, // sisa = 1.5M
+    ];
+
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
-      if (table === 'anggota') {
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
-          }),
-        };
-      }
-      if (table === 'member_deposits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        };
-      }
-      if (table === 'loans') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({ data: mockLoans, error: null }),
-            }),
-          }),
-        };
-      }
-      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      const tableMap: Record<string, any> = {
+        anggota: makePagedChain({ data: mockMembers, error: null }),
+        deposit_types: Promise.resolve({ data: [], error: null }),
+        member_deposits: makePagedChain({ data: [], error: null }),
+        deposit_transactions: makePagedChain({ data: [], error: null }),
+        loans: makePagedChain({ data: mockLoans, error: null }),
+        loan_schedules: makePagedChain({ data: [], error: null }),
+        loan_repayments: makePagedChain({ data: mockRepayments, error: null }),
+      };
+      return {
+        select: vi.fn().mockReturnValue(tableMap[table] ?? makePagedChain({ data: [], error: null })),
+      };
     });
 
     const report = await getMembersComprehensiveReport();
@@ -410,32 +427,22 @@ describe('memberService - getMembersComprehensiveReport', () => {
 
     (supabase.from as any) = vi.fn().mockImplementation((table: string) => {
       if (table === 'anggota') {
-        return {
-          select: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: mockMembers, error: null }),
-          }),
-        };
+        return { select: vi.fn().mockReturnValue(makePagedChain({ data: mockMembers, error: null })) };
       }
-      if (table === 'member_deposits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({ data: [], error: null }),
-          }),
-        };
+      if (table === 'deposit_types') {
+        return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
       }
       if (table === 'loans') {
         return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: null,
-                error: { message: 'Timeout loading loans' },
-              }),
-            }),
-          }),
+          select: vi.fn().mockReturnValue(
+            makePagedChain({
+              data: null,
+              error: { message: 'Timeout loading loans' },
+            })
+          ),
         };
       }
-      return { select: vi.fn().mockResolvedValue({ data: [], error: null }) };
+      return { select: vi.fn().mockReturnValue(makePagedChain({ data: [], error: null })) };
     });
 
     const report = await getMembersComprehensiveReport();

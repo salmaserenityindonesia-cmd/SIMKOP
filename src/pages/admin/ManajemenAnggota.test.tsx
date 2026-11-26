@@ -8,9 +8,17 @@ import ManajemenAnggota, {
 } from './ManajemenAnggota';
 import {
   getMembersComprehensiveReport,
+  getMembersTemplateExportData,
   resetAllMembersData,
 } from '../../services/memberService';
-import { exportMembersToExcel, exportMembersToPdf } from '../../services/memberExporter';
+import {
+  exportDataAnggotaExcel,
+  exportDataAkhirSimpananExcel,
+  exportDataAkhirPinjamanExcel,
+  exportDataKomitmenTarifLebaranExcel,
+  exportDataAkhirGajiAngsuranLainExcel,
+  exportMembersToPdf,
+} from '../../services/memberExporter';
 import { getKoperasiProfile } from '../../services/settingsService';
 
 // Mock layout & feedback
@@ -84,6 +92,43 @@ vi.mock('../../services/memberService', () => ({
       sisa_pinjaman: 2500000,
     },
   ]),
+  getMembersTemplateExportData: vi.fn().mockResolvedValue({
+    anggota: [
+      {
+        nomor_referensi: 'REF-001',
+        nrp: '12345678',
+        nama: 'Budi Santoso',
+        tanggal_lahir: '1985-05-20',
+        bank_account_number: '1234567890',
+        membership_status: 'ACTIVE',
+        tgl_awal_anggota: '2023-01-01',
+      },
+    ],
+    simpanan: [
+      {
+        nomor_referensi: 'REF-001',
+        nrp: '12345678',
+        nama: 'Budi Santoso',
+        jumlah_simpanan_pokok: 100000,
+        jumlah_simpanan_wajib: 200000,
+        jumlah_simpanan_belanja: 50000,
+        jumlah_simpanan_lebaran: 75000,
+      },
+    ],
+    pinjaman: [
+      {
+        nomor_referensi: 'REF-001',
+        nrp: '12345678',
+        nama: 'Budi Santoso',
+        jenis_pinjaman: 'Pinjaman Reguler',
+        jumlah_pinjaman: 5000000,
+        tgl_awal_pinjaman: '2024-01-01',
+        nilai_angsuran: 500000,
+        tenor: 10,
+        total_terangsur: 2500000,
+      },
+    ],
+  }),
   RESET_MEMBERS_CONFIRMATION_PHRASE: 'RESET ANGGOTA',
   resetAllMembersData: vi.fn().mockResolvedValue({
     success: true,
@@ -113,6 +158,11 @@ vi.mock('../../services/loanService', () => ({
 
 vi.mock('../../services/memberExporter', () => ({
   exportMembersToExcel: vi.fn().mockResolvedValue({}),
+  exportDataAnggotaExcel: vi.fn().mockResolvedValue({}),
+  exportDataAkhirSimpananExcel: vi.fn().mockResolvedValue({}),
+  exportDataAkhirPinjamanExcel: vi.fn().mockResolvedValue({}),
+  exportDataKomitmenTarifLebaranExcel: vi.fn().mockResolvedValue({}),
+  exportDataAkhirGajiAngsuranLainExcel: vi.fn().mockResolvedValue({}),
   exportMembersToPdf: vi.fn().mockResolvedValue({}),
 }));
 
@@ -226,37 +276,68 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
     });
   });
 
-  describe('Excel Export Flow (14 Kolom Komprehensif)', () => {
-    it('triggers Excel export: fetches comprehensive report and calls exportMembersToExcel with success toast', async () => {
+  describe('Excel Export Flow (5 File Terpisah Sesuai Template Impor)', () => {
+    it('triggers Excel export (all): fetches template export bundle and downloads 5 separate files with success toast', async () => {
       const showToast = vi.fn();
       const setIsExporting = vi.fn();
       const targetMemberIds = ['member-1', 'member-2'];
 
-      await triggerMemberExportExcel(targetMemberIds, showToast, setIsExporting);
+      await triggerMemberExportExcel(targetMemberIds, showToast, setIsExporting, 'all');
 
       // Verify loading state cycle
       expect(setIsExporting).toHaveBeenCalledWith(true);
       expect(setIsExporting).toHaveBeenLastCalledWith(false);
 
       // Verify data fetcher called with selected member IDs
-      expect(getMembersComprehensiveReport).toHaveBeenCalledTimes(1);
-      expect(getMembersComprehensiveReport).toHaveBeenCalledWith(targetMemberIds);
+      expect(getMembersTemplateExportData).toHaveBeenCalledTimes(1);
+      expect(getMembersTemplateExportData).toHaveBeenCalledWith(targetMemberIds);
 
-      // Verify exporter called with returned data
-      expect(exportMembersToExcel).toHaveBeenCalledTimes(1);
-      expect(exportMembersToExcel).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            nrp: '12345678',
-            nama: 'Budi Santoso',
-            jumlah_simpanan_pokok: 100000,
-          }),
-        ])
-      );
+      // Verify all 5 separate exporters called
+      expect(exportDataAnggotaExcel).toHaveBeenCalledTimes(1);
+      expect(exportDataAkhirSimpananExcel).toHaveBeenCalledTimes(1);
+      expect(exportDataAkhirPinjamanExcel).toHaveBeenCalledTimes(1);
+      expect(exportDataKomitmenTarifLebaranExcel).toHaveBeenCalledTimes(1);
+      expect(exportDataAkhirGajiAngsuranLainExcel).toHaveBeenCalledTimes(1);
 
       // Verify success toast
       expect(showToast).toHaveBeenCalledWith(
-        'Laporan Excel 14 kolom berhasil diunduh.',
+        '5 berkas Excel (Data Anggota, Simpanan, Pinjaman, Tarif Lebaran, Gaji & Angsuran Lain-lain) berhasil diunduh.',
+        'success'
+      );
+    });
+
+    it('triggers single Excel export when specific type is selected', async () => {
+      const showToast = vi.fn();
+      const setIsExporting = vi.fn();
+
+      await triggerMemberExportExcel(['member-1'], showToast, setIsExporting, 'simpanan');
+
+      expect(exportDataAkhirSimpananExcel).toHaveBeenCalledTimes(1);
+      expect(exportDataAnggotaExcel).not.toHaveBeenCalled();
+      expect(exportDataAkhirPinjamanExcel).not.toHaveBeenCalled();
+      expect(exportDataKomitmenTarifLebaranExcel).not.toHaveBeenCalled();
+      expect(exportDataAkhirGajiAngsuranLainExcel).not.toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith(
+        'File 2: Data Akhir Simpanan (.xlsx) berhasil diunduh.',
+        'success'
+      );
+    });
+
+    it('triggers File 4 (tarif_lebaran) and File 5 (gaji_angsuran) individually', async () => {
+      const showToast = vi.fn();
+      const setIsExporting = vi.fn();
+
+      await triggerMemberExportExcel(['member-1'], showToast, setIsExporting, 'tarif_lebaran');
+      expect(exportDataKomitmenTarifLebaranExcel).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(
+        'File 4: Data Komitmen Tarif Simpanan Lebaran (.xlsx) berhasil diunduh.',
+        'success'
+      );
+
+      await triggerMemberExportExcel(['member-1'], showToast, setIsExporting, 'gaji_angsuran');
+      expect(exportDataAkhirGajiAngsuranLainExcel).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(
+        'File 5: Data Akhir Gaji & Angsuran Lain-lain (.xlsx) berhasil diunduh.',
         'success'
       );
     });
@@ -266,7 +347,7 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       const setIsExporting = vi.fn();
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      (getMembersComprehensiveReport as any).mockRejectedValueOnce(
+      (getMembersTemplateExportData as any).mockRejectedValueOnce(
         new Error('Network timeout during query')
       );
 

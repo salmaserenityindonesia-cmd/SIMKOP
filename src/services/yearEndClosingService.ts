@@ -10,6 +10,12 @@ export interface RatShuSettings {
   id?: string;
   fiscal_year: number;
   reserve_fund_pct: number;
+  member_borrower_pct: number;
+  member_depositor_pct: number;
+  management_fund_pct: number;
+  employee_fund_pct: number;
+  social_fund_pct: number;
+  education_fund_pct: number;
   member_shu_pct: number;
   other_fund_pct: number;
   member_business_pct: number;
@@ -29,6 +35,12 @@ export interface RatSettingsValidationResult {
 export interface ShuAllocationBreakdown {
   distributableShu: number;
   reserveFundAmount: number;
+  memberBorrowerPool: number;
+  memberDepositorPool: number;
+  managementFundAmount: number;
+  employeeFundAmount: number;
+  socialFundAmount: number;
+  educationFundAmount: number;
   otherFundAmount: number;
   memberShuTotal: number;
   jasaUsahaPool: number;
@@ -76,6 +88,18 @@ export interface FiscalYearClosingRecord {
   post_shu_cash_balance?: number;
   post_shu_member_savings?: number;
   reserve_fund_pct?: number;
+  member_borrower_pct?: number;
+  member_depositor_pct?: number;
+  management_fund_pct?: number;
+  employee_fund_pct?: number;
+  social_fund_pct?: number;
+  education_fund_pct?: number;
+  member_borrower_amount?: number;
+  member_depositor_amount?: number;
+  management_fund_amount?: number;
+  employee_fund_amount?: number;
+  social_fund_amount?: number;
+  education_fund_amount?: number;
   member_shu_pct?: number;
   other_fund_pct?: number;
   member_business_pct?: number;
@@ -102,6 +126,12 @@ export interface YearEndClosingPreview {
   opex: number;
   netShuAmount: number;
   reserveFundAmount: number;
+  memberBorrowerPool: number;
+  memberDepositorPool: number;
+  managementFundAmount: number;
+  employeeFundAmount: number;
+  socialFundAmount: number;
+  educationFundAmount: number;
   otherFundAmount: number;
   memberShuTotal: number;
   jasaUsahaPool: number;
@@ -126,11 +156,17 @@ const DEFAULT_DEPOSIT_CODE = 'BELANJA';
 export function createDefaultRatSettings(fiscalYear: number): RatShuSettings {
   return {
     fiscal_year: fiscalYear,
-    reserve_fund_pct: 40,
-    member_shu_pct: 60,
-    other_fund_pct: 0,
-    member_business_pct: 70,
-    member_capital_pct: 30,
+    reserve_fund_pct: 20,
+    member_borrower_pct: 30,
+    member_depositor_pct: 25,
+    management_fund_pct: 10,
+    employee_fund_pct: 5,
+    social_fund_pct: 5,
+    education_fund_pct: 5,
+    member_shu_pct: 55,
+    other_fund_pct: 25,
+    member_business_pct: 54.55,
+    member_capital_pct: 45.45,
     payout_method: 'CASH_PAYOUT',
     target_deposit_type_code: DEFAULT_DEPOSIT_CODE,
   };
@@ -178,29 +214,58 @@ function normalizePayoutMethod(raw?: string | null): ShuPayoutMethod {
 
 function normalizeRatSettings(raw: Partial<RatShuSettings>, fiscalYear: number): RatShuSettings {
   const defaults = createDefaultRatSettings(fiscalYear);
+  const reserve_fund_pct =
+    raw.reserve_fund_pct !== undefined && raw.reserve_fund_pct !== null
+      ? Number(raw.reserve_fund_pct)
+      : defaults.reserve_fund_pct;
+  const member_borrower_pct =
+    raw.member_borrower_pct !== undefined && raw.member_borrower_pct !== null
+      ? Number(raw.member_borrower_pct)
+      : defaults.member_borrower_pct;
+  const member_depositor_pct =
+    raw.member_depositor_pct !== undefined && raw.member_depositor_pct !== null
+      ? Number(raw.member_depositor_pct)
+      : defaults.member_depositor_pct;
+  const management_fund_pct =
+    raw.management_fund_pct !== undefined && raw.management_fund_pct !== null
+      ? Number(raw.management_fund_pct)
+      : defaults.management_fund_pct;
+  const employee_fund_pct =
+    raw.employee_fund_pct !== undefined && raw.employee_fund_pct !== null
+      ? Number(raw.employee_fund_pct)
+      : defaults.employee_fund_pct;
+  const social_fund_pct =
+    raw.social_fund_pct !== undefined && raw.social_fund_pct !== null
+      ? Number(raw.social_fund_pct)
+      : defaults.social_fund_pct;
+  const education_fund_pct =
+    raw.education_fund_pct !== undefined && raw.education_fund_pct !== null
+      ? Number(raw.education_fund_pct)
+      : defaults.education_fund_pct;
+
+  const member_shu_pct = round2(member_borrower_pct + member_depositor_pct);
+  const other_fund_pct = round2(
+    management_fund_pct + employee_fund_pct + social_fund_pct + education_fund_pct
+  );
+  const member_business_pct =
+    member_shu_pct > 0 ? round2((member_borrower_pct / member_shu_pct) * 100) : 0;
+  const member_capital_pct =
+    member_shu_pct > 0 ? round2(100 - member_business_pct) : 0;
+
   return {
     id: raw.id,
     fiscal_year: Number(raw.fiscal_year || fiscalYear),
-    reserve_fund_pct:
-      raw.reserve_fund_pct !== undefined && raw.reserve_fund_pct !== null
-        ? Number(raw.reserve_fund_pct)
-        : defaults.reserve_fund_pct,
-    member_shu_pct:
-      raw.member_shu_pct !== undefined && raw.member_shu_pct !== null
-        ? Number(raw.member_shu_pct)
-        : defaults.member_shu_pct,
-    other_fund_pct:
-      raw.other_fund_pct !== undefined && raw.other_fund_pct !== null
-        ? Number(raw.other_fund_pct)
-        : defaults.other_fund_pct,
-    member_business_pct:
-      raw.member_business_pct !== undefined && raw.member_business_pct !== null
-        ? Number(raw.member_business_pct)
-        : defaults.member_business_pct,
-    member_capital_pct:
-      raw.member_capital_pct !== undefined && raw.member_capital_pct !== null
-        ? Number(raw.member_capital_pct)
-        : defaults.member_capital_pct,
+    reserve_fund_pct,
+    member_borrower_pct,
+    member_depositor_pct,
+    management_fund_pct,
+    employee_fund_pct,
+    social_fund_pct,
+    education_fund_pct,
+    member_shu_pct,
+    other_fund_pct,
+    member_business_pct,
+    member_capital_pct,
     payout_method: normalizePayoutMethod(raw.payout_method),
     target_deposit_type_code:
       String(raw.target_deposit_type_code || defaults.target_deposit_type_code).trim() ||
@@ -210,16 +275,18 @@ function normalizeRatSettings(raw: Partial<RatShuSettings>, fiscalYear: number):
 }
 
 /**
- * Validasi rasio konfigurasi RAT secara ketat sebelum disimpan atau dieksekusi.
+ * Validasi rasio konfigurasi RAT sesuai 7 pos AD/ART (total wajib 100%) sebelum disimpan atau dieksekusi.
  */
 export function validateRatSettings(settings: RatShuSettings): RatSettingsValidationResult {
   const errors: string[] = [];
   const fields: Array<{ label: string; value: number }> = [
-    { label: 'Cadangan Modal Koperasi', value: Number(settings.reserve_fund_pct) },
-    { label: 'Bagian SHU Anggota', value: Number(settings.member_shu_pct) },
-    { label: 'Dana Pengurus / Sosial', value: Number(settings.other_fund_pct) },
-    { label: 'Jasa Usaha / Transaksi', value: Number(settings.member_business_pct) },
-    { label: 'Jasa Modal Simpanan', value: Number(settings.member_capital_pct) },
+    { label: 'Cadangan Modal', value: Number(settings.reserve_fund_pct) },
+    { label: 'Anggota Peminjam', value: Number(settings.member_borrower_pct) },
+    { label: 'Anggota Penyimpan', value: Number(settings.member_depositor_pct) },
+    { label: 'Dana Pengurus', value: Number(settings.management_fund_pct) },
+    { label: 'Dana Karyawan', value: Number(settings.employee_fund_pct) },
+    { label: 'Dana Sosial', value: Number(settings.social_fund_pct) },
+    { label: 'Dana Pendidikan', value: Number(settings.education_fund_pct) },
   ];
 
   for (const field of fields) {
@@ -230,21 +297,20 @@ export function validateRatSettings(settings: RatShuSettings): RatSettingsValida
 
   const mainTotal = round2(
     Number(settings.reserve_fund_pct || 0) +
-      Number(settings.member_shu_pct || 0) +
-      Number(settings.other_fund_pct || 0)
+      Number(settings.member_borrower_pct || 0) +
+      Number(settings.member_depositor_pct || 0) +
+      Number(settings.management_fund_pct || 0) +
+      Number(settings.employee_fund_pct || 0) +
+      Number(settings.social_fund_pct || 0) +
+      Number(settings.education_fund_pct || 0)
   );
   const memberSubTotal = round2(
-    Number(settings.member_business_pct || 0) + Number(settings.member_capital_pct || 0)
+    Number(settings.member_borrower_pct || 0) + Number(settings.member_depositor_pct || 0)
   );
 
   if (Math.abs(mainTotal - 100) > 0.01) {
     errors.push(
-      `Total alokasi utama (Cadangan Modal + Bagian Anggota + Dana Lainnya) harus tepat 100% (saat ini ${mainTotal}%).`
-    );
-  }
-  if (Math.abs(memberSubTotal - 100) > 0.01) {
-    errors.push(
-      `Total sub-rasio anggota (Jasa Usaha + Jasa Modal) harus tepat 100% (saat ini ${memberSubTotal}%).`
+      `Total alokasi SHU sesuai AD/ART harus tepat 100% (saat ini ${mainTotal}%).`
     );
   }
   if (settings.payout_method !== 'CASH_PAYOUT' && settings.payout_method !== 'CREDIT_SAVINGS') {
@@ -260,8 +326,7 @@ export function validateRatSettings(settings: RatShuSettings): RatSettingsValida
 }
 
 /**
- * Memecah SHU Bersih menjadi Cadangan Modal, Dana Lainnya, dan Pool SHU Anggota
- * (Jasa Usaha vs Jasa Modal).
+ * Memecah SHU Bersih menjadi 7 pos alokasi sesuai AD/ART Koperasi.
  */
 export function calculateShuAllocation(
   netShuAmount: number,
@@ -271,22 +336,49 @@ export function calculateShuAllocation(
   const reserveFundAmount = Math.round(
     distributableShu * (Number(settings.reserve_fund_pct || 0) / 100)
   );
-  const otherFundAmount = Math.round(
-    distributableShu * (Number(settings.other_fund_pct || 0) / 100)
+  const memberBorrowerPool = Math.round(
+    distributableShu * (Number(settings.member_borrower_pct || 0) / 100)
   );
-  const memberShuTotal = Math.max(0, distributableShu - reserveFundAmount - otherFundAmount);
-  const jasaUsahaPool = Math.round(
-    memberShuTotal * (Number(settings.member_business_pct || 0) / 100)
+  const memberDepositorPool = Math.round(
+    distributableShu * (Number(settings.member_depositor_pct || 0) / 100)
   );
-  const jasaModalPool = Math.max(0, memberShuTotal - jasaUsahaPool);
+  const managementFundAmount = Math.round(
+    distributableShu * (Number(settings.management_fund_pct || 0) / 100)
+  );
+  const employeeFundAmount = Math.round(
+    distributableShu * (Number(settings.employee_fund_pct || 0) / 100)
+  );
+  const socialFundAmount = Math.round(
+    distributableShu * (Number(settings.social_fund_pct || 0) / 100)
+  );
+  const educationFundAmount = Math.max(
+    0,
+    distributableShu -
+      reserveFundAmount -
+      memberBorrowerPool -
+      memberDepositorPool -
+      managementFundAmount -
+      employeeFundAmount -
+      socialFundAmount
+  );
+
+  const memberShuTotal = memberBorrowerPool + memberDepositorPool;
+  const otherFundAmount =
+    managementFundAmount + employeeFundAmount + socialFundAmount + educationFundAmount;
 
   return {
     distributableShu,
     reserveFundAmount,
+    memberBorrowerPool,
+    memberDepositorPool,
+    managementFundAmount,
+    employeeFundAmount,
+    socialFundAmount,
+    educationFundAmount,
     otherFundAmount,
     memberShuTotal,
-    jasaUsahaPool,
-    jasaModalPool,
+    jasaUsahaPool: memberBorrowerPool,
+    jasaModalPool: memberDepositorPool,
   };
 }
 
@@ -399,6 +491,12 @@ export function recalculatePreviewWithSettings(
     postShuCashBalance,
     postShuMemberSavings,
     reserveFundAmount: allocation.reserveFundAmount,
+    memberBorrowerPool: allocation.memberBorrowerPool,
+    memberDepositorPool: allocation.memberDepositorPool,
+    managementFundAmount: allocation.managementFundAmount,
+    employeeFundAmount: allocation.employeeFundAmount,
+    socialFundAmount: allocation.socialFundAmount,
+    educationFundAmount: allocation.educationFundAmount,
     otherFundAmount: allocation.otherFundAmount,
     memberShuTotal: allocation.memberShuTotal,
     jasaUsahaPool: allocation.jasaUsahaPool,
@@ -498,6 +596,12 @@ export async function saveYearEndSettings(settings: RatShuSettings): Promise<Rat
   const payload = {
     fiscal_year: normalized.fiscal_year,
     reserve_fund_pct: normalized.reserve_fund_pct,
+    member_borrower_pct: normalized.member_borrower_pct,
+    member_depositor_pct: normalized.member_depositor_pct,
+    management_fund_pct: normalized.management_fund_pct,
+    employee_fund_pct: normalized.employee_fund_pct,
+    social_fund_pct: normalized.social_fund_pct,
+    education_fund_pct: normalized.education_fund_pct,
     member_shu_pct: normalized.member_shu_pct,
     other_fund_pct: normalized.other_fund_pct,
     member_business_pct: normalized.member_business_pct,
@@ -562,6 +666,30 @@ function mapClosingRecord(row: any): FiscalYearClosingRecord {
       row.post_shu_member_savings !== undefined ? Number(row.post_shu_member_savings) : undefined,
     reserve_fund_pct:
       row.reserve_fund_pct !== undefined ? Number(row.reserve_fund_pct) : undefined,
+    member_borrower_pct:
+      row.member_borrower_pct !== undefined ? Number(row.member_borrower_pct) : undefined,
+    member_depositor_pct:
+      row.member_depositor_pct !== undefined ? Number(row.member_depositor_pct) : undefined,
+    management_fund_pct:
+      row.management_fund_pct !== undefined ? Number(row.management_fund_pct) : undefined,
+    employee_fund_pct:
+      row.employee_fund_pct !== undefined ? Number(row.employee_fund_pct) : undefined,
+    social_fund_pct:
+      row.social_fund_pct !== undefined ? Number(row.social_fund_pct) : undefined,
+    education_fund_pct:
+      row.education_fund_pct !== undefined ? Number(row.education_fund_pct) : undefined,
+    member_borrower_amount:
+      row.member_borrower_amount !== undefined ? Number(row.member_borrower_amount) : undefined,
+    member_depositor_amount:
+      row.member_depositor_amount !== undefined ? Number(row.member_depositor_amount) : undefined,
+    management_fund_amount:
+      row.management_fund_amount !== undefined ? Number(row.management_fund_amount) : undefined,
+    employee_fund_amount:
+      row.employee_fund_amount !== undefined ? Number(row.employee_fund_amount) : undefined,
+    social_fund_amount:
+      row.social_fund_amount !== undefined ? Number(row.social_fund_amount) : undefined,
+    education_fund_amount:
+      row.education_fund_amount !== undefined ? Number(row.education_fund_amount) : undefined,
     member_shu_pct: row.member_shu_pct !== undefined ? Number(row.member_shu_pct) : undefined,
     other_fund_pct: row.other_fund_pct !== undefined ? Number(row.other_fund_pct) : undefined,
     member_business_pct:
@@ -740,6 +868,17 @@ async function buildClosedPreviewFromRecord(
         ? closing.closing_member_savings + totalDistributedToMembers
         : closing.closing_member_savings;
 
+  const closedAllocation = calculateShuAllocation(closing.net_shu_amount, {
+    ...createDefaultRatSettings(closing.fiscal_year),
+    reserve_fund_pct: closing.reserve_fund_pct ?? 20,
+    member_borrower_pct: closing.member_borrower_pct ?? 30,
+    member_depositor_pct: closing.member_depositor_pct ?? 25,
+    management_fund_pct: closing.management_fund_pct ?? 10,
+    employee_fund_pct: closing.employee_fund_pct ?? 5,
+    social_fund_pct: closing.social_fund_pct ?? 5,
+    education_fund_pct: closing.education_fund_pct ?? 5,
+  });
+
   return {
     fiscalYear: closing.fiscal_year,
     closingDate: closing.closing_date,
@@ -759,6 +898,17 @@ async function buildClosedPreviewFromRecord(
     opex: Number(closing.opex_amount ?? 0),
     netShuAmount: closing.net_shu_amount,
     reserveFundAmount: closing.reserve_fund_amount,
+    memberBorrowerPool:
+      closing.member_borrower_amount ?? (jasaUsahaPool || closedAllocation.memberBorrowerPool),
+    memberDepositorPool:
+      closing.member_depositor_amount ?? (jasaModalPool || closedAllocation.memberDepositorPool),
+    managementFundAmount:
+      closing.management_fund_amount ?? closedAllocation.managementFundAmount,
+    employeeFundAmount:
+      closing.employee_fund_amount ?? closedAllocation.employeeFundAmount,
+    socialFundAmount: closing.social_fund_amount ?? closedAllocation.socialFundAmount,
+    educationFundAmount:
+      closing.education_fund_amount ?? closedAllocation.educationFundAmount,
     otherFundAmount: closing.other_fund_amount,
     memberShuTotal: closing.member_shu_total,
     jasaUsahaPool,
@@ -1181,10 +1331,19 @@ export async function computeYearEndPreview(
 
   let goodsFinancingMargin = 0;
   const memberMarginMap = new Map<string, number>();
+  const memberLoanRepaymentMap = new Map<string, number>();
+  let totalLoanRepaymentsInYear = 0;
   for (const r of repaymentsInYear) {
     const loan = r?.loan_id ? loanMap.get(String(r.loan_id)) : null;
     const sched = r?.schedule_id ? scheduleLookup.get(String(r.schedule_id)) : null;
     const explicitMargin = Math.round(Number(r?.margin_portion || 0));
+    const paidAmt = Math.max(0, Math.round(Number(r?.amount_paid || 0)));
+
+    if (paidAmt > 0 && loan?.member_id) {
+      const mId = String(loan.member_id);
+      memberLoanRepaymentMap.set(mId, (memberLoanRepaymentMap.get(mId) || 0) + paidAmt);
+      totalLoanRepaymentsInYear += paidAmt;
+    }
 
     let marginPortion = 0;
     if (explicitMargin > 0) {
@@ -1228,14 +1387,17 @@ export async function computeYearEndPreview(
   // 6. Rincian Hak SHU per Anggota Aktif
   const memberInputs: MemberContributionInput[] = activeMembers.map((m: any) => {
     const mId = String(m.id);
+    const borrowerContribution =
+      totalLoanRepaymentsInYear > 0
+        ? memberLoanRepaymentMap.get(mId) || 0
+        : (memberPosSalesMap.get(mId) || 0) + (memberMarginMap.get(mId) || 0);
     return {
       memberId: mId,
       nrp: String(m.nrp || ''),
       nama: String(m.nama || ''),
       tanggal_lahir: m.tanggal_lahir ?? null,
       totalSavingsContribution: memberSavingsMap.get(mId) || 0,
-      totalTransactionContribution:
-        (memberPosSalesMap.get(mId) || 0) + (memberMarginMap.get(mId) || 0),
+      totalTransactionContribution: borrowerContribution,
     };
   });
 
@@ -1258,6 +1420,12 @@ export async function computeYearEndPreview(
     opex: Math.round(opex),
     netShuAmount: Math.round(netShuAmount),
     reserveFundAmount: 0,
+    memberBorrowerPool: 0,
+    memberDepositorPool: 0,
+    managementFundAmount: 0,
+    employeeFundAmount: 0,
+    socialFundAmount: 0,
+    educationFundAmount: 0,
     otherFundAmount: 0,
     memberShuTotal: 0,
     jasaUsahaPool: 0,
@@ -1495,6 +1663,18 @@ export async function executeYearEndClosing(
     post_shu_cash_balance: preview.postShuCashBalance,
     post_shu_member_savings: preview.postShuMemberSavings,
     reserve_fund_pct: savedSettings.reserve_fund_pct,
+    member_borrower_pct: savedSettings.member_borrower_pct,
+    member_depositor_pct: savedSettings.member_depositor_pct,
+    management_fund_pct: savedSettings.management_fund_pct,
+    employee_fund_pct: savedSettings.employee_fund_pct,
+    social_fund_pct: savedSettings.social_fund_pct,
+    education_fund_pct: savedSettings.education_fund_pct,
+    member_borrower_amount: preview.memberBorrowerPool,
+    member_depositor_amount: preview.memberDepositorPool,
+    management_fund_amount: preview.managementFundAmount,
+    employee_fund_amount: preview.employeeFundAmount,
+    social_fund_amount: preview.socialFundAmount,
+    education_fund_amount: preview.educationFundAmount,
     member_shu_pct: savedSettings.member_shu_pct,
     other_fund_pct: savedSettings.other_fund_pct,
     member_business_pct: savedSettings.member_business_pct,
@@ -1645,5 +1825,362 @@ export async function executeYearEndClosing(
       closingRecord,
       memberRows: preview.memberRows.map((r) => ({ ...r, payoutStatus: 'PAID' })),
     },
+  };
+}
+
+export type PriorYearAdjustmentTarget = 'CASH_VAULT' | 'MEMBER_SAVINGS' | 'RESERVE_EQUITY';
+export type PriorYearAdjustmentDirection = 'INCREASE' | 'DECREASE';
+
+export interface PriorYearAdjustmentRecord {
+  id: string;
+  closed_fiscal_year: number;
+  effective_year: number;
+  effective_date: string;
+  adjustment_target: PriorYearAdjustmentTarget;
+  direction: PriorYearAdjustmentDirection;
+  amount: number;
+  member_id?: string | null;
+  member_nrp?: string | null;
+  member_nama?: string | null;
+  deposit_type_code?: string | null;
+  reference_no: string;
+  reason: string;
+  cash_flow_id?: string | null;
+  deposit_transaction_id?: string | null;
+  created_by?: string | null;
+  created_at: string;
+}
+
+export interface RecordPriorYearAdjustmentParams {
+  closedFiscalYear: number;
+  adjustmentTarget: PriorYearAdjustmentTarget;
+  direction: PriorYearAdjustmentDirection;
+  amount: number;
+  referenceNo: string;
+  reason: string;
+  memberId?: string;
+  depositTypeCode?: string;
+}
+
+/**
+ * Mengambil seluruh riwayat Jurnal Penyesuaian Awal Tahun Buku Baru (Koreksi Pasca-RAT)
+ * untuk tahun buku yang sudah berstatus CLOSED.
+ */
+export async function getPriorYearAdjustments(
+  closedFiscalYear: number
+): Promise<PriorYearAdjustmentRecord[]> {
+  try {
+    const tbl: any = supabase?.from?.('prior_year_adjustments');
+    if (!tbl || typeof tbl.select !== 'function') return [];
+
+    let q = tbl.select('*');
+    if (q && typeof q.eq === 'function') q = q.eq('closed_fiscal_year', closedFiscalYear);
+    if (q && typeof q.order === 'function') q = q.order('created_at', { ascending: false });
+
+    const { data, error } = await q;
+    if (error) {
+      if (isMissingTableOrSchemaErr(error)) return [];
+      throw new Error(`Gagal memuat riwayat penyesuaian pasca-RAT: ${error.message}`);
+    }
+
+    const rows = (data || []) as PriorYearAdjustmentRecord[];
+    const memberIds = Array.from(
+      new Set(rows.map((r) => r.member_id).filter((id): id is string => Boolean(id)))
+    );
+
+    const memberMap = new Map<string, { nrp: string; nama: string }>();
+    if (memberIds.length > 0) {
+      const mTbl: any = supabase?.from?.('anggota');
+      if (mTbl && typeof mTbl.select === 'function') {
+        let mq = mTbl.select('id, nrp, nama');
+        if (mq && typeof mq.in === 'function') mq = mq.in('id', memberIds);
+        const { data: members } = await mq;
+        for (const m of members || []) {
+          if (m?.id) {
+            memberMap.set(String(m.id), {
+              nrp: String(m.nrp || ''),
+              nama: String(m.nama || ''),
+            });
+          }
+        }
+      }
+    }
+
+    return rows.map((row) => {
+      const member = row.member_id ? memberMap.get(String(row.member_id)) : undefined;
+      return {
+        ...row,
+        amount: Number(row.amount || 0),
+        member_nrp: member?.nrp ?? row.member_nrp ?? null,
+        member_nama: member?.nama ?? row.member_nama ?? null,
+      };
+    });
+  } catch (err: any) {
+    if (isMissingTableOrSchemaErr(err)) return [];
+    throw err;
+  }
+}
+
+/**
+ * Mencatat Jurnal Penyesuaian Awal Tahun Buku Baru (per 1 Januari {closedFiscalYear + 1})
+ * untuk koreksi pasca-RAT tanpa mengubah atau membuka kunci laporan tahun buku lama (CLOSED).
+ */
+export async function recordPriorYearAdjustment(
+  params: RecordPriorYearAdjustmentParams
+): Promise<PriorYearAdjustmentRecord> {
+  const closedFiscalYear = Number(params.closedFiscalYear);
+  if (!Number.isFinite(closedFiscalYear) || closedFiscalYear < 2000) {
+    throw new Error('Tahun buku tertutup tidak valid.');
+  }
+
+  const cleanAmount = Math.round(Number(params.amount));
+  if (!Number.isFinite(cleanAmount) || cleanAmount <= 0) {
+    throw new Error('Nominal koreksi harus lebih besar dari Rp 0.');
+  }
+
+  const cleanRef = String(params.referenceNo || '').trim();
+  if (!cleanRef) {
+    throw new Error('Nomor Dokumen / Berita Acara Koreksi wajib diisi.');
+  }
+
+  const cleanReason = String(params.reason || '').trim();
+  if (!cleanReason) {
+    throw new Error('Uraian alasan penyesuaian wajib diisi.');
+  }
+
+  const { adjustmentTarget, direction } = params;
+  if (
+    adjustmentTarget !== 'CASH_VAULT' &&
+    adjustmentTarget !== 'MEMBER_SAVINGS' &&
+    adjustmentTarget !== 'RESERVE_EQUITY'
+  ) {
+    throw new Error('Objek penyesuaian tidak valid.');
+  }
+  if (direction !== 'INCREASE' && direction !== 'DECREASE') {
+    throw new Error('Arah koreksi harus INCREASE atau DECREASE.');
+  }
+
+  if (adjustmentTarget === 'MEMBER_SAVINGS') {
+    if (!params.memberId) {
+      throw new Error('Anggota wajib dipilih untuk koreksi saldo simpanan.');
+    }
+    if (!params.depositTypeCode) {
+      throw new Error('Jenis simpanan wajib dipilih untuk koreksi saldo simpanan.');
+    }
+  }
+
+  // Pastikan tahun buku memang sudah berstatus CLOSED
+  const fycTable: any = supabase.from('fiscal_year_closings');
+  const { data: closedRow, error: closedErr } = await fycTable
+    .select('id, fiscal_year, status')
+    .eq('fiscal_year', closedFiscalYear)
+    .maybeSingle();
+
+  if (closedErr) {
+    throw new Error(`Gagal memverifikasi status tutup buku ${closedFiscalYear}: ${closedErr.message}`);
+  }
+  if (!closedRow || String(closedRow.status || '').toUpperCase() !== 'CLOSED') {
+    throw new Error(
+      `Tahun buku ${closedFiscalYear} belum berstatus CLOSED. Gunakan fitur transaksi biasa sebelum tutup buku.`
+    );
+  }
+
+  const effectiveYear = closedFiscalYear + 1;
+  const effectiveDate = `${effectiveYear}-01-01`;
+  const effectiveTimestamp = `${effectiveYear}-01-01T00:05:00.000Z`;
+  const cashDirection = direction === 'INCREASE' ? 'in' : 'out';
+
+  let cashFlowId: string | null = null;
+  let depositTransactionId: string | null = null;
+  let resolvedDepositCode: string | null = params.depositTypeCode
+    ? normalizeDepositTypeCode(params.depositTypeCode)
+    : null;
+
+  if (adjustmentTarget === 'CASH_VAULT') {
+    const cfTable: any = supabase.from('cash_flow');
+    const cfPayload = {
+      direction: cashDirection,
+      category: 'KOREKSI_TAHUN_LALU',
+      amount: cleanAmount,
+      description: `Jurnal Penyesuaian Awal Tahun ${effectiveYear} (Koreksi RAT ${closedFiscalYear}) [${cleanRef}] — ${cleanReason}`,
+      created_at: effectiveTimestamp,
+    };
+    let cfRes = await cfTable.insert(cfPayload).select('id').single();
+    if (cfRes?.error && isMissingColumnErr(cfRes.error)) {
+      const { description: _desc, ...cfFallback } = cfPayload;
+      cfRes = await cfTable.insert(cfFallback).select('id').single();
+    }
+    if (cfRes?.error) {
+      throw new Error(`Gagal mencatat penyesuaian Kas Brankas ke arus kas: ${cfRes.error.message}`);
+    }
+    cashFlowId = cfRes?.data?.id ? String(cfRes.data.id) : null;
+  } else if (adjustmentTarget === 'MEMBER_SAVINGS') {
+    const targetType = await resolveTargetDepositType(params.depositTypeCode || DEFAULT_DEPOSIT_CODE);
+    resolvedDepositCode = targetType.code;
+
+    const mdTable: any = supabase.from('member_deposits');
+    const { data: existingMd, error: mdFindErr } = await mdTable
+      .select('id, balance')
+      .eq('member_id', params.memberId)
+      .eq('deposit_type_id', targetType.id)
+      .maybeSingle();
+
+    if (mdFindErr) {
+      throw new Error(`Gagal memeriksa rekening simpanan anggota: ${mdFindErr.message}`);
+    }
+
+    let memberDepositId = existingMd?.id ? String(existingMd.id) : '';
+    if (!memberDepositId) {
+      const insMd = await mdTable
+        .insert({
+          member_id: params.memberId,
+          deposit_type_id: targetType.id,
+        })
+        .select('id')
+        .single();
+      if (insMd?.error || !insMd?.data?.id) {
+        throw new Error(
+          `Gagal membuat rekening ${targetType.name} anggota: ${insMd?.error?.message || 'Unknown error'}`
+        );
+      }
+      memberDepositId = String(insMd.data.id);
+    }
+
+    const dtTable: any = supabase.from('deposit_transactions');
+    const txPayload = {
+      member_deposit_id: memberDepositId,
+      transaction_type: direction === 'INCREASE' ? 'deposit' : 'withdrawal',
+      amount: cleanAmount,
+      for_year: effectiveYear,
+      for_month: 1,
+      reference_no: cleanRef,
+      payment_method: 'koreksi_pasca_rat',
+      description: `Koreksi Saldo Awal Pasca-RAT ${closedFiscalYear} [${cleanRef}] — ${cleanReason}`,
+      created_at: effectiveTimestamp,
+    };
+
+    let insTx = await dtTable.insert(txPayload).select('id').single();
+    if (insTx?.error && isMissingColumnErr(insTx.error)) {
+      const {
+        reference_no: _ref,
+        payment_method: _pm,
+        ...fallbackPayload
+      } = txPayload;
+      insTx = await dtTable.insert(fallbackPayload).select('id').single();
+    }
+    if (insTx?.error) {
+      throw new Error(`Gagal mencatat mutasi koreksi simpanan anggota: ${insTx.error.message}`);
+    }
+    depositTransactionId = insTx?.data?.id ? String(insTx.data.id) : null;
+
+    // Hitung ulang total bersih seluruh deposit_transactions milik member_deposit_id tersebut
+    const { data: allTxs, error: sumErr } = await dtTable
+      .select('transaction_type, amount')
+      .eq('member_deposit_id', memberDepositId);
+
+    if (!sumErr && Array.isArray(allTxs)) {
+      const recomputedBalance = allTxs.reduce((acc: number, row: any) => {
+        const amt = Number(row?.amount || 0);
+        return String(row?.transaction_type || '').toLowerCase() === 'withdrawal'
+          ? acc - amt
+          : acc + amt;
+      }, 0);
+
+      try {
+        await mdTable.update({ balance: recomputedBalance }).eq('id', memberDepositId);
+      } catch {
+        // Abaikan jika kolom balance tidak dipakai
+      }
+    }
+
+    // Sisipkan 1 baris penyeimbang di public.cash_flow agar kas dan simpanan tetap seimbang
+    const cfTable: any = supabase.from('cash_flow');
+    const cfPayload = {
+      direction: cashDirection,
+      category: 'KOREKSI_TAHUN_LALU',
+      amount: cleanAmount,
+      reference_id: depositTransactionId,
+      description: `Penyesuaian Simpanan ${targetType.name} Awal Tahun ${effectiveYear} (Pasca-RAT ${closedFiscalYear}) [${cleanRef}] — ${cleanReason}`,
+      created_at: effectiveTimestamp,
+    };
+    let cfRes = await cfTable.insert(cfPayload).select('id').single();
+    if (cfRes?.error && isMissingColumnErr(cfRes.error)) {
+      const { description: _desc, reference_id: _refId, ...cfFallback } = cfPayload;
+      cfRes = await cfTable.insert(cfFallback).select('id').single();
+    }
+    if (cfRes?.error) {
+      throw new Error(`Gagal mencatat kas penyeimbang koreksi simpanan: ${cfRes.error.message}`);
+    }
+    cashFlowId = cfRes?.data?.id ? String(cfRes.data.id) : null;
+  }
+
+  let createdBy: string | null = null;
+  try {
+    const authRes = await supabase?.auth?.getUser?.();
+    createdBy = authRes?.data?.user?.id ? String(authRes.data.user.id) : null;
+  } catch {
+    createdBy = null;
+  }
+
+  const adjTable: any = supabase.from('prior_year_adjustments');
+  const { data: insertedAdj, error: adjErr } = await adjTable
+    .insert({
+      closed_fiscal_year: closedFiscalYear,
+      effective_year: effectiveYear,
+      effective_date: effectiveDate,
+      adjustment_target: adjustmentTarget,
+      direction,
+      amount: cleanAmount,
+      member_id: adjustmentTarget === 'MEMBER_SAVINGS' ? params.memberId : null,
+      deposit_type_code: adjustmentTarget === 'MEMBER_SAVINGS' ? resolvedDepositCode : null,
+      reference_no: cleanRef,
+      reason: cleanReason,
+      cash_flow_id: cashFlowId,
+      deposit_transaction_id: depositTransactionId,
+      created_by: createdBy,
+    })
+    .select('*')
+    .single();
+
+  if (adjErr || !insertedAdj) {
+    throw new Error(
+      `Gagal menyimpan log jurnal penyesuaian pasca-RAT: ${adjErr?.message || 'Unknown error'}`
+    );
+  }
+
+  // Audit log non-blocking
+  try {
+    const auditTable: any = supabase?.from?.('audit_logs');
+    if (auditTable && typeof auditTable.insert === 'function') {
+      await auditTable.insert({
+        table_name: 'prior_year_adjustments',
+        action: 'PRIOR_YEAR_ADJUSTMENT',
+        record_id: insertedAdj.id,
+        entity_name: 'prior_year_adjustments',
+        entity_id: insertedAdj.id,
+        new_data: {
+          closed_fiscal_year: closedFiscalYear,
+          effective_year: effectiveYear,
+          effective_date: effectiveDate,
+          adjustment_target: adjustmentTarget,
+          direction,
+          amount: cleanAmount,
+          member_id: params.memberId ?? null,
+          deposit_type_code: resolvedDepositCode,
+          reference_no: cleanRef,
+          reason: cleanReason,
+          cash_flow_id: cashFlowId,
+          deposit_transaction_id: depositTransactionId,
+        },
+        notes: `Jurnal Penyesuaian Awal Tahun ${effectiveYear} (Pasca-RAT ${closedFiscalYear}) [${cleanRef}]: ${cleanReason}`,
+      });
+    }
+  } catch {
+    // Non-blocking audit log
+  }
+
+  return {
+    ...(insertedAdj as PriorYearAdjustmentRecord),
+    amount: Number(insertedAdj.amount || cleanAmount),
   };
 }

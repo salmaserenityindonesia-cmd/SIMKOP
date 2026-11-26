@@ -19,10 +19,10 @@ describe('initialSavingsParser', () => {
     vi.clearAllMocks();
   });
 
-  it('builds a 6-column template workbook populated with active members and 0 defaults', async () => {
+  it('builds a 7-column template workbook populated with active members and 0 defaults', async () => {
     const workbook = await buildInitialSavingsTemplateWorkbook([
-      { nrp: '12345678', nama: 'Budi Santoso', status: 'aktif', membership_status: 'ACTIVE' },
-      { nrp: '99999999', nama: 'Non Aktif', status: 'resign', membership_status: 'RESIGNED' },
+      { nomor_referensi: '0042', nrp: '12345678', nama: 'Budi Santoso', status: 'aktif', membership_status: 'ACTIVE' },
+      { nomor_referensi: '0099', nrp: '99999999', nama: 'Non Aktif', status: 'resign', membership_status: 'RESIGNED' },
     ]);
 
     const worksheet = workbook.getWorksheet('Saldo Awal Simpanan');
@@ -36,26 +36,30 @@ describe('initialSavingsParser', () => {
 
     expect(worksheet!.rowCount).toBe(2);
     const row2 = worksheet!.getRow(2);
-    expect(row2.getCell(1).value).toBe('12345678');
-    expect(row2.getCell(2).value).toBe('Budi Santoso');
-    expect(row2.getCell(3).value).toBe(0);
+    expect(row2.getCell(1).value).toBe('0042');
+    expect(row2.getCell(2).value).toBe('12345678');
+    expect(row2.getCell(3).value).toBe('Budi Santoso');
     expect(row2.getCell(4).value).toBe(0);
     expect(row2.getCell(5).value).toBe(0);
     expect(row2.getCell(6).value).toBe(0);
+    expect(row2.getCell(7).value).toBe(0);
+    expect(worksheet!.getColumn('nomor_referensi').numFmt).toBe('@');
+    expect(worksheet!.getColumn('nrp').numFmt).toBe('@');
   });
 
-  it('parses uploaded Excel rows with pure as-is numbers', async () => {
+  it('parses uploaded Excel rows with pure as-is numbers (7-column and legacy 6-column)', async () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Saldo Awal Simpanan');
     ws.addRow([...INITIAL_SAVINGS_HEADERS]);
-    ws.addRow(['12345678', 'Budi Santoso', 100000, 1500000, 250000, 300000]);
-    ws.addRow(['87654321', 'Siti Aminah', null, '750.000', '', 120000]);
+    ws.addRow(['0042', '12345678', 'Budi Santoso', 100000, 1500000, 250000, 300000]);
+    ws.addRow(['', '87654321', 'Siti Aminah', null, '750.000', '', 120000]);
 
     const buffer = await workbook.xlsx.writeBuffer();
     const parsed = await parseInitialSavingsExcel(buffer as ArrayBuffer);
 
     expect(parsed).toHaveLength(2);
     expect(parsed[0]).toEqual({
+      nomor_referensi: '0042',
       nrp: '12345678',
       nama: 'Budi Santoso',
       jumlah_simpanan_pokok: 100000,
@@ -66,6 +70,7 @@ describe('initialSavingsParser', () => {
       errorMessage: undefined,
     });
     expect(parsed[1]).toEqual({
+      nomor_referensi: '',
       nrp: '87654321',
       nama: 'Siti Aminah',
       jumlah_simpanan_pokok: 0,
@@ -75,15 +80,30 @@ describe('initialSavingsParser', () => {
       isValid: true,
       errorMessage: undefined,
     });
+
+    // Legacy 6-column file without nomor_referensi
+    const legacyWb = new ExcelJS.Workbook();
+    const legacyWs = legacyWb.addWorksheet('Saldo Awal Simpanan');
+    legacyWs.addRow(['nrp', 'nama', 'jumlah_simpanan_pokok', 'jumlah_simpanan_wajib', 'jumlah_simpanan_belanja', 'jumlah_simpanan_lebaran']);
+    legacyWs.addRow(['12345678', 'Budi Santoso', 100000, 200000, 0, 0]);
+    const legacyBuf = await legacyWb.xlsx.writeBuffer();
+    const legacyParsed = await parseInitialSavingsExcel(legacyBuf as ArrayBuffer);
+    expect(legacyParsed[0]).toMatchObject({
+      nomor_referensi: '',
+      nrp: '12345678',
+      nama: 'Budi Santoso',
+      jumlah_simpanan_pokok: 100000,
+      jumlah_simpanan_wajib: 200000,
+    });
   });
 
   it('validates NRP existence and normalized Name against registeredMembers', async () => {
     const workbook = new ExcelJS.Workbook();
     const ws = workbook.addWorksheet('Saldo Awal Simpanan');
     ws.addRow([...INITIAL_SAVINGS_HEADERS]);
-    ws.addRow(['12345678', '  budi   SANTOSO ', 100000, 500000, 0, 0]);
-    ws.addRow(['99999999', 'Belum Terdaftar', 100000, 0, 0, 0]);
-    ws.addRow(['87654321', 'Nama Berbeda', 0, 200000, 0, 0]);
+    ws.addRow(['0001', '12345678', '  budi   SANTOSO ', 100000, 500000, 0, 0]);
+    ws.addRow(['0002', '99999999', 'Belum Terdaftar', 100000, 0, 0, 0]);
+    ws.addRow(['0003', '87654321', 'Nama Berbeda', 0, 200000, 0, 0]);
 
     const buffer = await workbook.xlsx.writeBuffer();
     const parsed = await parseInitialSavingsExcel(buffer as ArrayBuffer, [

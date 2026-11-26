@@ -1,10 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   exportMembersToExcel,
+  exportDataAnggotaExcel,
+  exportDataAkhirSimpananExcel,
+  exportDataAkhirPinjamanExcel,
+  exportDataKomitmenTarifLebaranExcel,
+  exportDataAkhirGajiAngsuranLainExcel,
   exportMembersToPdf,
   formatRp,
   getFormattedToday,
+  getFormattedTodayIso,
 } from './memberExporter';
+import { parseMemberLebaranRateExcel } from './savingsRateService';
 import type { MemberComprehensiveExportRow } from './memberService';
 import type { KoperasiProfile } from './settingsService';
 
@@ -212,6 +219,202 @@ describe('memberExporter - Unit Tests', () => {
     it('should handle null/undefined profile with default cooperative name', async () => {
       const doc = await exportMembersToPdf(sampleRows, null, false);
       expect(doc).toBeDefined();
+    });
+  });
+
+  describe('3 Separate Template-Matched Excel Exporters', () => {
+    it('exportDataAnggotaExcel produces exact 7-column header and preserves leading zeros as text', async () => {
+      const wb = await exportDataAnggotaExcel(
+        [
+          {
+            nomor_referensi: '00050543',
+            nrp: '00123456',
+            nama: 'Kopda Ahmad',
+            tanggal_lahir: '1988-11-10',
+            bank_account_number: '005701044350505',
+            membership_status: 'ACTIVE',
+            tgl_awal_anggota: '2023-01-15',
+          },
+        ],
+        undefined,
+        false
+      );
+
+      const ws = wb.getWorksheet('Data Anggota');
+      expect(ws).toBeDefined();
+      const headers = ws!.getRow(1).values as any[];
+      expect(headers.slice(1)).toEqual([
+        'nomor_referensi',
+        'nrp',
+        'nama',
+        'tanggal_lahir',
+        'bank_account_number',
+        'membership_status',
+        'tgl_awal_anggota',
+      ]);
+      expect(ws!.getRow(2).getCell(1).value).toBe('00050543');
+      expect(ws!.getRow(2).getCell(1).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(2).value).toBe('00123456');
+      expect(ws!.getRow(2).getCell(5).value).toBe('005701044350505');
+    });
+
+    it('exportDataAkhirSimpananExcel produces exact 7-column header and numeric savings balances', async () => {
+      const wb = await exportDataAkhirSimpananExcel(
+        [
+          {
+            nomor_referensi: '00050543',
+            nrp: '00123456',
+            nama: 'Kopda Ahmad',
+            jumlah_simpanan_pokok: 100000,
+            jumlah_simpanan_wajib: 200000,
+            jumlah_simpanan_belanja: 50000,
+            jumlah_simpanan_lebaran: 75000,
+          },
+        ],
+        undefined,
+        false
+      );
+
+      const ws = wb.getWorksheet('Data Akhir Simpanan');
+      expect(ws).toBeDefined();
+      const headers = ws!.getRow(1).values as any[];
+      expect(headers.slice(1)).toEqual([
+        'nomor_referensi',
+        'nrp',
+        'nama',
+        'jumlah_simpanan_pokok',
+        'jumlah_simpanan_wajib',
+        'jumlah_simpanan_belanja',
+        'jumlah_simpanan_lebaran',
+      ]);
+      expect(ws!.getRow(2).getCell(4).value).toBe(100000);
+      expect(ws!.getRow(2).getCell(7).value).toBe(75000);
+    });
+
+    it('exportDataAkhirPinjamanExcel produces exact 9-column header and filename format', async () => {
+      const wb = await exportDataAkhirPinjamanExcel(
+        [
+          {
+            nomor_referensi: '00050543',
+            nrp: '00123456',
+            nama: 'Kopda Ahmad',
+            jenis_pinjaman: 'Pinjaman Reguler',
+            jumlah_pinjaman: 5000000,
+            tgl_awal_pinjaman: '2024-02-01',
+            nilai_angsuran: 500000,
+            tenor: 10,
+            total_terangsur: 1500000,
+          },
+        ],
+        undefined,
+        true
+      );
+
+      const ws = wb.getWorksheet('Data Akhir Pinjaman');
+      expect(ws).toBeDefined();
+      const headers = ws!.getRow(1).values as any[];
+      expect(headers.slice(1)).toEqual([
+        'nomor_referensi',
+        'nrp',
+        'nama',
+        'jenis_pinjaman',
+        'jumlah_pinjaman',
+        'tgl_awal_pinjaman',
+        'nilai_angsuran',
+        'tenor',
+        'total_terangsur',
+      ]);
+      expect(mockAnchor.download).toBe(`data_akhir_pinjaman_${getFormattedTodayIso()}.xlsx`);
+    });
+
+    it('exportDataKomitmenTarifLebaranExcel produces exact 9-column header, preserves leading zeros, and stays compatible with parseMemberLebaranRateExcel', async () => {
+      const wb = await exportDataKomitmenTarifLebaranExcel(
+        [
+          {
+            id: 'm-1',
+            nomor_referensi: '00050543',
+            nrp: '00123456',
+            nama: 'Kopda Ahmad',
+            tanggal_lahir: '1988-11-10',
+          },
+        ],
+        undefined,
+        true
+      );
+
+      const ws = wb.getWorksheet('Komitmen Tarif Lebaran');
+      expect(ws).toBeDefined();
+      const headers = ws!.getRow(1).values as any[];
+      expect(headers.slice(1)).toEqual([
+        'nomor_referensi',
+        'nrp',
+        'nama',
+        'tanggal_lahir',
+        'tarif_saat_ini',
+        'tarif_lebaran_baru',
+        'mulai_bulan',
+        'mulai_tahun',
+        'keterangan_siklus',
+      ]);
+      expect(ws!.getRow(2).getCell(1).value).toBe('00050543');
+      expect(ws!.getRow(2).getCell(1).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(2).value).toBe('00123456');
+      expect(ws!.getRow(2).getCell(2).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(4).value).toBe('1988-11-10');
+      expect(ws!.getRow(2).getCell(6).value).toBe('');
+      expect(mockAnchor.download).toBe(
+        `data_komitmen_tarif_simpanan_lebaran_${getFormattedTodayIso()}.xlsx`
+      );
+
+      // Uji kompatibilitas impor kembali setelah tarif_lebaran_baru diisi
+      ws!.getRow(2).getCell(6).value = 250000;
+      const buf = await wb.xlsx.writeBuffer();
+      const parsed = await parseMemberLebaranRateExcel(buf as ArrayBuffer);
+      expect(parsed.invalidRows).toEqual([]);
+      expect(parsed.validRows).toHaveLength(1);
+      expect(parsed.validRows[0].nrp).toBe('00123456');
+      expect(parsed.validRows[0].tarif_lebaran_baru).toBe(250000);
+    });
+
+    it('exportDataAkhirGajiAngsuranLainExcel produces exact 6-column header and preserves leading zeros', async () => {
+      const wb = await exportDataAkhirGajiAngsuranLainExcel(
+        [
+          {
+            id: 'm-1',
+            nomor_referensi: '00050543',
+            nrp: '00123456',
+            nama: 'Kopda Ahmad',
+            bank_account_number: '005701044350505',
+            master_thp: 6500000,
+            angsuran_lain_lain: 750000,
+          },
+        ],
+        undefined,
+        true
+      );
+
+      const ws = wb.getWorksheet('Gaji & Angsuran Lain-lain');
+      expect(ws).toBeDefined();
+      const headers = ws!.getRow(1).values as any[];
+      expect(headers.slice(1)).toEqual([
+        'nomor_referensi',
+        'NRP',
+        'Nama Lengkap',
+        'Nomor Rekening',
+        'Gaji Pokok',
+        'Angsuran Lain-lain',
+      ]);
+      expect(ws!.getRow(2).getCell(1).value).toBe('00050543');
+      expect(ws!.getRow(2).getCell(1).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(2).value).toBe('00123456');
+      expect(ws!.getRow(2).getCell(2).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(4).value).toBe('005701044350505');
+      expect(ws!.getRow(2).getCell(4).numFmt).toBe('@');
+      expect(ws!.getRow(2).getCell(5).value).toBe(6500000);
+      expect(ws!.getRow(2).getCell(6).value).toBe(750000);
+      expect(mockAnchor.download).toBe(
+        `data_akhir_gaji_angsuran_lain_${getFormattedTodayIso()}.xlsx`
+      );
     });
   });
 });
