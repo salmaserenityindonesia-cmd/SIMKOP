@@ -6,7 +6,6 @@ import {
   exportDataAkhirPinjamanExcel,
   exportDataKomitmenTarifLebaranExcel,
   exportDataAkhirGajiAngsuranLainExcel,
-  exportMembersToPdf,
   formatRp,
   getFormattedToday,
   getFormattedTodayIso,
@@ -172,53 +171,6 @@ describe('memberExporter - Unit Tests', () => {
       const worksheet = workbook.getWorksheet('Data Anggota Lengkap');
       expect(worksheet).toBeDefined();
       expect(worksheet?.rowCount).toBe(1); // Only header
-    });
-  });
-
-  describe('exportMembersToPdf', () => {
-    it('should generate landscape A4 PDF with cooperative header and total footer', async () => {
-      const doc = await exportMembersToPdf(sampleRows, sampleProfile, false);
-
-      expect(doc).toBeDefined();
-      expect(doc.internal.pageSize.getWidth()).toBeGreaterThan(doc.internal.pageSize.getHeight()); // Landscape: width > height
-      expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(1);
-
-      // Verifikasi autoTable terpanggil dan menghasilkan tabel dengan 15 kolom (No + 14 data)
-      const lastTable = (doc as any).lastAutoTable;
-      expect(lastTable).toBeDefined();
-      expect(lastTable.columns.length).toBe(15);
-
-      // Verifikasi baris footer akumulasi total (Pokok: 100k+100k=200k, Pinjaman: 5M+2M=7M, Sisa: 800k+1.2M=2M)
-      const footCellTexts = Object.values(lastTable.foot[0].cells).map(
-        (c: any) => c.text?.[0] || c.raw?.content || c.raw
-      );
-      expect(footCellTexts).toContain('TOTAL');
-      expect(footCellTexts).toContain('Rp 200.000');
-      expect(footCellTexts).toContain('Rp 350.000');
-      expect(footCellTexts).toContain('Rp 150.000');
-      expect(footCellTexts).toContain('Rp 200.000');
-      expect(footCellTexts).toContain('Rp 7.000.000');
-      expect(footCellTexts).toContain('Rp 2.000.000');
-    });
-
-    it('should trigger doc.save when autoSave is true', async () => {
-      const doc = await exportMembersToPdf(sampleRows, sampleProfile, false);
-      const saveSpy = vi.spyOn(doc, 'save').mockImplementation(() => doc);
-      // Panggil langsung save untuk verifikasi format nama file
-      const todayStr = getFormattedToday();
-      doc.save(`laporan-anggota-lengkap-${todayStr}.pdf`);
-      expect(saveSpy).toHaveBeenCalledWith(`laporan-anggota-lengkap-${todayStr}.pdf`);
-    });
-
-    it('should handle empty rows in PDF export gracefully', async () => {
-      const doc = await exportMembersToPdf([], sampleProfile, false);
-      expect(doc).toBeDefined();
-      expect(doc.getNumberOfPages()).toBe(1);
-    });
-
-    it('should handle null/undefined profile with default cooperative name', async () => {
-      const doc = await exportMembersToPdf(sampleRows, null, false);
-      expect(doc).toBeDefined();
     });
   });
 

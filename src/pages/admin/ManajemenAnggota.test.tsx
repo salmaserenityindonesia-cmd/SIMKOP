@@ -3,11 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ManajemenAnggota, {
   triggerMemberExportExcel,
-  triggerMemberExportPdf,
   triggerResetAllMembers,
 } from './ManajemenAnggota';
 import {
-  getMembersComprehensiveReport,
   getMembersTemplateExportData,
   resetAllMembersData,
 } from '../../services/memberService';
@@ -17,9 +15,7 @@ import {
   exportDataAkhirPinjamanExcel,
   exportDataKomitmenTarifLebaranExcel,
   exportDataAkhirGajiAngsuranLainExcel,
-  exportMembersToPdf,
 } from '../../services/memberExporter';
-import { getKoperasiProfile } from '../../services/settingsService';
 
 // Mock layout & feedback
 vi.mock('../../components/layout/AdminLayout', () => ({
@@ -163,15 +159,6 @@ vi.mock('../../services/memberExporter', () => ({
   exportDataAkhirPinjamanExcel: vi.fn().mockResolvedValue({}),
   exportDataKomitmenTarifLebaranExcel: vi.fn().mockResolvedValue({}),
   exportDataAkhirGajiAngsuranLainExcel: vi.fn().mockResolvedValue({}),
-  exportMembersToPdf: vi.fn().mockResolvedValue({}),
-}));
-
-vi.mock('../../services/settingsService', () => ({
-  getKoperasiProfile: vi.fn().mockResolvedValue({
-    nama_koperasi: 'PRIMKOPPOL POLRES NGAWI',
-    alamat: 'Jl. Jaksa Agung Suprapto No. 10',
-    telepon: '08123456789',
-  }),
 }));
 
 describe('ManajemenAnggota Page - Component & Comprehensive Export Integration', () => {
@@ -204,12 +191,13 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).not.toContain('lucide-trash');
     });
 
-    it('contains Import Data Anggota, Tambah Anggota, Excel, and PDF toolbar buttons without standalone Template button', () => {
+    it('contains Import Data Anggota, Tambah Anggota, and Ekspor Excel toolbar buttons without Ekspor PDF or standalone Template button', () => {
       const html = renderToStaticMarkup(<ManajemenAnggota />);
 
-      // Verification: Toolbar buttons present and standalone Template button removed
+      // Verification: Toolbar buttons present and standalone Template & Ekspor PDF buttons removed
       expect(html).not.toContain('Template</button>');
-      expect(html).toContain('Import Data Anggota');
+      expect(html).not.toContain('Ekspor PDF');
+      expect(html).toContain('Impor Anggota (.xlsx)');
       expect(html).toContain('whitespace-nowrap');
       expect(html).toContain('Saldo Awal Simpanan');
       expect(html).toContain('Saldo Awal Pinjaman');
@@ -217,12 +205,10 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(html).toContain('bg-amber-50');
       expect(html).toContain('text-amber-800');
       expect(html).toContain('Tambah Anggota');
-      expect(html).toContain('Excel');
-      expect(html).toContain('PDF');
+      expect(html).toContain('Ekspor Excel');
 
       // Check button styling and icons
-      expect(html).toContain('bg-green-600');
-      expect(html).toContain('bg-red-600');
+      expect(html).toContain('bg-emerald-600');
       expect(html).toContain('lucide-download');
     });
 
@@ -357,66 +343,6 @@ describe('ManajemenAnggota Page - Component & Comprehensive Export Integration',
       expect(setIsExporting).toHaveBeenLastCalledWith(false);
       expect(showToast).toHaveBeenCalledWith(
         'Network timeout during query',
-        'error'
-      );
-
-      consoleErrorSpy.mockRestore();
-    });
-  });
-
-  describe('PDF Export Flow (Landscape 14 Kolom Komprehensif)', () => {
-    it('triggers PDF export: fetches report & profile, calls exportMembersToPdf with success toast', async () => {
-      const showToast = vi.fn();
-      const setIsExporting = vi.fn();
-      const targetMemberIds = ['member-1'];
-
-      await triggerMemberExportPdf(targetMemberIds, showToast, setIsExporting);
-
-      // Verify loading state cycle
-      expect(setIsExporting).toHaveBeenCalledWith(true);
-      expect(setIsExporting).toHaveBeenLastCalledWith(false);
-
-      // Verify data and profile fetchers called
-      expect(getMembersComprehensiveReport).toHaveBeenCalledTimes(1);
-      expect(getMembersComprehensiveReport).toHaveBeenCalledWith(targetMemberIds);
-      expect(getKoperasiProfile).toHaveBeenCalledTimes(1);
-
-      // Verify PDF exporter called with comprehensive rows and profile
-      expect(exportMembersToPdf).toHaveBeenCalledTimes(1);
-      expect(exportMembersToPdf).toHaveBeenCalledWith(
-        expect.arrayContaining([
-          expect.objectContaining({
-            nrp: '12345678',
-            nama: 'Budi Santoso',
-          }),
-        ]),
-        expect.objectContaining({
-          nama_koperasi: 'PRIMKOPPOL POLRES NGAWI',
-        })
-      );
-
-      // Verify success toast
-      expect(showToast).toHaveBeenCalledWith(
-        'Laporan PDF Landscape 14 kolom berhasil diunduh.',
-        'success'
-      );
-    });
-
-    it('handles PDF export failure: shows error toast and resets exporting state', async () => {
-      const showToast = vi.fn();
-      const setIsExporting = vi.fn();
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      (exportMembersToPdf as any).mockRejectedValueOnce(
-        new Error('jsPDF rendering crashed')
-      );
-
-      await triggerMemberExportPdf(['m-1'], showToast, setIsExporting);
-
-      expect(setIsExporting).toHaveBeenCalledWith(true);
-      expect(setIsExporting).toHaveBeenLastCalledWith(false);
-      expect(showToast).toHaveBeenCalledWith(
-        'jsPDF rendering crashed',
         'error'
       );
 

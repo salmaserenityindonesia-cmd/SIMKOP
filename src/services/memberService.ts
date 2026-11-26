@@ -889,6 +889,7 @@ export async function getActiveMembersForLoan() {
 }
 
 export interface MemberComprehensiveExportRow {
+  nomor_referensi?: string;
   nrp: string;
   nama: string;
   tanggal_lahir: string;
@@ -1190,6 +1191,7 @@ export async function getMembersComprehensiveReport(
     }
 
     return {
+      nomor_referensi: m.nomor_referensi || '',
       nrp: m.nrp || '',
       nama: m.nama || '',
       tanggal_lahir: formatSafeDate(m.tanggal_lahir),

@@ -3,7 +3,6 @@ import AdminLayout from '../../components/layout/AdminLayout';
 import { getAnggota, fetchAllAnggotaPaged, updateAnggota, Anggota, LoanType } from '../../services/koperasiService';
 import { Search, Loader2, Plus, Edit2, Eye, X, Download, Upload, RotateCcw, Wallet, Banknote, FileSpreadsheet, CheckCircle2, AlertTriangle, Users, PauseCircle, PlayCircle, Sparkles, Sliders, ChevronDown } from 'lucide-react';
 import {
-  getMembersComprehensiveReport,
   getMembersTemplateExportData,
   createMember,
   resetAllMembersData,
@@ -17,9 +16,7 @@ import {
   exportDataAkhirPinjamanExcel,
   exportDataKomitmenTarifLebaranExcel,
   exportDataAkhirGajiAngsuranLainExcel,
-  exportMembersToPdf,
 } from '../../services/memberExporter';
-import { getKoperasiProfile } from '../../services/settingsService';
 import MemberMigrationModal from '../../components/members/MemberMigrationModal';
 import MemberMigrationDetailModal from '../../components/members/MemberMigrationDetailModal';
 import MemberSuspensionModal from '../../components/members/MemberSuspensionModal';
@@ -99,25 +96,6 @@ export async function triggerMemberExportExcel(
   }
 }
 
-export async function triggerMemberExportPdf(
-  memberIds: string[],
-  showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void,
-  setIsExporting?: (loading: boolean) => void
-) {
-  setIsExporting?.(true);
-  try {
-    const comprehensiveData = await getMembersComprehensiveReport(memberIds);
-    const profile = await getKoperasiProfile();
-    await exportMembersToPdf(comprehensiveData, profile);
-    showToast('Laporan PDF Landscape 14 kolom berhasil diunduh.', 'success');
-  } catch (err: any) {
-    console.error('Export PDF error:', err);
-    showToast(err?.message || 'Gagal mengekspor laporan PDF', 'error');
-  } finally {
-    setIsExporting?.(false);
-  }
-}
-
 export async function triggerResetAllMembers(
   showToast: (msg: string, type: 'success' | 'error' | 'info') => void,
   setIsResetting?: (val: boolean) => void,
@@ -179,7 +157,6 @@ export default function ManajemenAnggota({
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   useEffect(() => {
     if (!isExportMenuOpen) return;
@@ -421,14 +398,6 @@ export default function ManajemenAnggota({
       showToast,
       setIsExportingExcel,
       exportType
-    );
-  };
-
-  const handleExportPDF = async () => {
-    await triggerMemberExportPdf(
-      filteredList.map(a => a.id),
-      showToast,
-      setIsExportingPdf
     );
   };
 
@@ -975,20 +944,6 @@ export default function ManajemenAnggota({
                   </div>
                 )}
               </div>
-
-              <button
-                type="button"
-                onClick={handleExportPDF}
-                disabled={isExportingPdf}
-                className="inline-flex items-center justify-center gap-1.5 h-10 px-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer shadow-xs disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isExportingPdf ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                ) : (
-                  <Download className="w-3.5 h-3.5 shrink-0" />
-                )}
-                <span>Ekspor PDF</span>
-              </button>
 
               <button
                 type="button"
