@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
-import { exportRetailToExcel, exportRetailReportToPdf, formatRp } from './retailExporter';
+import { exportRetailToExcel, exportRetailReportToPdf, exportSalesLogToExcel, formatRp } from './retailExporter';
 
 describe('retailExporter', () => {
   it('should format rupiah correctly', () => {
@@ -228,6 +229,114 @@ describe('retailExporter', () => {
     const saveSpy = vi.spyOn(doc, 'save').mockImplementation(() => doc);
     doc.save('laporan-retail-2026-10-01-sd-2026-10-29.pdf');
     expect(saveSpy).toHaveBeenCalledWith('laporan-retail-2026-10-01-sd-2026-10-29.pdf');
+  });
+
+  it('should export sales transaction log to formatted Excel with reconciliation totals', async () => {
+    let capturedBuffer: any = null;
+    const mockClick = vi.fn();
+    const mockAnchor = { href: '', download: '', click: mockClick };
+    const mockCreateElement = vi.fn().mockReturnValue(mockAnchor);
+    const mockRevokeObjectURL = vi.fn();
+    const mockCreateObjectURL = vi.fn().mockReturnValue('blob:mock-sales-url');
+
+    (globalThis as any).document = {
+      createElement: mockCreateElement,
+      title: 'Original Title',
+    };
+    (globalThis as any).URL = {
+      createObjectURL: mockCreateObjectURL,
+      revokeObjectURL: mockRevokeObjectURL,
+    };
+    (globalThis as any).Blob = class MockBlob {
+      content: any;
+      type: any;
+      constructor(content: any, options: any) {
+        this.content = content;
+        this.type = options?.type;
+        capturedBuffer = content[0];
+      }
+    };
+
+    const salesRows = [
+      {
+        id: 'tx-1',
+        sale_number: 'POS-20260930-001',
+        total_amount: 500000,
+        paid_cash: 300000,
+        paid_deposit: 150000,
+        paid_credit: 50000,
+        completed_at: '2026-09-30T10:15:00.000Z',
+        pengelola: { nama: 'Kasir Budi' },
+        anggota: { nrp: '12345', nama: 'Anggota Ani' },
+      },
+      {
+        id: 'tx-2',
+        sale_number: 'POS-20260930-002',
+        total_amount: 120000,
+        paid_cash: 120000,
+        paid_deposit: 0,
+        paid_credit: 0,
+        created_at: '2026-09-30T11:30:00.000Z',
+        pengelola: { nama: 'Kasir Budi' },
+        anggota: null,
+      },
+    ];
+
+    const mockProfile = {
+      nama_koperasi: 'KOPERASI PRIMKOPPOL RESORT',
+      alamat: 'Jl. Merdeka No. 1',
+      telepon: '08123456789',
+      terminal_name: 'POS-01',
+      footer_notes: 'Terima kasih',
+    };
+
+    await exportSalesLogToExcel(
+      salesRows,
+      { startDate: '2026-09-01', endDate: '2026-09-30' },
+      mockProfile
+    );
+
+    expect(mockAnchor.download).toBe('Log_Transaksi_Penjualan_2026-09-01_sd_2026-09-30.xlsx');
+    expect(mockClick).toHaveBeenCalled();
+    expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:mock-sales-url');
+    expect(capturedBuffer).toBeTruthy();
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(capturedBuffer);
+    const ws = wb.getWorksheet('Log Transaksi Penjualan');
+    expect(ws).toBeDefined();
+
+    expect(ws!.getCell('A1').value).toBe('KOPERASI PRIMKOPPOL RESORT');
+    expect(ws!.getCell('A2').value).toBe('LOG TRANSAKSI PENJUALAN RETAIL (POS)');
+    expect(ws!.getCell('A3').value).toBe('Periode: 2026-09-01 s/d 2026-09-30');
+
+    expect(ws!.getRow(5).values).toEqual([
+      undefined,
+      'NO',
+      'TANGGAL & WAKTU',
+      'NO. NOTA',
+      'KASIR',
+      'PEMBELI',
+      'TOTAL (RP)',
+      'TUNAI (RP)',
+      'SIMPANAN (RP)',
+      'BON TOKO (RP)',
+    ]);
+
+    expect(ws!.getCell('C6').value).toBe('POS-20260930-001');
+    expect(ws!.getCell('C6').numFmt).toBe('@');
+    expect(ws!.getCell('E6').value).toBe('12345 - Anggota Ani');
+    expect(ws!.getCell('F6').value).toBe(500000);
+    expect(ws!.getCell('F6').numFmt).toBe('#,##0');
+
+    expect(ws!.getCell('E7').value).toBe('Non-Anggota');
+
+    expect(ws!.getCell('A8').value).toBe('TOTAL REKONSILIASI');
+    expect((ws!.getCell('F8').value as any).formula).toBe('SUM(F6:F7)');
+    expect((ws!.getCell('F8').value as any).result).toBe(620000);
+    expect((ws!.getCell('G8').value as any).result).toBe(420000);
+    expect((ws!.getCell('H8').value as any).result).toBe(150000);
+    expect((ws!.getCell('I8').value as any).result).toBe(50000);
   });
 });
 

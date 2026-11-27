@@ -381,6 +381,207 @@ export async function exportRetailToExcel(
 }
 
 /**
+ * Format timestamp into DD/MM/YYYY HH:mm for Excel sales log
+ */
+function formatSalesTimestamp(raw?: string | null): string {
+  if (!raw) return '-';
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return String(raw);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Export POS Sales Transaction Log to a formatted .xlsx file with reconciliation totals.
+ */
+export async function exportSalesLogToExcel(
+  salesRows: any[],
+  dateRange: { startDate: string; endDate: string },
+  koperasiProfile?: KoperasiProfile | null
+): Promise<void> {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'SIMKOP Enterprise';
+  wb.created = new Date();
+
+  const ws = wb.addWorksheet('Log Transaksi Penjualan');
+  const namaKoperasi = (koperasiProfile?.nama_koperasi || 'KOPERASI PRIMKOPPOL').toUpperCase();
+
+  // ── 1. Header Laporan (Baris 1-3) ─────────────────────────────────────────
+  const row1 = ws.addRow([namaKoperasi]);
+  row1.font = { bold: true, size: 13, color: { argb: 'FF0F172A' } };
+  ws.mergeCells('A1:I1');
+
+  const row2 = ws.addRow(['LOG TRANSAKSI PENJUALAN RETAIL (POS)']);
+  row2.font = { bold: true, size: 11, color: { argb: 'FF0D9488' } };
+  ws.mergeCells('A2:I2');
+
+  const row3 = ws.addRow([`Periode: ${dateRange.startDate} s/d ${dateRange.endDate}`]);
+  row3.font = { size: 10, color: { argb: 'FF475569' } };
+  ws.mergeCells('A3:I3');
+
+  ws.addRow([]); // Baris 4 kosong
+
+  // ── 2. Header Tabel (Baris 5) ─────────────────────────────────────────────
+  const headers = [
+    'NO',
+    'TANGGAL & WAKTU',
+    'NO. NOTA',
+    'KASIR',
+    'PEMBELI',
+    'TOTAL (RP)',
+    'TUNAI (RP)',
+    'SIMPANAN (RP)',
+    'BON TOKO (RP)'
+  ];
+  const headerRow = ws.addRow(headers);
+  headerRow.height = 24;
+  headerRow.eachCell((cell, colNumber) => {
+    cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF0D9488' }
+    };
+    cell.alignment = {
+      vertical: 'middle',
+      horizontal: colNumber === 1 ? 'center' : colNumber >= 6 ? 'right' : 'left'
+    };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+    };
+  });
+
+  // ── 3. Isi Baris Transaksi ────────────────────────────────────────────────
+  let totalAmount = 0;
+  let totalCash = 0;
+  let totalDeposit = 0;
+  let totalCredit = 0;
+
+  const firstDataRow = 6;
+  salesRows.forEach((t, idx) => {
+    const amt = Number(t.total_amount) || 0;
+    const cash = Number(t.paid_cash) || 0;
+    const dep = Number(t.paid_deposit) || 0;
+    const cred = Number(t.paid_credit) || 0;
+
+    totalAmount += amt;
+    totalCash += cash;
+    totalDeposit += dep;
+    totalCredit += cred;
+
+    const pembeli = t.anggota?.nama
+      ? (t.anggota.nrp ? `${t.anggota.nrp} - ${t.anggota.nama}` : t.anggota.nama)
+      : 'Non-Anggota';
+
+    const dataRow = ws.addRow([
+      idx + 1,
+      formatSalesTimestamp(t.completed_at || t.created_at),
+      String(t.sale_number || '-'),
+      t.pengelola?.nama || '-',
+      pembeli,
+      amt,
+      cash,
+      dep,
+      cred
+    ]);
+
+    dataRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    dataRow.getCell(2).alignment = { horizontal: 'left', vertical: 'middle' };
+    dataRow.getCell(3).numFmt = '@';
+    dataRow.getCell(3).alignment = { horizontal: 'left', vertical: 'middle' };
+    dataRow.getCell(4).alignment = { horizontal: 'left', vertical: 'middle' };
+    dataRow.getCell(5).alignment = { horizontal: 'left', vertical: 'middle' };
+
+    for (let col = 6; col <= 9; col++) {
+      const c = dataRow.getCell(col);
+      c.numFmt = '#,##0';
+      c.alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+
+    dataRow.eachCell((cell) => {
+      cell.border = {
+        top: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'hair', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'hair', color: { argb: 'FFE2E8F0' } }
+      };
+    });
+  });
+
+  // ── 4. Baris Footer (TOTAL REKONSILIASI) ───────────────────────────────────
+  const lastDataRow = firstDataRow + salesRows.length - 1;
+  const totalRow = ws.addRow([
+    'TOTAL REKONSILIASI',
+    '',
+    '',
+    '',
+    '',
+    salesRows.length > 0 ? { formula: `SUM(F${firstDataRow}:F${lastDataRow})`, result: totalAmount } : 0,
+    salesRows.length > 0 ? { formula: `SUM(G${firstDataRow}:G${lastDataRow})`, result: totalCash } : 0,
+    salesRows.length > 0 ? { formula: `SUM(H${firstDataRow}:H${lastDataRow})`, result: totalDeposit } : 0,
+    salesRows.length > 0 ? { formula: `SUM(I${firstDataRow}:I${lastDataRow})`, result: totalCredit } : 0
+  ]);
+  totalRow.height = 22;
+  ws.mergeCells(`A${totalRow.number}:E${totalRow.number}`);
+
+  totalRow.eachCell((cell, colNumber) => {
+    cell.font = { bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF1F5F9' }
+    };
+    cell.border = {
+      top: { style: 'medium', color: { argb: 'FFCBD5E1' } },
+      bottom: { style: 'medium', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+    };
+    if (colNumber <= 5) {
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    } else {
+      cell.numFmt = '#,##0';
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+  });
+
+  // ── 5. Auto-Fit Lebar Kolom ────────────────────────────────────────────────
+  ws.columns.forEach((col, index) => {
+    let maxLen = headers[index]?.length || 10;
+    col.eachCell?.({ includeEmpty: false }, (cell, rowNumber) => {
+      if (rowNumber < 5) return; // Abaikan baris judul yang di-merge
+      const val = cell.value;
+      let strLen = 0;
+      if (val && typeof val === 'object' && 'result' in val) {
+        strLen = Number(val.result || 0).toLocaleString('id-ID').length;
+      } else if (typeof val === 'number') {
+        strLen = val.toLocaleString('id-ID').length;
+      } else if (val !== null && val !== undefined) {
+        strLen = String(val).length;
+      }
+      if (strLen > maxLen) maxLen = strLen;
+    });
+    col.width = Math.min(Math.max(maxLen + 4, index === 0 ? 6 : 12), 42);
+  });
+
+  // ── 6. Download File ──────────────────────────────────────────────────────
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Log_Transaksi_Penjualan_${dateRange.startDate}_sd_${dateRange.endDate}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
  * Export to PDF using browser print dialog
  */
 export function printRetailPDF(title: string) {

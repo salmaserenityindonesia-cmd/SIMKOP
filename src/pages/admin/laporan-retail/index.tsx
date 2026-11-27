@@ -30,7 +30,7 @@ import {
   type StockValuation,
   type CashierShift
 } from '../../../services/retail-report.service';
-import { exportRetailToExcel, exportRetailReportToPdf } from '../../../utils/retailExporter';
+import { exportRetailToExcel, exportRetailReportToPdf, exportSalesLogToExcel } from '../../../utils/retailExporter';
 import { getKoperasiProfile, KoperasiProfile, DEFAULT_KOPERASI_PROFILE } from '../../../services/settingsService';
 import { useFeedback } from '../../../context/FeedbackContext';
 
@@ -163,6 +163,7 @@ export default function LaporanRetail() {
 
   // Loading / error
   const [loading, setLoading] = useState(false);
+  const [isExportingSalesExcel, setIsExportingSalesExcel] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Pagination for out-of-stock products table
@@ -255,6 +256,25 @@ export default function LaporanRetail() {
 
   const handleExportExcel = () =>
     exportRetailToExcel({ startDate, endDate }, eodData, fastMoving, stockData, shiftHistory);
+
+  const handleExportSalesLogExcel = async () => {
+    const salesLog = eodData?.transactions ?? [];
+    if (salesLog.length === 0) {
+      showToast('Tidak ada transaksi pada periode yang dipilih.', 'info');
+      return;
+    }
+
+    setIsExportingSalesExcel(true);
+    try {
+      await exportSalesLogToExcel(salesLog, { startDate, endDate }, koperasiProfile);
+      showToast('Log transaksi penjualan berhasil diekspor ke Excel.', 'success');
+    } catch (err: any) {
+      console.error('Error exporting sales log to Excel:', err);
+      showToast(err?.message || 'Gagal mengekspor log transaksi ke Excel.', 'error');
+    } finally {
+      setIsExportingSalesExcel(false);
+    }
+  };
   const handlePrintPDF = async () => {
     if (!eodData || !eodData.transactions || eodData.transactions.length === 0) {
       showToast('Tidak ada transaksi pada periode yang dipilih.', 'info');
@@ -547,14 +567,25 @@ export default function LaporanRetail() {
 
                 {/* Transactions table */}
                 <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
+                  <div className="p-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-wrap items-center justify-between gap-3">
                     <h3 className="font-semibold text-[#0F2942] flex items-center gap-2">
                       <ShoppingCart className="w-4 h-4 text-[#0D9488]" />
                       Log Transaksi Penjualan
                     </h3>
-                    <span className="text-xs text-slate-500">
-                      {eodData?.transactions.length ?? 0} record ditemukan
-                    </span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-slate-500">
+                        {eodData?.transactions.length ?? 0} record ditemukan
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleExportSalesLogExcel}
+                        disabled={!eodData?.transactions || eodData.transactions.length === 0 || isExportingSalesExcel}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>{isExportingSalesExcel ? 'Mengekspor...' : 'Export Excel (.xlsx)'}</span>
+                      </button>
+                    </div>
                   </div>
                   {eodData && eodData.transactions.length === 0 ? (
                     <div className="py-16 text-center text-slate-400">
